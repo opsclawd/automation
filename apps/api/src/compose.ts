@@ -47,6 +47,7 @@ import {
   killProcess,
 } from '@ai-sdlc/infrastructure';
 import {
+  LoadRepositoryForRun,
   StartIssueRun,
   CancelRun,
   ResumeRun,
@@ -482,6 +483,7 @@ export interface Container {
   targetRepoRoot: string;
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
+  loadRepositoryForRun: LoadRepositoryForRun;
   cancelRun: CancelRun;
   checkMergeReadiness: CheckMergeReadiness;
   stepRepository: StepRepositoryPort;
@@ -1474,6 +1476,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     };
   };
 
+  const loadRepositoryForRun = new LoadRepositoryForRun({ repositoryPort: registryBackedRepo });
+
   const deps: StartIssueRunDeps = {
     runRepository,
     failureRepository,
@@ -1487,6 +1491,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     createEventTailer,
     baseTmpDir,
     tmpDirectoryFactory,
+    repositoryPort: registryBackedRepo,
   };
   if (opts.baseBranch !== undefined) deps.baseBranch = opts.baseBranch;
   if (opts.model !== undefined) deps.model = opts.model;
@@ -4178,7 +4183,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const metadataResolver = resolver;
 
   const listRepositories = new ListRepositories({ repos: registryReadRepo });
-  const inspectRepository = new InspectRepository({ repos: registryReadRepo });
+  const inspectRepository = new InspectRepository({ repos: registryBackedRepo });
   const registerRepository = new RegisterRepository({
     registry: repositoryRegistry,
     repos: registryReadRepo,
@@ -4769,6 +4774,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     targetRepoRoot: targetRoot,
     runValidation,
     startIssueRun,
+    loadRepositoryForRun,
     cancelRun,
     checkMergeReadiness,
     stepRepository,

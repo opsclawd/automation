@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { RunId, validationRunPassed } from '@ai-sdlc/domain';
 import type { Container } from '../compose.js';
+import { guardRead } from './_lib.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -11,6 +12,8 @@ export function registerValidationRoutes(app: FastifyInstance, c: Container): vo
       reply.code(400);
       return { error: 'invalid run uuid' };
     }
+    const run = await guardRead(req, reply, c);
+    if (!run) return;
     const runs = c.validationRunRepository.listByRun(RunId(uuid));
     const ordered = [...runs].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
     const validationRuns = ordered.map((v) => ({

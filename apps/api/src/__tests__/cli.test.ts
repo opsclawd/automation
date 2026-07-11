@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { spawn, execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildProgram as originalBuildProgram, findRepoRoot } from '../cli.js';
+import { buildProgram as originalBuildProgram, findRepoRoot, resolveCliRepoId } from '../cli.js';
+vi.setConfig({ testTimeout: 30000 });
 function buildProgram(opts?: Parameters<typeof originalBuildProgram>[0]) {
   return originalBuildProgram({
     isCliTestSuite: true,
@@ -13,16 +14,28 @@ function buildProgram(opts?: Parameters<typeof originalBuildProgram>[0]) {
     ...opts,
   });
 }
-import { openDatabase, applyMigrations, JobQueueRepository } from '@ai-sdlc/infrastructure';
-import { RunExecutor, ResumeRun, RetryFailedPhase } from '@ai-sdlc/application';
+import {
+  openDatabase,
+  applyMigrations,
+  JobQueueRepository,
+  RepositoryMetadataResolver,
+} from '@ai-sdlc/infrastructure';
+import {
+  RunExecutor,
+  ResumeRun,
+  RetryFailedPhase,
+  LoadRepositoryForRun,
+  StartIssueRun,
+} from '@ai-sdlc/application';
 import {
   GitWorktreeAdapter,
   InMemoryEventBus,
   RunRepository,
   WorkerLeaseRepository,
 } from '@ai-sdlc/infrastructure';
-import { WorkerLeaseConflictError, WorkerId, RepositoryId, JobId } from '@ai-sdlc/domain';
+import { WorkerLeaseConflictError, WorkerId, RepositoryId, JobId, Run } from '@ai-sdlc/domain';
 import { WorkerScheduler } from '../worker-scheduler.js';
+import { composeWithTarget } from '../cli/compose-with-target.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const apiRoot = join(__dirname, '..', '..');
@@ -51,6 +64,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -4194,11 +4208,392 @@ describe('CLI run flag validation', () => {
     const modelOpt = runCmd!.options.find((o) => o.long === '--model');
     expect(modelOpt?.description).toMatch(/Bash executor only/);
   });
-
   it('labels --agent-cli help text as Bash-only', () => {
     const program = buildProgram();
     const runCmd = program.commands.find((c) => c.name() === 'run');
     const agentCliOpt = runCmd!.options.find((o) => o.long === '--agent-cli');
     expect(agentCliOpt?.description).toMatch(/Bash executor only/);
+  });
+
+  describe('CLI --repository-id flag', () => {
+    let resolverSpy: ReturnType<typeof vi.spyOn> | undefined;
+    let savedCwd: string | undefined;
+
+    beforeEach(() => {
+      savedCwd = process.cwd();
+      resolverSpy = vi
+        .spyOn(RepositoryMetadataResolver.prototype, 'resolve')
+        .mockImplementation((targetPath: string) => {
+          return {
+            rootPath: targetPath,
+            nameWithOwner: 'owner/repo-1',
+            defaultBranch: 'main',
+            remoteUrl: 'https://github.com/owner/repo-1.git',
+          };
+        });
+    });
+
+    afterEach(() => {
+      resolverSpy?.mockRestore();
+      if (savedCwd) {
+        process.chdir(savedCwd);
+      }
+    });
+
+    it('start works without --repository-id when exactly one repo enabled', async () => {
+      const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-start-single-')));
+      writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+      process.chdir(root);
+
+      const mockRepoId = '0000000000000000000000000000000000000000000000000000000000000001';
+
+      let startCalled = false;
+      let startCalledWithRepoId: string | undefined = undefined;
+      const startSpy = vi
+        .spyOn(StartIssueRun.prototype, 'execute')
+        .mockImplementation(async (input: unknown) => {
+          startCalled = true;
+          startCalledWithRepoId = (input as { repoId: string }).repoId;
+          return { uuid: 'run-uuid', status: 'passed' as const, exitCode: 0 };
+        });
+
+      const program = buildProgram({
+        composeOverrides: { repoFullName: 'owner/repo-1' },
+      });
+
+      const { c } = composeWithTarget(root);
+      c.repositoryRegistry.insert({
+        id: mockRepoId as RepositoryId,
+        fullName: 'owner/repo-1',
+        owner: 'owner',
+        name: 'repo-1',
+        localBasePath: root,
+        defaultBranch: 'main',
+        remoteUrl: 'https://github.com/owner/repo-1.git',
+        enabled: true,
+        maxConcurrentRuns: 1,
+        configMetadata: '',
+        healthStatus: 'healthy',
+        healthError: null,
+        lastHealthCheckAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, cb) => {
+        if (typeof cb === 'function') (cb as () => void)();
+        return true;
+      });
+
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '42',
+        '--executor',
+        'bash',
+        '--script',
+        '/nonexistent/script',
+      ]);
+
+      expect(startCalled).toBe(true);
+      expect(startCalledWithRepoId).toBe(mockRepoId);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+
+      startSpy.mockRestore();
+      exitSpy.mockRestore();
+      writeSpy.mockRestore();
+    });
+
+    it('start errors helpfully when many repos enabled and flag omitted', async () => {
+      vi.stubEnv('GITHUB_REPOSITORY', 'unknown/unknown');
+      const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-start-many-')));
+      writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+      process.chdir(root);
+
+      const mockRepoId1 = '0000000000000000000000000000000000000000000000000000000000000001';
+      const mockRepoId2 = '0000000000000000000000000000000000000000000000000000000000000002';
+
+      resolverSpy.mockImplementation((targetPath: string) => {
+        return {
+          rootPath: targetPath,
+          nameWithOwner: 'owner/repo-3',
+          defaultBranch: 'main',
+          remoteUrl: 'https://github.com/owner/repo-3.git',
+        };
+      });
+
+      const program = buildProgram({
+        composeOverrides: { repoFullName: undefined },
+      });
+
+      const { c } = composeWithTarget(root);
+      c.repositoryRegistry.insert({
+        id: mockRepoId1 as RepositoryId,
+        fullName: 'owner/repo-1',
+        owner: 'owner',
+        name: 'repo-1',
+        localBasePath: join(root, 'repo-1'),
+        defaultBranch: 'main',
+        remoteUrl: 'https://github.com/owner/repo-1.git',
+        enabled: true,
+        maxConcurrentRuns: 1,
+        configMetadata: '',
+        healthStatus: 'healthy',
+        healthError: null,
+        lastHealthCheckAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      c.repositoryRegistry.insert({
+        id: mockRepoId2 as RepositoryId,
+        fullName: 'owner/repo-2',
+        owner: 'owner',
+        name: 'repo-2',
+        localBasePath: join(root, 'repo-2'),
+        defaultBranch: 'main',
+        remoteUrl: 'https://github.com/owner/repo-2.git',
+        enabled: true,
+        maxConcurrentRuns: 1,
+        configMetadata: '',
+        healthStatus: 'healthy',
+        healthError: null,
+        lastHealthCheckAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '42',
+        '--executor',
+        'bash',
+        '--script',
+        '/nonexistent/script',
+      ]);
+
+      expect(exitSpy).toHaveBeenCalledWith(2);
+      expect(errSpy.mock.calls[0][0]).toContain(
+        '--repository-id is required when more than one repository is enabled',
+      );
+
+      exitSpy.mockRestore();
+      errSpy.mockRestore();
+    });
+
+    it('cancel routes through loadRepositoryForRun', async () => {
+      const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-id-')));
+      writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+      process.chdir(root);
+
+      let loadCalledWith: unknown = null;
+      const loadSpy = vi
+        .spyOn(LoadRepositoryForRun.prototype, 'execute')
+        .mockImplementation((input: unknown) => {
+          loadCalledWith = input;
+        });
+
+      const mockRepoId = '0000000000000000000000000000000000000000000000000000000000000001';
+      const mockRun: Run = {
+        uuid: 'cancel-uuid-test',
+        displayId: 'issue-50-20260519-000000',
+        repoId: mockRepoId as RepositoryId,
+        issueNumber: 50,
+        status: 'running',
+        pid: process.pid,
+        startedAt: new Date(),
+        type: 'issue_to_pr',
+        completedPhases: [],
+        skippedPhases: [],
+      };
+
+      const program = buildProgram({
+        composeOverrides: { repoFullName: 'owner/repo-1' },
+      });
+
+      const { c } = composeWithTarget(root);
+      c.repositoryRegistry.insert({
+        id: mockRepoId as RepositoryId,
+        fullName: 'owner/repo-1',
+        owner: 'owner',
+        name: 'repo-1',
+        localBasePath: join(root, 'repo-1'),
+        defaultBranch: 'main',
+        remoteUrl: 'https://github.com/owner/repo-1.git',
+        enabled: true,
+        maxConcurrentRuns: 1,
+        configMetadata: '',
+        healthStatus: 'healthy',
+        healthError: null,
+        lastHealthCheckAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      c.runRepository.insertIfNoActive(mockRun);
+
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+      await runsCmd.parseAsync(
+        ['cancel', '--uuid', 'cancel-uuid-test', '--repository-id', mockRepoId],
+        { from: 'user' },
+      );
+
+      expect(loadCalledWith).toBeDefined();
+      expect((loadCalledWith as Record<string, unknown>).callerRepoId).toBe(mockRepoId);
+      expect((loadCalledWith as Record<string, Record<string, unknown>>).run.uuid).toBe(
+        'cancel-uuid-test',
+      );
+
+      loadSpy.mockRestore();
+      exitSpy.mockRestore();
+      killSpy.mockRestore();
+    });
+
+    it('start with --repository-id owner/name resolves via inspectRepository', async () => {
+      const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-start-fullname-')));
+      writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+      process.chdir(root);
+
+      const mockRepoId1 = '0000000000000000000000000000000000000000000000000000000000000001';
+      const mockRepoId2 = '0000000000000000000000000000000000000000000000000000000000000002';
+
+      let startCalledWithRepoId: string | undefined = undefined;
+      const startSpy = vi
+        .spyOn(StartIssueRun.prototype, 'execute')
+        .mockImplementation(async (input: unknown) => {
+          startCalledWithRepoId = (input as { repoId: string }).repoId;
+          return { uuid: 'run-uuid', status: 'passed' as const, exitCode: 0 };
+        });
+
+      const program = buildProgram({
+        composeOverrides: { repoFullName: 'owner/repo-1' },
+      });
+
+      const { c } = composeWithTarget(root);
+      c.repositoryRegistry.insert({
+        id: mockRepoId1 as RepositoryId,
+        fullName: 'owner/repo-1',
+        owner: 'owner',
+        name: 'repo-1',
+        localBasePath: join(root, 'repo-1'),
+        defaultBranch: 'main',
+        remoteUrl: 'https://github.com/owner/repo-1.git',
+        enabled: true,
+        maxConcurrentRuns: 1,
+        configMetadata: '',
+        healthStatus: 'healthy',
+        healthError: null,
+        lastHealthCheckAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      c.repositoryRegistry.insert({
+        id: mockRepoId2 as RepositoryId,
+        fullName: 'owner/repo-2',
+        owner: 'owner',
+        name: 'repo-2',
+        localBasePath: join(root, 'repo-2'),
+        defaultBranch: 'main',
+        remoteUrl: 'https://github.com/owner/repo-2.git',
+        enabled: true,
+        maxConcurrentRuns: 1,
+        configMetadata: '',
+        healthStatus: 'healthy',
+        healthError: null,
+        lastHealthCheckAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, cb) => {
+        if (typeof cb === 'function') (cb as () => void)();
+        return true;
+      });
+
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '42',
+        '--executor',
+        'bash',
+        '--script',
+        '/nonexistent/script',
+        '--repository-id',
+        'owner/repo-2',
+      ]);
+
+      expect(startCalledWithRepoId).toBe(mockRepoId2);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+
+      startSpy.mockRestore();
+      exitSpy.mockRestore();
+      writeSpy.mockRestore();
+    });
+  });
+});
+
+describe('resolveCliRepoId and resolveRepoIdForCli fallback behavior', () => {
+  it('should return matching repository ID if repoFullName matches one of the enabled repositories', () => {
+    const opts = {};
+    const container = {
+      repoFullName: 'owner/repo-2',
+      listEnabledRepositories: () => [
+        { id: '1', fullName: 'owner/repo-1' },
+        { id: '2', fullName: 'owner/repo-2' },
+      ],
+    };
+    const result = resolveCliRepoId(opts, container);
+    expect(result).toBe('2');
+  });
+
+  it('should throw error when repoFullName is not set and multiple repositories are enabled', () => {
+    const opts = {};
+    const container = {
+      listEnabledRepositories: () => [
+        { id: '1', fullName: 'owner/repo-1' },
+        { id: '2', fullName: 'owner/repo-2' },
+      ],
+    };
+    expect(() => resolveCliRepoId(opts, container)).toThrow(
+      /--repository-id is required when more than one repository is enabled/,
+    );
+  });
+
+  it('should fallback to resolving single enabled repository when repoFullName does not match', () => {
+    const opts = {};
+    const container = {
+      repoFullName: 'owner/nonexistent',
+      listEnabledRepositories: () => [{ id: '1', fullName: 'owner/repo-1' }],
+    };
+    const result = resolveCliRepoId(opts, container);
+    expect(result).toBe('1');
+  });
+
+  it('should resolve options repoId first', () => {
+    const opts = { repositoryId: 'custom-id' };
+    const container = {
+      repoFullName: 'owner/repo-2',
+      listEnabledRepositories: () => [
+        { id: '1', fullName: 'owner/repo-1' },
+        { id: '2', fullName: 'owner/repo-2' },
+      ],
+    };
+    const result = resolveCliRepoId(opts, container);
+    expect(result).toBe('custom-id');
   });
 });

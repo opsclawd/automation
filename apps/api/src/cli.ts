@@ -6,6 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import {
+  Run,
   RunId,
   RunStatus,
   createRun,
@@ -31,6 +32,7 @@ import { resolveTargetRepoRootOrExit, findRepoRoot } from './cli/target-repo-roo
 import { composeWithTarget } from './cli/compose-with-target.js';
 import { WorkerScheduler } from './worker-scheduler.js';
 import { startWorkerDrainLoop } from './worker-drain-loop.js';
+import { resolveRepoContext, canonicalizeRepoContext } from './routes/_lib.js';
 import { registerRepoCommand } from './cli/repo-commands.js';
 import { EXIT_USER_ERROR, EXIT_INTERNAL_ERROR } from './cli/exit-codes.js';
 
@@ -321,6 +323,58 @@ export interface RunCliOptions {
   agentCli?: string;
   executor?: string;
   targetRepoRoot?: string;
+  repositoryId?: string;
+}
+
+export function resolveCliRepoId(
+  opts: { repositoryId?: string | undefined },
+  container: {
+    listEnabledRepositories(): Array<{ id: string; fullName: string }>;
+    repoFullName: string | undefined;
+  },
+): string | undefined {
+  if (opts.repositoryId) return opts.repositoryId;
+  const enabled = container.listEnabledRepositories();
+  if (container.repoFullName) {
+    const matched = enabled.find((r) => r.fullName === container.repoFullName);
+    if (matched) return matched.id;
+  }
+  if (enabled.length === 1 && enabled[0]) return enabled[0].id;
+  if (enabled.length > 1) {
+    throw new Error(
+      `--repository-id is required when more than one repository is enabled (${enabled.map((r) => r.fullName).join(', ')})`,
+    );
+  }
+  return undefined;
+}
+
+export function resolveRepoIdForCli(
+  opts: { repositoryId?: string | undefined },
+  c: {
+    listRepositories: {
+      execute(opts?: { includeDisabled?: boolean }): Array<{ id: RepositoryId; fullName: string }>;
+    };
+    repoFullName?: string;
+    inspectRepository: { executeByFullName(fullName: string): { id: RepositoryId } };
+  },
+): string | undefined {
+  const resolvedRepoIdStr = resolveCliRepoId(opts, {
+    repoFullName: c.repoFullName,
+    listEnabledRepositories: () =>
+      c.listRepositories.execute({ includeDisabled: false }).map((r) => ({
+        id: r.id,
+        fullName: r.fullName,
+      })),
+  });
+
+  if (!resolvedRepoIdStr) return undefined;
+
+  const ctx = resolveRepoContext({ headers: {}, query: { repositoryId: resolvedRepoIdStr } }, c);
+
+  if (ctx.repositoryId || ctx.fullName) {
+    return canonicalizeRepoContext(ctx, c);
+  }
+  return undefined;
 }
 
 export function buildProgram(buildOpts?: BuildProgramOptions): Command {
@@ -330,7 +384,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
   program
     .command('run')
+    .alias('start')
     .description('Start an issue-to-PR run by wrapping the legacy Bash script')
+    .option('--repository-id <id|owner/name>', 'Repository ID or owner/name')
     .requiredOption('--issue <number>', 'GitHub issue number', (v) => {
       if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
       const n = parseInt(v, 10);
@@ -414,7 +470,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             );
             process.exit(EXIT_USER_ERROR);
           }
-          if (!c.repoFullName) {
+
+          const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
+          const repoId = callerRepoId
+            ? (callerRepoId as RepositoryId)
+            : c.repoFullName
+              ? RepositoryId(c.repoFullName)
+              : undefined;
+          if (!repoId) {
             console.error(
               'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
             );
@@ -430,7 +493,6 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
           const startedAt = new Date();
           const ids = newRunId({ issueNumber: opts.issue, now: startedAt });
-          const repoId = RepositoryId(c.repoFullName);
 
           // Resolve the effective base branch and validate it exists on the
           // target repo's remote before creating any worktree/job/run state.
@@ -460,6 +522,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             startedAt,
             ...(effectiveBaseBranch ? { baseBranch: effectiveBaseBranch } : {}),
           });
+
+          if (callerRepoId) {
+            c.loadRepositoryForRun.execute({
+              run,
+              callerRepoId: callerRepoId as RepositoryId,
+              strictMatch: false,
+            });
+          }
 
           const jobId = JobId(randomUUID());
           const workerId = WorkerId(`cli-${process.pid}`);
@@ -684,14 +754,28 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           }
         } else {
           // --- Bash executor path ---
-          if (!c.repoFullName) {
+          const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
+          const repoId = callerRepoId
+            ? (callerRepoId as RepositoryId)
+            : c.repoFullName
+              ? RepositoryId(c.repoFullName)
+              : undefined;
+          if (!repoId) {
             console.error(
               'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
             );
             process.exit(EXIT_USER_ERROR);
           }
 
-          const repoId = RepositoryId(c.repoFullName);
+          if (callerRepoId) {
+            const dummyRun = { repoId, uuid: '' } as Run;
+            c.loadRepositoryForRun.execute({
+              run: dummyRun,
+              callerRepoId: callerRepoId as RepositoryId,
+              strictMatch: false,
+            });
+          }
+
           const signalHandlers = installSignalHandlers(c.runRepository, repoId, opts.issue);
 
           try {
@@ -881,6 +965,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     .addCommand(
       new Command('cancel')
         .description('Cancel an active run')
+        .option('--repository-id <id|owner/name>', 'Repository ID or owner/name')
         .option('--issue <number>', 'Issue number', (v) => {
           if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
           const n = parseInt(v, 10);
@@ -899,6 +984,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             uuid?: string;
             reason?: string;
             targetRepoRoot?: string;
+            repositoryId?: string;
           }) => {
             if (!opts.issue && !opts.uuid) {
               console.error('Error: specify --issue or --uuid');
@@ -916,15 +1002,20 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const { c } = composeWithTarget(targetRepoRoot, {
                 ...(buildOpts !== undefined ? { buildOpts } : {}),
               });
+              const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
               let uuid: string;
               if (opts.uuid) {
                 uuid = opts.uuid;
               } else {
-                if (!c.repoFullName) {
+                const repoId = callerRepoId
+                  ? (callerRepoId as RepositoryId)
+                  : c.repoFullName
+                    ? RepositoryId(c.repoFullName)
+                    : undefined;
+                if (!repoId) {
                   console.error('Error: could not determine repository name.');
                   process.exit(EXIT_USER_ERROR);
                 }
-                const repoId = RepositoryId(c.repoFullName);
                 const run = c.runRepository.findByIssueNumber(repoId, opts.issue!);
                 if (!run) {
                   console.error(`No run found for issue ${opts.issue}`);
@@ -935,6 +1026,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const run = c.runRepository.findByUuid(uuid);
               if (!run) {
                 throw new Error(`No run found for uuid ${uuid}`);
+              }
+              if (callerRepoId) {
+                c.loadRepositoryForRun.execute({
+                  run,
+                  callerRepoId: callerRepoId as RepositoryId,
+                  strictMatch: false,
+                });
               }
               const pid = run.pid;
               if (pid !== undefined && pid !== null && pid !== process.pid) {
@@ -963,13 +1061,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     )
     .addCommand(
       new Command('check-merge-ready')
+        .alias('check-merge-readiness')
         .description('Verify that a run has no unverified or blocked review comments')
         .requiredOption('--uuid <uuid>', 'Run UUID')
+        .option('--repository-id <id|owner/name>', 'Repository ID or owner/name')
         .option(
           '--target-repo-root <path>',
           'Target repository root for runs DB and worktrees (default: orchestrator repo)',
         )
-        .action(async (opts: { uuid: string; targetRepoRoot?: string }) => {
+        .action(async (opts: { uuid: string; targetRepoRoot?: string; repositoryId?: string }) => {
           try {
             const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
               console.error(`Error: ${msg}`);
@@ -978,12 +1078,20 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const { c } = composeWithTarget(targetRepoRoot, {
               ...(buildOpts !== undefined ? { buildOpts } : {}),
             });
+            const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
             // An unknown UUID must fail, not report ready: listComments on a
             // nonexistent run returns no rows, which would green-light the merge.
             const run = c.runRepository.findByUuid(opts.uuid);
             if (!run) {
               console.error(`No run found for uuid ${opts.uuid}`);
               process.exit(EXIT_USER_ERROR);
+            }
+            if (callerRepoId) {
+              c.loadRepositoryForRun.execute({
+                run,
+                callerRepoId: callerRepoId as RepositoryId,
+                strictMatch: false,
+              });
             }
             const result = await c.checkMergeReadiness.execute(RunId(opts.uuid));
             process.stdout.write(JSON.stringify(result, null, 2) + '\n');
@@ -1003,11 +1111,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       new Command('execute')
         .description('Execute a queued run through the RunExecutor')
         .requiredOption('--uuid <uuid>', 'Run UUID to execute')
+        .option('--repository-id <id|owner/name>', 'Repository ID or owner/name')
         .option(
           '--target-repo-root <path>',
-          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+          'Target repository root for worktrees and DB (default: orchestrator repo)',
         )
-        .action(async (opts: { uuid: string; targetRepoRoot?: string }) => {
+        .action(async (opts: { uuid: string; targetRepoRoot?: string; repositoryId?: string }) => {
           try {
             const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
               console.error(`Error: ${msg}`);
@@ -1027,17 +1136,29 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               console.error(`No run found for uuid ${opts.uuid}`);
               process.exit(EXIT_USER_ERROR);
             }
+            const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
+            if (callerRepoId) {
+              c.loadRepositoryForRun.execute({
+                run,
+                callerRepoId: callerRepoId as RepositoryId,
+                strictMatch: false,
+              });
+            }
             if (run.status !== 'queued' && run.status !== 'running' && run.status !== 'waiting') {
               console.error(
                 `Run ${opts.uuid} has status ${run.status}, expected queued, running, or waiting`,
               );
               process.exit(EXIT_USER_ERROR);
             }
-            if (!c.repoFullName) {
+            const repoId = callerRepoId
+              ? (callerRepoId as RepositoryId)
+              : c.repoFullName
+                ? RepositoryId(c.repoFullName)
+                : undefined;
+            if (!repoId) {
               console.error('Error: could not determine repository name.');
               process.exit(EXIT_USER_ERROR);
             }
-            const repoId = RepositoryId(c.repoFullName);
             const workerId = WorkerId(`cli-${process.pid}`);
             const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;
             const heartbeatIntervalMs =
@@ -1121,8 +1242,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     )
     .addCommand(
       new Command('resume')
+        .alias('retry')
         .description('Resume a failed or blocked run')
         .requiredOption('--uuid <uuid>', 'Run UUID')
+        .option('--repository-id <id|owner/name>', 'Repository ID or owner/name')
         .option(
           '--from-phase <phase>',
           'Phase to resume from (default: auto-detect failed or blocked phase)',
@@ -1141,6 +1264,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             confirm?: boolean;
             verbose?: boolean;
             targetRepoRoot?: string;
+            repositoryId?: string;
           }) => {
             const isCliTestSuite =
               buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
@@ -1166,9 +1290,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 console.error(`No run found for uuid ${opts.uuid}`);
                 process.exit(EXIT_USER_ERROR);
               }
-              if (!c.repoFullName) {
-                console.error('Error: could not determine repository name.');
-                process.exit(EXIT_USER_ERROR);
+              const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
+              if (callerRepoId) {
+                c.loadRepositoryForRun.execute({
+                  run,
+                  callerRepoId: callerRepoId as RepositoryId,
+                  strictMatch: false,
+                });
               }
 
               const phases = c.phaseRepository.listByRun(opts.uuid);
@@ -1193,7 +1321,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 }
               }
 
-              const repoId = RepositoryId(c.repoFullName);
+              const repoId = callerRepoId
+                ? (callerRepoId as RepositoryId)
+                : c.repoFullName
+                  ? RepositoryId(c.repoFullName)
+                  : undefined;
+              if (!repoId) {
+                console.error('Error: could not determine repository name.');
+                process.exit(EXIT_USER_ERROR);
+              }
               const workerId = WorkerId(`cli-${process.pid}`);
 
               const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;

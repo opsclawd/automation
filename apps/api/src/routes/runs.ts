@@ -1,8 +1,19 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Container } from '../compose.js';
 import { serializeRun, serializeFailure, serializeJob } from '../serializers.js';
-import { WorkerId, RunId } from '@ai-sdlc/domain';
+import {
+  WorkerId,
+  RunId,
+  RepositoryId,
+  RepositoryNotFoundError,
+  RunStatus,
+  RepositoryNotApprovedError,
+  RepositoryValidationError,
+  RunRepositoryMismatchError,
+  RunRepositoryMissingError,
+} from '@ai-sdlc/domain';
 import { planRunRecoveryAction, UnknownPhaseError } from '@ai-sdlc/application';
+import { resolveRepoContext, canonicalizeRepoContext, guardRead } from './_lib.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_INT_RE = /^-?\d+$/;
@@ -33,7 +44,119 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     };
   });
 
-  app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/runs', async (req, reply) => {
+  async function guardMutation(
+    req: FastifyRequest<{ Params: { runId: string } }>,
+    reply: FastifyReply,
+  ): Promise<import('@ai-sdlc/domain').Run | null> {
+    const runId = req.params.runId;
+    const run = c.runRepository.findByUuid(runId);
+    if (!run) {
+      reply.code(404).send({ error: 'not_found' });
+      return null;
+    }
+    const ctx = resolveRepoContext(
+      { headers: req.headers, query: (req.query ?? {}) as Record<string, unknown> },
+      c,
+      { allowFallback: false },
+    );
+    let resolvedRepoId: RepositoryId | undefined;
+    if (ctx.repositoryId || ctx.fullName) {
+      try {
+        resolvedRepoId = canonicalizeRepoContext(ctx, c);
+      } catch (err) {
+        if (err instanceof RepositoryNotFoundError) {
+          reply.code(404).send({ error: 'not_found' });
+          return null;
+        }
+        throw err;
+      }
+    }
+    try {
+      c.loadRepositoryForRun.execute({
+        run,
+        ...(resolvedRepoId ? { callerRepoId: resolvedRepoId } : {}),
+        strictMatch: true,
+      });
+    } catch (err) {
+      if (err instanceof RunRepositoryMismatchError) {
+        reply.code(404).send({ error: 'not_found' });
+        return null;
+      }
+      if (err instanceof RunRepositoryMissingError) {
+        reply.code(409).send({ error: 'repository_missing' });
+        return null;
+      }
+      throw err;
+    }
+    return run;
+  }
+
+  app.post<{
+    Body: {
+      issueNumber?: unknown;
+      repositoryId?: string;
+      repo?: string;
+      baseBranch?: string;
+    };
+  }>('/api/runs', async (req, reply) => {
+    const body = req.body ?? {};
+    const issueNumber = Number(body.issueNumber);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+      return reply.code(400).send({ error: 'invalid_issue_number' });
+    }
+    const ctx = resolveRepoContext(
+      { headers: req.headers, query: (req.query ?? {}) as Record<string, unknown> },
+      c,
+      { allowFallback: false },
+    );
+    let repositoryId =
+      ctx.repositoryId ?? (body.repositoryId ? RepositoryId(body.repositoryId) : undefined);
+    // Do NOT fall back to c.repoFullName here: that's the compose-root's own
+    // default repo context and is always defined, so it would silently
+    // resolve a repositoryId whenever the caller omits one — defeating the
+    // "explicit repositoryId required when more than one repository is
+    // enabled" guard StartIssueRun.execute() enforces below. Leave fullName
+    // undefined when neither the request context nor the body specifies a
+    // repo, so that guard actually gets a chance to run.
+    const fullName = ctx.fullName ?? body.repo;
+    if (!repositoryId && fullName) {
+      try {
+        const repo = c.inspectRepository.executeByFullName(fullName);
+        repositoryId = repo.id;
+      } catch (err) {
+        if (err instanceof RepositoryNotFoundError) {
+          return reply.code(404).send({ error: 'repository_not_found' });
+        }
+        throw err;
+      }
+    }
+    try {
+      const run = await c.startIssueRun.execute({
+        issueNumber,
+        repoId: repositoryId,
+        baseBranch: typeof body.baseBranch === 'string' ? body.baseBranch : undefined,
+      });
+      return reply.code(201).send({ run });
+    } catch (err) {
+      if (err instanceof RepositoryNotApprovedError) {
+        return reply.code(409).send({ error: 'repository_not_approved', message: err.message });
+      }
+      if (err instanceof RepositoryValidationError) {
+        return reply.code(400).send({ error: 'missing_repository_id', message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.get<{
+    Querystring: {
+      limit?: string;
+      offset?: string;
+      repositoryId?: string;
+      repo?: string;
+      status?: string;
+    };
+  }>('/api/runs', async (req, reply) => {
     const MAX_LIMIT = 100;
     if (req.query.limit !== undefined && req.query.limit !== '') {
       if (!DECIMAL_INT_RE.test(req.query.limit)) {
@@ -61,7 +184,38 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
       req.query.offset !== undefined && req.query.offset !== ''
         ? Math.max(0, Number(req.query.offset))
         : 0;
-    const { runs, total } = c.runRepository.list({ limit, offset });
+
+    let repositoryId: RepositoryId | undefined;
+    try {
+      const ctx = resolveRepoContext({ headers: req.headers, query: req.query }, c);
+      if (ctx.repositoryId || ctx.fullName) {
+        repositoryId = canonicalizeRepoContext(ctx, c);
+      }
+    } catch (err) {
+      if (err instanceof RepositoryNotFoundError) {
+        return reply.code(404).send({ error: 'repository_not_found' });
+      }
+      throw err;
+    }
+
+    const status =
+      typeof req.query.status === 'string' ? (req.query.status as RunStatus) : undefined;
+    const filter: {
+      limit?: number;
+      offset?: number;
+      repositoryId?: RepositoryId;
+      status?: RunStatus;
+    } = {
+      limit,
+      offset,
+    };
+    if (repositoryId !== undefined) {
+      filter.repositoryId = repositoryId;
+    }
+    if (status !== undefined) {
+      filter.status = status;
+    }
+    const { runs, total } = c.runRepository.list(filter);
     return {
       runs: runs.map(serializeRun),
       total,
@@ -74,8 +228,8 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     if (!UUID_RE.test(req.params.runId)) {
       return reply.code(400).send({ error: 'invalid_id' });
     }
-    const run = c.runRepository.findByUuid(req.params.runId);
-    if (!run) return reply.code(404).send({ error: 'not_found' });
+    const run = await guardRead(req, reply, c);
+    if (!run) return;
     const failure = c.failureRepository.findLatestByRun(req.params.runId);
     return { run: serializeRun(run), failure: failure ? serializeFailure(failure) : null };
   });
@@ -93,8 +247,8 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     }
 
     try {
-      const run = c.runRepository.findByUuid(req.params.runId);
-      if (!run) return reply.code(404).send({ error: 'not_found' });
+      const run = await guardMutation(req, reply);
+      if (!run) return;
 
       const phases = c.phaseRepository.listByRun(req.params.runId);
       const plan = planRunRecoveryAction({ action: 'cancel', run, phases });
@@ -147,8 +301,8 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     }
 
     try {
-      const run = c.runRepository.findByUuid(req.params.runId);
-      if (!run) return reply.code(404).send({ error: 'not_found' });
+      const run = await guardMutation(req, reply);
+      if (!run) return;
 
       const phases = c.phaseRepository.listByRun(req.params.runId);
       const plan = planRunRecoveryAction({ action: 'retry', run, phases });
@@ -224,8 +378,8 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     }
 
     try {
-      const run = c.runRepository.findByUuid(req.params.runId);
-      if (!run) return reply.code(404).send({ error: 'not_found' });
+      const run = await guardMutation(req, reply);
+      if (!run) return;
 
       const phases = c.phaseRepository.listByRun(req.params.runId);
       const plan = planRunRecoveryAction({

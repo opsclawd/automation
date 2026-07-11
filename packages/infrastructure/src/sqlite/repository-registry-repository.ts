@@ -1,15 +1,59 @@
 import type { Db } from './database.js';
-import type { RepositoryRegistryPort, RepositoryUpdatePatch } from '@ai-sdlc/application/ports';
+import type {
+  RepositoryRegistryPort,
+  RepositoryUpdatePatch,
+  RepositoryPort,
+} from '@ai-sdlc/application/ports';
 import {
   DuplicateRepositoryError,
   RepositoryHasActiveRunsError,
   RepositoryNotFoundError,
   type Repository,
+  RepositoryId,
+  type RepositoryHealthStatus,
 } from '@ai-sdlc/domain';
+
+interface RepositoryRow {
+  id: string;
+  full_name: string;
+  owner: string;
+  name: string;
+  local_base_path: string;
+  default_branch: string;
+  remote_url: string;
+  enabled: number;
+  max_concurrent_runs: number;
+  config_metadata: string;
+  health_status: string;
+  health_error: string | null;
+  last_health_check_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function rowToRepository(row: RepositoryRow): Repository {
+  return {
+    id: RepositoryId(row.id),
+    fullName: row.full_name,
+    owner: row.owner,
+    name: row.name,
+    localBasePath: row.local_base_path,
+    defaultBranch: row.default_branch,
+    remoteUrl: row.remote_url,
+    enabled: row.enabled === 1,
+    maxConcurrentRuns: row.max_concurrent_runs as 1,
+    configMetadata: row.config_metadata,
+    healthStatus: row.health_status as RepositoryHealthStatus,
+    healthError: row.health_error,
+    lastHealthCheckAt: row.last_health_check_at ? new Date(row.last_health_check_at) : null,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
 
 const TERMINAL_STATUSES = "('passed','failed','cancelled')";
 
-export class RepositoryRegistryRepository implements RepositoryRegistryPort {
+export class RepositoryRegistryRepository implements RepositoryRegistryPort, RepositoryPort {
   constructor(private readonly db: Db) {}
 
   insert(repo: Repository): void {
@@ -106,6 +150,41 @@ export class RepositoryRegistryRepository implements RepositoryRegistryPort {
       )
       .get(id) as { c: number };
     return row.c;
+  }
+
+  findById(id: Repository['id']): Repository | undefined {
+    const row = this.db.prepare(`SELECT * FROM repositories WHERE id = ?`).get(id) as
+      | RepositoryRow
+      | undefined;
+    return row ? rowToRepository(row) : undefined;
+  }
+
+  findByFullName(fullName: string): Repository | undefined {
+    const row = this.db.prepare(`SELECT * FROM repositories WHERE full_name = ?`).get(fullName) as
+      | RepositoryRow
+      | undefined;
+    return row ? rowToRepository(row) : undefined;
+  }
+
+  findByLocalPath(localBasePath: string): Repository | undefined {
+    const row = this.db
+      .prepare(`SELECT * FROM repositories WHERE local_base_path = ?`)
+      .get(localBasePath) as RepositoryRow | undefined;
+    return row ? rowToRepository(row) : undefined;
+  }
+
+  listAll(): Repository[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM repositories ORDER BY created_at ASC`)
+      .all() as RepositoryRow[];
+    return rows.map(rowToRepository);
+  }
+
+  listEnabled(): Repository[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM repositories WHERE enabled = 1 ORDER BY created_at ASC`)
+      .all() as RepositoryRow[];
+    return rows.map(rowToRepository);
   }
 
   private findRow(id: string): { id: string } | undefined {

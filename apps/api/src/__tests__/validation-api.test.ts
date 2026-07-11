@@ -1,25 +1,36 @@
 import { describe, it, expect } from 'vitest';
 import { composeRoot } from '../compose.js';
 import { buildServer } from '../server.js';
-import { RunId, PhaseName, type ValidationRun } from '@ai-sdlc/domain';
+import { RunId, PhaseName, RepositoryId, type ValidationRun } from '@ai-sdlc/domain';
 
 function compose() {
-  return composeRoot({
+  const c = composeRoot({
     repoRoot: process.cwd(),
     scriptPath: '/bin/true',
     dbPath: ':memory:',
     runsDir: '/tmp/runs-test-' + Math.random(),
+    metadataResolver: {
+      resolve: () => ({
+        rootPath: process.cwd(),
+        nameWithOwner: 'owner/repo',
+        defaultBranch: 'main',
+        remoteUrl: 'git@github.com:owner/repo.git',
+      }),
+    },
   });
+  const repo = c.registerRepository.execute({ localPath: process.cwd() });
+  return { c, repo };
 }
 
 const RUN_UUID = '00000000-0000-0000-0000-0000000000aa';
 
-function seedRunRow(c: ReturnType<typeof compose>) {
+function seedRunRow(c: ReturnType<typeof compose>['c'], repoId: RepositoryId) {
   c.runRepository.insertIfNoActive({
     uuid: RUN_UUID,
     displayId: 'run-aa',
+    repoId: repoId,
     issueNumber: 11,
-    type: 'issue',
+    type: 'issue_to_pr',
     status: 'running',
     completedPhases: [],
     startedAt: new Date(),
@@ -59,11 +70,14 @@ function sampleValidationRun(): ValidationRun {
 
 describe('GET /api/runs/:uuid/validation', () => {
   it('returns serialized validation runs (no inlined output)', async () => {
-    const c = compose();
-    seedRunRow(c);
+    const { c, repo } = compose();
+    seedRunRow(c, repo.id);
     c.validationRunRepository.save(sampleValidationRun());
     const app = await buildServer(c);
-    const res = await app.inject({ url: `/api/runs/${RUN_UUID}/validation` });
+    const res = await app.inject({
+      url: `/api/runs/${RUN_UUID}/validation`,
+      headers: { 'x-repository-id': 'owner/repo' },
+    });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { validationRuns: Array<Record<string, unknown>> };
     expect(body.validationRuns).toHaveLength(1);
@@ -94,20 +108,20 @@ describe('GET /api/runs/:uuid/validation', () => {
   });
 
   it('returns 400 for an invalid uuid', async () => {
-    const c = compose();
+    const { c } = compose();
     const app = await buildServer(c);
     const res = await app.inject({ url: '/api/runs/not-a-uuid/validation' });
     expect(res.statusCode).toBe(400);
     expect((res.json() as { error: string }).error).toBe('invalid run uuid');
   });
 
-  it('returns an empty array for a valid uuid with no data', async () => {
-    const c = compose();
+  it('returns 404 for a valid uuid with no data', async () => {
+    const { c } = compose();
     const app = await buildServer(c);
     const res = await app.inject({
       url: '/api/runs/00000000-0000-0000-0000-0000000000bb/validation',
+      headers: { 'x-repository-id': 'owner/repo' },
     });
-    expect(res.statusCode).toBe(200);
-    expect((res.json() as { validationRuns: unknown[] }).validationRuns).toEqual([]);
+    expect(res.statusCode).toBe(404);
   });
 });

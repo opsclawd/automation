@@ -108,4 +108,36 @@ describe('RepositoryRegistryRepository', () => {
   it('remove throws RepositoryNotFoundError when id is unknown', () => {
     expect(() => port.remove(RepositoryId('nope'))).toThrow(RepositoryNotFoundError);
   });
+
+  describe('findByFullName and listEnabled', () => {
+    it('finds a repository by full_name and returns undefined when missing', () => {
+      port.insert(repo({ id: RepositoryId('r1'), fullName: 'owner/repo-a', localBasePath: '/a' }));
+      expect(port.findByFullName('owner/repo-a')?.fullName).toBe('owner/repo-a');
+      expect(port.findByFullName('owner/missing')).toBeUndefined();
+    });
+
+    it('listEnabled returns only enabled rows', () => {
+      port.insert(
+        repo({
+          id: RepositoryId('r1'),
+          fullName: 'owner/repo-a',
+          localBasePath: '/a',
+          enabled: true,
+        }),
+      );
+      port.insert(
+        repo({
+          id: RepositoryId('r2'),
+          fullName: 'owner/repo-b',
+          localBasePath: '/b',
+          enabled: false,
+        }),
+      );
+      const enabled = port
+        .listEnabled()
+        .map((r) => r.fullName)
+        .sort();
+      expect(enabled).toEqual(['owner/repo-a']);
+    });
+  });
 });

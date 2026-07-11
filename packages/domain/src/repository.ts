@@ -42,8 +42,8 @@ export function recordHealthCheck(
 
 export class RepositoryNotApprovedError extends Error {
   readonly repositoryId: RepositoryId;
-  constructor(repositoryId: RepositoryId) {
-    super(`Repository ${repositoryId} is not approved/registered or is disabled`);
+  constructor(repositoryId: RepositoryId, message?: string) {
+    super(message ?? `Repository ${repositoryId} is not approved/registered or is disabled`);
     this.name = 'RepositoryNotApprovedError';
     this.repositoryId = repositoryId;
   }
@@ -90,5 +90,31 @@ export class RepositoryHasActiveRunsError extends Error {
     this.name = 'RepositoryHasActiveRunsError';
     this.repositoryId = repositoryId;
     this.activeCount = activeCount;
+  }
+}
+
+export class RunRepositoryMismatchError extends Error {
+  readonly runUuid: string;
+  readonly expectedRepositoryId: RepositoryId | undefined;
+  readonly actualRepositoryId: RepositoryId | undefined;
+  constructor(detail: {
+    runUuid: string;
+    expectedRepositoryId?: RepositoryId;
+    actualRepositoryId?: RepositoryId;
+  }) {
+    super('run does not belong to the supplied repository context');
+    this.name = 'RunRepositoryMismatchError';
+    this.runUuid = detail.runUuid;
+    this.expectedRepositoryId = detail.expectedRepositoryId;
+    this.actualRepositoryId = detail.actualRepositoryId;
+  }
+}
+
+export class RunRepositoryMissingError extends Error {
+  readonly identifier: string;
+  constructor(identifier: string, message?: string) {
+    super(message ?? `repository '${identifier}' is not registered`);
+    this.name = 'RunRepositoryMissingError';
+    this.identifier = identifier;
   }
 }

@@ -176,4 +176,80 @@ describe('routes', () => {
     const body = (await r.json()) as { limit: number };
     expect(body.limit).toBe(100);
   });
+
+  it('filters runs by status and repository context', async () => {
+    const { baseUrl, container } = await bootServer({ withRun: true });
+    // Register repo
+    container.repositoryRegistry.insert({
+      id: RepositoryId('1234567890123456789012345678901234567890123456789012345678901234'),
+      fullName: 'some/other-repo',
+      owner: 'some',
+      name: 'other-repo',
+      localBasePath: '/tmp/some-other-repo',
+      defaultBranch: 'main',
+      remoteUrl: 'git@github.com:some/other-repo.git',
+      enabled: true,
+      maxConcurrentRuns: 1,
+      healthStatus: 'healthy',
+      healthError: null,
+      lastHealthCheckAt: new Date(),
+      configMetadata: '{}',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    // Add a run for this repository
+    await container.startIssueRun.execute({
+      issueNumber: 42,
+      repoId: RepositoryId('1234567890123456789012345678901234567890123456789012345678901234'),
+    });
+
+    // 1. Filter by status 'running'
+    const res1 = await fetch(`${baseUrl}/api/runs?status=running`);
+    expect(res1.status).toBe(200);
+    const body1 = (await res1.json()) as { runs: unknown[] };
+    expect(body1.runs.length).toBe(0);
+
+    // 2. Filter by status 'passed'
+    const res2 = await fetch(`${baseUrl}/api/runs?status=passed`);
+    expect(res2.status).toBe(200);
+    const body2 = (await res2.json()) as { runs: unknown[] };
+    expect(body2.runs.length).toBe(1);
+
+    // 3. Filter by repo sha256 id
+    const res3 = await fetch(
+      `${baseUrl}/api/runs?repositoryId=1234567890123456789012345678901234567890123456789012345678901234`,
+    );
+    expect(res3.status).toBe(200);
+    const body3 = (await res3.json()) as { runs: unknown[] };
+    expect(body3.runs.length).toBe(1);
+
+    // 4. Filter by repo owner/name fullName (resolving canonicalized repo context)
+    const res4 = await fetch(`${baseUrl}/api/runs?repositoryId=some/other-repo`);
+    expect(res4.status).toBe(200);
+    const body4 = (await res4.json()) as { runs: unknown[] };
+    expect(body4.runs.length).toBe(1);
+
+    // 5. Query parameter repo
+    const res5 = await fetch(`${baseUrl}/api/runs?repo=some/other-repo`);
+    expect(res5.status).toBe(200);
+    const body5 = (await res5.json()) as { runs: unknown[] };
+    expect(body5.runs.length).toBe(1);
+
+    // 6. Header x-repository-id
+    const res6 = await fetch(`${baseUrl}/api/runs`, {
+      headers: {
+        'x-repository-id': 'some/other-repo',
+      },
+    });
+    expect(res6.status).toBe(200);
+    const body6 = (await res6.json()) as { runs: unknown[] };
+    expect(body6.runs.length).toBe(1);
+
+    // 7. Non-existent repo -> 404 repository_not_found
+    const res7 = await fetch(`${baseUrl}/api/runs?repositoryId=nonexistent/repo`);
+    expect(res7.status).toBe(404);
+    const body7 = (await res7.json()) as { error: string };
+    expect(body7.error).toBe('repository_not_found');
+  });
 });

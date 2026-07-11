@@ -1,31 +1,30 @@
-# Task 11 — Test fixtures: remove wholePrFix from three remaining cli test files
+# Task 11: Multi-repo API Integration Tests
 
 ## Scope
-Remove the retired `wholePrFix: { maxIterations: 3 },` configuration line from three remaining cli test files:
-- `apps/api/src/__tests__/cli-runs-target.test.ts`
-- `apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts`
-- `apps/api/src/__tests__/cli-failure-output.test.ts`
+Write integration tests for multi-repo API endpoints and verify E2E validations covering multiple repositories.
 
 ## Changes
 
-### apps/api/src/__tests__/cli-runs-target.test.ts
-- Removed `wholePrFix: { maxIterations: 3 },` from line 40.
+### apps/api/src/__tests__/multi-repo-api-routes.test.ts
+- Created integration tests covering all requirements:
+  - `GET /api/runs?repositoryId=<A>` filters out repo B runs
+  - `GET /api/runs/:uuid` from A returns 404 from B context
+  - `POST /api/runs/:uuid/cancel` with wrong repo context returns 404
+  - `POST /api/runs` without repositoryId when two repos enabled returns 400
+  - `POST /api/runs` with disabled repo returns 409 naming the repo
+  - `GET /api/runs?repositoryId=owner/repo-a` (legacy form) resolves to canonical id
+  - `POST /api/runs` with header X-Repository-Id: owner/name resolves and creates under correct repo
 
-### apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts
-- Removed `wholePrFix: { maxIterations: 3 },` from line 53.
+### apps/api/src/__tests__/helpers/test-server.ts
+- Created `buildTestServer` helper setting up test instances of the fastify api server using composed container roots, registerRepository registry helper, disableRepository registry helper, startIssue run execution helper, and HTTP request inject helpers (GET and POST).
 
-### apps/api/src/__tests__/cli-failure-output.test.ts
-- Removed `wholePrFix: { maxIterations: 3 },` from line 54.
+### apps/api/src/serializers.ts
+- Serialized `repoId` field inside `serializeRun` response mapping to allow validation checks on returned run records from `/api/runs`.
 
 ## Verification
-- Ran all three test files:
-  `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/cli-runs-target.test.ts src/__tests__/cli-runs-resume-confirmation.test.ts src/__tests__/cli-failure-output.test.ts`
-  **Result**: 3/3 files passed, 13/13 tests passed.
-- Ran typecheck on `@ai-sdlc/api`:
-  `pnpm --filter @ai-sdlc/api run typecheck`
-  **Result**: Passed successfully.
-
-## Files changed
-- `apps/api/src/__tests__/cli-runs-target.test.ts`
-- `apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts`
-- `apps/api/src/__tests__/cli-failure-output.test.ts`
+- Ran vitest target: `pnpm vitest run apps/api/src/__tests__/multi-repo-api-routes.test.ts`
+  **Result**: 7/7 tests passed.
+- Ran workspace build: `pnpm -r build` (Passed)
+- Ran workspace typecheck: `pnpm -r typecheck` (Passed)
+- Ran workspace lint: `pnpm lint` (Passed)
+- Ran workspace test: `pnpm -r test` (Passed)

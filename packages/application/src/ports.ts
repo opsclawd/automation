@@ -45,6 +45,13 @@ export interface RunRepositoryUpdatePatch {
   configSourcesJson?: string;
 }
 
+export type ListRunsFilter = {
+  limit?: number;
+  offset?: number;
+  repositoryId?: RepositoryId;
+  status?: RunStatus;
+};
+
 export interface RunRepositoryPort {
   insertIfNoActive(run: Run): void;
   update(uuid: string, patch: RunRepositoryUpdatePatch): void;
@@ -74,6 +81,7 @@ export interface RunRepositoryPort {
       currentPhase?: string | null;
     },
   ): boolean;
+  list(filter?: ListRunsFilter): { runs: RunRecord[]; total: number };
 }
 
 export interface RunDirectoryHandle {

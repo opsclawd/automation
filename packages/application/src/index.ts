@@ -84,3 +84,4 @@ export * from './use-cases/enable-repository.js';
 export * from './use-cases/disable-repository.js';
 export * from './use-cases/refresh-repository.js';
 export * from './use-cases/remove-repository.js';
+export * from './use-cases/load-repository-for-run.js';

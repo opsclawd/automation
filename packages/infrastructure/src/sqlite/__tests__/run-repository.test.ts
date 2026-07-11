@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { RepositoryId } from '@ai-sdlc/domain';
+import Database from 'better-sqlite3';
 import { openDatabase, applyMigrations } from '../../index.js';
-import { RunRepository } from '../run-repository.js';
+import { RunRepository, RunRepository as SqliteRunRepository } from '../run-repository.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'ai-orch-db-'));
@@ -594,5 +595,61 @@ describe('RunRepository', () => {
     expect(atomic?.configFingerprint).toBe(atomicFingerprint);
 
     db.close();
+  });
+});
+
+describe('SqliteRunRepository.list filtering', () => {
+  function makeDb() {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE runs (
+        uuid TEXT PRIMARY KEY,
+        repo_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        issue_number INTEGER
+      );
+      CREATE INDEX idx_runs_repo_id_issue_number ON runs(repo_id, issue_number);
+    `);
+    return db;
+  }
+
+  it('filters by repositoryId and status', () => {
+    const db = makeDb();
+    const repo = new SqliteRunRepository(
+      db as unknown as Parameters<typeof SqliteRunRepository>[0],
+    );
+    const idA = 'a'.repeat(64);
+    const idB = 'b'.repeat(64);
+    db.prepare(`INSERT INTO runs (uuid, repo_id, status, started_at) VALUES (?, ?, ?, ?)`).run(
+      'u1',
+      idA,
+      'completed',
+      1,
+    );
+    db.prepare(`INSERT INTO runs (uuid, repo_id, status, started_at) VALUES (?, ?, ?, ?)`).run(
+      'u2',
+      idA,
+      'failed',
+      2,
+    );
+    db.prepare(`INSERT INTO runs (uuid, repo_id, status, started_at) VALUES (?, ?, ?, ?)`).run(
+      'u3',
+      idB,
+      'failed',
+      3,
+    );
+
+    const aRuns = repo.list({ limit: 50, repositoryId: RepositoryId(idA) });
+    expect(aRuns.runs.map((r) => r.uuid)).toEqual(['u2', 'u1']);
+    expect(aRuns.total).toBe(2);
+
+    const failed = repo.list({ limit: 50, status: 'failed' });
+    expect(failed.runs.map((r) => r.uuid).sort()).toEqual(['u2', 'u3']);
+    expect(failed.total).toBe(2);
+
+    const both = repo.list({ limit: 50, repositoryId: RepositoryId(idA), status: 'failed' });
+    expect(both.runs.map((r) => r.uuid)).toEqual(['u2']);
+    expect(both.total).toBe(1);
   });
 });

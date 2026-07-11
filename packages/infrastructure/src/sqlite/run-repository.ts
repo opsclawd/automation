@@ -1,6 +1,6 @@
 import { RepositoryId } from '@ai-sdlc/domain';
 import type { Run, RunStatus } from '@ai-sdlc/domain';
-import type { RunRepositoryUpdatePatch } from '@ai-sdlc/application/ports';
+import type { RunRepositoryUpdatePatch, ListRunsFilter } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
 interface RunRow {
@@ -176,23 +176,44 @@ export class RunRepository {
     return row ? toRecord(row) : undefined;
   }
 
-  list(opts?: { limit: number; offset?: number }): { runs: RunRecord[]; total: number } {
-    const totalRow = this.db.prepare('SELECT COUNT(*) AS total FROM runs').get() as {
-      total: number;
-    };
-    const total = totalRow.total;
+  list(filter?: ListRunsFilter): { runs: RunRecord[]; total: number } {
+    const repoId = filter?.repositoryId ?? null;
+    const status = filter?.status ?? null;
+    const limit = filter?.limit ?? null;
+    const offset = filter?.offset ?? 0;
 
-    if (opts?.limit === undefined) {
-      const rows = this.db.prepare('SELECT * FROM runs ORDER BY started_at DESC').all() as RunRow[];
-      return { runs: rows.map(toRecord), total };
+    let rows: RunRow[];
+    if (limit === null) {
+      rows = this.db
+        .prepare(
+          `SELECT * FROM runs
+           WHERE (@repo_id IS NULL OR repo_id = @repo_id)
+             AND (@status IS NULL OR status = @status)
+           ORDER BY started_at DESC`,
+        )
+        .all({ repo_id: repoId, status }) as RunRow[];
+    } else {
+      const sanitizedLimit = Math.max(1, Math.min(limit, 100));
+      rows = this.db
+        .prepare(
+          `SELECT * FROM runs
+           WHERE (@repo_id IS NULL OR repo_id = @repo_id)
+             AND (@status IS NULL OR status = @status)
+           ORDER BY started_at DESC
+           LIMIT @limit OFFSET @offset`,
+        )
+        .all({ repo_id: repoId, status, limit: sanitizedLimit, offset }) as RunRow[];
     }
 
-    const limit = Math.max(1, Math.min(opts.limit, 100));
-    const offset = Math.max(0, opts.offset ?? 0);
-    const rows = this.db
-      .prepare('SELECT * FROM runs ORDER BY started_at DESC LIMIT ? OFFSET ?')
-      .all(limit, offset) as RunRow[];
-    return { runs: rows.map(toRecord), total };
+    const countRow = this.db
+      .prepare(
+        `SELECT COUNT(*) as c FROM runs
+         WHERE (@repo_id IS NULL OR repo_id = @repo_id)
+           AND (@status IS NULL OR status = @status)`,
+      )
+      .get({ repo_id: repoId, status }) as { c: number };
+
+    return { runs: rows.map(toRecord), total: countRow.c };
   }
 
   update(uuid: string, patch: RunRepositoryUpdatePatch): void {
@@ -377,8 +398,8 @@ function toRecord(row: RunRow): RunRecord {
     issueNumber: row.issue_number,
     type: row.type as Run['type'],
     status: row.status as RunStatus,
-    completedPhases: JSON.parse(row.completed_phases) as string[],
-    skippedPhases: JSON.parse(row.skipped_phases) as string[],
+    completedPhases: row.completed_phases ? (JSON.parse(row.completed_phases) as string[]) : [],
+    skippedPhases: row.skipped_phases ? (JSON.parse(row.skipped_phases) as string[]) : [],
     startedAt: new Date(row.started_at),
     ...(row.current_phase !== null ? { currentPhase: row.current_phase } : {}),
     ...(row.completed_at !== null ? { completedAt: new Date(row.completed_at) } : {}),

@@ -16,13 +16,24 @@ describe('GET /api/runs/:uuid/invocations', () => {
       scriptPath: '/bin/true',
       dbPath: ':memory:',
       runsDir: '/tmp/runs-test-' + Math.random(),
+      metadataResolver: {
+        resolve: () => ({
+          rootPath: process.cwd(),
+          nameWithOwner: 'owner/repo',
+          defaultBranch: 'main',
+          remoteUrl: 'git@github.com:owner/repo.git',
+        }),
+      },
     });
+    const repo = c.registerRepository.execute({ localPath: process.cwd() });
+
     const runUuid = '00000000-0000-0000-0000-000000000099';
     c.runRepository.insertIfNoActive({
       uuid: runUuid,
       displayId: 'run-99',
+      repoId: repo.id,
       issueNumber: 99,
-      type: 'issue',
+      type: 'issue_to_pr',
       status: 'running',
       completedPhases: [],
       startedAt: new Date(),
@@ -49,7 +60,10 @@ describe('GET /api/runs/:uuid/invocations', () => {
     };
     c.agentInvocationRepository.insert(inv);
     const app = await buildServer(c);
-    const res = await app.inject({ url: `/api/runs/${runUuid}/invocations` });
+    const res = await app.inject({
+      url: `/api/runs/${runUuid}/invocations`,
+      headers: { 'x-repository-id': 'owner/repo' },
+    });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { invocations: Array<Record<string, unknown>> };
     expect(body.invocations).toHaveLength(1);
@@ -81,19 +95,27 @@ describe('GET /api/runs/:uuid/invocations', () => {
     expect(body.error).toBe('invalid run uuid');
   });
 
-  it('returns empty invocations for valid UUID with no matching run', async () => {
+  it('returns 404 for valid UUID with no matching run', async () => {
     const c = composeRoot({
       repoRoot: process.cwd(),
       scriptPath: '/bin/true',
       dbPath: ':memory:',
       runsDir: '/tmp/runs-test-' + Math.random(),
+      metadataResolver: {
+        resolve: () => ({
+          rootPath: process.cwd(),
+          nameWithOwner: 'owner/repo',
+          defaultBranch: 'main',
+          remoteUrl: 'git@github.com:owner/repo.git',
+        }),
+      },
     });
+    c.registerRepository.execute({ localPath: process.cwd() });
     const app = await buildServer(c);
     const res = await app.inject({
       url: '/api/runs/00000000-0000-0000-0000-000000000999/invocations',
+      headers: { 'x-repository-id': 'owner/repo' },
     });
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as { invocations: unknown[] };
-    expect(body.invocations).toEqual([]);
+    expect(res.statusCode).toBe(404);
   });
 });

@@ -2,9 +2,10 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { RepositoryId } from '@ai-sdlc/domain';
 import { composeRoot } from '../compose.js';
 import { buildServer } from '../server.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 
 const tempDirs: string[] = [];
 
@@ -16,6 +17,24 @@ function compose(tempDir: string) {
     dbPath,
     repoFullName: 'owner/repo',
     runStartupSweeps: false,
+    metadataResolver: {
+      resolve: (localPath: string) => {
+        if (localPath.endsWith('other')) {
+          return {
+            rootPath: localPath,
+            nameWithOwner: 'acme/widgets',
+            defaultBranch: 'main',
+            remoteUrl: 'git@github.com:acme/widgets.git',
+          };
+        }
+        return {
+          rootPath: localPath,
+          nameWithOwner: 'owner/repo',
+          defaultBranch: 'main',
+          remoteUrl: 'git@github.com:owner/repo.git',
+        };
+      },
+    },
   });
 }
 
@@ -59,6 +78,7 @@ describe('Recovery REST Endpoints', () => {
       const res = await app.inject({
         method: 'POST',
         url: `/api/runs/${uuid}/${action}`,
+        headers: { 'x-repository-id': 'owner/repo' },
         payload: {},
       });
       expect(res.statusCode).toBe(404);
@@ -89,7 +109,7 @@ describe('Recovery REST Endpoints', () => {
       const res1 = await app.inject({
         method: 'POST',
         url: `/api/runs/${uuid}/cancel`,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-repository-id': 'owner/repo' },
         payload: JSON.stringify('not-an-object'),
       });
       expect(res1.statusCode).toBe(400);
@@ -97,6 +117,7 @@ describe('Recovery REST Endpoints', () => {
       const res2 = await app.inject({
         method: 'POST',
         url: `/api/runs/${uuid}/cancel`,
+        headers: { 'x-repository-id': 'owner/repo' },
         payload: { reason: 123 },
       });
       expect(res2.statusCode).toBe(400);
@@ -107,7 +128,7 @@ describe('Recovery REST Endpoints', () => {
       const res1 = await app.inject({
         method: 'POST',
         url: `/api/runs/${uuid}/retry`,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-repository-id': 'owner/repo' },
         payload: JSON.stringify('not-an-object'),
       });
       expect(res1.statusCode).toBe(400);
@@ -115,6 +136,7 @@ describe('Recovery REST Endpoints', () => {
       const res2 = await app.inject({
         method: 'POST',
         url: `/api/runs/${uuid}/retry`,
+        headers: { 'x-repository-id': 'owner/repo' },
         payload: { confirm: 'yes' },
       });
       expect(res2.statusCode).toBe(400);
@@ -125,6 +147,7 @@ describe('Recovery REST Endpoints', () => {
       const res1 = await app.inject({
         method: 'POST',
         url: `/api/runs/${uuid}/resume`,
+        headers: { 'x-repository-id': 'owner/repo' },
         payload: { fromPhase: 123 },
       });
       expect(res1.statusCode).toBe(400);
@@ -132,6 +155,7 @@ describe('Recovery REST Endpoints', () => {
       const res2 = await app.inject({
         method: 'POST',
         url: `/api/runs/${uuid}/resume`,
+        headers: { 'x-repository-id': 'owner/repo' },
         payload: { confirm: 'yes' },
       });
       expect(res2.statusCode).toBe(400);
@@ -159,6 +183,7 @@ describe('Recovery REST Endpoints', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/runs/${uuid}/cancel`,
+      headers: { 'x-repository-id': 'owner/repo' },
       payload: { reason: 'Test cancel reason' },
     });
 
@@ -193,6 +218,7 @@ describe('Recovery REST Endpoints', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/runs/${uuid}/cancel`,
+      headers: { 'x-repository-id': 'owner/repo' },
       payload: {},
     });
 
@@ -230,6 +256,7 @@ describe('Recovery REST Endpoints', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/runs/${uuid}/retry`,
+      headers: { 'x-repository-id': 'owner/repo' },
       payload: {},
     });
 
@@ -272,6 +299,7 @@ describe('Recovery REST Endpoints', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/runs/${uuid}/retry`,
+      headers: { 'x-repository-id': 'owner/repo' },
       payload: {},
     });
 
@@ -316,6 +344,7 @@ describe('Recovery REST Endpoints', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/runs/${uuid}/retry`,
+      headers: { 'x-repository-id': 'owner/repo' },
       payload: { confirm: true },
     });
 
@@ -349,6 +378,7 @@ describe('Recovery REST Endpoints', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/runs/${uuid}/resume`,
+      headers: { 'x-repository-id': 'owner/repo' },
       payload: {},
     });
 
@@ -381,6 +411,7 @@ describe('Recovery REST Endpoints', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/runs/${uuid}/resume`,
+      headers: { 'x-repository-id': 'owner/repo' },
       payload: {},
     });
 
@@ -413,6 +444,7 @@ describe('Recovery REST Endpoints', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/runs/${uuid}/resume`,
+      headers: { 'x-repository-id': 'owner/repo' },
       payload: { fromPhase: 'invalid-phase-name' },
     });
 
@@ -441,6 +473,7 @@ describe('Recovery REST Endpoints', () => {
     const resUnconfirmed = await app.inject({
       method: 'POST',
       url: `/api/runs/${uuid}/resume`,
+      headers: { 'x-repository-id': 'owner/repo' },
       payload: { fromPhase: 'implement' },
     });
 
@@ -457,6 +490,7 @@ describe('Recovery REST Endpoints', () => {
     const resConfirmed = await app.inject({
       method: 'POST',
       url: `/api/runs/${uuid}/resume`,
+      headers: { 'x-repository-id': 'owner/repo' },
       payload: { fromPhase: 'implement', confirm: true },
     });
 
@@ -466,5 +500,111 @@ describe('Recovery REST Endpoints', () => {
     expect(body.targetPhase).toBe('implement');
     expect(body.job).toBeDefined();
     expect(body.job.status).toBe('queued');
+  });
+
+  describe('Strict Context Mismatch Tests', () => {
+    it('returns 409 when repository context is missing', async () => {
+      const tempDir = createTempDir();
+      const c = compose(tempDir);
+      const app = await buildServer(c);
+      const uuid = '00000000-0000-0000-0000-000000000999';
+
+      c.runRepository.insertIfNoActive({
+        uuid,
+        displayId: 'run-999',
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: 19,
+        type: 'issue',
+        status: 'failed',
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      } as unknown as import('@ai-sdlc/domain').Run);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/runs/${uuid}/cancel`,
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toBe('repository_missing');
+    });
+
+    it('returns 404 when repository context is mismatched', async () => {
+      const tempDir = createTempDir();
+      const c = compose(tempDir);
+      const app = await buildServer(c);
+      const uuid = '00000000-0000-0000-0000-000000000999';
+
+      c.runRepository.insertIfNoActive({
+        uuid,
+        displayId: 'run-999',
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: 19,
+        type: 'issue',
+        status: 'failed',
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      } as unknown as import('@ai-sdlc/domain').Run);
+
+      // Register another repo to use as mismatched context
+      const otherPath = path.join(tempDir, 'other');
+      mkdirSync(otherPath);
+      execSync('git init', { cwd: otherPath });
+      execSync('git remote add origin git@github.com:acme/widgets.git', { cwd: otherPath });
+      c.registerRepository.execute({ localPath: otherPath });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/runs/${uuid}/cancel`,
+        headers: { 'x-repository-id': 'acme/widgets' },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error).toBe('not_found');
+    });
+  });
+
+  describe('POST /api/runs', () => {
+    it('creates a run successfully with canonical lookup', async () => {
+      const tempDir = createTempDir();
+      const c = compose(tempDir);
+      const app = await buildServer(c);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/runs',
+        payload: {
+          issueNumber: 42,
+          repo: 'owner/repo',
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(body.run).toBeDefined();
+      expect(body.run.repoId).toBe('owner/repo');
+    });
+
+    it('returns 400 for invalid issue number', async () => {
+      const tempDir = createTempDir();
+      const c = compose(tempDir);
+      const app = await buildServer(c);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/runs',
+        payload: {
+          issueNumber: -1,
+          repo: 'owner/repo',
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('invalid_issue_number');
+    });
   });
 });

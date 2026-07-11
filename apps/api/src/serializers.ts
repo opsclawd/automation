@@ -18,6 +18,7 @@ export function serializeRun(r: RunItem) {
     exitCode: r.exitCode !== undefined ? r.exitCode : null,
     durationMs: r.durationMs !== undefined ? r.durationMs : null,
     failureReason: r.failureReason !== undefined ? r.failureReason : null,
+    repoId: r.repoId,
   };
 }
 

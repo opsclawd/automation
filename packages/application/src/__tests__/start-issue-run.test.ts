@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { RepositoryId } from '@ai-sdlc/domain';
-import type { Failure, Run, ClassifyExitInput } from '@ai-sdlc/domain';
+import type { Failure, Run, ClassifyExitInput, Repository } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { StartIssueRun } from '../start-issue-run.js';
+import type { StartIssueRunDeps } from '../start-issue-run.js';
 
 const stableRepoId = RepositoryId('owner/repo');
 import type {
@@ -312,6 +313,41 @@ describe('StartIssueRun', () => {
     expect(calls[0]!.env.AI_BASE_BRANCH).toBe('develop');
     expect(calls[0]!.env.AI_AGENT_MODEL).toBe('gpt-4');
     expect(calls[0]!.env.AI_RUNTIME).toBe('codex');
+  });
+
+  it('allows overriding baseBranch per request', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash, calls } = fakeBash({ exitCode: 0 });
+    const refCalls: Array<{ cwd: string; ref: string }> = [];
+    const resolveRefSha = (cwd: string, ref: string) => {
+      refCalls.push({ cwd, ref });
+      return 'override-sha-456';
+    };
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      baseBranch: 'develop',
+      resolveRefSha,
+      ...defaultEventDeps(),
+      now: fixedNow,
+    });
+    const out = await usecase.execute({
+      issueNumber: 10,
+      repoId: stableRepoId,
+      baseBranch: 'feature-branch',
+    });
+    expect(calls[0]!.env.AI_BASE_BRANCH).toBe('feature-branch');
+    expect(refCalls).toEqual([
+      { cwd: '/fake/.ai-worktrees/issue-10', ref: 'origin/feature-branch' },
+    ]);
+    expect(repo.findByUuid(out.uuid)?.startCommitSha).toBe('override-sha-456');
   });
 
   it('omits optional env vars when deps are not provided', async () => {
@@ -1063,5 +1099,136 @@ describe('StartIssueRun event ingestion', () => {
     });
 
     expect(capturedInputs[0]!.events).toEqual(eventsBeforeDrain);
+  });
+});
+
+describe('StartIssueRun repository resolution', () => {
+  let startIssueRun: StartIssueRun;
+  function baseDeps(overrides: Partial<StartIssueRunDeps> = {}): StartIssueRunDeps {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const deps: StartIssueRunDeps = {
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/srv/repos/repo-a-root/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      now: fixedNow,
+      repositoryPort: {
+        findById: () => undefined,
+        listEnabled: () => [],
+      },
+      ...overrides,
+    };
+    startIssueRun = new StartIssueRun(deps);
+    return deps;
+  }
+
+  it('uses the explicit repoId when supplied', async () => {
+    const repoA = {
+      id: RepositoryId('a'.repeat(64)),
+      fullName: 'owner/repo-a',
+      enabled: true,
+      healthStatus: 'healthy',
+      localBasePath: '/repos/a',
+    } as unknown as Repository;
+    baseDeps({
+      repositoryPort: {
+        findById: (id) => (id === repoA.id ? repoA : undefined),
+        listEnabled: () => [repoA],
+      },
+    });
+    const result = await startIssueRun.execute({ issueNumber: 42, repoId: repoA.id });
+    expect(result.repoId).toBe(repoA.id);
+  });
+
+  it('defaults to the single enabled repository when omitted', async () => {
+    const repoA = {
+      id: RepositoryId('a'.repeat(64)),
+      fullName: 'owner/repo-a',
+      enabled: true,
+      healthStatus: 'healthy',
+      localBasePath: '/repos/a',
+    } as unknown as Repository;
+    baseDeps({
+      repositoryPort: {
+        findById: () => repoA,
+        listEnabled: () => [repoA],
+      },
+    });
+    const result = await startIssueRun.execute({ issueNumber: 42 });
+    expect(result.repoId).toBe(repoA.id);
+  });
+
+  it('throws RepositoryValidationError when many enabled repos and no explicit id', async () => {
+    const repoA = {
+      id: RepositoryId('a'.repeat(64)),
+      fullName: 'owner/repo-a',
+      enabled: true,
+      healthStatus: 'healthy',
+      localBasePath: '/repos/a',
+    } as unknown as Repository;
+    const repoB = {
+      id: RepositoryId('b'.repeat(64)),
+      fullName: 'owner/repo-b',
+      enabled: true,
+      healthStatus: 'healthy',
+      localBasePath: '/repos/b',
+    } as unknown as Repository;
+    baseDeps({
+      repositoryPort: {
+        findById: () => undefined,
+        listEnabled: () => [repoA, repoB],
+      },
+    });
+    await expect(startIssueRun.execute({ issueNumber: 42 })).rejects.toThrow(/repoId|repositoryId/);
+  });
+
+  it('throws RepositoryNotApprovedError naming the repo when target repo is degraded or unreachable', async () => {
+    const repoA = {
+      id: RepositoryId('a'.repeat(64)),
+      fullName: 'owner/repo-a',
+      enabled: true,
+      healthStatus: 'unreachable',
+      localBasePath: '/repos/a',
+    } as unknown as Repository;
+    baseDeps({
+      repositoryPort: {
+        findById: () => repoA,
+        listEnabled: () => [repoA],
+      },
+    });
+    await expect(startIssueRun.execute({ issueNumber: 42, repoId: repoA.id })).rejects.toThrow(
+      /owner\/repo-a.*unreachable|degraded|not approved/,
+    );
+  });
+
+  it('uses repo.localBasePath for the worktreeRoot (not the runsDir filesystem heuristic)', async () => {
+    const repoA = {
+      id: RepositoryId('a'.repeat(64)),
+      fullName: 'owner/repo-a',
+      enabled: true,
+      healthStatus: 'healthy',
+      localBasePath: '/srv/repos/repo-a-root',
+    } as unknown as Repository;
+    let capturedWorktreeRoot: string | undefined;
+    baseDeps({
+      runsDir: '/srv/repos/repo-a-root/.ai-runs',
+      repositoryPort: {
+        findById: () => repoA,
+        listEnabled: () => [repoA],
+      },
+      resolveRefSha: (worktreeRoot: string) => {
+        capturedWorktreeRoot = worktreeRoot;
+        return 'sha-from-test';
+      },
+    });
+    await startIssueRun.execute({ issueNumber: 7, repoId: repoA.id });
+    expect(capturedWorktreeRoot).toBe(`/srv/repos/repo-a-root/.ai-worktrees/issue-7`);
   });
 });
