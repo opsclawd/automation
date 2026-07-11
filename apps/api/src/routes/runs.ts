@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { Container } from '../compose.js';
 import { serializeRun, serializeFailure, serializeJob } from '../serializers.js';
-import { WorkerId, RunId } from '@ai-sdlc/domain';
+import { WorkerId, RunId, RepositoryId, RepositoryNotFoundError, RunStatus } from '@ai-sdlc/domain';
 import { planRunRecoveryAction, UnknownPhaseError } from '@ai-sdlc/application';
+import { resolveRepoContext, canonicalizeRepoContext } from './_lib.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_INT_RE = /^-?\d+$/;
@@ -33,7 +34,15 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     };
   });
 
-  app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/runs', async (req, reply) => {
+  app.get<{
+    Querystring: {
+      limit?: string;
+      offset?: string;
+      repositoryId?: string;
+      repo?: string;
+      status?: string;
+    };
+  }>('/api/runs', async (req, reply) => {
     const MAX_LIMIT = 100;
     if (req.query.limit !== undefined && req.query.limit !== '') {
       if (!DECIMAL_INT_RE.test(req.query.limit)) {
@@ -61,7 +70,40 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
       req.query.offset !== undefined && req.query.offset !== ''
         ? Math.max(0, Number(req.query.offset))
         : 0;
-    const { runs, total } = c.runRepository.list({ limit, offset });
+
+    let repositoryId: RepositoryId | undefined;
+    try {
+      const ctx = resolveRepoContext({ headers: req.headers, query: req.query }, c, {
+        allowFallback: false,
+      });
+      if (ctx.repositoryId || ctx.fullName) {
+        repositoryId = canonicalizeRepoContext(ctx, c);
+      }
+    } catch (err) {
+      if (err instanceof RepositoryNotFoundError) {
+        return reply.code(404).send({ error: 'repository_not_found' });
+      }
+      throw err;
+    }
+
+    const status =
+      typeof req.query.status === 'string' ? (req.query.status as RunStatus) : undefined;
+    const filter: {
+      limit?: number;
+      offset?: number;
+      repositoryId?: RepositoryId;
+      status?: RunStatus;
+    } = {
+      limit,
+      offset,
+    };
+    if (repositoryId !== undefined) {
+      filter.repositoryId = repositoryId;
+    }
+    if (status !== undefined) {
+      filter.status = status;
+    }
+    const { runs, total } = c.runRepository.list(filter);
     return {
       runs: runs.map(serializeRun),
       total,

@@ -1,11 +1,10 @@
-# Implementation Log - Task 7: Wire-up in compose.ts
+# Implementation Log - Task 8: Update API Route Helpers and GET /api/runs
 
-Implemented wiring up of `LoadRepositoryForRun` and `repositoryPort` into the application container in `apps/api/src/compose.ts`.
+Implemented `resolveRepoContext` and `canonicalizeRepoContext` route helpers in `apps/api/src/routes/_lib.ts`, and updated `GET /api/runs` to support filtering by status and repositoryId.
 
 ## Changes Made:
-- Imported `LoadRepositoryForRun` from `@ai-sdlc/application` package in `apps/api/src/compose.ts`.
-- Updated `Container` interface definition to include `loadRepositoryForRun: LoadRepositoryForRun`.
-- Created an instance of `LoadRepositoryForRun` inside `composeRoot` using `registryBackedRepo` (which implements `RepositoryPort` with support for both the database registry and single-repo fallback logic).
-- Passed `registryBackedRepo` as the `repositoryPort` dependency in `StartIssueRunDeps` constructor parameter.
-- Returned `loadRepositoryForRun` in the container object return statement of `composeRoot`.
-- Verified typechecking, linting, building, and running test suites all pass.
+- Created new route helper file `apps/api/src/routes/_lib.ts` containing the implementation of `resolveRepoContext` and `canonicalizeRepoContext`.
+- Updated `GET /api/runs` inside `apps/api/src/routes/runs.ts` to utilize these helpers for extracting and canonicalizing the repository context, handling `repositoryId` or `repo` query params, `x-repository-id` headers, and falling back appropriately.
+- Handled status filter query parameter.
+- Added comprehensive unit tests in `apps/api/src/__tests__/routes.test.ts` to verify filtering behavior, canonicalization logic, headers, and 404 response on missing repositories.
+- Verified that all workspace tests pass, ESLint checks pass, and typechecking succeeds without issues.
