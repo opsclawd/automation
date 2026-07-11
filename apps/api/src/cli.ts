@@ -326,12 +326,19 @@ export interface RunCliOptions {
   repositoryId?: string;
 }
 
-function resolveCliRepoId(
+export function resolveCliRepoId(
   opts: { repositoryId?: string | undefined },
-  container: { listEnabledRepositories(): Array<{ id: string; fullName: string }> },
+  container: {
+    listEnabledRepositories(): Array<{ id: string; fullName: string }>;
+    repoFullName: string | undefined;
+  },
 ): string | undefined {
   if (opts.repositoryId) return opts.repositoryId;
   const enabled = container.listEnabledRepositories();
+  if (container.repoFullName) {
+    const matched = enabled.find((r) => r.fullName === container.repoFullName);
+    if (matched) return matched.id;
+  }
   if (enabled.length === 1 && enabled[0]) return enabled[0].id;
   if (enabled.length > 1) {
     throw new Error(
@@ -341,7 +348,7 @@ function resolveCliRepoId(
   return undefined;
 }
 
-function resolveRepoIdForCli(
+export function resolveRepoIdForCli(
   opts: { repositoryId?: string | undefined },
   c: {
     listRepositories: {
@@ -352,6 +359,7 @@ function resolveRepoIdForCli(
   },
 ): string | undefined {
   const resolvedRepoIdStr = resolveCliRepoId(opts, {
+    repoFullName: c.repoFullName,
     listEnabledRepositories: () =>
       c.listRepositories.execute({ includeDisabled: false }).map((r) => ({
         id: r.id,

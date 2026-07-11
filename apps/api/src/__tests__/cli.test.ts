@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { spawn, execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildProgram as originalBuildProgram, findRepoRoot } from '../cli.js';
+import { buildProgram as originalBuildProgram, findRepoRoot, resolveCliRepoId } from '../cli.js';
 vi.setConfig({ testTimeout: 30000 });
 function buildProgram(opts?: Parameters<typeof originalBuildProgram>[0]) {
   return originalBuildProgram({
@@ -64,6 +64,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -4307,6 +4308,7 @@ describe('CLI run flag validation', () => {
     });
 
     it('start errors helpfully when many repos enabled and flag omitted', async () => {
+      vi.stubEnv('GITHUB_REPOSITORY', 'unknown/unknown');
       const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-start-many-')));
       writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
       process.chdir(root);
@@ -4314,8 +4316,17 @@ describe('CLI run flag validation', () => {
       const mockRepoId1 = '0000000000000000000000000000000000000000000000000000000000000001';
       const mockRepoId2 = '0000000000000000000000000000000000000000000000000000000000000002';
 
+      resolverSpy.mockImplementation((targetPath: string) => {
+        return {
+          rootPath: targetPath,
+          nameWithOwner: 'owner/repo-3',
+          defaultBranch: 'main',
+          remoteUrl: 'https://github.com/owner/repo-3.git',
+        };
+      });
+
       const program = buildProgram({
-        composeOverrides: { repoFullName: 'owner/repo-1' },
+        composeOverrides: { repoFullName: undefined },
       });
 
       const { c } = composeWithTarget(root);
@@ -4533,5 +4544,56 @@ describe('CLI run flag validation', () => {
       exitSpy.mockRestore();
       writeSpy.mockRestore();
     });
+  });
+});
+
+describe('resolveCliRepoId and resolveRepoIdForCli fallback behavior', () => {
+  it('should return matching repository ID if repoFullName matches one of the enabled repositories', () => {
+    const opts = {};
+    const container = {
+      repoFullName: 'owner/repo-2',
+      listEnabledRepositories: () => [
+        { id: '1', fullName: 'owner/repo-1' },
+        { id: '2', fullName: 'owner/repo-2' },
+      ],
+    };
+    const result = resolveCliRepoId(opts, container);
+    expect(result).toBe('2');
+  });
+
+  it('should throw error when repoFullName is not set and multiple repositories are enabled', () => {
+    const opts = {};
+    const container = {
+      listEnabledRepositories: () => [
+        { id: '1', fullName: 'owner/repo-1' },
+        { id: '2', fullName: 'owner/repo-2' },
+      ],
+    };
+    expect(() => resolveCliRepoId(opts, container)).toThrow(
+      /--repository-id is required when more than one repository is enabled/,
+    );
+  });
+
+  it('should fallback to resolving single enabled repository when repoFullName does not match', () => {
+    const opts = {};
+    const container = {
+      repoFullName: 'owner/nonexistent',
+      listEnabledRepositories: () => [{ id: '1', fullName: 'owner/repo-1' }],
+    };
+    const result = resolveCliRepoId(opts, container);
+    expect(result).toBe('1');
+  });
+
+  it('should resolve options repoId first', () => {
+    const opts = { repositoryId: 'custom-id' };
+    const container = {
+      repoFullName: 'owner/repo-2',
+      listEnabledRepositories: () => [
+        { id: '1', fullName: 'owner/repo-1' },
+        { id: '2', fullName: 'owner/repo-2' },
+      ],
+    };
+    const result = resolveCliRepoId(opts, container);
+    expect(result).toBe('custom-id');
   });
 });
