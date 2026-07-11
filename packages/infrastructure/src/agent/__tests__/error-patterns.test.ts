@@ -126,6 +126,11 @@ describe('testQuotaPatterns', () => {
     expect(result).toBeNull();
   });
 
+  it('does not match git SHAs containing 429 (default mode)', () => {
+    const result = testQuotaPatterns('de4297c feat: add helper function');
+    expect(result).toBeNull();
+  });
+
   it('matches rate_limit_exceeded independently of HTTP status code', () => {
     const result = testQuotaPatterns('error: rate_limit_exceeded for user');
     expect(result).toBeTruthy();
@@ -334,6 +339,11 @@ describe('testProviderErrorPatterns', () => {
 
   it('does not match bare 503 in commit title (default mode)', () => {
     const result = testProviderErrorPatterns('fix: handle 503 error in retry logic');
+    expect(result).toBeNull();
+  });
+
+  it('does not match git SHAs starting with 5 and followed by error (default mode)', () => {
+    const result = testProviderErrorPatterns('5a3e12c feat: add status parsing, but error occurs');
     expect(result).toBeNull();
   });
 
