@@ -73,6 +73,38 @@ describe('parsePlanReviewFindings', () => {
     });
   });
 
+  it('allows pass verdict with all resolved findings', () => {
+    const markdown = buildMarkdown(
+      '## verdict',
+      'pass',
+      '',
+      '## findings',
+      '- [P1] `plan.md:28-34` | failure | grounded | addressed',
+      '- [P2] `task.json:4` | failure | grounded | rebutted',
+      '',
+    );
+
+    expect(parsePlanReviewFindings(markdown)).toEqual({
+      verdict: 'pass',
+      findings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:28-34',
+          failureScenario: 'failure',
+          evidence: 'grounded',
+          disposition: 'addressed',
+        },
+        {
+          severity: 'P2',
+          citation: 'task.json:4',
+          failureScenario: 'failure',
+          evidence: 'grounded',
+          disposition: 'rebutted',
+        },
+      ],
+    });
+  });
+
   it.each([
     [
       'missing verdict section',
@@ -93,8 +125,17 @@ describe('parsePlanReviewFindings', () => {
       ),
     ],
     [
-      'pass verdict with findings rejected',
+      'pass verdict with unresolved findings rejected',
       buildMarkdown('## verdict', 'pass', '## findings', '- [P2] `plan.md:1` | defect | grounded'),
+    ],
+    [
+      'pass verdict with still_open findings rejected',
+      buildMarkdown(
+        '## verdict',
+        'pass',
+        '## findings',
+        '- [P1] `plan.md:1` | defect | grounded | still_open',
+      ),
     ],
     ['p1_found with no findings rejected', buildMarkdown('## verdict', 'p1_found', '## findings')],
     [

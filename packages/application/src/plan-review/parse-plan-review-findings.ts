@@ -332,8 +332,13 @@ function finalizeDocument(
   findings: PlanReviewFinding[],
   parsedKnownLimitations: string[] | undefined,
 ): PlanReviewFindingsDocument {
-  if (verdict === 'pass' && findings.length > 0) {
-    throw new PlanReviewFindingsParseError('pass verdict must not include findings');
+  if (verdict === 'pass') {
+    const unresolvedFindings = findings.filter(
+      (f) => f.disposition === undefined || f.disposition === 'still_open',
+    );
+    if (unresolvedFindings.length > 0) {
+      throw new PlanReviewFindingsParseError('pass verdict must not include unresolved findings');
+    }
   }
 
   if (verdict !== 'pass' && findings.length === 0) {
