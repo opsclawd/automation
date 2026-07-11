@@ -172,9 +172,14 @@ export class ImplementHandler implements PhaseHandler {
       }
     }
 
+    const totalSteps = derived.length;
+
     for (const d of derived) {
       if (doneIdx.has(d.index)) {
-        emit('step.skipped', 'info', `step ${d.index} already complete`, { index: d.index });
+        emit('step.skipped', 'info', `step ${d.index}/${totalSteps} already complete`, {
+          index: d.index,
+          total: totalSteps,
+        });
         continue;
       }
 
@@ -189,7 +194,10 @@ export class ImplementHandler implements PhaseHandler {
         startedAt,
       };
       this.opts.steps.upsert(step);
-      emit('step.started', 'info', `step ${d.index}: ${d.title}`, { index: d.index });
+      emit('step.started', 'info', `step ${d.index}/${totalSteps}: ${d.title}`, {
+        index: d.index,
+        total: totalSteps,
+      });
 
       let result: StepRunResult;
       try {
@@ -204,7 +212,10 @@ export class ImplementHandler implements PhaseHandler {
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-        emit('step.failed', 'error', `step ${d.index} crashed: ${message}`, { index: d.index });
+        emit('step.failed', 'error', `step ${d.index}/${totalSteps} crashed: ${message}`, {
+          index: d.index,
+          total: totalSteps,
+        });
         return this.fail(
           ctx,
           emit,
@@ -215,12 +226,21 @@ export class ImplementHandler implements PhaseHandler {
 
       if (result.outcome === 'success') {
         this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
-        emit('step.completed', 'info', `step ${d.index} done`, { index: d.index });
+        emit('step.completed', 'info', `step ${d.index}/${totalSteps} done`, {
+          index: d.index,
+          total: totalSteps,
+        });
       } else if (result.outcome === 'needs_human_review') {
         this.opts.steps.upsert({ ...step, status: 'needs_human_review', completedAt: ctx.now() });
-        emit('step.needs_human_review', 'warn', `step ${d.index} needs human review`, {
-          index: d.index,
-        });
+        emit(
+          'step.needs_human_review',
+          'warn',
+          `step ${d.index}/${totalSteps} needs human review`,
+          {
+            index: d.index,
+            total: totalSteps,
+          },
+        );
         return this.needsHumanReview(
           ctx,
           emit,
@@ -235,7 +255,10 @@ export class ImplementHandler implements PhaseHandler {
         // runStep still reports a non-success outcome here, the step
         // genuinely failed and there is nothing further to recover.
         this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-        emit('step.failed', 'error', `step ${d.index} failed`, { index: d.index });
+        emit('step.failed', 'error', `step ${d.index}/${totalSteps} failed`, {
+          index: d.index,
+          total: totalSteps,
+        });
         return this.fail(ctx, emit, 'agent_incomplete', `step ${d.index} (${d.title}) failed`);
       }
     }

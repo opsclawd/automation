@@ -74,8 +74,18 @@ describe('ImplementHandler', () => {
     expect(all.map((s) => s.status)).toEqual(['success', 'success']);
     expect(all.map((s) => s.index)).toEqual([1, 2]);
 
-    expect(events.filter((e) => e.type === 'step.started')).toHaveLength(2);
-    expect(events.filter((e) => e.type === 'step.completed')).toHaveLength(2);
+    const started = events.filter((e) => e.type === 'step.started');
+    expect(started).toHaveLength(2);
+    expect(started[0]?.message).toBe('step 1/2: Task 1: first');
+    expect(started[0]?.metadata).toMatchObject({ index: 1, total: 2 });
+    expect(started[1]?.message).toBe('step 2/2: Task 2: second');
+    expect(started[1]?.metadata).toMatchObject({ index: 2, total: 2 });
+
+    const completed = events.filter((e) => e.type === 'step.completed');
+    expect(completed).toHaveLength(2);
+    expect(completed[0]?.message).toBe('step 1/2 done');
+    expect(completed[1]?.message).toBe('step 2/2 done');
+
     expect(events.filter((e) => e.type === 'implement.started')).toHaveLength(1);
     expect(events.filter((e) => e.type === 'implement.completed')).toHaveLength(1);
   });
@@ -116,7 +126,10 @@ describe('ImplementHandler', () => {
     expect(all[0]!.status).toBe('success'); // untouched
     expect(all[1]!.status).toBe('success'); // newly completed
 
-    expect(events.filter((e) => e.type === 'step.skipped')).toHaveLength(1);
+    const skipped = events.filter((e) => e.type === 'step.skipped');
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.message).toBe('step 1/2 already complete');
+    expect(skipped[0]?.metadata).toMatchObject({ index: 1, total: 2 });
   });
 
   it('resume from failed step re-runs it', async () => {
