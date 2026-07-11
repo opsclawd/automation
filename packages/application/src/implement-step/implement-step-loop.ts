@@ -719,7 +719,7 @@ export class ImplementStepLoop {
           dirtyDimensions = markDimensionDirty(
             dirtyDimensions,
             'spec',
-            prevState === 'dirty' ? 'recurred' : 'dirty',
+            prevState === 'clean' ? 'dirty' : 'recurred',
           );
         }
         persistReviewState();
@@ -833,7 +833,7 @@ export class ImplementStepLoop {
           dirtyDimensions = markDimensionDirty(
             dirtyDimensions,
             'quality',
-            prevState === 'dirty' ? 'recurred' : 'dirty',
+            prevState === 'clean' ? 'dirty' : 'recurred',
           );
         }
         persistReviewState();
@@ -908,6 +908,19 @@ export class ImplementStepLoop {
             'quality',
           );
           persistReviewState();
+          loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+          deps.loops.update(loop);
+          await appendHistory(
+            buildHistoryEntry(
+              iterationIndex,
+              specReview,
+              qualityReview,
+              undefined,
+              undefined,
+              'unresolved',
+            ),
+          );
+          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
           continue;
         } else {
           // HEAD stable - check snapshots match
