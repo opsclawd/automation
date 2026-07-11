@@ -2360,6 +2360,19 @@ describe('CLI run --executor ts', () => {
         expect.stringContaining('[ts] starting phase read_issue'),
       );
 
+      // semantic_retry is recorded (DB/events) but is pure retry-dedup
+      // bookkeeping noise on the live --verbose stream — must not be printed.
+      consoleErrorSpy.mockClear();
+      listener?.({
+        runId: 'mock-run-uuid',
+        type: 'semantic_retry',
+        level: 'info' as const,
+        message: 'Semantic retry detected for phase spec-review with identity deadbeef',
+        timestamp: new Date().toISOString(),
+        metadata: {},
+      });
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+
       subscribeSpy.mockRestore();
       consoleErrorSpy.mockRestore();
       vi.restoreAllMocks();
