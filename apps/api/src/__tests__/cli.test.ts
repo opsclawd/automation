@@ -33,7 +33,7 @@ import {
   RunRepository,
   WorkerLeaseRepository,
 } from '@ai-sdlc/infrastructure';
-import { WorkerLeaseConflictError, WorkerId, RepositoryId, JobId } from '@ai-sdlc/domain';
+import { WorkerLeaseConflictError, WorkerId, RepositoryId, JobId, Run } from '@ai-sdlc/domain';
 import { WorkerScheduler } from '../worker-scheduler.js';
 import { composeWithTarget } from '../cli/compose-with-target.js';
 
@@ -4280,7 +4280,10 @@ describe('CLI run flag validation', () => {
       });
 
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, cb) => {
+        if (typeof cb === 'function') (cb as () => void)();
+        return true;
+      });
 
       await program.parseAsync([
         'node',
@@ -4321,7 +4324,7 @@ describe('CLI run flag validation', () => {
         fullName: 'owner/repo-1',
         owner: 'owner',
         name: 'repo-1',
-        localBasePath: root,
+        localBasePath: join(root, 'repo-1'),
         defaultBranch: 'main',
         remoteUrl: 'https://github.com/owner/repo-1.git',
         enabled: true,
@@ -4338,7 +4341,7 @@ describe('CLI run flag validation', () => {
         fullName: 'owner/repo-2',
         owner: 'owner',
         name: 'repo-2',
-        localBasePath: root,
+        localBasePath: join(root, 'repo-2'),
         defaultBranch: 'main',
         remoteUrl: 'https://github.com/owner/repo-2.git',
         enabled: true,
@@ -4388,12 +4391,17 @@ describe('CLI run flag validation', () => {
         });
 
       const mockRepoId = '0000000000000000000000000000000000000000000000000000000000000001';
-      const mockRun = {
+      const mockRun: Run = {
         uuid: 'cancel-uuid-test',
+        displayId: 'issue-50-20260519-000000',
         repoId: mockRepoId as RepositoryId,
         issueNumber: 50,
-        status: 'running' as const,
+        status: 'running',
         pid: process.pid,
+        startedAt: new Date(),
+        type: 'issue_to_pr',
+        completedPhases: [],
+        skippedPhases: [],
       };
 
       const program = buildProgram({
@@ -4406,7 +4414,7 @@ describe('CLI run flag validation', () => {
         fullName: 'owner/repo-1',
         owner: 'owner',
         name: 'repo-1',
-        localBasePath: root,
+        localBasePath: join(root, 'repo-1'),
         defaultBranch: 'main',
         remoteUrl: 'https://github.com/owner/repo-1.git',
         enabled: true,
@@ -4468,7 +4476,7 @@ describe('CLI run flag validation', () => {
         fullName: 'owner/repo-1',
         owner: 'owner',
         name: 'repo-1',
-        localBasePath: root,
+        localBasePath: join(root, 'repo-1'),
         defaultBranch: 'main',
         remoteUrl: 'https://github.com/owner/repo-1.git',
         enabled: true,
@@ -4485,7 +4493,7 @@ describe('CLI run flag validation', () => {
         fullName: 'owner/repo-2',
         owner: 'owner',
         name: 'repo-2',
-        localBasePath: root,
+        localBasePath: join(root, 'repo-2'),
         defaultBranch: 'main',
         remoteUrl: 'https://github.com/owner/repo-2.git',
         enabled: true,
@@ -4499,7 +4507,10 @@ describe('CLI run flag validation', () => {
       });
 
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, cb) => {
+        if (typeof cb === 'function') (cb as () => void)();
+        return true;
+      });
 
       await program.parseAsync([
         'node',
