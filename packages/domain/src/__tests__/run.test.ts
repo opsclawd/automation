@@ -151,10 +151,14 @@ describe('Run state machine', () => {
       expect(canResume(r)).toBe(true);
     });
 
-    it('returns false for running, passed, cancelled, waiting runs', () => {
+    it('returns true for cancelled runs', () => {
+      const r = cancelRun(createRun(base));
+      expect(canResume(r)).toBe(true);
+    });
+
+    it('returns false for running, passed, waiting runs', () => {
       expect(canResume(createRun(base))).toBe(false);
       expect(canResume(passRun(createRun(base), new Date()))).toBe(false);
-      expect(canResume(cancelRun(createRun(base)))).toBe(false);
     });
   });
 
@@ -235,6 +239,12 @@ describe('Run state machine', () => {
 
     it('transitions needs_human_review → running', () => {
       const r = markRunNeedsHumanReview(createRun(base), 'review');
+      const resumed = resumeRun(r);
+      expect(resumed.status).toBe('running');
+    });
+
+    it('transitions cancelled → running', () => {
+      const r = cancelRun(createRun(base));
       const resumed = resumeRun(r);
       expect(resumed.status).toBe('running');
     });
