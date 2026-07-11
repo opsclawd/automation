@@ -73,9 +73,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
 
     let repositoryId: RepositoryId | undefined;
     try {
-      const ctx = resolveRepoContext({ headers: req.headers, query: req.query }, c, {
-        allowFallback: false,
-      });
+      const ctx = resolveRepoContext({ headers: req.headers, query: req.query }, c);
       if (ctx.repositoryId || ctx.fullName) {
         repositoryId = canonicalizeRepoContext(ctx, c);
       }

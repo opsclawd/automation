@@ -13,7 +13,8 @@ export function resolveRepoContext(
 ): ResolvedRepoContext {
   const headerVal = req.headers['x-repository-id'];
   const header = Array.isArray(headerVal) ? headerVal[0] : headerVal;
-  const queryVal = (req.query.repositoryId ?? req.query.repo) as string | undefined;
+  const rawQuery = req.query.repositoryId ?? req.query.repo;
+  const queryVal = (Array.isArray(rawQuery) ? rawQuery[0] : rawQuery) as string | undefined;
   const raw = (header || queryVal || '').trim();
   if (!raw) {
     if (options?.allowFallback === false) {

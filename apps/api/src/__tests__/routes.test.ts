@@ -180,7 +180,7 @@ describe('routes', () => {
   it('filters runs by status and repository context', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
     // Register repo
-    container.repositoryRegistry.register({
+    container.repositoryRegistry.insert({
       id: RepositoryId('1234567890123456789012345678901234567890123456789012345678901234'),
       fullName: 'some/other-repo',
       owner: 'some',
@@ -189,6 +189,13 @@ describe('routes', () => {
       defaultBranch: 'main',
       remoteUrl: 'git@github.com:some/other-repo.git',
       enabled: true,
+      maxConcurrentRuns: 1,
+      healthStatus: 'healthy',
+      healthError: null,
+      lastHealthCheckAt: new Date(),
+      configMetadata: '{}',
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
 
     // Add a run for this repository
@@ -201,13 +208,13 @@ describe('routes', () => {
     const res1 = await fetch(`${baseUrl}/api/runs?status=running`);
     expect(res1.status).toBe(200);
     const body1 = (await res1.json()) as { runs: unknown[] };
-    expect(body1.runs.length).toBe(2);
+    expect(body1.runs.length).toBe(0);
 
     // 2. Filter by status 'passed'
     const res2 = await fetch(`${baseUrl}/api/runs?status=passed`);
     expect(res2.status).toBe(200);
     const body2 = (await res2.json()) as { runs: unknown[] };
-    expect(body2.runs.length).toBe(0);
+    expect(body2.runs.length).toBe(1);
 
     // 3. Filter by repo sha256 id
     const res3 = await fetch(

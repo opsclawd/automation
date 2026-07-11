@@ -4183,7 +4183,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const metadataResolver = resolver;
 
   const listRepositories = new ListRepositories({ repos: registryReadRepo });
-  const inspectRepository = new InspectRepository({ repos: registryReadRepo });
+  const inspectRepository = new InspectRepository({ repos: registryBackedRepo });
   const registerRepository = new RegisterRepository({
     registry: repositoryRegistry,
     repos: registryReadRepo,
