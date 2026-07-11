@@ -381,15 +381,11 @@ export class PlanReviewLoop {
         };
       }
 
-      const manifestError = null;
-      const manifestOnlyFix = false;
-
       // --- FIX ---
       const fix = await deps.runFix(ctx, {
         ...(pendingReconciliationContext !== undefined
           ? { reconciliationContext: pendingReconciliationContext }
           : {}),
-        ...(manifestError ? { manifestMismatch: manifestError } : {}),
         metadata: {
           iteration: iterationIndex,
           invocation_type: 'initial',
@@ -456,7 +452,7 @@ export class PlanReviewLoop {
 
       // --- CONTRADICTION DETECTION ---
       const reviewFailed = review.verdict === 'p1_found';
-      if (fix.verdict === 'done_no_fixes_needed' && reviewFailed && !manifestOnlyFix) {
+      if (fix.verdict === 'done_no_fixes_needed' && reviewFailed) {
         this.emit(
           input,
           'plan-review.review.contradiction.detected',
@@ -511,22 +507,6 @@ export class PlanReviewLoop {
                 iterationIndex,
               },
             );
-            if (manifestError) {
-              loop = completeIteration(loop, {
-                outcome: 'unresolved',
-                fixInvocationId: fix.invocationId,
-                now: deps.now(),
-              });
-              deps.loops.update(loop);
-              this.emit(
-                input,
-                'plan-review.loop.iteration.completed',
-                'info',
-                `iteration ${iterationIndex} completed: unresolved (manifest error remains)`,
-                { index: iterationIndex, outcome: 'unresolved' },
-              );
-              continue;
-            }
             loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(loop);
             return { outcome: 'success', loop, proceedWithConcerns: false };
@@ -571,28 +551,6 @@ export class PlanReviewLoop {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
         return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
-      } else if (fix.verdict === 'done_no_fixes_needed' && manifestOnlyFix) {
-        this.emit(
-          input,
-          'plan-review.manifest_mismatch.fixer_declined',
-          'warn',
-          `fixer declined to address manifest/prose mismatch at iteration ${iterationIndex}; treating as unresolved`,
-          { iterationIndex },
-        );
-        loop = completeIteration(loop, {
-          outcome: 'unresolved',
-          fixInvocationId: fix.invocationId,
-          now: deps.now(),
-        });
-        deps.loops.update(loop);
-        this.emit(
-          input,
-          'plan-review.loop.iteration.completed',
-          'info',
-          `iteration ${iterationIndex} completed: unresolved`,
-          { index: iterationIndex, outcome: 'unresolved' },
-        );
-        continue;
       }
 
       // Update frozen-finding dispositions based on the fixer's outcome and the
@@ -729,7 +687,6 @@ export class PlanReviewLoop {
           return { outcome: 'failed', loop, proceedWithConcerns: false };
         }
 
-        const finalManifestError = null;
         if (finalReview.verdict === 'pass' || finalReview.verdict === 'p2_only') {
           const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
             index: finalIterationIndex,
@@ -755,7 +712,7 @@ export class PlanReviewLoop {
           return { outcome: 'success', loop, proceedWithConcerns: false };
         }
 
-        if (!finalManifestError && finalReview.verdict === 'proceed_with_concerns') {
+        if (finalReview.verdict === 'proceed_with_concerns') {
           const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
             index: finalIterationIndex,
             reviewInvocationId: finalReview.invocationId,
@@ -836,69 +793,51 @@ export class PlanReviewLoop {
             return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
           }
           if (arbiterResult.outcome === 'finding_invalid') {
-            if (finalManifestError) {
-              // emit resolved final review fail but manifest mismatch remains
-              // do NOT return success; fall through to the unresolved fallback below
-              this.emit(
-                input,
-                'plan-review.final_review.arbiter.resolved',
-                'info',
-                `arbiter resolved final review fail at iteration ${finalIterationIndex}: ${arbiterResult.outcome} (but manifest mismatch remains)`,
-                {
-                  ruling: arbiterResult.outcome,
-                  resolvedBy: 'final-review-arbiter',
-                  evidence: arbiterResult.evidence,
-                  iterationIndex: finalIterationIndex,
-                  manifestError: finalManifestError,
-                },
-              );
-            } else {
-              this.emit(
-                input,
-                'plan-review.final_review.arbiter.resolved',
-                'info',
-                `arbiter resolved final review fail at iteration ${finalIterationIndex}: ${arbiterResult.outcome}`,
-                {
-                  ruling: arbiterResult.outcome,
-                  resolvedBy: 'final-review-arbiter',
-                  evidence: arbiterResult.evidence,
-                  iterationIndex: finalIterationIndex,
-                },
-              );
-              const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+            this.emit(
+              input,
+              'plan-review.final_review.arbiter.resolved',
+              'info',
+              `arbiter resolved final review fail at iteration ${finalIterationIndex}: ${arbiterResult.outcome}`,
+              {
+                ruling: arbiterResult.outcome,
+                resolvedBy: 'final-review-arbiter',
+                evidence: arbiterResult.evidence,
+                iterationIndex: finalIterationIndex,
+              },
+            );
+            const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+              index: finalIterationIndex,
+              reviewInvocationId: finalReview.invocationId,
+              startedAt: deps.now(),
+              completedAt: deps.now(),
+              outcome: 'resolved',
+            };
+            loop = {
+              ...loop,
+              iterations: [...loop.iterations, finalIteration],
+              status: 'converged',
+              completedAt: deps.now(),
+            };
+            deps.loops.update(loop);
+            this.emit(
+              input,
+              'plan-review.loop.iteration.completed',
+              'info',
+              `iteration ${finalIterationIndex} completed: resolved`,
+              {
                 index: finalIterationIndex,
-                reviewInvocationId: finalReview.invocationId,
-                startedAt: deps.now(),
-                completedAt: deps.now(),
                 outcome: 'resolved',
-              };
-              loop = {
-                ...loop,
-                iterations: [...loop.iterations, finalIteration],
-                status: 'converged',
-                completedAt: deps.now(),
-              };
-              deps.loops.update(loop);
-              this.emit(
-                input,
-                'plan-review.loop.iteration.completed',
-                'info',
-                `iteration ${finalIterationIndex} completed: resolved`,
-                {
-                  index: finalIterationIndex,
-                  outcome: 'resolved',
-                  resolvedBy: 'final-review-arbiter',
-                },
-              );
-              return {
-                outcome: 'success',
-                loop,
-                proceedWithConcerns: false,
-                ...(finalReview.knownLimitations
-                  ? { knownLimitations: finalReview.knownLimitations }
-                  : {}),
-              };
-            }
+                resolvedBy: 'final-review-arbiter',
+              },
+            );
+            return {
+              outcome: 'success',
+              loop,
+              proceedWithConcerns: false,
+              ...(finalReview.knownLimitations
+                ? { knownLimitations: finalReview.knownLimitations }
+                : {}),
+            };
           } else if (
             arbiterResult.outcome === 'finding_valid' &&
             !bonusIterationUsed &&
