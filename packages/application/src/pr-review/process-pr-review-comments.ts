@@ -259,32 +259,40 @@ export class ProcessPrReviewComments {
             });
           }
         } else {
-          // Final attempt failed
-          const rollbackOk = await d.rollbackFix?.(
-            { cwd: input.cwd, branch: pr.headRefName },
-            taskStartSha,
-          );
-          if (rollbackOk === false) {
-            d.onWarning?.(
-              'rollbackFix failed: broken commits may remain on remote branch',
-              { branch: pr.headRefName, cwd: input.cwd, targetSha: taskStartSha },
-              String(input.runId),
+          // Final attempt exhausted.
+          // If the runner successfully reached 'replied' state (e.g. build failed but reply posted),
+          // we leave it as 'replied' and let verifyOrphaned do one final attempt at verification.
+          // Otherwise, we block it now.
+          if (comment.state !== 'replied') {
+            const rollbackOk = await d.rollbackFix?.(
+              { cwd: input.cwd, branch: pr.headRefName },
+              taskStartSha,
             );
-          }
+            if (rollbackOk === false) {
+              d.onWarning?.(
+                'rollbackFix failed: broken commits may remain on remote branch',
+                { branch: pr.headRefName, cwd: input.cwd, targetSha: taskStartSha },
+                String(input.runId),
+              );
+            }
 
-          let fallbackReason = `task failed after ${ESCALATION_BUDGET} attempts`;
-          if (co.codeVerifyReason !== undefined) {
-            fallbackReason = `verified incorrect: ${co.codeVerifyReason}`;
-          } else if (co.buildError !== undefined) {
-            fallbackReason = `build failed: ${co.buildError}`;
+            let fallbackReason = `task failed after ${ESCALATION_BUDGET} attempts`;
+            if (co.codeVerifyReason !== undefined) {
+              fallbackReason = `verified incorrect: ${co.codeVerifyReason}`;
+            } else if (co.buildError !== undefined) {
+              fallbackReason = `build failed: ${co.buildError}`;
+            }
+            d.prReviewRepo.upsertComment(blockComment(comment, fallbackReason));
+            taskResults.push({
+              ...co,
+              action: 'failed' as const,
+              processed: false,
+              blocked: true,
+            });
+          } else {
+            // It's replied, verifyOrphaned will pick it up and either process or block it.
+            taskResults.push(co);
           }
-          d.prReviewRepo.upsertComment(blockComment(comment, fallbackReason));
-          taskResults.push({
-            ...co,
-            action: 'failed' as const,
-            processed: false,
-            blocked: true,
-          });
         }
       }
     }
@@ -324,16 +332,14 @@ export class ProcessPrReviewComments {
       }
     }
 
-    let processed = 0;
-    let blocked = 0;
+    const orphanResult = await this.verifyOrphaned(input, originalStart);
+
+    let processed = orphanResult.newlyProcessed;
+    let blocked = orphanResult.blocked;
     for (const tr of taskResults) {
       if (tr.processed) processed++;
       if (tr.blocked) blocked++;
     }
-
-    const orphanResult = await this.verifyOrphaned(input, originalStart);
-    blocked += orphanResult.blocked;
-    processed += orphanResult.newlyProcessed;
 
     const allComments = d.prReviewRepo.listComments(input.runId);
     const stillUnresolved = allComments.filter(isUnresolved);

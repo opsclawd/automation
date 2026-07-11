@@ -155,13 +155,16 @@ export class PollTaskRunner {
     }
 
     const batchResult = extracted.result;
-    const results: PollTaskOutput['comments'] = [];
+    const commentOutcomes = new Map<number, PollTaskOutput['comments'][number]>();
 
-    // 5. Verify each comment in the batch independently
+    // 5. Initial sweep: handle 'blocked' and 'no_fix' immediately, and pre-verify 'fixed'
+    let anyFixed = false;
+    let fixCommitSha: string | undefined;
+
     for (const comment of input.comments) {
       const result = batchResult[String(comment.commentId)];
       if (!result) {
-        results.push({
+        commentOutcomes.set(comment.commentId, {
           commentId: comment.commentId,
           action: 'failed',
           processed: false,
@@ -182,7 +185,7 @@ export class PollTaskRunner {
           verified: true,
         });
         d.prReviewRepo.upsertComment(blockComment(comment, result.blockedReason ?? 'agent blocked'));
-        results.push({
+        commentOutcomes.set(comment.commentId, {
           commentId: comment.commentId,
           action: 'blocked',
           processed: false,
@@ -193,9 +196,8 @@ export class PollTaskRunner {
 
       if (result.action === 'no_fix') {
         const githubReplyId = await this.postReplyIfMissing(input, comment.commentId, result.replyBody);
-        const replyRecordId = d.idFactory();
         d.prReviewRepo.insertReply({
-          id: replyRecordId,
+          id: d.idFactory(),
           runId: input.runId,
           prNumber: input.prNumber,
           commentId: comment.commentId,
@@ -209,6 +211,7 @@ export class PollTaskRunner {
           outcome: 'no_fix',
           poll: input.pollNumber,
         });
+        replied.attempts = input.attempt;
         d.prReviewRepo.upsertComment(replied);
 
         const verification = await verifyComment(replied, d, {
@@ -230,14 +233,14 @@ export class PollTaskRunner {
             }),
           );
           await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
-          results.push({
+          commentOutcomes.set(comment.commentId, {
             commentId: comment.commentId,
             action: 'no_fix',
             processed: true,
             blocked: false,
           });
         } else {
-          results.push({
+          commentOutcomes.set(comment.commentId, {
             commentId: comment.commentId,
             action: 'no_fix',
             processed: false,
@@ -248,127 +251,163 @@ export class PollTaskRunner {
       }
 
       if (result.action === 'fixed') {
-        const fixCommitSha = await d.git.headCommitSha(input.cwd);
+        anyFixed = true;
+        if (!fixCommitSha) {
+          fixCommitSha = await d.git.headCommitSha(input.cwd);
+        }
+
         if (fixCommitSha === input.startCommitSha) {
-          results.push({
+          commentOutcomes.set(comment.commentId, {
             commentId: comment.commentId,
-            action: 'fixed',
+            action: 'failed',
             processed: false,
             blocked: false,
             buildError: 'agent did not produce a new commit (commitSha unchanged)',
           });
           continue;
         }
+      }
+    }
 
-        const buildResult = await d.verifyBuildPasses({
-          cwd: input.cwd,
-          runId: String(input.runId),
-        });
-        if (!buildResult.passed) {
-          results.push({
-            commentId: comment.commentId,
-            action: 'fixed',
-            processed: false,
-            blocked: false,
-            ...(buildResult.error !== undefined ? { buildError: buildResult.error } : {}),
-          });
-          continue;
+    // 6. If any are 'fixed', perform local verification BEFORE pushing
+    if (anyFixed && fixCommitSha) {
+      const buildResult = await d.verifyBuildPasses({
+        cwd: input.cwd,
+        runId: String(input.runId),
+      });
+
+      const batchCanPush = buildResult.passed;
+      let allFixedVerified = true;
+
+      if (!batchCanPush) {
+        allFixedVerified = false;
+      } else {
+        // Build passed, check code changes for each fixed comment
+        for (const comment of input.comments) {
+          if (batchResult[String(comment.commentId)]?.action !== 'fixed') continue;
+          if (commentOutcomes.has(comment.commentId)) continue; // Already marked failed due to no-commit
+
+          if (d.verifyCodeChange) {
+            const codeResult = await d.verifyCodeChange({
+              commentBody: comment.body,
+              path: comment.path,
+              line: comment.line,
+              cwd: input.cwd,
+              startCommitSha: input.startCommitSha,
+              fixCommitSha,
+              runId: String(input.runId),
+              repoId: String(input.repoId),
+            });
+            if (!codeResult.pass) {
+              allFixedVerified = false;
+              commentOutcomes.set(comment.commentId, {
+                commentId: comment.commentId,
+                action: 'fixed',
+                processed: false,
+                blocked: false,
+                codeVerifyReason: codeResult.reason,
+              });
+            }
+          }
         }
+      }
 
-        if (d.verifyCodeChange) {
-          const codeResult = await d.verifyCodeChange({
-            commentBody: comment.body,
-            path: comment.path,
-            line: comment.line,
+      if (batchCanPush && allFixedVerified) {
+        // Everything passed local verification, PUSH ONCE
+        await d.git.push({ cwd: input.cwd, branch: input.branch });
+
+        // Now finalize those fixed comments
+        for (const comment of input.comments) {
+          const result = batchResult[String(comment.commentId)];
+          if (result?.action !== 'fixed' || commentOutcomes.has(comment.commentId)) continue;
+
+          const githubReplyId = await this.postReplyIfMissing(input, comment.commentId, result.replyBody);
+          d.prReviewRepo.insertReply({
+            id: d.idFactory(),
+            runId: input.runId,
+            prNumber: input.prNumber,
+            commentId: comment.commentId,
+            body: result.replyBody,
+            postedAt: d.now(),
+            verified: true,
+          });
+
+          const replied = markReplied(comment, {
+            replyId: githubReplyId,
+            outcome: 'fixed',
+            commitSha: fixCommitSha,
+            poll: input.pollNumber,
+          });
+          replied.attempts = input.attempt;
+          d.prReviewRepo.upsertComment(replied);
+
+          const verification = await verifyComment(replied, d, {
             cwd: input.cwd,
-            startCommitSha: input.startCommitSha,
-            fixCommitSha,
-            runId: String(input.runId),
+            branch: input.branch,
+            prNumber: input.prNumber,
+            repoFullName: input.repoFullName,
+            originalStartCommitSha: input.originalStartCommitSha,
+            runningStartSha: input.startCommitSha,
             repoId: String(input.repoId),
           });
-          if (!codeResult.pass) {
-            results.push({
+
+          if (verification.ok) {
+            d.prReviewRepo.upsertComment(
+              markProcessed(replied, {
+                commitVerified: verification.commitVerified,
+                replyVerified: verification.replyVerified,
+                buildVerified: verification.buildVerified,
+              }),
+            );
+            await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
+            commentOutcomes.set(comment.commentId, {
+              commentId: comment.commentId,
+              action: 'fixed',
+              processed: true,
+              blocked: false,
+            });
+          } else {
+            commentOutcomes.set(comment.commentId, {
               commentId: comment.commentId,
               action: 'fixed',
               processed: false,
               blocked: false,
-              codeVerifyReason: codeResult.reason,
+              buildError: verification.buildError,
+              codeVerifyReason: verification.codeVerifyReason,
             });
-            continue;
           }
         }
+      } else {
+        // Local verification failed (either build or a code change)
+        // Mark all remaining fixed comments as failed to trigger split
+        for (const comment of input.comments) {
+          if (batchResult[String(comment.commentId)]?.action !== 'fixed') continue;
+          if (commentOutcomes.has(comment.commentId)) continue;
 
-        await d.git.push({ cwd: input.cwd, branch: input.branch });
-
-        const githubReplyId = await this.postReplyIfMissing(input, comment.commentId, result.replyBody);
-        const replyRecordId = d.idFactory();
-        d.prReviewRepo.insertReply({
-          id: replyRecordId,
-          runId: input.runId,
-          prNumber: input.prNumber,
-          commentId: comment.commentId,
-          body: result.replyBody,
-          postedAt: d.now(),
-          verified: true,
-        });
-
-        const replied = markReplied(comment, {
-          replyId: githubReplyId,
-          outcome: 'fixed',
-          commitSha: fixCommitSha,
-          poll: input.pollNumber,
-        });
-        d.prReviewRepo.upsertComment(replied);
-
-        const verification = await verifyComment(replied, d, {
-          cwd: input.cwd,
-          branch: input.branch,
-          prNumber: input.prNumber,
-          repoFullName: input.repoFullName,
-          originalStartCommitSha: input.originalStartCommitSha,
-          runningStartSha: input.startCommitSha,
-          repoId: String(input.repoId),
-        });
-
-        if (verification.ok) {
-          d.prReviewRepo.upsertComment(
-            markProcessed(replied, {
-              commitVerified: verification.commitVerified,
-              replyVerified: verification.replyVerified,
-              buildVerified: verification.buildVerified,
-            }),
-          );
-          await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
-          results.push({
-            commentId: comment.commentId,
-            action: 'fixed',
-            processed: true,
-            blocked: false,
-          });
-        } else {
-          results.push({
+          commentOutcomes.set(comment.commentId, {
             commentId: comment.commentId,
             action: 'fixed',
             processed: false,
             blocked: false,
-            ...(verification.buildError !== undefined ? { buildError: verification.buildError } : {}),
-            ...(verification.codeVerifyReason !== undefined
-              ? { codeVerifyReason: verification.codeVerifyReason }
-              : {}),
+            buildError: buildResult.error,
           });
         }
-        continue;
       }
-
-      results.push({
-        commentId: comment.commentId,
-        action: 'failed',
-        processed: false,
-        blocked: false,
-      });
     }
 
-    return { comments: results };
+    // Ensure all comments have an entry
+    for (const comment of input.comments) {
+      if (!commentOutcomes.has(comment.commentId)) {
+        commentOutcomes.set(comment.commentId, {
+          commentId: comment.commentId,
+          action: 'failed',
+          processed: false,
+          blocked: false,
+        });
+      }
+    }
+
+    return { comments: Array.from(commentOutcomes.values()) };
   }
 
   private async resetToStart(input: PollTaskInput): Promise<void> {

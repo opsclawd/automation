@@ -63,7 +63,27 @@ function makeDeps(overrides: Partial<PollTaskRunnerDeps> = {}): {
     'post-pr-review-profile': [makeSuccessAgentResult()],
   });
 
+  github.prs.set('o/r/5', {
+    number: 5,
+    url: 'https://x/pr/5',
+    state: 'open',
+    headRefName: 'feat-x',
+  });
+  github.comments.set('o/r/5', [
+    {
+      id: 9001,
+      prNumber: 5,
+      path: 'a.ts',
+      line: 3,
+      reviewer: 'octocat',
+      body: 'rename foo',
+      createdAt: new Date('2026-06-04T00:00:00Z'),
+    },
+  ]);
+  git.remoteRefs.set('origin/feat-x', 'abc123');
   git.headByCwd.set('/work/tree', 'abc123');
+  git.ancestorResults.set('abc123|abc123', true);
+  git.logBetweenResults.set('abc123|abc123', ['abc123']);
 
   let replyCounter = 0;
   const deps: PollTaskRunnerDeps = {
@@ -74,7 +94,7 @@ function makeDeps(overrides: Partial<PollTaskRunnerDeps> = {}): {
     renderTaskPrompt: async () => '/tmp/prompt.md',
     extractTaskResult: async () => ({
       ok: true,
-      result: { "9001": { action: 'fixed', replyBody: 'Renamed foo to bar.' } },
+      result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
     }),
     verifyCommitPushed: async () => true,
     verifyBuildPasses: async () => ({ passed: true }),
@@ -95,12 +115,10 @@ function makeInput(overrides: Partial<PollTaskInput> = {}): PollTaskInput {
     cwd: '/work/tree',
     phaseId,
     pollNumber: 1,
-    attempt: 1,
-    comments: [makeComment()],
+    comment: makeComment(),
     diff: '--- a.ts\n+++ a.ts\n@@ -1 +1 @@\n-old\n+new',
     branch: 'feat-x',
     startCommitSha: 'abc123',
-    originalStartCommitSha: 'abc123',
     unresolvedCommentCount: 1,
     ...overrides,
   };
@@ -114,6 +132,7 @@ describe('PollTaskRunner — happy path', () => {
       git.headByCwd.set('/work/tree', 'def456');
       return makeSuccessAgentResult();
     });
+    // Simulate agent creating a new commit
     git.remoteRefs.set('origin/feat-x', 'def456');
     git.ancestorResults.set('def456|def456', true);
     git.logBetweenResults.set('abc123|def456', ['def456']);
@@ -121,12 +140,250 @@ describe('PollTaskRunner — happy path', () => {
 
     const out = await runner.execute(makeInput());
 
-    expect(out.comments[0]).toEqual({
+    expect(out).toEqual({
       commentId: 9001,
       action: 'fixed',
       processed: true,
       blocked: false,
     });
     expect(git.pushes).toHaveLength(1);
+    expect(git.pushes[0]).toEqual({ cwd: '/work/tree', branch: 'feat-x' });
+    expect(github.repliesPosted).toHaveLength(1);
+    expect(github.resolvedThreads).toEqual(
+      expect.arrayContaining([expect.objectContaining({ commentId: 9001 })]),
+    );
+  });
+
+  it('processes a no_fix comment', async () => {
+    const { deps, github, git } = makeDeps({
+      extractTaskResult: async () => ({
+        ok: true,
+        result: { commentId: 9001, action: 'no_fix', replyBody: 'Comment is invalid.' },
+      }),
+    });
+    const runner = new PollTaskRunner(deps);
+
+    const out = await runner.execute(makeInput());
+
+    expect(out.action).toBe('no_fix');
+    expect(out.processed).toBe(true);
+    expect(github.repliesPosted).toHaveLength(1);
+    expect(git.pushes).toHaveLength(0);
+  });
+
+  it('processes a blocked comment', async () => {
+    const { deps, repo, git, github } = makeDeps({
+      extractTaskResult: async () => ({
+        ok: true,
+        result: {
+          commentId: 9001,
+          action: 'blocked',
+          replyBody: 'Cannot fix.',
+          blockedReason: 'out of scope',
+        },
+      }),
+    });
+    const runner = new PollTaskRunner(deps);
+
+    const out = await runner.execute(makeInput());
+
+    expect(out.action).toBe('blocked');
+    expect(out.blocked).toBe(true);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).toBe('blocked');
+    expect(github.repliesPosted).toHaveLength(1);
+    expect(git.pushes).toHaveLength(0);
+  });
+
+  it('forwards resultJsonPath from agent invocation to extractTaskResult', async () => {
+    let capturedResultJsonPath: string | undefined;
+    let capturedCwd = '';
+    const { deps, git, agent } = makeDeps({
+      extractTaskResult: async (input) => {
+        capturedResultJsonPath = input.resultJsonPath;
+        capturedCwd = input.cwd;
+        return {
+          ok: true,
+          result: { commentId: 9001, action: 'fixed', replyBody: 'done.' },
+        };
+      },
+    });
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'def456');
+      return makeSuccessAgentResult();
+    });
+    git.remoteRefs.set('origin/feat-x', 'def456');
+    git.ancestorResults.set('def456|def456', true);
+    git.logBetweenResults.set('abc123|def456', ['def456']);
+    const runner = new PollTaskRunner(deps);
+    const out = await runner.execute(makeInput());
+    expect(out.processed).toBe(true);
+    expect(capturedResultJsonPath).toBe('/tmp/result.json');
+    expect(capturedCwd).toBe('/work/tree');
+  });
+
+  it('returns buildError when verification fails due to build', async () => {
+    const { deps, git, agent } = makeDeps({
+      verifyBuildPasses: async () => ({ passed: false, error: 'tsc failed: TS2322' }),
+    });
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'newSha');
+      return makeSuccessAgentResult();
+    });
+    const runner = new PollTaskRunner(deps);
+    const output = await runner.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId,
+      pollNumber: 1,
+      comment: makeComment({ commitSha: 'newSha' }),
+      diff: '',
+      branch: 'feat-x',
+      startCommitSha: 'abc123',
+      unresolvedCommentCount: 1,
+    });
+    expect(output.processed).toBe(false);
+    expect(output.buildError).toBe('tsc failed: TS2322');
+    expect(output.action).toBe('fixed');
+    expect(git.pushes).toHaveLength(0);
+    expect(git.headByCwd.get('/work/tree')).toBe('abc123'); // reset to start SHA
+    expect(git.cleanUntrackedCalls).toContain('/work/tree');
+  });
+
+  it('returns codeVerifyReason when verification fails due to code change verification', async () => {
+    const { deps, git, agent, github } = makeDeps({
+      verifyCodeChange: async () => ({ pass: false, reason: 'unwanted change' }),
+    });
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'newSha');
+      return makeSuccessAgentResult();
+    });
+    const runner = new PollTaskRunner(deps);
+    const output = await runner.execute(makeInput());
+
+    expect(output.processed).toBe(false);
+    expect(output.codeVerifyReason).toBe('unwanted change');
+    expect(output.action).toBe('fixed');
+    expect(git.pushes).toHaveLength(0);
+    expect(github.repliesPosted).toHaveLength(0);
+    expect(git.headByCwd.get('/work/tree')).toBe('abc123'); // reset to start SHA
+    expect(git.cleanUntrackedCalls).toContain('/work/tree');
+  });
+
+  it('passes previousBuildError to renderTaskPrompt', async () => {
+    let capturedInput: Record<string, unknown> | undefined;
+    const { deps, git, agent } = makeDeps({
+      renderTaskPrompt: async (input) => {
+        capturedInput = input;
+        return '/tmp/prompt.md';
+      },
+      verifyBuildPasses: async () => ({ passed: false, error: 'build broke' }),
+    });
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'newSha');
+      return makeSuccessAgentResult();
+    });
+    const runner = new PollTaskRunner(deps);
+    await runner.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId,
+      pollNumber: 1,
+      comment: makeComment({ commitSha: 'newSha' }),
+      diff: '',
+      branch: 'feat-x',
+      startCommitSha: 'abc123',
+      unresolvedCommentCount: 1,
+      previousBuildError: 'previous error from attempt 1',
+    });
+    expect(capturedInput).toBeDefined();
+    expect((capturedInput as Record<string, unknown>).previousBuildError).toBe(
+      'previous error from attempt 1',
+    );
+  });
+});
+
+describe('PollTaskRunner — failure isolation', () => {
+  it('returns failed when agent invocation fails', async () => {
+    const { deps, agent } = makeDeps();
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', makeSuccessAgentResult({ outcome: 'error' }));
+
+    const runner = new PollTaskRunner(deps);
+    const out = await runner.execute(makeInput());
+
+    expect(out.action).toBe('failed');
+    expect(out.processed).toBe(false);
+  });
+
+  it('returns failed when result extraction fails', async () => {
+    const { deps } = makeDeps({
+      extractTaskResult: async () => ({ ok: false, reason: 'missing', detail: 'no file' }),
+    });
+    const runner = new PollTaskRunner(deps);
+
+    const out = await runner.execute(makeInput());
+
+    expect(out.action).toBe('failed');
+    expect(out.processed).toBe(false);
+  });
+
+  it('returns failed when result.commentId does not match input comment', async () => {
+    const { deps, github } = makeDeps({
+      extractTaskResult: async () => ({
+        ok: true,
+        result: { commentId: 9999, action: 'fixed', replyBody: 'Renamed.' },
+      }),
+    });
+    const runner = new PollTaskRunner(deps);
+
+    const out = await runner.execute(makeInput());
+
+    expect(out).toEqual({
+      commentId: 9001,
+      action: 'failed',
+      processed: false,
+      blocked: false,
+    });
+    expect(github.repliesPosted).toHaveLength(0);
+  });
+});
+
+describe('PollTaskRunner — timeout scaling', () => {
+  it('computes timeoutMs using min(30, 10 + 5 * N) * 60_000 formula', async () => {
+    const { deps, agent } = makeDeps();
+    const runner = new PollTaskRunner(deps);
+    await runner.execute(makeInput({ unresolvedCommentCount: 3 }));
+    expect(agent.invocations).toHaveLength(1);
+    // min(30, 10 + 5*3) = min(30, 25) = 25 → 25 * 60_000 = 1_500_000
+    expect(agent.invocations[0].timeoutMs).toBe(1_500_000);
+  });
+
+  it('caps timeout at 30 minutes for large comment counts', async () => {
+    const { deps, agent } = makeDeps();
+    const runner = new PollTaskRunner(deps);
+    await runner.execute(makeInput({ unresolvedCommentCount: 10 }));
+    expect(agent.invocations).toHaveLength(1);
+    // min(30, 10 + 5*10) = min(30, 60) = 30 → 30 * 60_000 = 1_800_000
+    expect(agent.invocations[0].timeoutMs).toBe(1_800_000);
+  });
+
+  it('uses 10-minute floor for 0 comments', async () => {
+    const { deps, agent } = makeDeps();
+    const runner = new PollTaskRunner(deps);
+    await runner.execute(makeInput({ unresolvedCommentCount: 0 }));
+    expect(agent.invocations).toHaveLength(1);
+    // min(30, 10 + 0) = 10 → 10 * 60_000 = 600_000
+    expect(agent.invocations[0].timeoutMs).toBe(600_000);
   });
 });

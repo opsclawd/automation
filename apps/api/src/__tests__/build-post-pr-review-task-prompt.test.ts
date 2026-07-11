@@ -4,13 +4,25 @@ import { buildPostPrReviewTaskPrompt } from '../compose.js';
 describe('buildPostPrReviewTaskPrompt', () => {
   const baseInput = {
     cwd: '/workspace/.ai-worktrees/issue-42',
-    comment: {
-      commentId: 1234,
-      path: 'apps/api/src/compose.ts',
-      line: 50,
-      body: 'Fix this logic error',
+    comments: [
+      {
+        commentId: 1234,
+        path: 'apps/api/src/compose.ts',
+        line: 50,
+        body: 'Fix this logic error',
+      },
+    ],
+    attempt: 1,
+    selectedContext: {
+      files: [],
+      hunks: [],
+      symbols: [],
+      expansionLevel: 1,
+      tierReasoning: 'Tier 1',
     },
     diff: 'diff --git a/apps/api/src/compose.ts b/apps/api/src/compose.ts\n...',
+    previousBuildError: undefined,
+    previousCodeVerifyReason: undefined,
   };
 
   it('renders the base prompt correctly and asserts no-push instructions', () => {
@@ -45,10 +57,11 @@ describe('buildPostPrReviewTaskPrompt', () => {
   it('includes previous build error and previous code verify reason when provided', () => {
     const inputWithErrors = {
       ...baseInput,
+      attempt: 2,
       previousBuildError: 'The previous fix attempt failed the build with an error',
       previousCodeVerifyReason: 'Previous Fix Rejected by Code Verifier - reasoning here',
     };
-    const prompt = buildPostPrReviewTaskPrompt(inputWithErrors);
+    const prompt = buildPostPrReviewTaskPrompt(inputWithErrors as any);
 
     expect(prompt).toContain('The previous fix attempt failed the build');
     expect(prompt).toContain('Previous Fix Rejected by Code Verifier');

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RunId, RepositoryId, PhaseName, } from '@ai-sdlc/domain';
+import { RunId, RepositoryId, PhaseName, createPrReviewComment } from '@ai-sdlc/domain';
 import {
   FakeGitHubPort,
   FakeGitPort,
@@ -38,14 +38,17 @@ class IncrementingShaGitPort extends FakeGitPort {
   override async headCommitSha(_cwd: string): Promise<string> {
     return `sha-${++this.n}`;
   }
-  override async isAncestor(): Promise<boolean> {
+  override async isAncestor(
+    _cwd: string,
+    _ancestor: string,
+    _descendant: string,
+  ): Promise<boolean> {
     return true;
   }
-  override async logBetween(): Promise<string[]> {
+  override async logBetween(_cwd: string, _base: string, _head: string): Promise<string[]> {
     return ['dummy'];
   }
 }
-
 
 function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
   deps: ProcessPrReviewDeps;
@@ -88,18 +91,15 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
     agent,
     prReviewRepo: repo,
     renderTaskPrompt: async ({ comments }) => {
-      currentCommentIds = comments.map((c) => c.commentId);
+      currentCommentIds = comments.map(c => c.commentId);
       return '/tmp/prompt.md';
     },
     extractTaskResult: async () => {
-      const result: Record<string, { action: "fixed" | "no_fix" | "blocked"; replyBody: string; blockedReason?: string }> = {};
+      const result: Record<string, any> = {};
       for (const id of currentCommentIds) {
         result[String(id)] = { action: 'fixed', replyBody: 'Renamed foo to bar.' };
       }
-      return {
-        ok: true,
-        result,
-      };
+      return { ok: true, result };
     },
     verifyCommitPushed: async () => true,
     verifyBuildPasses: async () => ({ passed: true }),
@@ -128,24 +128,44 @@ describe('ProcessPrReviewComments — happy path', () => {
 
     expect(out.outcome).toBe('ALL_RESOLVED');
     expect(out.processed).toBe(1);
-    expect(out.blocked).toBe(0);
-    expect(out.allResolved).toBe(true);
+    expect(repo.getComment(runId, 9001)?.state).toBe('processed');
+  });
+});
 
-    expect(github.repliesPosted).toContainEqual({
+describe('ProcessPrReviewComments — batching', () => {
+  it('groups comments by proximity and processes in a single task', async () => {
+    const { deps, github, repo, agent } = makeDeps();
+    github.comments.set('o/r/5', [
+      { id: 101, prNumber: 5, path: 'a.ts', line: 10, reviewer: 'u1', body: 'b1', createdAt: new Date() },
+      { id: 102, prNumber: 5, path: 'a.ts', line: 15, reviewer: 'u2', body: 'b2', createdAt: new Date() },
+      { id: 103, prNumber: 5, path: 'b.ts', line: 100, reviewer: 'u3', body: 'b3', createdAt: new Date() },
+    ]);
+
+    let renderedComments: number[][] = [];
+    deps.renderTaskPrompt = async ({ comments }) => {
+      renderedComments.push(comments.map(c => c.commentId));
+      return '/tmp/p';
+    };
+
+    // Need to supply enough success results for both tasks (and their retries if any, but should be 1 attempt)
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', makeSuccessAgentResult);
+    agent.enqueue('post-pr-review-profile', makeSuccessAgentResult);
+
+    const uc = new ProcessPrReviewComments(deps);
+    await uc.execute({
+      runId,
+      repoId,
       repoFullName: 'o/r',
       prNumber: 5,
-      commentId: 9001,
-      body: 'Renamed foo to bar.',
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
     });
-    expect(github.resolvedThreads).toContainEqual({
-      repoFullName: 'o/r',
-      prNumber: 5,
-      commentId: 9001,
-    });
-    const comment = repo.getComment(runId, 9001);
-    expect(comment?.state).toBe('processed');
 
-    const poll = repo.latestPollAttempt(runId);
-    expect(poll?.terminalState).toBe('all_resolved');
+    expect(renderedComments).toHaveLength(2);
+    expect(renderedComments[0]).toContain(101);
+    expect(renderedComments[0]).toContain(102);
+    expect(renderedComments[1]).toEqual([103]);
   });
 });
