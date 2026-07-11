@@ -9,6 +9,7 @@ import { wholePrReviewResultSchema } from './schemas/whole-pr-review.js';
 import { compoundResultSchema } from './schemas/compound.js';
 import { arbiterResultSchema } from './schemas/arbiter.js';
 import { fixValidateResultSchema } from './schemas/fix-validate.js';
+import { planFixResultSchema } from './schemas/plan-fix.js';
 
 export interface PhaseResultMeta {
   schema: ZodTypeAny;
@@ -96,5 +97,10 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
     schema: arbiterResultSchema,
     schemaContractText:
       '{\n  "outcome": "finding_invalid" | "finding_valid" | "ambiguous" | "insufficient_evidence",\n  "defect_classification"?: string,\n  "evidence": string,\n  "rationale": string\n}',
+  },
+  'plan-fix': {
+    schema: planFixResultSchema,
+    schemaContractText:
+      '{\n  "verdict": "done_with_fixes" | "done_no_fixes_needed" | "cannot_fix",\n  "summary": string,\n  "rebuttal"?: string\n}',
   },
 };

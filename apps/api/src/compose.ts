@@ -124,6 +124,9 @@ import {
   type SynthesizeFromTranscriptInput,
   type SynthesizeFromTranscriptPort as _SynthesizeFromTranscriptPort,
   arbiterResultSchema,
+  planFixResultSchema,
+  specReviewResultSchema,
+  qualityReviewResultSchema,
   extractResult,
   extractTaskBody,
   loadPromptTemplate,
@@ -799,15 +802,88 @@ export async function buildImplementStepFixPrompt(
   > => {
     try {
       const raw = await artifacts.read(runId, archive);
-      const parsed = JSON.parse(raw) as { findings?: unknown };
-      if (!Array.isArray(parsed.findings)) return [];
-      return parsed.findings.filter(
-        (f): f is { severity: string; summary: string; file?: string; suggested_fix?: string } =>
-          typeof f === 'object' &&
-          f !== null &&
-          typeof (f as { severity?: unknown }).severity === 'string' &&
-          typeof (f as { summary?: unknown }).summary === 'string',
-      );
+      const parsed = JSON.parse(raw);
+      const schema =
+        archive === SPEC_REVIEW_RESULT_ARTIFACT
+          ? specReviewResultSchema
+          : qualityReviewResultSchema;
+      const parsedResult = schema.safeParse(parsed);
+      if (parsedResult.success) {
+        return (parsedResult.data.findings || []).map((f) => {
+          const item: { severity: string; summary: string; file?: string; suggested_fix?: string } =
+            {
+              severity: f.severity,
+              summary: f.summary,
+            };
+          if (f.file !== undefined) {
+            item.file = f.file;
+          }
+          if (f.suggested_fix !== undefined) {
+            item.suggested_fix = f.suggested_fix;
+          }
+          return item;
+        });
+      }
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        'findings' in parsed &&
+        Array.isArray(parsed.findings)
+      ) {
+        const itemSchema = (
+          schema.shape.findings as {
+            _def: {
+              innerType: {
+                _def: {
+                  innerType: {
+                    element: {
+                      safeParse: (data: unknown) => {
+                        success: boolean;
+                        data: {
+                          severity: 'P0' | 'P1' | 'P2' | 'P3';
+                          summary: string;
+                          file?: string;
+                          suggested_fix?: string;
+                        };
+                      };
+                    };
+                  };
+                };
+              };
+            };
+          }
+        )._def.innerType._def.innerType.element;
+        const items: Array<{
+          severity: string;
+          summary: string;
+          file?: string;
+          suggested_fix?: string;
+        }> = [];
+        for (const f of parsed.findings) {
+          const itemResult = itemSchema.safeParse(f);
+          if (itemResult.success) {
+            const data = itemResult.data;
+            const item: {
+              severity: string;
+              summary: string;
+              file?: string;
+              suggested_fix?: string;
+            } = {
+              severity: data.severity,
+              summary: data.summary,
+            };
+            if (data.file !== undefined) {
+              item.file = data.file;
+            }
+            if (data.suggested_fix !== undefined) {
+              item.suggested_fix = data.suggested_fix;
+            }
+            items.push(item);
+          }
+        }
+        return items;
+      }
+      return [];
     } catch (err) {
       if (!(err instanceof ArtifactNotFoundError)) {
         // Swallow other errors so the fixer is never blocked by a malformed archive.
@@ -3408,27 +3484,37 @@ export function composeRoot(opts: ComposeOptions): Container {
             agentOutcome: invokeResult.outcome,
           };
         }
-        try {
-          const resultJson = await planReviewArtifacts(String(ctx.runId), ctx.cwd).read(
-            String(ctx.runId),
-            PLAN_FIX_RESULT_ARTIFACT,
-          );
-          const parsed = JSON.parse(resultJson) as {
-            verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
-            summary?: string;
-            rebuttal?: string;
-          };
-          return {
-            invocationId,
-            agentOutcome: 'success',
-            headBeforeFix: startCommitSha,
-            ...(parsed.verdict ? { verdict: parsed.verdict } : {}),
-            ...(parsed.summary ? { summary: parsed.summary } : {}),
-            ...(parsed.rebuttal ? { rebuttal: parsed.rebuttal } : {}),
-          };
-        } catch {
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        if (!inv) {
           return { invocationId, agentOutcome: 'failed' };
         }
+        const patched = inv.resultJsonPath
+          ? inv
+          : { ...inv, resultJsonPath: PLAN_FIX_RESULT_ARTIFACT };
+        const verdict = await extractResult({
+          invocation: patched,
+          ports: {
+            artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
+            agent: artifactAgent,
+            repair: structuredResultRepair,
+          },
+        });
+        if (!verdict.ok) {
+          return { invocationId, agentOutcome: 'failed' };
+        }
+        const parsed = planFixResultSchema.safeParse(verdict.result);
+        if (!parsed.success) {
+          return { invocationId, agentOutcome: 'failed' };
+        }
+        const data = parsed.data;
+        return {
+          invocationId,
+          agentOutcome: 'success',
+          headBeforeFix: startCommitSha,
+          verdict: data.verdict,
+          summary: data.summary,
+          ...('rebuttal' in data && data.rebuttal ? { rebuttal: data.rebuttal } : {}),
+        };
       };
 
       type PlanReviewArbiterResult = Awaited<

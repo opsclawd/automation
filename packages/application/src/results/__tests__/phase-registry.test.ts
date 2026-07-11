@@ -28,6 +28,7 @@ describe('PHASE_RESULT_REGISTRY', () => {
       'arbiter',
       'plan-review-arbiter',
       'implement-final-review-arbiter',
+      'plan-fix',
     ];
     expect(Object.keys(PHASE_RESULT_REGISTRY).sort()).toEqual([...expected].sort());
   });
@@ -45,6 +46,7 @@ describe('PHASE_RESULT_REGISTRY', () => {
     'arbiter',
     'plan-review-arbiter',
     'implement-final-review-arbiter',
+    'plan-fix',
   ])('phase %s has a schemaContractText string', (phase) => {
     expect(typeof PHASE_RESULT_REGISTRY[phase].schemaContractText).toBe('string');
     expect(PHASE_RESULT_REGISTRY[phase].schemaContractText.length).toBeGreaterThan(0);

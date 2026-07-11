@@ -10,6 +10,8 @@ export { qualityReviewResultSchema } from './schemas/quality-review.js';
 export type { QualityReviewResult } from './schemas/quality-review.js';
 export { fixReviewResultSchema } from './schemas/fix-review.js';
 export type { FixReviewResult } from './schemas/fix-review.js';
+export { planFixResultSchema } from './schemas/plan-fix.js';
+export type { PlanFixResult } from './schemas/plan-fix.js';
 export { createPrResultSchema } from './schemas/create-pr.js';
 export type { CreatePrResult } from './schemas/create-pr.js';
 export { postPrReviewResultSchema } from './schemas/post-pr-review.js';
