@@ -1308,41 +1308,37 @@ export function composeRoot(opts: ComposeOptions): Container {
     });
     const sweepResult = sweep.execute();
     if (sweepResult.swept > 0) {
-      console.error(
-        `Recovered ${sweepResult.swept} orphaned run(s) (${sweepResult.orphanedRuns.length} entries enqueued for recovery)`,
-      );
-    }
-
-    // Enqueue recovery jobs for any runs whose owning process died between
-    // the last serve-mode periodic sweep and this restart. The periodic
-    // sweep in serve mode (cli.ts) handles the steady-state case; this
-    // catches crashes that occurred while the orchestrator was offline.
-    if (sweepResult.orphanedRuns.length > 0) {
-      const orphanedSweeper = new OrphanedRunsSweeper({
-        runRepository,
-        leases: workerLeaseRepository,
-        queue: jobQueue,
-        eventBus,
-        now: () => new Date(),
-        logger: sweepLogger,
-      });
-      orphanedSweeper.execute(sweepResult.orphanedRuns).then(
-        (recoveryResult) => {
-          if (
-            recoveryResult.enqueued > 0 ||
-            recoveryResult.skippedLeaseConflict > 0 ||
-            recoveryResult.skippedAlreadyQueued > 0 ||
-            recoveryResult.enqueueErrors.length > 0
-          ) {
-            console.error(
-              `Orphan recovery: ${recoveryResult.enqueued} enqueued, ${recoveryResult.skippedLeaseConflict} skipped (lease conflict), ${recoveryResult.skippedAlreadyQueued} skipped (already queued), ${recoveryResult.enqueueErrors.length} errors`,
-            );
-          }
-        },
-        (err) => {
-          console.error('Orphan recovery sweep error:', err);
-        },
-      );
+      console.error(`Recovered ${sweepResult.swept} orphaned run(s); enqueuing resume jobs`);
+      if (sweepResult.orphanedRuns.length > 0) {
+        const orphanSweeper = new OrphanedRunsSweeper({
+          runRepository,
+          leases: workerLeaseRepository,
+          queue: jobQueue,
+          eventBus,
+          now: () => new Date(),
+          logger: sweepLogger,
+        });
+        orphanSweeper
+          .execute(sweepResult.orphanedRuns)
+          .then((orphanResult) => {
+            if (
+              orphanResult.enqueued > 0 ||
+              orphanResult.skippedLeaseConflict > 0 ||
+              orphanResult.skippedAlreadyQueued > 0 ||
+              orphanResult.enqueueErrors.length > 0
+            ) {
+              console.error(
+                `Orphan recovery: ${orphanResult.enqueued} enqueued, ${orphanResult.skippedLeaseConflict} skipped (lease), ${orphanResult.skippedAlreadyQueued} skipped (already queued), ${orphanResult.enqueueErrors.length} errors`,
+              );
+              for (const err of orphanResult.enqueueErrors) {
+                console.error(`  Orphan enqueue error in run ${err.runId}: ${err.error}`);
+              }
+            }
+          })
+          .catch((err) => {
+            console.error('Orphan recovery sweep error:', err);
+          });
+      }
     }
 
     // Sweep orphaned tmp dirs: remove .ai-tmp/<runId>/ where the runId
