@@ -46,6 +46,9 @@ plan.md
 design.md
 prompt.md
 plan-fix-result.json
+diff.txt
+*-diff.txt
+*.diff
 EOF
 }
 
