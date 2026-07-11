@@ -7,9 +7,8 @@ import {
   type RunId,
   type Run,
   type WorkerId,
-  type JobStatus,
 } from '@ai-sdlc/domain';
-import type { RunRepositoryPort, RepositoryPort } from './ports.js';
+import type { RunRepositoryPort } from './ports.js';
 import type { JobQueuePort, WorkerLeasePort } from './ports/index.js';
 import type { EventBusPort } from './ports/event-bus-port.js';
 import type { LoggerPort } from './ports/logger-port.js';
@@ -18,13 +17,10 @@ import type { SweepOrphanedRunEntry } from './sweep-orphaned-runs.js';
 const ORPHAN_RECOVERY_JOB_PRIORITY = 10;
 const LEASE_TTL_MS = 30_000;
 
-const IN_FLIGHT_JOB_STATUSES: ReadonlySet<JobStatus> = new Set(['queued', 'claimed', 'running']);
-
 export interface OrphanedRunsSweeperDeps {
   runRepository: RunRepositoryPort;
   leases: WorkerLeasePort;
   queue: JobQueuePort;
-  repos: RepositoryPort;
   eventBus: EventBusPort;
   now: () => Date;
   logger: LoggerPort;
@@ -34,8 +30,7 @@ export interface OrphanedRunsSweeperResult {
   scanned: number;
   enqueued: number;
   skippedLeaseConflict: number;
-  skippedJobInFlight: number;
-  terminalizedRepoDisabled: number;
+  skippedAlreadyQueued: number;
   enqueueErrors: Array<{ runId: string; error: string }>;
 }
 
@@ -47,60 +42,14 @@ export class OrphanedRunsSweeper {
       scanned: entries.length,
       enqueued: 0,
       skippedLeaseConflict: 0,
-      skippedJobInFlight: 0,
-      terminalizedRepoDisabled: 0,
+      skippedAlreadyQueued: 0,
       enqueueErrors: [],
     };
 
     for (const entry of entries) {
       const run = entry.run;
 
-      // Preflight: the repo may have been removed/disabled since the run
-      // was created. Enqueuing a job would just fail on enqueue
-      // (RepositoryNotApprovedError) and leave the run stuck in `failed`.
-      // Terminalize the run instead so the orphan sweep has an exit and
-      // findActiveRuns() stops returning it on subsequent ticks.
-      const repo = this.deps.repos.findById(run.repoId);
-      if (!repo || !repo.enabled) {
-        const reason = !repo
-          ? `orphaned sweep aborted: repository ${run.repoId} not found`
-          : `orphaned sweep aborted: repository ${run.repoId} is disabled`;
-        const terminalized = this.deps.runRepository.atomicUpdateByUuid(
-          run.uuid,
-          {
-            status: 'cancelled',
-            completedAt: this.deps.now(),
-            failureReason: reason,
-            currentPhase: null,
-          },
-          run.status,
-        );
-        if (terminalized) {
-          result.terminalizedRepoDisabled++;
-          try {
-            this.deps.eventBus.publish(run.uuid, {
-              runId: run.uuid,
-              level: 'warn',
-              type: 'orchestrator.run.terminalized_no_repo',
-              message: reason,
-              timestamp: this.deps.now().toISOString(),
-              metadata: { previousPid: entry.previousPid },
-            });
-          } catch (pubErr) {
-            this.deps.logger.error(
-              `OrphanedRunsSweeper: Failed to publish terminalize event for ${run.uuid}:`,
-              pubErr,
-            );
-          }
-        } else {
-          this.deps.logger.error(
-            `OrphanedRunsSweeper: run ${run.uuid} status changed concurrently while terminalizing (expected ${run.status})`,
-          );
-        }
-        continue;
-      }
-
-      // Lease guard: a live worker holds the lease for this repo. Skip —
+      // Lease guard: a live worker holds the lease for this repo. Skip -
       // the drain loop will pick up the run when the worker eventually
       // finishes or the lease expires.
       if (this.deps.leases.checkActiveLease(run.repoId, this.deps.now())) {
@@ -112,15 +61,10 @@ export class OrphanedRunsSweeper {
       }
 
       // Idempotency: another sweeper tick (or the same tick in another
-      // process) already enqueued an in-flight job for this run. We only
-      // treat in-flight jobs (queued/claimed/running) as blockers —
-      // terminal jobs (succeeded/failed/cancelled) don't prevent
-      // resumption.
-      const activeForRun = this.deps.queue
-        .listForRun(run.uuid as RunId)
-        .filter((job) => IN_FLIGHT_JOB_STATUSES.has(job.status));
+      // process) already enqueued a job for this run.
+      const activeForRun = this.deps.queue.listForRun(run.uuid as RunId);
       if (activeForRun.length > 0) {
-        result.skippedJobInFlight++;
+        result.skippedAlreadyQueued++;
         continue;
       }
 
