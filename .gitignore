@@ -54,6 +54,9 @@ task-*-complete.md
 # these patterns are belt-and-suspenders against per-task scratch leaking from worktree roots.
 /full_diff.patch
 /diff.patch
+/diff.txt
+/*-diff.txt
+/*.diff
 /review-plan-task-*.md
 /quality-review-task-*.md
 /quality-review-task-*.result
