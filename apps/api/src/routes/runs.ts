@@ -107,10 +107,11 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     const ctx = resolveRepoContext(
       { headers: req.headers, query: (req.query ?? {}) as Record<string, unknown> },
       c,
+      { allowFallback: false },
     );
     let repositoryId =
       ctx.repositoryId ?? (body.repositoryId ? RepositoryId(body.repositoryId) : undefined);
-    const fullName = ctx.fullName ?? body.repo;
+    const fullName = ctx.fullName ?? body.repo ?? c.repoFullName;
     if (!repositoryId && fullName) {
       try {
         const repo = c.inspectRepository.executeByFullName(fullName);
