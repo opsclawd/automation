@@ -174,6 +174,7 @@ import {
   ImplementArtifactGuard,
   SynthesizeFromTranscript,
   RepositoryRegistryRepository,
+  StructuredResultRepair,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import {
@@ -205,6 +206,7 @@ import {
   createPlanReviewEvidenceResolver,
   PLAN_REVIEW_FINDINGS_ARTIFACT,
   PLAN_FIX_RESULT_ARTIFACT,
+  buildPlanReviewFixPrompt,
 } from './plan-review-prompts.js';
 import { WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
 
@@ -1658,7 +1660,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       const agent = config.agent;
       // Non-optional local so the ReviewFixHandler closure below can reference it
       // without a guard (the outer `let` stays `| undefined` for other consumers).
-      const resolveProfileBound = (phaseName: string) => resolveProfileForPhase(agent, phaseName);
+      const resolveProfileBound = (phaseName: string) => {
+        try {
+          resolveProfileForPhase(agent, 'result-writer');
+        } catch {
+          throw new ConfigError("unknown phase 'result-writer'");
+        }
+        return resolveProfileForPhase(agent, phaseName);
+      };
       resolveProfileForPhaseBound = resolveProfileBound;
 
       const router = agentRuntime;
@@ -1698,6 +1707,18 @@ export function composeRoot(opts: ComposeOptions): Container {
         optionalArtifacts: optionalOrchestratorArtifacts,
       });
       const artifactAgent = capturingAgent ?? router;
+      let resultWriterProfile: string | undefined;
+      try {
+        resultWriterProfile = resolveProfileForPhase(agent, 'result-writer');
+      } catch {
+        // Do not throw during composeRoot so that tests lacking result-writer can construct the container.
+        // The check inside resolveProfileBound will still enforce failure before any semantic agent dispatch.
+      }
+      const structuredResultRepair = new StructuredResultRepair({
+        git: gitAdapter,
+        agent: artifactAgent,
+        ...(resultWriterProfile ? { repairProfile: resultWriterProfile } : {}),
+      });
       const reviewProfileName: string =
         config.agent.phaseProfiles['whole-pr-review']?.profile ?? 'opencode-frontier';
       const fixProfileName: string =
@@ -1769,7 +1790,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const verdict = patchedInv
           ? await readReviewVerdict(
               patchedInv,
-              { artifacts: store, agent: artifactAgent },
+              { artifacts: store, agent: artifactAgent, repair: structuredResultRepair },
               {
                 blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
               },
@@ -1833,6 +1854,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           fixFallbackProfileOverride?: string;
           extraPromptSections?: string[];
           historyContext?: string;
+          deterministicDiagnostic?: string;
         },
       ): Promise<FixStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
@@ -1849,6 +1871,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           architectPlan: opts.architectPlan,
           useFallback: opts.useFallback,
           extraPromptSections: opts.extraPromptSections,
+          deterministicDiagnostic: opts.deterministicDiagnostic,
         });
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -1890,7 +1913,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? { ...inv, resultJsonPath: 'result.json' }
             : inv;
         const verdict = patchedFixInv
-          ? await readFixVerdict(patchedFixInv, { artifacts: store, agent: artifactAgent })
+          ? await readFixVerdict(patchedFixInv, {
+              artifacts: store,
+              agent: artifactAgent,
+              repair: structuredResultRepair,
+            })
           : { ok: false as const, detail: 'no invocation row' };
         const shaAdvanced =
           result.endCommitSha !== undefined && result.endCommitSha !== startCommitSha;
@@ -2707,7 +2734,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         );
         const verdict = await readReviewVerdict(
           patched,
-          { artifacts, agent: artifactAgent },
+          { artifacts, agent: artifactAgent, repair: structuredResultRepair },
           { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
         );
         if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
@@ -2773,7 +2800,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const verdict = await readReviewVerdict(
           patched,
-          { artifacts, agent: artifactAgent },
+          { artifacts, agent: artifactAgent, repair: structuredResultRepair },
           { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
         );
         if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
@@ -2856,6 +2883,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const fixVerdict = await readFixVerdict(patched, {
           artifacts,
           agent: artifactAgent,
+          repair: structuredResultRepair,
         });
         return {
           invocationId,
@@ -2967,7 +2995,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
             const verdict = await extractResult({
               invocation: patched,
-              ports: { artifacts, agent: artifactAgent },
+              ports: { artifacts, agent: artifactAgent, repair: structuredResultRepair },
             });
             if (!verdict.ok) {
               return {
@@ -3093,7 +3121,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
             const verdict = await extractResult({
               invocation: patched,
-              ports: { artifacts, agent: artifactAgent },
+              ports: { artifacts, agent: artifactAgent, repair: structuredResultRepair },
             });
             if (!verdict.ok) {
               return {
@@ -3338,7 +3366,10 @@ export function composeRoot(opts: ComposeOptions): Container {
           },
           artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
         });
-        writeFileSync(promptPath, promptBody, 'utf-8');
+        const finalPrompt = buildPlanReviewFixPrompt(promptBody, {
+          deterministicDiagnostic: opts.manifestMismatch,
+        });
+        writeFileSync(promptPath, finalPrompt, 'utf-8');
 
         const startCommitSha = (() => {
           try {
@@ -3480,7 +3511,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
               const verdict = await extractResult({
                 invocation: patched,
-                ports: { artifacts, agent: artifactAgent },
+                ports: { artifacts, agent: artifactAgent, repair: structuredResultRepair },
               });
               if (!verdict.ok) {
                 return {
@@ -3577,7 +3608,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
             const verdict = await extractResult({
               invocation: patched,
-              ports: { artifacts, agent: artifactAgent },
+              ports: { artifacts, agent: artifactAgent, repair: structuredResultRepair },
             });
             if (!verdict.ok) {
               return {

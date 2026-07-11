@@ -15,6 +15,24 @@ export const PLAN_REVIEW_FINDINGS_ARTIFACT = 'plan-review-findings.md';
 export const PLAN_FIX_RESULT_ARTIFACT = 'plan-fix-result.json';
 export const PLAN_REVIEW_ARBITER_RESULT_ARTIFACT = 'plan-review-arbiter-result.json';
 
+export function buildPlanReviewFixPrompt(
+  basePrompt: string,
+  opts?: { deterministicDiagnostic?: string | undefined },
+): string {
+  if (!opts?.deterministicDiagnostic) return basePrompt;
+  return [
+    basePrompt,
+    '',
+    '## DETERMINISTIC DIAGNOSTIC',
+    'A deterministic failure or manifest mismatch was detected:',
+    '```',
+    opts.deterministicDiagnostic.slice(0, 8192),
+    '```',
+    '',
+    'You MUST resolve this deterministic failure before performing other work.',
+  ].join('\n');
+}
+
 async function readExcerpt(
   artifacts: ArtifactStore,
   runId: string,

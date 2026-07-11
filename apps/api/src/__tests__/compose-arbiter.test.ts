@@ -21,10 +21,10 @@ describe('compose runArbiter wiring', () => {
     const mod = await import('@ai-sdlc/application');
     const reg = (mod as Record<string, unknown>).PHASE_RESULT_REGISTRY as Record<
       string,
-      { retrySafe: boolean }
+      { schema: unknown }
     >;
     expect(reg.arbiter).toBeDefined();
-    expect(reg.arbiter!.retrySafe).toBe(true);
+    expect(reg.arbiter!.schema).toBeDefined();
   });
 
   it('buildArbiterPrompt writes a read-only prompt with all four outcomes', async () => {

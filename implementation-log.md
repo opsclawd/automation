@@ -11,3 +11,15 @@ Implemented the result coordinator and failure classification logic:
    - Replaced old retry matrix tests with compact tests verify repair/valid/thrown/terminal/mismatch scenarios.
    - Verified that no test references `retrySafe` or semantic reruns.
    - Run typecheck and verified packages/application test suite compiles and runs correctly.
+
+## Task 3: Wire all result-artifact consumers through composition
+
+Wired the structured result repair mechanisms and updated prompts/tests:
+1. **Result Repair Construction**: Constructed `StructuredResultRepair` using the role-aware resolver for `result-writer` profile. Passed the `gitAdapter` (git cleanup adapter) and `artifactAgent` (capturing agent) to it.
+2. **Coordinator Injection**: Injected the constructed `StructuredResultRepair` as `repair: structuredResultRepair` into every coordinator caller (`extractResult`, `readReviewVerdict`, and `readFixVerdict` invocations in `apps/api/src/compose.ts`).
+3. **Lazy Config Validation**: Implemented a lazy check for the `result-writer` profile inside `resolveProfileBound` to fail configuration before any semantic agent dispatch while letting container construction in non-agent tests pass.
+4. **Deterministic-Diagnostic Prompt Sections**: Added `deterministicDiagnostic` prompt section rendering to both plan-fix and review-fix prompts (`buildPlanReviewFixPrompt` and `buildReviewFixFixPrompt`).
+5. **Testing & Verification**:
+   - Created [compose-result-repair.test.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-720/apps/api/src/__tests__/compose-result-repair.test.ts) covering malformed JSON output, writer profile routing, and coordinator result extraction.
+   - Updated `compose-plan-review.test.ts` and `compose-arbiter.test.ts` to expect `schema` instead of `retrySafe`.
+   - Verified that `vitest`, `tsc`, `eslint`, and `depcruise` all run and pass successfully.

@@ -15,7 +15,7 @@ describe('plan-review compose wiring', () => {
   it('PHASE_RESULT_REGISTRY has plan-review-arbiter entry with arbiter schema', () => {
     const entry = PHASE_RESULT_REGISTRY['plan-review-arbiter'];
     expect(entry).toBeDefined();
-    expect(entry?.retrySafe).toBe(true);
+    expect(entry?.schema).toBeDefined();
   });
 
   it('PHASE_NAME_MIGRATION_MAP maps plan-review to null', () => {

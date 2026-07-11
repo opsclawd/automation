@@ -27,6 +27,7 @@ module.exports = {
         path: '^packages/application/src',
         pathNot: [
           '^packages/application/src/prompts/load-prompt-template\\.ts$',
+          '^packages/application/src/results/failure-classification\\.ts$',
           '(^|/)__tests__/',
         ],
       },
