@@ -883,8 +883,10 @@ describe('ImplementStepLoop', () => {
       expect(out.outcome).toBe('failed');
       // typecheck was called at least twice (pre-loop + iteration 2 re-run).
       expect(tcCalls).toBeGreaterThanOrEqual(2);
-      // spec + quality must NOT be skipped by the typecheck hard-fail of yore.
-      expect(specCalls).toBe(3);
+      // spec passes in iteration 1, marked clean, then skipped in subsequent
+      // iterations (dirty dimension tracking #723). quality stays dirty and
+      // runs every iteration since it keeps failing.
+      expect(specCalls).toBe(1);
       expect(qualCalls).toBe(3);
     });
 

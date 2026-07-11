@@ -46,16 +46,41 @@ export interface TypecheckResult {
   structuredErrors?: TypescriptError[];
 }
 
+export type ReviewMode = 'initial_full' | 'intermediate_delta' | 'final_full';
+
+export type DimensionName = 'spec' | 'quality';
+
+export type DimensionState = 'clean' | 'dirty' | 'recurred';
+
+export interface ReviewFindings {
+  findings: unknown[];
+}
+
+export interface ReviewSnapshot {
+  snapshot: string;
+}
+
+export interface ReviewScopeOptions {
+  mode: ReviewMode;
+  dimensions?: DimensionName[];
+}
+
 export interface SpecReviewResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
   verdict?: 'pass' | 'fail';
+  findings?: ReviewFindings;
+  snapshot?: ReviewSnapshot;
+  mode?: ReviewMode;
 }
 
 export interface QualityReviewResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
   verdict?: 'pass' | 'fail';
+  findings?: ReviewFindings;
+  snapshot?: ReviewSnapshot;
+  mode?: ReviewMode;
 }
 
 export interface FixResult {
@@ -169,13 +194,24 @@ export interface ImplementStepLoopOptions {
   bonusIteration?: boolean;
 }
 
+export interface ReviewState {
+  dirtyDimensions: Record<DimensionName, DimensionState>;
+  finalPairCandidateHead: string | undefined;
+  finalPairSnapshots: { spec: string | undefined; quality: string | undefined };
+}
+
 export interface ImplementStepLoopDeps {
   runImplement: (ctx: StepLoopContext, opts?: ImplementStepOptions) => Promise<ImplementResult>;
   runTypecheck: (ctx: StepLoopContext) => Promise<TypecheckResult>;
-  runSpecReview: (ctx: StepLoopContext, tcResult: TypecheckResult) => Promise<SpecReviewResult>;
+  runSpecReview: (
+    ctx: StepLoopContext,
+    tcResult: TypecheckResult,
+    scope: ReviewScopeOptions,
+  ) => Promise<SpecReviewResult>;
   runQualityReview: (
     ctx: StepLoopContext,
     tcResult: TypecheckResult,
+    scope: ReviewScopeOptions,
   ) => Promise<QualityReviewResult>;
   runFix: (ctx: StepLoopContext, opts: ImplementFixStepOptions) => Promise<FixResult>;
   implementProfile: AgentProfileName;
@@ -232,6 +268,11 @@ export interface ImplementStepLoopDeps {
    * omitted, defaults to `{ endOnReview: true }`.
    */
   options?: ImplementStepLoopOptions;
+  /**
+   * Review state for dimension-level tracking (#723). Tracks dirty dimensions
+   * and final pair state. The loop reads and updates this object in-place.
+   */
+  reviewState?: ReviewState;
 }
 
 export interface ImplementStepLoopInput {
