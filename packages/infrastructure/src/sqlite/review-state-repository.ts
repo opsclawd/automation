@@ -14,6 +14,12 @@ interface AttemptRow {
   scope: string;
   step: string;
   review_mode: string;
+  dimension: string;
+  snapshot_kind: string | null;
+  snapshot_identity: string | null;
+  snapshot_base_identity: string | null;
+  snapshot_captured_at: string | null;
+  verdict: string | null;
   created_at: string;
   artifacts_json: string;
 }
@@ -52,15 +58,25 @@ function rowToSnapshot(
 }
 
 function rowToAttempt(r: AttemptRow): ReviewAttempt {
-  return {
+  const snapshot = rowToSnapshot(
+    r.snapshot_kind,
+    r.snapshot_identity,
+    r.snapshot_base_identity,
+    r.snapshot_captured_at,
+  );
+  const result: ReviewAttempt = {
     attemptId: r.id,
     runId: r.run_uuid,
     scope: r.scope,
     step: r.step,
     reviewMode: r.review_mode as ReviewAttempt['reviewMode'],
+    dimension: r.dimension,
     createdAt: r.created_at,
     artifacts: JSON.parse(r.artifacts_json),
   };
+  if (snapshot) result.snapshot = snapshot;
+  if (r.verdict) result.verdict = r.verdict;
+  return result;
 }
 
 function rowToDimensionState(r: DimensionStateRow): ReviewDimensionState {
@@ -91,8 +107,12 @@ export class ReviewStateRepository implements ReviewStateRepositoryPort {
     this.db
       .prepare(
         `INSERT INTO review_attempts
-           (id, run_uuid, scope, step, review_mode, created_at, artifacts_json)
-         VALUES (@id, @run_uuid, @scope, @step, @review_mode, @created_at, @artifacts_json)`,
+           (id, run_uuid, scope, step, review_mode, dimension,
+            snapshot_kind, snapshot_identity, snapshot_base_identity, snapshot_captured_at,
+            verdict, created_at, artifacts_json)
+         VALUES (@id, @run_uuid, @scope, @step, @review_mode, @dimension,
+                 @snapshot_kind, @snapshot_identity, @snapshot_base_identity, @snapshot_captured_at,
+                 @verdict, @created_at, @artifacts_json)`,
       )
       .run({
         id: attempt.attemptId,
@@ -100,19 +120,25 @@ export class ReviewStateRepository implements ReviewStateRepositoryPort {
         scope: attempt.scope,
         step: attempt.step,
         review_mode: attempt.reviewMode,
+        dimension: attempt.dimension,
+        snapshot_kind: attempt.snapshot?.kind ?? null,
+        snapshot_identity: attempt.snapshot?.identity ?? null,
+        snapshot_base_identity: attempt.snapshot?.baseIdentity ?? null,
+        snapshot_captured_at: attempt.snapshot?.capturedAt ?? null,
+        verdict: attempt.verdict ?? null,
         created_at: attempt.createdAt,
         artifacts_json: JSON.stringify(attempt.artifacts),
       });
   }
 
-  listAttempts(runId: string, scope: string, step: string): ReviewAttempt[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM review_attempts
-         WHERE run_uuid = ? AND scope = ? AND step = ?
-         ORDER BY created_at ASC`,
-      )
-      .all(runId, scope, step) as AttemptRow[];
+  listAttempts(runId: string, scope: string, step: string, dimension?: string): ReviewAttempt[] {
+    const baseQuery = `SELECT * FROM review_attempts
+         WHERE run_uuid = ? AND scope = ? AND step = ?`;
+    const query = dimension
+      ? `${baseQuery} AND dimension = ? ORDER BY created_at ASC`
+      : `${baseQuery} ORDER BY created_at ASC`;
+    const params = dimension ? [runId, scope, step, dimension] : [runId, scope, step];
+    const rows = this.db.prepare(query).all(...params) as AttemptRow[];
     return rows.map(rowToAttempt);
   }
 

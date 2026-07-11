@@ -2,7 +2,7 @@ import type { ReviewAttempt, ReviewDimensionState } from '../review-state/types.
 
 export interface ReviewStateRepositoryPort {
   appendAttempt(attempt: ReviewAttempt): void;
-  listAttempts(runId: string, scope: string, step: string): ReviewAttempt[];
+  listAttempts(runId: string, scope: string, step: string, dimension?: string): ReviewAttempt[];
   upsertDimensionState(
     runId: string,
     scope: string,

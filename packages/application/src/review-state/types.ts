@@ -41,6 +41,9 @@ export interface ReviewAttempt {
   scope: string;
   step: string;
   reviewMode: ReviewMode;
+  dimension: string;
+  snapshot?: ReviewSnapshot;
+  verdict?: string;
   createdAt: string;
   artifacts: string[];
 }

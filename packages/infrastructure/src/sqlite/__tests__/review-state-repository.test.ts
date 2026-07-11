@@ -22,6 +22,7 @@ describe('ReviewStateRepository', () => {
         scope: 'review',
         step: 'plan-review',
         reviewMode: 'initial_full',
+        dimension: 'quality',
         createdAt: t0,
         artifacts: ['artifact1.txt'],
       });
@@ -34,6 +35,7 @@ describe('ReviewStateRepository', () => {
         scope: 'review',
         step: 'plan-review',
         reviewMode: 'initial_full',
+        dimension: 'quality',
         createdAt: t0,
         artifacts: ['artifact1.txt'],
       });
@@ -53,6 +55,7 @@ describe('ReviewStateRepository', () => {
         scope: 'review',
         step: 'plan-review',
         reviewMode: 'intermediate_delta',
+        dimension: 'quality',
         createdAt: t1,
         artifacts: [],
       });
@@ -62,6 +65,7 @@ describe('ReviewStateRepository', () => {
         scope: 'review',
         step: 'plan-review',
         reviewMode: 'initial_full',
+        dimension: 'quality',
         createdAt: t0,
         artifacts: [],
       });
@@ -71,6 +75,7 @@ describe('ReviewStateRepository', () => {
         scope: 'review',
         step: 'plan-review',
         reviewMode: 'final_full',
+        dimension: 'quality',
         createdAt: t2,
         artifacts: [],
       });
@@ -87,6 +92,7 @@ describe('ReviewStateRepository', () => {
         scope: 'review',
         step: 'plan-review',
         reviewMode: 'initial_full',
+        dimension: 'quality',
         createdAt: t0,
         artifacts: [],
       });
@@ -96,6 +102,7 @@ describe('ReviewStateRepository', () => {
         scope: 'review',
         step: 'implement',
         reviewMode: 'initial_full',
+        dimension: 'quality',
         createdAt: t0,
         artifacts: [],
       });
@@ -105,6 +112,7 @@ describe('ReviewStateRepository', () => {
         scope: 'review',
         step: 'plan-review',
         reviewMode: 'initial_full',
+        dimension: 'quality',
         createdAt: t0,
         artifacts: [],
       });

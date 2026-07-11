@@ -2,7 +2,11 @@ import type { ReviewAttempt, ReviewDimensionState } from '../review-state/types.
 import type { ReviewStateRepositoryPort } from '../ports/review-state-repository-port.js';
 
 function cloneAttempt(a: ReviewAttempt): ReviewAttempt {
-  return { ...a, artifacts: [...a.artifacts] };
+  return {
+    ...a,
+    artifacts: [...a.artifacts],
+    ...(a.snapshot ? { snapshot: { ...a.snapshot } } : {}),
+  };
 }
 
 function cloneState(s: ReviewDimensionState): ReviewDimensionState {
@@ -27,9 +31,15 @@ export class FakeReviewStateRepository implements ReviewStateRepositoryPort {
     this.attempts.push(cloneAttempt(attempt));
   }
 
-  listAttempts(runId: string, scope: string, step: string): ReviewAttempt[] {
+  listAttempts(runId: string, scope: string, step: string, dimension?: string): ReviewAttempt[] {
     return this.attempts
-      .filter((a) => a.runId === runId && a.scope === scope && a.step === step)
+      .filter(
+        (a) =>
+          a.runId === runId &&
+          a.scope === scope &&
+          a.step === step &&
+          (dimension ? a.dimension === dimension : true),
+      )
       .map(cloneAttempt)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }

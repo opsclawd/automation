@@ -37,14 +37,14 @@ describe('migration 0025 — review state', () => {
 
     const rows = db
       .prepare(
-        `SELECT id, run_uuid, scope, step, review_mode, created_at, artifacts_json FROM review_attempts`,
+        `SELECT id, run_uuid, scope, step, review_mode, dimension, created_at, artifacts_json FROM review_attempts`,
       )
       .all();
     expect(rows).toHaveLength(0);
 
     db.prepare(
-      `INSERT INTO review_attempts (id, run_uuid, scope, step, review_mode, created_at, artifacts_json)
-       VALUES ('attempt-1', 'run-1', 'review', 'plan-review', 'initial_full', '2026-07-01T00:00:00Z', '["artifact1.txt"]')`,
+      `INSERT INTO review_attempts (id, run_uuid, scope, step, review_mode, dimension, created_at, artifacts_json)
+       VALUES ('attempt-1', 'run-1', 'review', 'plan-review', 'initial_full', 'quality', '2026-07-01T00:00:00Z', '["artifact1.txt"]')`,
     ).run();
 
     const row = db.prepare(`SELECT * FROM review_attempts WHERE id = 'attempt-1'`).get() as {
@@ -53,12 +53,14 @@ describe('migration 0025 — review state', () => {
       scope: string;
       step: string;
       review_mode: string;
+      dimension: string;
       artifacts_json: string;
     };
     expect(row.run_uuid).toBe('run-1');
     expect(row.scope).toBe('review');
     expect(row.step).toBe('plan-review');
     expect(row.review_mode).toBe('initial_full');
+    expect(row.dimension).toBe('quality');
     expect(JSON.parse(row.artifacts_json)).toEqual(['artifact1.txt']);
     db.close();
   });
