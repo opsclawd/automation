@@ -1309,6 +1309,10 @@ export function composeRoot(opts: ComposeOptions): Container {
     const sweepResult = sweep.execute();
     if (sweepResult.swept > 0) {
       console.error(`Recovered ${sweepResult.swept} orphaned run(s); enqueuing resume jobs`);
+      // Enqueue recovery jobs for any runs whose owning process died between
+      // the last serve-mode periodic sweep and this restart. The periodic
+      // sweep in serve mode (cli.ts) handles the steady-state case; this
+      // catches crashes that occurred while the orchestrator was offline.
       if (sweepResult.orphanedRuns.length > 0) {
         const orphanSweeper = new OrphanedRunsSweeper({
           runRepository,
