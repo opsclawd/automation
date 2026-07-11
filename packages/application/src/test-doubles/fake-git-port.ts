@@ -52,7 +52,7 @@ export class FakeGitPort implements GitPort {
     return `1 file changed (stat for ${cwd} ${base}..${head ?? 'HEAD'})`;
   }
 
-  async addAll(cwd: string): Promise<void> {
+  async addAll(_cwd: string): Promise<void> {
     // No-op for now, could track calls if needed
   }
 
