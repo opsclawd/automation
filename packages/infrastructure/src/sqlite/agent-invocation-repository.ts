@@ -21,6 +21,7 @@ interface AgentInvocationUpdatePatch {
   resultJsonPath?: string;
   stdoutPath?: string;
   stderrPath?: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface Row {
@@ -181,6 +182,13 @@ export class AgentInvocationRepository {
     if (patch.stderrPath !== undefined) {
       setClauses.push('stderr_path = @stderrPath');
       params.stderrPath = patch.stderrPath;
+    }
+    if (patch.metadata !== undefined) {
+      const existing = this.findById(id);
+      if (!existing) throw new Error(`AgentInvocation ${id} not found`);
+      const merged = { ...(existing.metadata ?? {}), ...patch.metadata };
+      setClauses.push('metadata = @metadata');
+      params.metadata = JSON.stringify(merged);
     }
     if (setClauses.length === 0) return;
     const result = this.db

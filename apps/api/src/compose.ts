@@ -1821,6 +1821,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         })
           .toString()
           .trim();
+        const isSemanticRetry = ctx.iterationIndex > 1;
         const result = await artifactAgent.invoke({
           profile: AgentProfileName(reviewProfileName),
           promptPath,
@@ -1832,8 +1833,17 @@ export function composeRoot(opts: ComposeOptions): Container {
           startCommitSha,
           metadata: {
             iteration: ctx.iterationIndex,
-            invocation_type: 'initial',
+            invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
           },
+          ...(isSemanticRetry
+            ? {
+                retryIntent: {
+                  normalizedPhase: 'whole-pr-review',
+                  classification: 'semantic',
+                  relevantArtifactPaths: ['result.json', 'code-review.md'],
+                },
+              }
+            : {}),
         });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
@@ -1938,6 +1948,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         })
           .toString()
           .trim();
+        const isDeterministic = !!opts.deterministicDiagnostic;
+        const isSemanticRetry = ctx.iterationIndex > 1 && !opts.useFallback && !isDeterministic;
         const result = await artifactAgent.invoke({
           profile: AgentProfileName(profile),
           promptPath,
@@ -1959,8 +1971,21 @@ export function composeRoot(opts: ComposeOptions): Container {
             : {
                 metadata: {
                   iteration: ctx.iterationIndex,
-                  invocation_type: 'initial',
+                  invocation_type: isDeterministic
+                    ? 'deterministic_fix'
+                    : isSemanticRetry
+                      ? 'semantic_retry'
+                      : 'initial',
                 },
+                ...(isSemanticRetry
+                  ? {
+                      retryIntent: {
+                        normalizedPhase: 'fix-review',
+                        classification: 'semantic',
+                        relevantArtifactPaths: ['result.json'],
+                      },
+                    }
+                  : {}),
               }),
         });
         const invocationId = newestInvocationId(String(ctx.runId));
@@ -2430,6 +2455,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         );
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+        const isDeterministic = !!opts?.typecheckErrors;
+        const isSemanticRetry = ctx.iterationIndex > 1 && !opts?.useFallback && !isDeterministic;
         let result;
         try {
           result = await artifactAgent.invoke({
@@ -2455,8 +2482,21 @@ export function composeRoot(opts: ComposeOptions): Container {
                   metadata: {
                     implementation_task_number: ctx.stepIndex,
                     iteration: ctx.iterationIndex,
-                    invocation_type: ctx.metadata?.invocation_type ?? 'initial',
+                    invocation_type: isDeterministic
+                      ? 'deterministic_fix'
+                      : isSemanticRetry
+                        ? 'semantic_retry'
+                        : 'initial',
                   },
+                  ...(isSemanticRetry
+                    ? {
+                        retryIntent: {
+                          normalizedPhase: 'implement',
+                          classification: 'semantic',
+                          relevantArtifactPaths: ['implementation-log.md'],
+                        },
+                      }
+                    : {}),
                 }),
           });
         } catch (err) {
@@ -2754,6 +2794,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const reviewPrompt = buildSpecReviewPrompt(ctx, typecheckSection, implReport);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+        const isSemanticRetry = ctx.iterationIndex > 1;
         let result;
         try {
           result = await artifactAgent.invoke({
@@ -2768,8 +2809,17 @@ export function composeRoot(opts: ComposeOptions): Container {
             metadata: {
               implementation_task_number: ctx.stepIndex,
               iteration: ctx.iterationIndex,
-              invocation_type: 'initial',
+              invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
             },
+            ...(isSemanticRetry
+              ? {
+                  retryIntent: {
+                    normalizedPhase: 'spec-review',
+                    classification: 'semantic',
+                    relevantArtifactPaths: ['result.json'],
+                  },
+                }
+              : {}),
           });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -2819,6 +2869,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const reviewPrompt = buildQualityReviewPrompt(ctx, typecheckSection);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+        const isSemanticRetry = ctx.iterationIndex > 1;
         let result;
         try {
           result = await artifactAgent.invoke({
@@ -2833,8 +2884,17 @@ export function composeRoot(opts: ComposeOptions): Container {
             metadata: {
               implementation_task_number: ctx.stepIndex,
               iteration: ctx.iterationIndex,
-              invocation_type: 'initial',
+              invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
             },
+            ...(isSemanticRetry
+              ? {
+                  retryIntent: {
+                    normalizedPhase: 'quality-review',
+                    classification: 'semantic',
+                    relevantArtifactPaths: ['result.json'],
+                  },
+                }
+              : {}),
           });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -2894,6 +2954,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+        const isDeterministic = !!opts.typecheckErrors;
+        const isSemanticRetry = ctx.iterationIndex > 1 && !isDeterministic;
         let invokeResult;
         try {
           invokeResult = await artifactAgent.invoke({
@@ -2919,8 +2981,21 @@ export function composeRoot(opts: ComposeOptions): Container {
                   metadata: {
                     implementation_task_number: ctx.stepIndex,
                     iteration: ctx.iterationIndex,
-                    invocation_type: 'initial',
+                    invocation_type: isDeterministic
+                      ? 'deterministic_fix'
+                      : isSemanticRetry
+                        ? 'semantic_retry'
+                        : 'initial',
                   },
+                  ...(isSemanticRetry
+                    ? {
+                        retryIntent: {
+                          normalizedPhase: 'fix-review',
+                          classification: 'semantic',
+                          relevantArtifactPaths: ['result.json'],
+                        },
+                      }
+                    : {}),
                 }),
           });
         } catch (err) {
@@ -3329,6 +3404,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         })();
 
+        const isSemanticRetry = ctx.iterationIndex > 1;
         let invokeResult;
         try {
           invokeResult = await artifactAgent.invoke({
@@ -3342,8 +3418,17 @@ export function composeRoot(opts: ComposeOptions): Container {
             startCommitSha,
             metadata: {
               iteration: ctx.iterationIndex,
-              invocation_type: 'initial',
+              invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
             },
+            ...(isSemanticRetry
+              ? {
+                  retryIntent: {
+                    normalizedPhase: 'plan-review',
+                    classification: 'semantic',
+                    relevantArtifactPaths: [PLAN_REVIEW_FINDINGS_ARTIFACT],
+                  },
+                }
+              : {}),
           });
         } catch {
           return {
@@ -3441,6 +3526,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         })();
 
+        const isDeterministic = !!opts.manifestMismatch;
+        const isSemanticRetry = ctx.iterationIndex > 1 && !isDeterministic;
         let invokeResult;
         try {
           invokeResult = await artifactAgent.invoke({
@@ -3454,8 +3541,21 @@ export function composeRoot(opts: ComposeOptions): Container {
             startCommitSha,
             metadata: {
               iteration: ctx.iterationIndex,
-              invocation_type: 'initial',
+              invocation_type: isDeterministic
+                ? 'deterministic_fix'
+                : isSemanticRetry
+                  ? 'semantic_retry'
+                  : 'initial',
             },
+            ...(isSemanticRetry
+              ? {
+                  retryIntent: {
+                    normalizedPhase: 'plan-fix',
+                    classification: 'semantic',
+                    relevantArtifactPaths: [PLAN_FIX_RESULT_ARTIFACT, 'plan.md'],
+                  },
+                }
+              : {}),
           });
         } catch {
           return { invocationId: '', agentOutcome: 'failed' };

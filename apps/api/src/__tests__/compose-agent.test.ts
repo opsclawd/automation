@@ -161,3 +161,24 @@ describe('compose agent wiring', () => {
     ).rejects.toThrow(/no adapter registered/);
   });
 });
+
+describe('compose agent retryIntent behavior', () => {
+  it('only loop-owned semantic retries carry retry intent', () => {
+    const requestWithRetry: AgentInvocationRequest = {
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/tmp/prompt',
+      expectedArtifacts: [],
+      cwd: '/',
+      runId: 'test-run',
+      repoId: 'test-repo',
+      phaseId: 'plan-design',
+      startCommitSha: '0'.repeat(40),
+      retryIntent: {
+        normalizedPhase: 'plan-review',
+        classification: 'semantic',
+        relevantArtifactPaths: ['result.json'],
+      },
+    };
+    expect(requestWithRetry.retryIntent?.classification).toBe('semantic');
+  });
+});

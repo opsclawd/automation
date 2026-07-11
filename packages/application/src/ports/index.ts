@@ -31,6 +31,7 @@ export type {
   AgentInvocationOutcome,
   AgentInvocationRequest,
   AgentInvocationResult,
+  SemanticRetryIntent,
 } from './agent-invocation-types.js';
 export { AgentProfileName } from './agent-invocation-types.js';
 export { CONTRACT_VIOLATION_CODES } from './contract-violation-codes.js';

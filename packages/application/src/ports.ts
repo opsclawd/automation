@@ -170,6 +170,7 @@ export type {
   AgentInvocationOutcome,
   AgentInvocationRequest,
   AgentInvocationResult,
+  SemanticRetryIntent,
 } from './ports/agent-invocation-types.js';
 export { AgentProfileName } from './ports/agent-invocation-types.js';
 export { CONTRACT_VIOLATION_CODES } from './ports/contract-violation-codes.js';

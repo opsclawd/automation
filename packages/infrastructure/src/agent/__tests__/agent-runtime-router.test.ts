@@ -1302,4 +1302,134 @@ describe('fallback event triggerDetail', () => {
     expect(detail.length).toBe(201); // 200 chars + '…' (1 char)
     expect(detail.endsWith('…')).toBe(true);
   });
+
+  describe('duplicate semantic retry suppression', () => {
+    it('suppresses duplicate semantic retry and does not invoke adapter', async () => {
+      const invRepo = new FakeAgentInvocationPort();
+      let adapterCalls = 0;
+      const mockAdapter: AgentPort = {
+        async invoke(_req) {
+          adapterCalls++;
+          return {
+            runtime: 'opencode',
+            provider: 'anthropic',
+            model: 'm',
+            exitCode: 0,
+            durationMs: 10,
+            stdoutPath: '/tmp/stdout',
+            stderrPath: '/tmp/stderr',
+            contractViolations: [],
+            outcome: 'success',
+          };
+        },
+      };
+
+      const tmp = join(tmpdir(), `suppress-test-${randomUUID()}`);
+      mkdirSync(tmp, { recursive: true });
+      writeFileSync(join(tmp, 'art1.txt'), 'content-1');
+
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: mockAdapter },
+        invocationRepository: invRepo,
+        clock: () => FIXED_NOW,
+        idFactory: () => `inv-${adapterCalls}`,
+        readPromptContent: () => 'prompt content',
+      });
+
+      const firstReq = req({
+        cwd: tmp,
+        retryIntent: {
+          normalizedPhase: 'plan-design',
+          classification: 'semantic',
+          relevantArtifactPaths: ['art1.txt'],
+        },
+      });
+
+      // 1. First invocation should call adapter
+      const res1 = await router.invoke(firstReq);
+      expect(res1.outcome).toBe('success');
+      expect(adapterCalls).toBe(1);
+
+      // 2. Second invocation with identical retry intent and artifact content should be suppressed
+      const res2 = await router.invoke({
+        ...firstReq,
+        retryIntent: {
+          normalizedPhase: 'plan-design',
+          classification: 'semantic',
+          relevantArtifactPaths: ['art1.txt'],
+        },
+      });
+      expect(res2.outcome).toBe('duplicate_retry_suppressed');
+      expect(adapterCalls).toBe(1); // adapterCalls still 1
+
+      rmSyncFs(tmp, { recursive: true, force: true });
+    });
+
+    it('allows dispatch when the retry identity changes', async () => {
+      const invRepo = new FakeAgentInvocationPort();
+      let adapterCalls = 0;
+      const mockAdapter: AgentPort = {
+        async invoke(_req) {
+          adapterCalls++;
+          return {
+            runtime: 'opencode',
+            provider: 'anthropic',
+            model: 'm',
+            exitCode: 0,
+            durationMs: 10,
+            stdoutPath: '/tmp/stdout',
+            stderrPath: '/tmp/stderr',
+            contractViolations: [],
+            outcome: 'success',
+          };
+        },
+      };
+
+      const tmp = join(tmpdir(), `suppress-test-${randomUUID()}`);
+      mkdirSync(tmp, { recursive: true });
+      const artPath = join(tmp, 'art1.txt');
+      writeFileSync(artPath, 'content-1');
+
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: mockAdapter },
+        invocationRepository: invRepo,
+        clock: () => FIXED_NOW,
+        idFactory: () => `inv-${adapterCalls}`,
+        readPromptContent: () => 'prompt content',
+      });
+
+      const firstReq = req({
+        cwd: tmp,
+        retryIntent: {
+          normalizedPhase: 'plan-design',
+          classification: 'semantic',
+          relevantArtifactPaths: ['art1.txt'],
+        },
+      });
+
+      // 1. First invocation
+      const res1 = await router.invoke(firstReq);
+      expect(res1.outcome).toBe('success');
+      expect(adapterCalls).toBe(1);
+
+      // 2. Change file content
+      writeFileSync(artPath, 'content-2');
+
+      // 3. Second invocation should NOT be suppressed because content changed
+      const res2 = await router.invoke({
+        ...firstReq,
+        retryIntent: {
+          normalizedPhase: 'plan-design',
+          classification: 'semantic',
+          relevantArtifactPaths: ['art1.txt'],
+        },
+      });
+      expect(res2.outcome).toBe('success');
+      expect(adapterCalls).toBe(2);
+
+      rmSyncFs(tmp, { recursive: true, force: true });
+    });
+  });
 });

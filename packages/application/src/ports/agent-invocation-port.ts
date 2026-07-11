@@ -16,6 +16,7 @@ export interface AgentInvocationUpdatePatch {
   resultJsonPath?: string;
   stdoutPath?: string;
   stderrPath?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface AgentInvocationPort {
