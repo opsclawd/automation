@@ -28,6 +28,8 @@ export interface ImplementResult {
 
 export interface ImplementStepOptions {
   typecheckErrors?: TypescriptError[] | string;
+  useFallback?: boolean;
+  previousInvocationId?: string;
 }
 
 export interface TypescriptError {
@@ -176,6 +178,8 @@ export interface ImplementStepLoopDeps {
     tcResult: TypecheckResult,
   ) => Promise<QualityReviewResult>;
   runFix: (ctx: StepLoopContext, opts: ImplementFixStepOptions) => Promise<FixResult>;
+  implementProfile: AgentProfileName;
+  implementFallbackProfile?: AgentProfileName;
   runArbiter?: (
     ctx: StepLoopContext,
     tcResult: TypecheckResult,

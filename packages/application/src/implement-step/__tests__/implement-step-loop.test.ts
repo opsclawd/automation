@@ -118,6 +118,7 @@ function makeDeps(over: Partial<ImplementStepLoopDeps>): ImplementStepLoopDeps {
     }),
     loops: new FakeLoopRepository(),
     events: bus,
+    implementProfile: AgentProfileName('opencode-frontier'),
     fixProfile: AgentProfileName('pi-qwen-local'),
     fixFallbackProfile: AgentProfileName('opencode-frontier'),
     now: () => new Date('2026-06-17T00:00:00.000Z'),
@@ -246,6 +247,39 @@ describe('ImplementStepLoop', () => {
     expect(out.loop.status).toBe('failed');
     expect(out.loop.iterations).toHaveLength(1);
     expect(out.loop.iterations[0]?.outcome).toBe('failed');
+  });
+
+  it('escalates to fallback profile when the initial implement call fails', async () => {
+    const { events, bus } = collectEvents();
+    let implementCalls = 0;
+    const implementCallOptions: ImplementStepOptions[] = [];
+    const deps = makeDeps({
+      events: bus,
+      implementProfile: AgentProfileName('primary-impl'),
+      implementFallbackProfile: AgentProfileName('fallback-impl'),
+      runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
+        implementCalls += 1;
+        implementCallOptions.push(opts ?? {});
+        if (implementCalls === 1) {
+          return { invocationId: 'impl-1', agentOutcome: 'failed' as const };
+        }
+        return { invocationId: 'impl-2', agentOutcome: 'success' as const };
+      },
+    });
+
+    const out = await new ImplementStepLoop(deps).execute(baseInput());
+
+    expect(out.outcome).toBe('success');
+    expect(implementCalls).toBe(2);
+    expect(implementCallOptions[0]?.useFallback).toBeUndefined();
+    expect(implementCallOptions[1]?.useFallback).toBe(true);
+    expect(implementCallOptions[1]?.previousInvocationId).toBe('impl-1');
+
+    const esc = events.filter((e) => e.type === 'phase.fallback.escalated');
+    expect(esc).toHaveLength(1);
+    expect(esc[0]?.metadata.triggerReason).toBe('implement_failed');
+    expect(esc[0]?.metadata.fromProfile).toBe('primary-impl');
+    expect(esc[0]?.metadata.toProfile).toBe('fallback-impl');
   });
 
   it('exhausts and fails when reviews never pass within maxIterations', async () => {
