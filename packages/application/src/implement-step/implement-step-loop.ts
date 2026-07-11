@@ -4,6 +4,7 @@ import {
   completeIteration,
   exhaust,
   updateOpenIteration,
+  AgentProfileName,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
@@ -18,6 +19,8 @@ import type {
   FixResult,
   ImplementStepHistoryEntry,
   ArbiterResult,
+  ImplementResult,
+  ImplementStepOptions,
 } from './types.js';
 import { verifyFixCommit, type FixCommitVerification } from '../fix-commit-verifier.js';
 
@@ -240,7 +243,7 @@ export class ImplementStepLoop {
     };
 
     // --- PRE-LOOP: IMPLEMENT ---
-    const implementResult = await deps.runImplement({
+    const implementResult = await this.runImplementWithFallback(input, {
       ...baseCtx,
       metadata: {
         implementation_task_number: input.stepIndex,
@@ -328,7 +331,8 @@ export class ImplementStepLoop {
         },
       );
 
-      const retryImplementResult = await deps.runImplement(
+      const retryImplementResult = await this.runImplementWithFallback(
+        input,
         {
           ...baseCtx,
           metadata: {
@@ -659,7 +663,12 @@ export class ImplementStepLoop {
       const escalateForFixFailures = consecutiveFixFailures >= 2;
       const useFallback = escalateForFixFailures && deps.fixFallbackProfile !== undefined;
       if (useFallback) {
-        this.emitEscalation(input, 'two_consecutive_fix_failures');
+        this.emitEscalation(
+          input,
+          'two_consecutive_fix_failures',
+          deps.fixProfile,
+          deps.fixFallbackProfile!,
+        );
       }
 
       // --- TRAILING RE-REVIEW SHORT-CIRCUIT (#680) ---
@@ -1386,11 +1395,39 @@ export class ImplementStepLoop {
     );
   }
 
-  private emitEscalation(input: ImplementStepLoopInput, triggerReason: string): void {
+  private async runImplementWithFallback(
+    input: ImplementStepLoopInput,
+    ctx: StepLoopContext,
+    opts?: ImplementStepOptions,
+  ): Promise<ImplementResult> {
     const { deps } = this;
-    const toProfile = deps.fixFallbackProfile!;
-    this.emit(input, 'phase.fallback.escalated', 'warn', `escalating fix to ${toProfile}`, {
-      fromProfile: deps.fixProfile as unknown as string,
+    const result = await deps.runImplement(ctx, opts);
+
+    if (result.agentOutcome !== 'success' && deps.implementFallbackProfile) {
+      this.emitEscalation(
+        input,
+        'implement_failed',
+        deps.implementProfile,
+        deps.implementFallbackProfile,
+      );
+      return deps.runImplement(ctx, {
+        ...opts,
+        useFallback: true,
+        previousInvocationId: result.invocationId,
+      });
+    }
+
+    return result;
+  }
+
+  private emitEscalation(
+    input: ImplementStepLoopInput,
+    triggerReason: string,
+    fromProfile: AgentProfileName,
+    toProfile: AgentProfileName,
+  ): void {
+    this.emit(input, 'phase.fallback.escalated', 'warn', `escalating phase to ${toProfile}`, {
+      fromProfile: fromProfile as unknown as string,
       toProfile: toProfile as unknown as string,
       triggerReason,
       triggerOwner: 'use_case',

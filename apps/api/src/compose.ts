@@ -2216,6 +2216,8 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const implementProfileName: string =
         config.agent.phaseProfiles['implement']?.profile ?? 'opencode-frontier';
+      const implementFallbackProfileName: string | undefined =
+        config.agent.phaseProfiles['implement']?.fallbackProfile;
       const specReviewProfileName: string =
         config.agent.phaseProfiles['spec-review']?.profile ?? 'opencode-frontier';
       const qualityReviewProfileName: string =
@@ -2267,6 +2269,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         ctx: StepLoopContext & { manifest: TaskManifest; planMd: string },
         opts?: ImplementStepOptions,
       ) => {
+        const fallbackProfile = implementFallbackProfileName;
+        const primaryProfile = implementProfileName;
+        const profile = opts?.useFallback && fallbackProfile ? fallbackProfile : primaryProfile;
+
         const run = runRepository.findByUuid(String(ctx.runId));
         const runDir = run?.displayId ?? String(ctx.runId);
         const issueNumber = run?.issueNumber ?? 0;
@@ -2343,7 +2349,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         let result;
         try {
           result = await artifactAgent.invoke({
-            profile: AgentProfileName(implementProfileName),
+            profile: AgentProfileName(profile),
             promptPath,
             expectedArtifacts: ['implementation-log.md'],
             cwd: ctx.cwd,
@@ -2351,11 +2357,23 @@ export function composeRoot(opts: ComposeOptions): Container {
             repoId: ctx.repoId,
             phaseId: 'implement',
             startCommitSha,
-            metadata: {
-              implementation_task_number: ctx.stepIndex,
-              iteration: ctx.iterationIndex,
-              invocation_type: 'initial',
-            },
+            ...(opts?.useFallback && opts.previousInvocationId
+              ? {
+                  fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
+                  fallbackReason: 'use_case_escalation',
+                  metadata: {
+                    implementation_task_number: ctx.stepIndex,
+                    iteration: ctx.iterationIndex,
+                    invocation_type: 'fallback',
+                  },
+                }
+              : {
+                  metadata: {
+                    implementation_task_number: ctx.stepIndex,
+                    iteration: ctx.iterationIndex,
+                    invocation_type: ctx.metadata?.invocation_type ?? 'initial',
+                  },
+                }),
           });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -3110,6 +3128,10 @@ export function composeRoot(opts: ComposeOptions): Container {
           : {}),
         loops: loopRepository,
         events: persistingEventBusForLoop,
+        implementProfile: AgentProfileName(implementProfileName),
+        ...(implementFallbackProfileName
+          ? { implementFallbackProfile: AgentProfileName(implementFallbackProfileName) }
+          : {}),
         fixProfile: AgentProfileName(implFixProfileName),
         ...(implFixFallbackProfileName
           ? { fixFallbackProfile: AgentProfileName(implFixFallbackProfileName) }
