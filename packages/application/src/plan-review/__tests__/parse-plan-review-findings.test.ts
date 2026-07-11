@@ -73,6 +73,38 @@ describe('parsePlanReviewFindings', () => {
     });
   });
 
+  it('accepts a pass verdict that lists findings resolved on this pass', () => {
+    const markdown = buildMarkdown(
+      '## verdict',
+      'pass',
+      '',
+      '## findings',
+      '- [P1] `plan.md:28-34` | The migration ordering bug | grounded | addressed',
+      '- [P2] `task-manifest.json:Task 9` | The error mapping mismatch | grounded | rebutted',
+      '',
+    );
+
+    expect(parsePlanReviewFindings(markdown)).toEqual({
+      verdict: 'pass',
+      findings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:28-34',
+          failureScenario: 'The migration ordering bug',
+          evidence: 'grounded',
+          disposition: 'addressed',
+        },
+        {
+          severity: 'P2',
+          citation: 'task-manifest.json:Task 9',
+          failureScenario: 'The error mapping mismatch',
+          evidence: 'grounded',
+          disposition: 'rebutted',
+        },
+      ],
+    });
+  });
+
   it.each([
     [
       'missing verdict section',
@@ -93,8 +125,17 @@ describe('parsePlanReviewFindings', () => {
       ),
     ],
     [
-      'pass verdict with findings rejected',
+      'pass verdict with an undispositioned finding rejected',
       buildMarkdown('## verdict', 'pass', '## findings', '- [P2] `plan.md:1` | defect | grounded'),
+    ],
+    [
+      'pass verdict with a still_open finding rejected',
+      buildMarkdown(
+        '## verdict',
+        'pass',
+        '## findings',
+        '- [P1] `plan.md:1` | defect | grounded | still_open',
+      ),
     ],
     ['p1_found with no findings rejected', buildMarkdown('## verdict', 'p1_found', '## findings')],
     [
