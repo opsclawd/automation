@@ -715,11 +715,11 @@ export class ImplementStepLoop {
           dirtyDimensions = markDimensionClean(dirtyDimensions, 'spec');
         } else if (specReview.verdict === 'fail') {
           isInFinalPair = false;
-          const hasNewEvidence = (specReview.findings?.findings?.length ?? 0) > 0;
+          const prevState = dirtyDimensions.spec;
           dirtyDimensions = markDimensionDirty(
             dirtyDimensions,
             'spec',
-            hasNewEvidence ? 'dirty' : 'recurred',
+            prevState === 'dirty' ? 'recurred' : 'dirty',
           );
         }
         persistReviewState();
@@ -829,11 +829,11 @@ export class ImplementStepLoop {
           dirtyDimensions = markDimensionClean(dirtyDimensions, 'quality');
         } else if (qualityReview.verdict === 'fail') {
           isInFinalPair = false;
-          const hasNewEvidence = (qualityReview.findings?.findings?.length ?? 0) > 0;
+          const prevState = dirtyDimensions.quality;
           dirtyDimensions = markDimensionDirty(
             dirtyDimensions,
             'quality',
-            hasNewEvidence ? 'dirty' : 'recurred',
+            prevState === 'dirty' ? 'recurred' : 'dirty',
           );
         }
         persistReviewState();
@@ -908,6 +908,7 @@ export class ImplementStepLoop {
             'quality',
           );
           persistReviewState();
+          continue;
         } else {
           // HEAD stable - check snapshots match
           const specSnapshot = specReview.snapshot?.snapshot ?? '';
