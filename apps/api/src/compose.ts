@@ -745,6 +745,14 @@ export function buildQualityReviewPrompt(
     'You MUST use your file-write tool to create result.json on disk. Printing the',
     'JSON in your chat response instead of writing the file is a contract violation —',
     'the orchestrator only reads the file, never your response text.',
+    '',
+    '## JSON ESCAPING WARNING',
+    'When writing the `suggested_fix` or `summary` strings, you MUST ensure valid',
+    'JSON escaping. Specifically, backticks (`) and template-literal syntax (${...})',
+    'are NOT valid JSON escape sequences. If you need to include a backtick in a',
+    'JSON string, use the raw character (`) — do NOT escape it with a backslash.',
+    'Only escape double quotes ("), backslashes (\\), and control characters as',
+    'required by the JSON spec.',
   ].join('\n');
 }
 

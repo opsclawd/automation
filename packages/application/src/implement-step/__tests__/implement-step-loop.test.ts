@@ -2820,6 +2820,45 @@ describe('ImplementStepLoop', () => {
       expect(arbiterCalls).toBe(1);
     });
   });
+
+  describe('quality-review retry', () => {
+    it('retries on contract_violation and succeeds on attempt 2', async () => {
+      let qualityCalls = 0;
+      const deps = makeDeps({
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          qualityCalls += 1;
+          if (qualityCalls === 1) {
+            return { invocationId: 'qr-1', agentOutcome: 'contract_violation' as const };
+          }
+          return {
+            invocationId: 'qr-2',
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      // Expectation BEFORE FIX: outcome: 'failed', iterations: 1, qualityCalls: 1
+      // Expectation AFTER FIX: outcome: 'success', iterations: 1, qualityCalls: 2
+      expect(out.outcome).toBe('success');
+      expect(qualityCalls).toBe(2);
+    });
+
+    it('hard fails after all 3 quality-review attempts fail (exhaustion)', async () => {
+      let qualityCalls = 0;
+      const deps = makeDeps({
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          qualityCalls += 1;
+          return { invocationId: `qr-${qualityCalls}`, agentOutcome: 'timeout' as const };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('failed');
+      expect(out.loop.status).toBe('failed');
+      expect(out.loop.iterations[0]?.outcome).toBe('failed');
+      expect(qualityCalls).toBe(3);
+    });
+  });
 });
 
 describe('ImplementStepLoop auto-commit fallback', () => {
