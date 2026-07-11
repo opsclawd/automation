@@ -46,6 +46,13 @@ export class OrphanedRunsSweeper {
       enqueueErrors: [],
     };
 
+    // Snapshot active jobs once so the per-entry idempotency check is
+    // O(1) instead of an O(N) query per entry.
+    const activeRuns = new Set<RunId>();
+    for (const job of this.deps.queue.listActive()) {
+      activeRuns.add(job.runId);
+    }
+
     for (const entry of entries) {
       const run = entry.run;
 
@@ -62,8 +69,7 @@ export class OrphanedRunsSweeper {
 
       // Idempotency: another sweeper tick (or the same tick in another
       // process) already enqueued a job for this run.
-      const activeForRun = this.deps.queue.listForRun(run.uuid as RunId);
-      if (activeForRun.length > 0) {
+      if (activeRuns.has(run.uuid as RunId)) {
         result.skippedAlreadyQueued++;
         continue;
       }
@@ -147,13 +153,12 @@ export class OrphanedRunsSweeper {
             `OrphanedRunsSweeper: Enqueue failed for run ${run.uuid}, rolling back to failed:`,
             err,
           );
-          const enqueueError = err instanceof Error ? err.message : String(err);
           const rolled = this.deps.runRepository.atomicUpdateByUuid(
             run.uuid,
             {
               status: 'failed',
-              completedAt: this.deps.now(),
-              failureReason: enqueueError,
+              completedAt: run.completedAt ?? null,
+              failureReason: run.failureReason ?? null,
               currentPhase: null,
             },
             'running',

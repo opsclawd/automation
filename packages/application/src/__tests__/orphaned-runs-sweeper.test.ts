@@ -136,7 +136,7 @@ describe('OrphanedRunsSweeper', () => {
     const failed = makeFailedRun('o4');
     runRepo.addRun(failed);
     // Pre-existing active job for the same runId (simulating a re-enqueue attempt)
-    vi.spyOn(queue, 'listForRun').mockReturnValueOnce([
+    vi.spyOn(queue, 'listActive').mockReturnValueOnce([
       {
         id: 'existing-job' as never,
         runId: 'o4' as never,
@@ -166,6 +166,8 @@ describe('OrphanedRunsSweeper', () => {
 
   it('rolls back status to failed when enqueue throws after the status flip', async () => {
     const failed = makeFailedRun('o5');
+    const originalCompletedAt = failed.completedAt;
+    const originalFailureReason = failed.failureReason;
     runRepo.addRun(failed);
     vi.spyOn(queue, 'enqueue').mockImplementationOnce(() => {
       throw new Error('enqueue DB write failed');
@@ -185,6 +187,9 @@ describe('OrphanedRunsSweeper', () => {
     expect(result.enqueued).toBe(0);
     expect(result.enqueueErrors).toHaveLength(1);
     expect(result.enqueueErrors[0]!.error).toBe('enqueue DB write failed');
-    expect(runRepo.findByUuid('o5')?.status).toBe('failed');
+    const after = runRepo.findByUuid('o5');
+    expect(after?.status).toBe('failed');
+    expect(after?.completedAt).toEqual(originalCompletedAt);
+    expect(after?.failureReason).toBe(originalFailureReason);
   });
 });
