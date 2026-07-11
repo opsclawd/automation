@@ -62,5 +62,12 @@ task-*-complete.md
 /fix-review-task-*.md
 /fix-review-task-*.result
 /implementation-log.md
+/implementation-log-task-*.md
+/task-context-step-*.md
+/plan.md
+/design.md
+/prompt.md
+/compound.md
+/plan-fix-result.json
 /validate/
 

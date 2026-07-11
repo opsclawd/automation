@@ -1,8 +1,0 @@
-applied: 1
-resolved: 1
-pushed: 1cb4981
-threads:
-  - id: 3260280995
-    action: fixed
-    summary: 'Agent exiting 0 with no valid result file now emits agent.failed (reason=no_result_file) instead of agent.completed'
-    reply_id: 3260352462
