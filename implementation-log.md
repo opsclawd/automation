@@ -1,16 +1,15 @@
-# Implementation Log - Task 3
+# Implementation Log - Task 4
 
-## Extended RunRepositoryPort and SqliteRunRepository
+## What was implemented
+1. **Extended `RepositoryRegistryRepository`**:
+   - Implemented the full `RepositoryPort` interface (which includes `findById`, `findByFullName`, `findByLocalPath`, `listAll`, and `listEnabled`).
+   - Added database querying and domain-mapping helper (`rowToRepository`) to convert SQLite `repositories` table rows to `Repository` entities.
+2. **Added Tests**:
+   - Wrote unit tests in `packages/infrastructure/src/sqlite/__tests__/repository-registry-repository.test.ts` to verify `findByFullName` (finding a repository and returning undefined for missing ones) and `listEnabled` (retrieving only enabled repositories ordered by creation date).
 
-- **Ports Extended**:
-  - Defined `ListRunsFilter` type with optional `limit`, `offset`, `repositoryId`, and `status`.
-  - Added `list(filter?: ListRunsFilter)` method signature to `RunRepositoryPort` interface in `packages/application/src/ports.ts`.
-  - Re-exported `ListRunsFilter` in `packages/application/src/ports/index.ts`.
-- **Test Double Updated**:
-  - Implemented the `list` method in `FakeRunRepository` (`packages/application/src/test-doubles/fake-run-repository.ts`) with repositoryId, status, sorting, and pagination filtering.
-- **Adapter Updated**:
-  - Updated `list(filter?: ListRunsFilter)` in `RunRepository` (`packages/infrastructure/src/sqlite/run-repository.ts`) to query database filtering by `repo_id` and `status` when supplied.
-  - Made `toRecord` robust to parse missing JSON columns (`completed_phases` and `skipped_phases`) safely when querying in memory mock databases.
-- **Tests Added & Verified**:
-  - Added a new unit test suite `SqliteRunRepository.list filtering` to `packages/infrastructure/src/sqlite/__tests__/run-repository.test.ts`.
-  - Verified tests initially fail, and subsequently pass after updates.
+## Verification Results
+- All unit tests in `packages/infrastructure/src/sqlite/__tests__/repository-registry-repository.test.ts` passed successfully.
+- `pnpm -r build` completed successfully.
+- `pnpm -r typecheck` completed successfully.
+- `pnpm lint` completed successfully with no errors or warnings.
+- `pnpm -r test` completed successfully (108 tests passed).
