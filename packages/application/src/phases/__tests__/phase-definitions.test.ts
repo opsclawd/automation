@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import type { PhaseName } from '@ai-sdlc/domain';
-import { PHASE_RESULT_REGISTRY, PHASE_NAME_MIGRATION_MAP } from '../../results/phase-registry.js';
 import {
   CANONICAL_PHASE_ORDER,
   PHASE_DEFINITIONS,
@@ -202,20 +201,6 @@ describe('phase definitions registry', () => {
   });
 
   describe('cross-phase consistency', () => {
-    it('retrySafety agrees between PHASE_DEFINITIONS and PHASE_RESULT_REGISTRY for overlapping phases', () => {
-      const phaseToResultKey: Record<string, string> = {};
-      for (const [phase, resultKey] of Object.entries(PHASE_NAME_MIGRATION_MAP)) {
-        if (resultKey) phaseToResultKey[phase] = resultKey;
-      }
-      for (const phaseName of CANONICAL_PHASE_ORDER) {
-        const resultKey = phaseToResultKey[phaseName as string];
-        if (!resultKey) continue;
-        const defRetry = PHASE_DEFINITIONS[phaseName]!.retrySafety;
-        const regRetry = PHASE_RESULT_REGISTRY[resultKey]!.retrySafe;
-        expect(defRetry === 'safe' ? regRetry === true : regRetry === false).toBe(true);
-      }
-    });
-
     it('every required input of every phase is produced by some earlier phase', () => {
       const produced = new Set<string>();
       for (const name of CANONICAL_PHASE_ORDER) {

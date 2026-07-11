@@ -22,6 +22,7 @@ export interface BuildFixPromptInput {
   architectPlan?: ArchitectPlan | undefined;
   useFallback: boolean;
   extraPromptSections?: string[] | undefined;
+  deterministicDiagnostic?: string | undefined;
 }
 
 export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): string {
@@ -132,6 +133,19 @@ export function buildReviewFixFixPrompt(input: BuildFixPromptInput): string {
 
   if (input.historyContext) {
     sections.push(input.historyContext);
+  }
+
+  if (input.deterministicDiagnostic) {
+    sections.push(
+      '## DETERMINISTIC DIAGNOSTIC',
+      'A deterministic failure or manifest mismatch was detected:',
+      '```',
+      input.deterministicDiagnostic.slice(0, 8192),
+      '```',
+      '',
+      'You MUST resolve this deterministic failure before performing other work.',
+      '',
+    );
   }
 
   sections.push(

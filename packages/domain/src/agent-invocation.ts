@@ -1,7 +1,12 @@
 import type { AgentInvocationId, PhaseName, RunId } from './ids.js';
 import type { AgentProfileName, AgentRuntimeKind } from './agent-types.js';
 
-export type AgentInvocationOutcome = 'success' | 'failed' | 'timeout' | 'contract_violation';
+export type AgentInvocationOutcome =
+  | 'success'
+  | 'failed'
+  | 'timeout'
+  | 'contract_violation'
+  | 'duplicate_retry_suppressed';
 
 export interface AgentInvocation {
   id: AgentInvocationId;

@@ -743,34 +743,42 @@ exit 1
     expect(result.loop.iterations).toHaveLength(1);
   });
 
-  it('ReviewFixLoop passes gate failure output to runReview on iteration 2', async () => {
+  it('ReviewFixLoop routes gate failure directly to fixer, bypassing reviewer', async () => {
     const bus = {
       publish: (_runUuid: string, _event: OrchestratorEvent) => {},
       subscribe: () => () => {},
     };
-    const receivedGateResults: Array<PostFixGateResult | undefined> = [];
     let reviewCalls = 0;
+    let fixCalls = 0;
+    const fixOptions: FixStepOptions[] = [];
+    let gateCalls = 0;
 
     const fixLoop = new ReviewFixLoop({
-      runPostFixGate: async (): Promise<PostFixGateResult> => ({
-        outcome: 'fail',
-        output: 'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
-      }),
-      runReview: async (_ctx, opts) => {
+      runPostFixGate: async (): Promise<PostFixGateResult> => {
+        gateCalls += 1;
+        // Fail on first call (iteration 2), pass on second call (iteration 3)
+        return {
+          outcome: gateCalls === 1 ? 'fail' : 'pass',
+          output: 'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
+        };
+      },
+      runReview: async () => {
         reviewCalls += 1;
-        const gateResult = opts && 'gateResult' in opts ? opts.gateResult : opts;
-        receivedGateResults.push(gateResult);
         return {
           invocationId: `review-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
         };
       },
-      runFix: async () => ({
-        invocationId: 'fix-1',
-        agentOutcome: 'success' as const,
-        verdict: 'done_with_fixes' as const,
-      }),
+      runFix: async (ctx, opts) => {
+        fixCalls += 1;
+        fixOptions.push(opts);
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        };
+      },
       runRevalidation: async () => ({
         validationRunId: 'reval-1',
         passed: true,
@@ -792,12 +800,16 @@ exit 1
     });
 
     expect(result.phaseOutcome).toBe('passed');
-    expect(receivedGateResults[0]).toBeUndefined();
-    expect(receivedGateResults[1]).toEqual({
-      outcome: 'fail',
-      output: 'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
-    });
-    expect(reviewCalls).toBe(3);
+    // Iteration 1: Review Fail -> Fix (standard)
+    // Iteration 2: Gate fails -> Bypasses reviewer, calls Fixer (deterministic)
+    // Iteration 3: Gate passes -> Reviewer called (returns pass) -> Resolved!
+    expect(reviewCalls).toBe(2); // Only called in Iteration 1 and 3, not 2
+    expect(fixCalls).toBe(2);
+    expect(fixOptions[0]!.attemptKind).toBeUndefined(); // Standard fix
+    expect(fixOptions[1]!.attemptKind).toBe('deterministic'); // Deterministic fix
+    expect(fixOptions[1]!.deterministicDiagnostic).toBe(
+      'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
+    );
   });
 
   it('removes per-run tmp dir after a failed run completes', async () => {

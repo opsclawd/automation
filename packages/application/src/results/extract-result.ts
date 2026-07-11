@@ -1,17 +1,15 @@
-import type { AgentInvocation } from '@ai-sdlc/domain';
-import { PHASE_RESULT_REGISTRY } from './phase-registry.js';
-import type { ArtifactStore, AgentPort } from '../ports.js';
+import type { AgentInvocation, AgentInvocationId } from '@ai-sdlc/domain';
+import { PHASE_RESULT_REGISTRY, normalizePhaseId, type PhaseResultMeta } from './phase-registry.js';
+import type { ArtifactStore, StructuredResultRepairPort } from '../ports.js';
 import { ArtifactNotFoundError } from '../ports.js';
 import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
-import type {
-  AgentInvocationRequest,
-  AgentInvocationResult,
-} from '../ports/agent-invocation-types.js';
+import { hasEvidence } from './failure-classification.js';
 
 export type ExtractResultOutcome<T = unknown> =
-  | { ok: true; result: T; rerunResult?: AgentInvocationResult }
+  | { ok: true; result: T; repairInvocationId?: AgentInvocationId }
   | {
       ok: false;
+      classification: 'serialization_artifact' | 'unrecoverable_artifact';
       reason: 'missing' | 'invalid';
       detail: string;
       violationCode:
@@ -20,26 +18,34 @@ export type ExtractResultOutcome<T = unknown> =
         | typeof CONTRACT_VIOLATION_CODES.ARTIFACT_READ_ERROR;
     };
 
-export interface RerunContext {
-  cwd: string;
-  repoId: string;
-}
-
 export interface ExtractResultInput {
   invocation: AgentInvocation;
   ports: {
     artifacts: ArtifactStore;
-    agent: AgentPort;
+    repair?: StructuredResultRepairPort | undefined;
+    agent?: unknown;
   };
-  rerunContext?: RerunContext;
+  cwd?: string | undefined;
+  rerunContext?: { cwd: string; [key: string]: unknown } | undefined;
 }
 
 async function readAndValidate(
   runId: string,
   resultJsonPath: string | undefined,
-  meta: { schema: import('zod').ZodTypeAny },
+  meta: PhaseResultMeta,
   ports: { artifacts: ArtifactStore },
-): Promise<ExtractResultOutcome> {
+): Promise<
+  | { ok: true; result: unknown }
+  | {
+      ok: false;
+      reason: 'missing' | 'invalid';
+      detail: string;
+      violationCode:
+        | typeof CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON
+        | typeof CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT
+        | typeof CONTRACT_VIOLATION_CODES.ARTIFACT_READ_ERROR;
+    }
+> {
   if (!resultJsonPath) {
     return {
       ok: false,
@@ -89,36 +95,10 @@ async function readAndValidate(
   return { ok: true, result: result.data };
 }
 
-function buildRetryRequest(
-  invocation: AgentInvocation,
-  ctx: RerunContext,
-  fallbackReason: string,
-): AgentInvocationRequest {
-  return {
-    profile: invocation.profile,
-    promptPath: invocation.promptPath,
-    expectedArtifacts: ['result.json'],
-    cwd: ctx.cwd,
-    runId: invocation.runId as unknown as string,
-    repoId: ctx.repoId,
-    phaseId: invocation.phaseId as unknown as string,
-    ...(invocation.stepId ? { stepId: invocation.stepId } : {}),
-    startCommitSha: invocation.startCommitSha,
-    fallbackOfInvocationId: invocation.id,
-    fallbackReason,
-    metadata: {
-      ...invocation.metadata,
-      invocation_type: 'extraction_repair',
-    },
-  };
-}
-
 export async function extractResult(input: ExtractResultInput): Promise<ExtractResultOutcome> {
-  const { invocation, ports, rerunContext } = input;
-  // Normalize dynamic phase IDs like "fix-validate-1" → "fix-validate"
-  // so iteration-suffixed invocations resolve against the registry.
+  const { invocation, ports } = input;
   const rawPhase = invocation.phaseId as string;
-  const phase = rawPhase.replace(/-\d+$/, '');
+  const phase = normalizePhaseId(rawPhase);
   if (!Object.hasOwn(PHASE_RESULT_REGISTRY, phase)) {
     throw new Error(`no result schema registered for phase '${invocation.phaseId}'`);
   }
@@ -126,32 +106,63 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
 
   const runId = invocation.runId as unknown as string;
   const initial = await readAndValidate(runId, invocation.resultJsonPath, meta, ports);
-  if (initial.ok) return initial;
-
-  if (!meta.retrySafe) {
+  if (initial.ok) {
     return initial;
   }
 
-  // Skip rerun when initial invocation has no result path - deterministic failure
-  // rather than burning tokens on LLM retry.
-  if (!invocation.resultJsonPath || !rerunContext) {
-    return initial;
-  }
+  const hasEv = hasEvidence(invocation.stdoutPath);
+  const classification = hasEv ? 'serialization_artifact' : 'unrecoverable_artifact';
 
-  let rerunResult: AgentInvocationResult;
-  try {
-    rerunResult = await ports.agent.invoke(
-      buildRetryRequest(invocation, rerunContext, initial.violationCode),
-    );
-  } catch (e) {
+  if (classification === 'unrecoverable_artifact' || !ports.repair) {
     return {
-      ok: false,
-      reason: initial.reason,
-      detail: `rerun invoke failed: ${(e as Error)?.message ?? String(e)}`,
-      violationCode: initial.violationCode,
+      ...initial,
+      classification,
     };
   }
 
-  const rerunOutcome = await readAndValidate(runId, rerunResult.resultJsonPath, meta, ports);
-  return rerunOutcome.ok ? { ...rerunOutcome, rerunResult } : rerunOutcome;
+  // We have evidence and ports.repair is available: perform repair.
+  let rawText = '';
+  if (invocation.resultJsonPath) {
+    try {
+      rawText = await ports.artifacts.read(runId, invocation.resultJsonPath);
+    } catch {
+      // Ignore
+    }
+  }
+
+  const cwd = input.cwd ?? input.rerunContext?.cwd ?? '';
+  const repairResult = await ports.repair.repairStructuredResult({
+    runId,
+    cwd,
+    normalizedPhase: phase,
+    destination: invocation.resultJsonPath || 'result.json',
+    schemaContractText: meta.schemaContractText,
+    cappedRawArtifact: rawText,
+    transcriptEvidence: '',
+    expectedHead: invocation.startCommitSha,
+    classification: initial.violationCode,
+    primaryInvocation: {
+      id: invocation.id,
+      stdoutPath: invocation.stdoutPath,
+      stderrPath: invocation.stderrPath,
+    },
+  });
+
+  if (repairResult.outcome === 'repaired') {
+    const repaired = await readAndValidate(runId, invocation.resultJsonPath, meta, ports);
+    if (repaired.ok) {
+      return {
+        ok: true,
+        result: repaired.result,
+        ...(repairResult.repairInvocationId
+          ? { repairInvocationId: repairResult.repairInvocationId }
+          : {}),
+      };
+    }
+  }
+
+  return {
+    ...initial,
+    classification: 'unrecoverable_artifact',
+  };
 }

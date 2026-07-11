@@ -15,7 +15,7 @@ describe('plan-review compose wiring', () => {
   it('PHASE_RESULT_REGISTRY has plan-review-arbiter entry with arbiter schema', () => {
     const entry = PHASE_RESULT_REGISTRY['plan-review-arbiter'];
     expect(entry).toBeDefined();
-    expect(entry?.retrySafe).toBe(true);
+    expect(entry?.schema).toBeDefined();
   });
 
   it('PHASE_NAME_MIGRATION_MAP maps plan-review to null', () => {
@@ -79,5 +79,17 @@ describe('plan-review compose wiring', () => {
     expect(constructorMatch![0]).toContain('checkManifestSync: planReviewCheckManifestSync');
     expect(constructorMatch![0]).toContain('computeLastFixDiffCitations');
     expect(constructorMatch![0]).toContain('getRecentFixCitations');
+  });
+
+  it('planReviewRunFix forwards the manifest mismatch diagnostic in vars and sets deterministic_fix invocation_type', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixFnMatch = composeSrc.match(/const planReviewRunFix[\s\S]*?(?=const planReviewLoop)/);
+    expect(fixFnMatch).toBeTruthy();
+    expect(fixFnMatch![0]).toContain('manifestMismatch: opts.manifestMismatch');
+    expect(fixFnMatch![0]).toContain('deterministicDiagnostic: opts.manifestMismatch');
+    expect(fixFnMatch![0]).toContain('deterministic_fix');
   });
 });

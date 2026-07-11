@@ -170,6 +170,8 @@ export type {
   AgentInvocationOutcome,
   AgentInvocationRequest,
   AgentInvocationResult,
+  SemanticRetryClassification,
+  SemanticRetryIntent,
 } from './ports/agent-invocation-types.js';
 export { AgentProfileName } from './ports/agent-invocation-types.js';
 export { CONTRACT_VIOLATION_CODES } from './ports/contract-violation-codes.js';
@@ -189,6 +191,13 @@ export type {
   SynthesizeFromTranscriptResult,
   SynthesizeFromTranscriptOutcome,
 } from './ports/synthesize-from-transcript-port.js';
+export type {
+  StructuredResultRepairPort,
+  StructuredResultRepairInput,
+  StructuredResultRepairPrimaryInvocation,
+  StructuredResultRepairOutcome,
+  StructuredResultRepairResult,
+} from './ports/structured-result-repair-port.js';
 export type {
   FixDiffInspectorPort,
   FixDiffInspectorInput,

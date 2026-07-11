@@ -183,6 +183,12 @@ describe('AgentRuntimeRouter fallback', () => {
     },
   ];
 
+  const serializationTriggers = new Set([
+    'missing_required_artifact',
+    'invalid_result_json',
+    'no_output',
+  ]);
+
   triggerVariants.forEach(({ name, result: triggerResult, expectedReason }) => {
     it('escalates to fallback profile on ' + name, async () => {
       const inv = new FakeAgentInvocationPort();
@@ -204,24 +210,32 @@ describe('AgentRuntimeRouter fallback', () => {
 
       await router.invoke(req());
 
-      // Two rows: first (failed) + second (fallback)
       const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
-      expect(rows.length).toBe(2);
 
-      // First row is the original failure
-      expect(rows[0].outcome).toBe(triggerResult.outcome);
+      if (serializationTriggers.has(name)) {
+        expect(rows.length).toBe(1);
+        expect(rows[0].outcome).toBe(triggerResult.outcome);
+        expect(rows[0].fallbackOfInvocationId).toBeUndefined();
+        expect(events.length).toBe(0);
+      } else {
+        // Two rows: first (failed) + second (fallback)
+        expect(rows.length).toBe(2);
 
-      // Second row has fallbackOfInvocationId set
-      expect(rows[1].fallbackOfInvocationId).toBeDefined();
-      expect(String(rows[1].fallbackOfInvocationId)).toBe('inv-fallback-' + name);
+        // First row is the original failure
+        expect(rows[0].outcome).toBe(triggerResult.outcome);
 
-      // Event emitted with triggerOwner: 'router'
-      expect(events.length).toBe(1);
-      expect(events[0].type).toBe('phase.fallback.escalated');
-      expect(events[0].metadata.triggerOwner).toBe('router');
-      expect(events[0].metadata.triggerReason).toBe(expectedReason);
-      expect(events[0].metadata.fromProfile).toBe('opencode-frontier');
-      expect(events[0].metadata.toProfile).toBe('pi-local');
+        // Second row has fallbackOfInvocationId set
+        expect(rows[1].fallbackOfInvocationId).toBeDefined();
+        expect(String(rows[1].fallbackOfInvocationId)).toBe('inv-fallback-' + name);
+
+        // Event emitted with triggerOwner: 'router'
+        expect(events.length).toBe(1);
+        expect(events[0].type).toBe('phase.fallback.escalated');
+        expect(events[0].metadata.triggerOwner).toBe('router');
+        expect(events[0].metadata.triggerReason).toBe(expectedReason);
+        expect(events[0].metadata.fromProfile).toBe('opencode-frontier');
+        expect(events[0].metadata.toProfile).toBe('pi-local');
+      }
     });
   });
 
@@ -772,7 +786,7 @@ describe('AgentRuntimeRouter fallback', () => {
   });
 
   describe('fallbackTriggers configuration', () => {
-    it('triggers fallback for missing_required_artifact when configured', async () => {
+    it('does NOT trigger fallback for missing_required_artifact even when configured', async () => {
       const config: AgentConfig = {
         defaultProfile: 'opencode-frontier',
         profiles: {
@@ -833,7 +847,7 @@ describe('AgentRuntimeRouter fallback', () => {
       await router.invoke(req({ phaseId: 'implement' }));
 
       const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
-      expect(rows.length).toBe(2);
+      expect(rows.length).toBe(1);
     });
 
     it('does NOT trigger fallback for timeout when fallbackTriggers only has contract_violation', async () => {
@@ -991,7 +1005,7 @@ describe('AgentRuntimeRouter fallback', () => {
       expect(rows.length).toBe(2);
     });
 
-    it('triggers fallback for no_output by default (no fallbackTriggers override)', async () => {
+    it('does NOT trigger fallback for no_output by default', async () => {
       const inv = new FakeAgentInvocationPort();
       const adapter = new StubAdapter({
         runtime: 'opencode',
@@ -1016,7 +1030,7 @@ describe('AgentRuntimeRouter fallback', () => {
       await router.invoke(req());
 
       const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
-      expect(rows.length).toBe(2);
+      expect(rows.length).toBe(1);
     });
   });
 });

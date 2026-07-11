@@ -20,7 +20,16 @@ export class FakeAgentInvocationPort implements AgentInvocationPort {
   update(id: AgentInvocationId, patch: AgentInvocationUpdatePatch): void {
     const idx = this.rows.findIndex((r) => r.id === id);
     if (idx < 0) throw new Error(`AgentInvocation ${id} not found`);
-    this.rows[idx] = { ...this.rows[idx], ...patch } as unknown as AgentInvocation;
+    const existing = this.rows[idx]!;
+    const mergedMetadata =
+      patch.metadata !== undefined
+        ? { ...(existing.metadata ?? {}), ...patch.metadata }
+        : existing.metadata;
+    this.rows[idx] = {
+      ...existing,
+      ...patch,
+      ...(mergedMetadata ? { metadata: mergedMetadata } : {}),
+    } as unknown as AgentInvocation;
   }
 
   findById(id: AgentInvocationId): AgentInvocation | undefined {

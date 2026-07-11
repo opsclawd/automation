@@ -1,6 +1,6 @@
 import type { AgentInvocation } from '@ai-sdlc/domain';
 import { extractResult } from '../results/extract-result.js';
-import type { ArtifactStore, AgentPort } from '../ports.js';
+import type { ArtifactStore, StructuredResultRepairPort } from '../ports.js';
 import type { WholePrReviewResult } from '../results/schemas/whole-pr-review.js';
 import type { FixReviewResult } from '../results/schemas/fix-review.js';
 
@@ -47,10 +47,10 @@ export type VerdictOutcome<V> =
 
 export async function readReviewVerdict(
   invocation: AgentInvocation,
-  ports: { artifacts: ArtifactStore; agent: AgentPort },
-  opts?: { blockOnSeverity?: string },
+  ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
+  opts?: { blockOnSeverity?: string; cwd?: string },
 ): Promise<VerdictOutcome<'pass' | 'fail'>> {
-  const r = await extractResult({ invocation, ports });
+  const r = await extractResult({ invocation, ports, cwd: opts?.cwd });
   if (!r.ok) return { ok: false, detail: r.detail };
   const result = r.result as WholePrReviewResult;
 
@@ -95,9 +95,10 @@ export async function readReviewVerdict(
 
 export async function readFixVerdict(
   invocation: AgentInvocation,
-  ports: { artifacts: ArtifactStore; agent: AgentPort },
+  ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
+  opts?: { cwd?: string },
 ): Promise<VerdictOutcome<FixReviewResult['result']>> {
-  const r = await extractResult({ invocation, ports });
+  const r = await extractResult({ invocation, ports, cwd: opts?.cwd });
   if (!r.ok) return { ok: false, detail: r.detail };
   const fixResult = r.result as FixReviewResult;
   return {

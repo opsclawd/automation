@@ -218,6 +218,32 @@ describe('PlanReviewLoop', () => {
     expect(out.loop.iterations.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('exhaustion when checkAndFixManifest exhausts loop budget and succeeds on the final iteration', async () => {
+    let checkManifestCalls = 0;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => ({
+        invocationId: 'rev-1',
+        agentOutcome: 'success' as const,
+        verdict: 'pass' as const,
+      }),
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      checkManifestSync: async (): Promise<string | null> => {
+        checkManifestCalls++;
+        return checkManifestCalls === 1 ? 'manifest mismatch error' : null;
+      },
+    });
+    const baseInputWithMax1 = { ...baseInput(), maxIterations: 1 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax1);
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.kind).toBe('deterministic_fix');
+  });
+
   it('final fixer pass resolves P1 findings on the last allowed iteration', async () => {
     let reviewCalls = 0;
     let fixCalls = 0;
@@ -773,15 +799,20 @@ describe('PlanReviewLoop', () => {
     expect(fixCalls).toBe(0);
   });
 
-  it('checkManifestSync reports drift on iteration 1 (reviewer passes), fixer resolves it, converges on iteration 2', async () => {
+  it('initial mismatch yields zero reviews and one fixer', async () => {
     let checkCalls = 0;
+    let fixCalls = 0;
+    let reviewCalls = 0;
     let fixManifestMismatchSeen: string | undefined;
     const { deps } = makeDeps({
-      runReview: async (): Promise<PlanReviewResult> => ({
-        invocationId: 'rev-1',
-        agentOutcome: 'success' as const,
-        verdict: 'pass' as const,
-      }),
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        };
+      },
       checkManifestSync: async () => {
         checkCalls += 1;
         return checkCalls === 1
@@ -789,6 +820,7 @@ describe('PlanReviewLoop', () => {
           : null;
       },
       runFix: async (_ctx, opts): Promise<PlanFixResult> => {
+        fixCalls += 1;
         fixManifestMismatchSeen = opts.manifestMismatch;
         return {
           invocationId: 'fix-1',
@@ -800,15 +832,21 @@ describe('PlanReviewLoop', () => {
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
     expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations[0]?.kind).toBe('deterministic_fix');
+    expect(out.loop.iterations[0]?.reviewInvocationId).toBeUndefined();
+    expect(out.loop.iterations[0]?.fixInvocationId).toBe('fix-1');
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[1]?.kind).toBe('review');
     expect(out.loop.iterations[1]?.outcome).toBe('resolved');
     expect(fixManifestMismatchSeen).toBe(
       'manifest tasks missing from plan.md prose: Task 4, Task 5, Task 6',
     );
-    expect(checkCalls).toBe(2);
+    expect(reviewCalls).toBe(1);
+    expect(fixCalls).toBe(1);
   });
 
-  it('manifest mismatch surfaces only in the trailing final-review pass → exhausts to needs_human_review', async () => {
+  it('persistent mismatch exhausts', async () => {
+    let fixCalls = 0;
     let reviewCalls = 0;
     const { deps } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => {
@@ -816,86 +854,37 @@ describe('PlanReviewLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls <= 3 ? ('p1_found' as const) : ('pass' as const),
-          findings: reviewCalls <= 3 ? groundedP1Findings() : [],
+          verdict: 'pass' as const,
         };
       },
-      checkManifestSync: async (ctx: PlanReviewContext) =>
-        ctx.iterationIndex === 4 ? 'manifest tasks missing from plan.md prose: Task 4' : null,
-      runFix: async (): Promise<PlanFixResult> => ({
-        invocationId: 'fix-x',
-        agentOutcome: 'success' as const,
-        verdict: 'done_with_fixes' as const,
-      }),
-    });
-    const out = await new PlanReviewLoop(deps).execute(baseInput());
-    expect(out.outcome).toBe('needs_human_review');
-    expect(out.loop.status).toBe('exhausted');
-    // maxIterations (3) fixer iterations + 1 trailing final-review pass, all unresolved.
-    expect(out.loop.iterations).toHaveLength(4);
-    expect(out.loop.iterations[3]?.outcome).toBe('unresolved');
-  });
-
-  it('checkManifestSync reports drift on every iteration → loop exhausts → needs_human_review', async () => {
-    const { deps } = makeDeps({
       checkManifestSync: async () => 'manifest tasks missing from plan.md prose: Task 2',
-      runFix: async (): Promise<PlanFixResult> => ({
-        invocationId: 'fix-x',
-        agentOutcome: 'success' as const,
-        verdict: 'done_with_fixes' as const,
-      }),
+      runFix: async (): Promise<PlanFixResult> => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        };
+      },
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('needs_human_review');
     expect(out.loop.status).toBe('exhausted');
-    expect(out.loop.iterations).toHaveLength(4);
-    expect(
-      out.loop.iterations.every((it) => it.outcome === 'fixed' || it.outcome === 'unresolved'),
-    ).toBe(true);
+    expect(out.loop.iterations).toHaveLength(3); // maxIterations is 3
+    expect(reviewCalls).toBe(0);
+    expect(fixCalls).toBe(3);
+    expect(out.loop.iterations.every((it) => it.kind === 'deterministic_fix')).toBe(true);
   });
 
-  it('fixer done_no_fixes_needed on a manifest-only mismatch is unresolved, not a review/fix contradiction', async () => {
-    let reviewCalls = 0;
-    const { deps, events } = makeDeps({
-      runReview: async (): Promise<PlanReviewResult> => {
-        reviewCalls += 1;
-        return {
-          invocationId: `rev-${reviewCalls}`,
-          agentOutcome: 'success' as const,
-          verdict: reviewCalls === 1 ? ('pass' as const) : ('pass' as const),
-        };
-      },
-      checkManifestSync: async (ctx: PlanReviewContext) =>
-        ctx.iterationIndex === 1 ? 'manifest tasks missing from plan.md prose: Task 3' : null,
-      runFix: async (): Promise<PlanFixResult> => ({
-        invocationId: 'fix-1',
-        agentOutcome: 'success' as const,
-        verdict: 'done_no_fixes_needed' as const,
-        rebuttal: 'the manifest is intentionally out of date',
-      }),
-    });
-    const out = await new PlanReviewLoop(deps).execute(baseInput());
-    expect(out.outcome).toBe('success');
-    expect(out.loop.iterations[0]?.outcome).toBe('unresolved');
-    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
-    expect(events.some((e) => e.type === 'plan-review.review.contradiction.detected')).toBe(false);
-    expect(events.some((e) => e.type === 'plan-review.manifest_mismatch.fixer_declined')).toBe(
-      true,
-    );
-  });
-
-  it('dual failure: reviewer fails AND manifest check fails, fixer returns done_no_fixes_needed, arbiter is invoked but resolves to unresolved', async () => {
-    let checkCalls = 0;
+  it('decline skips arbiters', async () => {
     let arbiterCalls = 0;
-    const { deps } = makeDeps({
+    const { deps, events } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => ({
         invocationId: 'rev-1',
         agentOutcome: 'success' as const,
-        verdict: 'p1_found' as const,
-        findings: groundedP1Findings(),
+        verdict: 'pass' as const,
       }),
       checkManifestSync: async () => {
-        checkCalls += 1;
         return 'manifest tasks missing';
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -916,9 +905,78 @@ describe('PlanReviewLoop', () => {
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('needs_human_review');
-    expect(arbiterCalls).toBeGreaterThan(0);
-    expect(checkCalls).toBeGreaterThan(0);
+    expect(arbiterCalls).toBe(0);
     expect(out.loop.iterations[0]?.outcome).toBe('unresolved');
+    expect(events.some((e) => e.type === 'plan-review.manifest_mismatch.fixer_declined')).toBe(
+      true,
+    );
+  });
+
+  it('later mismatch precedes re-review', async () => {
+    let reviewCalls = 0;
+    let fixCalls = 0;
+    let checkCalls = 0;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 1 ? ('p1_found' as const) : ('pass' as const),
+          findings: reviewCalls === 1 ? groundedP1Findings() : [],
+        };
+      },
+      checkManifestSync: async () => {
+        checkCalls += 1;
+        // Mismatch only before iteration 2 reviewer call (checkCalls = 2)
+        return checkCalls === 2 ? 'later mismatch' : null;
+      },
+      runFix: async (): Promise<PlanFixResult> => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        };
+      },
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[0]?.kind).toBe('review');
+    expect(out.loop.iterations[1]?.kind).toBe('deterministic_fix');
+    expect(out.loop.iterations[2]?.kind).toBe('review');
+    expect(reviewCalls).toBe(2);
+    expect(fixCalls).toBe(2);
+  });
+
+  it('trailing mismatch never calls reviewer', async () => {
+    let reviewCalls = 0;
+    let checkCalls = 0;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
+        };
+      },
+      checkManifestSync: async () => {
+        checkCalls += 1;
+        // Mismatch only at the trailing review stage (checkCalls = 4)
+        return checkCalls === 4 ? 'trailing mismatch' : null;
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('needs_human_review');
+    expect(reviewCalls).toBe(3); // final review reviewer not called.
   });
 });
 

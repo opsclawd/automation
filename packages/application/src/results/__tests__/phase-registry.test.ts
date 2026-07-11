@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { PHASE_NAME_MIGRATION_MAP, PHASE_RESULT_REGISTRY } from '../phase-registry.js';
+import {
+  PHASE_NAME_MIGRATION_MAP,
+  PHASE_RESULT_REGISTRY,
+  normalizePhaseId,
+} from '../phase-registry.js';
+
+describe('normalizePhaseId', () => {
+  it('normalizes iteration-suffixed phase IDs', () => {
+    expect(normalizePhaseId('fix-validate-1')).toBe('fix-validate');
+    expect(normalizePhaseId('fix-validate-12')).toBe('fix-validate');
+    expect(normalizePhaseId('implement')).toBe('implement');
+  });
+});
 
 describe('PHASE_RESULT_REGISTRY', () => {
   it('contains all 12 expected phases', () => {
@@ -16,25 +28,28 @@ describe('PHASE_RESULT_REGISTRY', () => {
       'arbiter',
       'plan-review-arbiter',
       'implement-final-review-arbiter',
+      'plan-fix',
     ];
     expect(Object.keys(PHASE_RESULT_REGISTRY).sort()).toEqual([...expected].sort());
   });
 
   it.each([
-    ['implement', false],
-    ['quality-review', true],
-    ['fix-review', false],
-    ['create-pr', false],
-    ['post-pr-review', false],
-    ['spec-review', true],
-    ['whole-pr-review', true],
-    ['compound', false],
-    ['fix-validate', false],
-    ['arbiter', true],
-    ['plan-review-arbiter', true],
-    ['implement-final-review-arbiter', true],
-  ])('phase %s has retrySafe=%s', (phase, expected) => {
-    expect(PHASE_RESULT_REGISTRY[phase].retrySafe).toBe(expected);
+    'implement',
+    'quality-review',
+    'fix-review',
+    'create-pr',
+    'post-pr-review',
+    'spec-review',
+    'whole-pr-review',
+    'compound',
+    'fix-validate',
+    'arbiter',
+    'plan-review-arbiter',
+    'implement-final-review-arbiter',
+    'plan-fix',
+  ])('phase %s has a schemaContractText string', (phase) => {
+    expect(typeof PHASE_RESULT_REGISTRY[phase].schemaContractText).toBe('string');
+    expect(PHASE_RESULT_REGISTRY[phase].schemaContractText.length).toBeGreaterThan(0);
   });
 
   it('each phase has a valid zod schema', () => {

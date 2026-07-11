@@ -34,10 +34,19 @@ interface IterationRow {
 }
 
 function rowToIteration(r: IterationRow): LoopIteration {
+  const kind =
+    (!r.review_invocation_id || r.review_invocation_id === '') &&
+    r.fix_invocation_id &&
+    r.fix_invocation_id !== ''
+      ? 'deterministic_fix'
+      : 'review';
   return {
     index: r.idx,
-    reviewInvocationId: r.review_invocation_id,
+    kind,
     startedAt: new Date(r.started_at),
+    ...(r.review_invocation_id && r.review_invocation_id !== ''
+      ? { reviewInvocationId: r.review_invocation_id }
+      : {}),
     ...(r.quality_review_invocation_id !== null
       ? { qualityReviewInvocationId: r.quality_review_invocation_id }
       : {}),
@@ -105,7 +114,7 @@ export class LoopRepository implements LoopRepositoryPort {
         insertIter.run({
           loop_id: l.id,
           idx: it.index,
-          review_invocation_id: it.reviewInvocationId,
+          review_invocation_id: it.reviewInvocationId ?? '',
           quality_review_invocation_id: it.qualityReviewInvocationId ?? null,
           fix_invocation_id: it.fixInvocationId ?? null,
           revalidation_id: it.revalidationId ?? null,

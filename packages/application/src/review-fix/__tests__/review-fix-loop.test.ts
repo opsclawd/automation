@@ -813,64 +813,153 @@ describe('ReviewFixLoop', () => {
       expect(gateCalls).toEqual([2]);
     });
 
-    it('passes gate failure result to runReview on iteration 2', async () => {
+    it('bypasses reviewer on red gate, calls fixer with deterministic diagnostic, and resumes review on pass', async () => {
       let reviewCalls = 0;
-      const receivedGateResults: Array<ReviewStepOptions | undefined> = [];
+      let fixCalls = 0;
+      const fixOptions: FixStepOptions[] = [];
+      let gateCalls = 0;
+
       const deps = makeDeps({
-        runPostFixGate: async (): Promise<PostFixGateResult> => ({
-          outcome: 'fail',
-          output: 'src/foo.ts(1,1): error TS2322: Type string is not assignable to type number',
-        }),
-        runReview: async (_ctx, opts) => {
+        runPostFixGate: async (): Promise<PostFixGateResult> => {
+          gateCalls += 1;
+          // Fail on iteration 2, pass on iteration 3 (after deterministic fix)
+          return {
+            outcome: gateCalls === 1 ? 'fail' : 'pass',
+            output: 'build error diagnostics',
+          };
+        },
+        runReview: async () => {
           reviewCalls += 1;
-          receivedGateResults.push(opts);
           return {
             invocationId: `rev-${reviewCalls}`,
             agentOutcome: 'success' as const,
-            // Simulate reviewer receiving the gate failure and returning fail,
-            // then pass on third call (iteration 3, second gate check)
-            verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+            verdict: reviewCalls === 1 ? 'fail' : 'pass',
+          };
+        },
+        runFix: async (ctx, opts) => {
+          fixCalls += 1;
+          fixOptions.push(opts);
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes',
           };
         },
       });
-      await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 4 });
-      // Iteration 1: gate undefined (not called), reviewer called with undefined
-      expect(receivedGateResults[0]).toBeUndefined();
-      // Iteration 2: gate called and returns fail, reviewer receives failure
-      expect(receivedGateResults[1]).toEqual({
-        gateResult: {
-          outcome: 'fail',
-          output: 'src/foo.ts(1,1): error TS2322: Type string is not assignable to type number',
-        },
-      });
+
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 4 });
+      expect(out.phaseOutcome).toBe('passed');
+      // Iteration 1: Review Fail -> Fix (standard)
+      // Iteration 2: Gate fails -> Bypasses reviewer, calls Fixer (deterministic)
+      // Iteration 3: Gate passes -> Reviewer called (returns pass) -> Resolved!
+      expect(reviewCalls).toBe(2); // Only called in Iteration 1 and 3, not 2
+      expect(fixCalls).toBe(2);
+      expect(fixOptions[0]!.attemptKind).toBeUndefined(); // Standard fix
+      expect(fixOptions[1]!.attemptKind).toBe('deterministic'); // Deterministic fix
+      expect(fixOptions[1]!.deterministicDiagnostic).toBe('build error diagnostics');
     });
 
-    it('passes gate pass result to runReview when gate succeeds on iteration 2', async () => {
+    it('exhausts caps and unresolved when gate repeatedly fails', async () => {
+      let fixCalls = 0;
+      let gateCalls = 0;
       let reviewCalls = 0;
-      const receivedGateResults: Array<ReviewStepOptions | undefined> = [];
+
       const deps = makeDeps({
-        runPostFixGate: async (): Promise<PostFixGateResult> => ({
-          outcome: 'pass',
-          output: '',
-        }),
-        runReview: async (_ctx, opts) => {
+        runPostFixGate: async (): Promise<PostFixGateResult> => {
+          gateCalls += 1;
+          return { outcome: 'fail', output: 'persistent error' };
+        },
+        runReview: async () => {
           reviewCalls += 1;
-          receivedGateResults.push(opts);
           return {
             invocationId: `rev-${reviewCalls}`,
             agentOutcome: 'success' as const,
-            verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+            verdict: 'fail',
+          };
+        },
+        runFix: async () => {
+          fixCalls += 1;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes',
           };
         },
       });
-      const out = await new ReviewFixLoop(deps).execute(baseInput());
-      expect(out.phaseOutcome).toBe('passed');
-      // Iteration 1: gate not called, runReview receives undefined
-      expect(receivedGateResults[0]).toBeUndefined();
-      // Iteration 2: gate called (pass), runReview receives pass result
-      expect(receivedGateResults[1]).toEqual({
-        gateResult: { outcome: 'pass', output: '' },
+
+      const out = await new ReviewFixLoop(deps).execute({
+        ...baseInput(),
+        maxIterations: 5,
+        maxTotalFixAttempts: 2, // total fix attempts cap
       });
+
+      expect(out.loopStatus).toBe('exhausted');
+      expect(out.phaseOutcome).toBe('failed');
+      expect(reviewCalls).toBe(1); // Reviewer only called once at iteration 1
+      expect(fixCalls).toBe(2); // Initial fix (1) + deterministic fix (2) -> cap hit
+      expect(gateCalls).toBe(2);
+    });
+
+    it('supports auto-commit fallback on deterministic bypass path when dirty worktree passes revalidation', async () => {
+      const { bus } = collectEvents();
+      const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+      let commitCalls = 0;
+      let addAllCalled = false;
+      git.addAll = async () => {
+        addAllCalled = true;
+      };
+      git.commit = async (cwd, message) => {
+        commitCalls += 1;
+        if (commitCalls === 1) {
+          expect(message).toContain('(auto-committed — agent left changes uncommitted)');
+        } else {
+          expect(message).toContain('fix: deterministic gate resolution (auto-committed)');
+        }
+        return 'sha-2';
+      };
+
+      let gateCalls = 0;
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        git,
+        runPostFixGate: async (): Promise<PostFixGateResult> => {
+          gateCalls += 1;
+          // Fail on iteration 2 to trigger deterministic fix path
+          return {
+            outcome: gateCalls === 1 ? 'fail' : 'pass',
+            output: 'build error diagnostics',
+          };
+        },
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls === 1 ? 'fail' : 'pass',
+            offendingFindings: [{ severity: 'high', summary: 'fix this' }],
+          };
+        },
+        runFix: async () => {
+          fixCalls += 1;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes',
+            headBeforeFix: 'sha-1',
+          };
+        },
+        runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+      });
+
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 4 });
+      expect(out.phaseOutcome).toBe('passed');
+      expect(addAllCalled).toBe(true);
+      expect(commitCalls).toBe(2);
+      expect(out.loop.iterations[0].outcome).toBe('fixed');
+      expect(out.loop.iterations[1].outcome).toBe('fixed');
+      expect(out.loop.iterations[1].kind).toBe('deterministic_fix');
     });
   });
 
@@ -1924,7 +2013,7 @@ describe('ReviewFixLoop auto-commit fallback', () => {
     const result = await new ReviewFixLoop(deps).execute(baseInput());
     expect(addAllCalled).toBe(true);
     expect(commitCalled).toBe(true);
-    expect(events.find(e => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
+    expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
     // Iteration 1 should be 'fixed'
     expect(result.loop.iterations[0].outcome).toBe('fixed');
   });
@@ -1958,7 +2047,7 @@ describe('ReviewFixLoop auto-commit fallback', () => {
 
     const result = await new ReviewFixLoop(deps).execute(baseInput());
     expect(commitCalled).toBe(false);
-    expect(events.find(e => e.type === 'fix.auto_commit.failed')).toBeUndefined();
+    expect(events.find((e) => e.type === 'fix.auto_commit.failed')).toBeUndefined();
     expect(result.loop.iterations[0].outcome).toBe('unresolved');
   });
 
@@ -1997,8 +2086,8 @@ describe('ReviewFixLoop auto-commit fallback', () => {
 
     await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
     expect(attempts).toBe(2);
-    expect(events.find(e => e.type === 'fix.auto_commit.retry')).toBeDefined();
-    expect(events.find(e => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
+    expect(events.find((e) => e.type === 'fix.auto_commit.retry')).toBeDefined();
+    expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
   });
 
   it('retries once on git lock error and fails if still locked', async () => {
@@ -2031,7 +2120,7 @@ describe('ReviewFixLoop auto-commit fallback', () => {
 
     await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
     expect(attempts).toBe(2);
-    expect(events.find(e => e.type === 'fix.auto_commit.retry')).toBeDefined();
-    expect(events.find(e => e.type === 'fix.auto_commit.failed')).toBeDefined();
+    expect(events.find((e) => e.type === 'fix.auto_commit.retry')).toBeDefined();
+    expect(events.find((e) => e.type === 'fix.auto_commit.failed')).toBeDefined();
   });
 });

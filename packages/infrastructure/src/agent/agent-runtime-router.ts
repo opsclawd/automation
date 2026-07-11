@@ -20,6 +20,7 @@ import {
   testTokenLimitPatterns,
   testProviderErrorPatterns,
 } from './error-patterns.js';
+import { generateRetryIdentity } from './retry-identity.js';
 
 export interface AgentRuntimeRouterOptions {
   agent: AgentConfig;
@@ -30,6 +31,12 @@ export interface AgentRuntimeRouterOptions {
   clock?: () => Date;
   idFactory?: () => string;
   readPromptContent?: (path: string) => string;
+  /**
+   * Legacy test shim used in existing router coverage. If provided, it is
+   * treated as a prompt-content reader so retry identity hashing still has
+   * deterministic input.
+   */
+  readPromptChars?: (path: string) => string | number;
   env?: Record<string, string | undefined>;
 }
 
@@ -104,7 +111,11 @@ export class AgentRuntimeRouter implements AgentPort {
   constructor(private readonly opts: AgentRuntimeRouterOptions) {
     this.clock = opts.clock ?? (() => new Date());
     this.idFactory = opts.idFactory ?? (() => randomUUID());
-    this.readPromptContent = opts.readPromptContent ?? defaultReadPromptContent;
+    this.readPromptContent =
+      opts.readPromptContent ??
+      (opts.readPromptChars
+        ? (path) => String(opts.readPromptChars?.(path) ?? '')
+        : defaultReadPromptContent);
     this.env = opts.env ?? process.env;
   }
 
@@ -156,6 +167,101 @@ export class AgentRuntimeRouter implements AgentPort {
     const metadata = { ...request.metadata };
     if (!metadata.invocation_type) {
       metadata.invocation_type = request.fallbackOfInvocationId ? 'fallback' : 'initial';
+    }
+
+    let retryIdentity: string | undefined;
+    const isSemantic =
+      request.retryIntent &&
+      request.retryIntent.classification === 'semantic' &&
+      metadata.invocation_type !== 'serialization_repair' &&
+      metadata.invocation_type !== 'deterministic_fix';
+    if (isSemantic && request.retryIntent) {
+      retryIdentity = generateRetryIdentity({
+        normalizedPhase: request.retryIntent.normalizedPhase,
+        profile: request.profile,
+        promptHash,
+        startCommitSha: request.startCommitSha,
+        relevantArtifactPaths: request.retryIntent.relevantArtifactPaths,
+        classification: request.retryIntent.classification,
+        cwd: request.cwd,
+      });
+      metadata.retryIdentity = retryIdentity;
+      metadata.retry_identity = retryIdentity;
+    }
+
+    if (retryIdentity) {
+      const priorInvocations = this.opts.invocationRepository.listByRun(RunId(request.runId));
+      const hasDuplicate = priorInvocations.some((inv) => {
+        const priorIdentity = readRetryIdentity(inv.metadata);
+        return priorIdentity === retryIdentity;
+      });
+
+      if (hasDuplicate) {
+        const pre: AgentInvocation = {
+          id,
+          runId: RunId(request.runId),
+          phaseId: PhaseName(request.phaseId),
+          profile: request.profile,
+          runtime: profile.runtime,
+          provider: effectiveProvider,
+          model: effectiveModel,
+          promptPath: request.promptPath,
+          promptChars,
+          stdoutPath: '',
+          stderrPath: '',
+          startedAt,
+          startCommitSha: request.startCommitSha,
+          timeoutMs: effectiveTimeoutMs,
+          contractViolations: [],
+          promptHash,
+          metadata,
+        };
+        if (request.stepId) {
+          pre.stepId = request.stepId;
+        }
+        if (request.fallbackOfInvocationId) {
+          pre.fallbackOfInvocationId = request.fallbackOfInvocationId;
+        }
+        this.opts.invocationRepository.insert(pre);
+
+        const endedAt = this.clock();
+        this.opts.invocationRepository.update(id, {
+          endedAt,
+          outcome: 'duplicate_retry_suppressed',
+          exitCode: 0,
+          durationMs: 0,
+          stdoutPath: '',
+          stderrPath: '',
+          contractViolations: [],
+        });
+
+        return {
+          runtime: profile.runtime,
+          provider: effectiveProvider,
+          model: effectiveModel,
+          exitCode: 0,
+          durationMs: 0,
+          stdoutPath: '',
+          stderrPath: '',
+          contractViolations: [],
+          outcome: 'duplicate_retry_suppressed',
+        };
+      } else {
+        if (this.opts.eventBus) {
+          const event: OrchestratorEvent = {
+            runId: request.runId,
+            level: 'info',
+            type: 'semantic_retry',
+            message: `Semantic retry detected for phase ${request.phaseId} with identity ${retryIdentity}`,
+            timestamp: this.clock().toISOString(),
+            metadata: {
+              phase: request.phaseId,
+              retryIdentity,
+            },
+          };
+          this.opts.eventBus.publish(request.runId, event);
+        }
+      }
     }
 
     const pre: AgentInvocation = {
@@ -407,6 +513,9 @@ export class AgentRuntimeRouter implements AgentPort {
   }
 
   private shouldFallback(result: AgentInvocationResult, phaseId: string): boolean {
+    const isSerializationOutcome = isSerializationContractOutcome(result);
+    if (isSerializationOutcome) return false;
+
     // NOTE: Does not consult PHASE_FALLBACKS — relies on caller passing a phaseId
     // whose normalized form exists in phaseProfiles. See comment in dispatch().
     const routingPhase = normalizeRoutingPhase(phaseId);
@@ -415,15 +524,14 @@ export class AgentRuntimeRouter implements AgentPort {
       phaseEntry =
         this.opts.agent.phaseProfiles['plan-design'] ?? this.opts.agent.phaseProfiles['fix-review'];
     }
-    const triggers = phaseEntry?.fallbackTriggers ?? [
+    const triggers = (phaseEntry?.fallbackTriggers ?? [
       'timeout',
       'contract_violation',
       'runtime_error',
       'token_limit_exceeded',
       'quota_exceeded',
       'provider_error',
-      'no_output',
-    ];
+    ]) as string[];
     for (const trigger of triggers) {
       switch (trigger) {
         case 'timeout':
@@ -470,13 +578,6 @@ export class AgentRuntimeRouter implements AgentPort {
           )
             return true;
           break;
-        case 'no_output':
-          if (
-            result.outcome === 'contract_violation' &&
-            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.NO_OUTPUT)
-          )
-            return true;
-          break;
       }
     }
     return false;
@@ -492,15 +593,6 @@ export class AgentRuntimeRouter implements AgentPort {
     if (result.outcome === 'contract_violation') {
       if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROMPT_BUDGET_EXCEEDED)) {
         return { reason: 'prompt_budget_exceeded' };
-      }
-      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)) {
-        return { reason: 'missing_required_artifact' };
-      }
-      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON)) {
-        return { reason: 'invalid_result_json' };
-      }
-      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.NO_OUTPUT)) {
-        return { reason: 'no_output' };
       }
       return { reason: 'contract_violation' };
     }
@@ -635,4 +727,22 @@ function defaultReadPromptContent(path: string): string {
   } catch {
     return '';
   }
+}
+
+function readRetryIdentity(metadata: Record<string, unknown> | undefined): string | undefined {
+  if (!metadata) return undefined;
+  const camel = metadata.retryIdentity;
+  if (typeof camel === 'string' && camel.length > 0) return camel;
+  const snake = metadata.retry_identity;
+  if (typeof snake === 'string' && snake.length > 0) return snake;
+  return undefined;
+}
+
+function isSerializationContractOutcome(result: AgentInvocationResult): boolean {
+  if (result.outcome !== 'contract_violation') return false;
+  return (
+    result.contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT) ||
+    result.contractViolations.includes(CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON) ||
+    result.contractViolations.includes(CONTRACT_VIOLATION_CODES.NO_OUTPUT)
+  );
 }

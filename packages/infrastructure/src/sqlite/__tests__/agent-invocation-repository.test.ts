@@ -104,4 +104,28 @@ describe('AgentInvocationRepository', () => {
     repo.insert(sample({ id: AgentInvocationId('b'), runtime: 'pi' }));
     expect(repo.listByRuntime('pi').map((i) => i.id)).toEqual(['b']);
   });
+
+  it('round-trips and merges metadata', () => {
+    const { db } = setupDb();
+    const repo = new AgentInvocationRepository(db);
+    const inv = sample({
+      id: AgentInvocationId('a'),
+      metadata: { initialKey: 'initialVal', classification: 'semantic' },
+    });
+    repo.insert(inv);
+
+    const got1 = repo.findById(inv.id);
+    expect(got1?.metadata).toEqual({ initialKey: 'initialVal', classification: 'semantic' });
+
+    repo.update(inv.id, {
+      metadata: { newKey: 'newVal', classification: 'changed' },
+    });
+
+    const got2 = repo.findById(inv.id);
+    expect(got2?.metadata).toEqual({
+      initialKey: 'initialVal',
+      classification: 'changed',
+      newKey: 'newVal',
+    });
+  });
 });

@@ -3,9 +3,22 @@ import { type AgentRuntimeKind } from '@ai-sdlc/domain';
 export { AgentProfileName } from '@ai-sdlc/domain';
 export type { AgentRuntimeKind };
 
-export type AgentInvocationOutcome = 'success' | 'failed' | 'timeout' | 'contract_violation';
+export type AgentInvocationOutcome =
+  | 'success'
+  | 'failed'
+  | 'timeout'
+  | 'contract_violation'
+  | 'duplicate_retry_suppressed';
 
 export type StepAgentOutcome = AgentInvocationOutcome;
+
+export type SemanticRetryClassification = 'semantic' | 'deterministic_gate';
+
+export interface SemanticRetryIntent {
+  normalizedPhase: string;
+  classification: SemanticRetryClassification;
+  relevantArtifactPaths: readonly string[];
+}
 
 export interface AgentInvocationRequest {
   profile: AgentProfileName;
@@ -30,6 +43,7 @@ export interface AgentInvocationRequest {
   fallbackReason?: string;
   timeoutMs?: number;
   metadata?: Record<string, unknown>;
+  retryIntent?: SemanticRetryIntent;
 }
 
 export interface AgentInvocationResult {

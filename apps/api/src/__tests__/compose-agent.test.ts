@@ -47,7 +47,7 @@ function makeRouter(overrides: Partial<ConstructorParameters<typeof AgentRuntime
     invocationRepository: new FakeAgentInvocationPort(),
     clock: () => new Date('2026-01-01'),
     idFactory: () => 'test-id',
-    readPromptChars: () => 0,
+    readPromptContent: () => 'prompt content',
     ...overrides,
   });
 }
@@ -145,7 +145,7 @@ describe('compose agent wiring', () => {
       invocationRepository: new FakeAgentInvocationPort(),
       clock: () => new Date('2026-01-01'),
       idFactory: () => 'test-id',
-      readPromptChars: () => 0,
+      readPromptContent: () => 'prompt content',
     });
     await expect(
       router.invoke({
@@ -159,5 +159,27 @@ describe('compose agent wiring', () => {
         startCommitSha: '0'.repeat(40),
       }),
     ).rejects.toThrow(/no adapter registered/);
+  });
+});
+
+describe('compose agent retryIntent behavior', () => {
+  it('only loop-owned semantic retries carry retry intent', () => {
+    const requestWithRetry: AgentInvocationRequest = {
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/tmp/prompt',
+      expectedArtifacts: [],
+      cwd: '/',
+      runId: 'test-run',
+      repoId: 'test-repo',
+      phaseId: 'plan-design',
+      startCommitSha: '0'.repeat(40),
+      retryIntent: {
+        normalizedPhase: 'plan-review',
+        classification: 'semantic',
+        relevantArtifactPaths: ['result.json'],
+      },
+    };
+    expect(requestWithRetry.retryIntent?.classification).toBe('semantic');
+    expect(requestWithRetry.retryIntent?.relevantArtifactPaths).toEqual(['result.json']);
   });
 });
