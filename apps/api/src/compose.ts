@@ -55,6 +55,7 @@ import {
   ReapOrphanedTestWorkers,
   SweepWaitingRuns,
   WaitingRunsSweeper,
+  OrphanedRunsSweeper,
   checkPid,
   RunValidation,
   ReadIssueHandler,
@@ -464,6 +465,7 @@ export interface Container {
   workerLoopDeps?: Omit<WorkerLoopDeps, 'recoverableRunIds'>;
   serveSweepIntervalSeconds: number;
   buildWaitingRunsSweeper: () => import('@ai-sdlc/application').WaitingRunsSweeper;
+  buildOrphanedRunsSweeper: () => import('@ai-sdlc/application').OrphanedRunsSweeper;
   /** Exposed for worktree lifecycle management in CLI and tests. */
   git: GitPort;
   /** Context factory for a full run (includes promptsRoot, expectedBranch, cwd). Only present when agent config is loaded. */
@@ -4072,6 +4074,16 @@ export function composeRoot(opts: ComposeOptions): Container {
       logger: sweepLogger,
     });
 
+  const buildOrphanedRunsSweeper = () =>
+    new OrphanedRunsSweeper({
+      runRepository,
+      leases: workerLeaseRepository,
+      queue: jobQueue,
+      eventBus,
+      now: () => new Date(),
+      logger: sweepLogger,
+    });
+
   const workerLoopDeps: Omit<WorkerLoopDeps, 'recoverableRunIds'> | undefined =
     runExecutor !== undefined
       ? {
@@ -4611,6 +4623,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     removeRepository,
     serveSweepIntervalSeconds,
     buildWaitingRunsSweeper,
+    buildOrphanedRunsSweeper,
   };
 }
 
