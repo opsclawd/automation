@@ -18,7 +18,14 @@ import {
   createWorker,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
-import { planRunRecoveryAction, ReapOrphanedTestWorkers } from '@ai-sdlc/application';
+import {
+  planRunRecoveryAction,
+  ReapOrphanedTestWorkers,
+  SweepOrphanedRuns,
+  checkPid,
+} from '@ai-sdlc/application';
+import type { RunRepositoryPort } from '@ai-sdlc/application';
+import type { SweepOrphanedRunEntry } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions } from './compose.js';
 import { resolveTargetRepoRootOrExit, findRepoRoot } from './cli/target-repo-root.js';
 import { composeWithTarget } from './cli/compose-with-target.js';
@@ -141,21 +148,36 @@ function startTestWorkerReaper(
 
 const MIN_SWEEP_INTERVAL_MS = 30_000;
 
-function startWaitingRunsSweepTimer(
-  sweeper: {
-    execute(workerId: WorkerId): Promise<{
-      reactivated: number;
-      enqueued: number;
-      skippedLeaseConflict: number;
-      timedOut: number;
-      passedOnMergedPr: number;
-      cancelledOnClosedPr: number;
-      stayedReady: number;
-      skipped: number;
-      errors: Array<{ runId: string; error: string }>;
-      enqueueErrors: Array<{ runId: string; error: string }>;
-    }>;
+type WaitingSweepResult = {
+  reactivated: number;
+  enqueued: number;
+  skippedLeaseConflict: number;
+  timedOut: number;
+  passedOnMergedPr: number;
+  cancelledOnClosedPr: number;
+  stayedReady: number;
+  skipped: number;
+  errors: Array<{ runId: string; error: string }>;
+  enqueueErrors: Array<{ runId: string; error: string }>;
+};
+
+type OrphanSweepResult = {
+  scanned: number;
+  enqueued: number;
+  skippedLeaseConflict: number;
+  skippedAlreadyQueued: number;
+  enqueueErrors: Array<{ runId: string; error: string }>;
+};
+
+function startPeriodicSweepTimer(
+  waitingSweeper: {
+    execute(workerId: WorkerId): Promise<WaitingSweepResult>;
   },
+  orphanSweeper: {
+    execute(entries: SweepOrphanedRunEntry[]): Promise<OrphanSweepResult>;
+  },
+  isProcessAlive: (pid: number) => boolean,
+  runRepository: RunRepositoryPort,
   intervalSeconds: number,
   workerId: WorkerId,
 ): { stop: () => void } {
@@ -164,33 +186,68 @@ function startWaitingRunsSweepTimer(
   const timer = setInterval(() => {
     if (isRunning) return;
     isRunning = true;
-    sweeper.execute(workerId).then(
-      (result) => {
+    let orphanResult: OrphanSweepResult | undefined;
+    let waitingResult: WaitingSweepResult | undefined;
+    Promise.resolve()
+      .then(() => {
+        const sweep = new SweepOrphanedRuns({
+          runRepository,
+          isProcessAlive,
+          now: () => new Date(),
+        });
+        return sweep.execute();
+      })
+      .then((discovered) => {
+        return orphanSweeper.execute(discovered.orphanedRuns);
+      })
+      .then((o) => {
+        orphanResult = o;
+        return waitingSweeper.execute(workerId);
+      })
+      .then((w) => {
+        waitingResult = w;
         isRunning = false;
+        const o = orphanResult!;
         if (
-          result.reactivated > 0 ||
-          result.timedOut > 0 ||
-          result.passedOnMergedPr > 0 ||
-          result.cancelledOnClosedPr > 0 ||
-          result.errors.length > 0 ||
-          result.enqueueErrors.length > 0
+          o.enqueued > 0 ||
+          o.skippedLeaseConflict > 0 ||
+          o.skippedAlreadyQueued > 0 ||
+          o.enqueueErrors.length > 0
         ) {
           console.error(
-            `Reactivation sweep: ${result.reactivated} reactivated (${result.enqueued} enqueued, ${result.skippedLeaseConflict} skipped due to lease conflict), ${result.timedOut} timed out, ${result.passedOnMergedPr} passed (merged PR), ${result.cancelledOnClosedPr} cancelled (closed PR), ${result.stayedReady} stayed ready, ${result.skipped} skipped, ${result.errors.length} errors, ${result.enqueueErrors.length} enqueue errors`,
+            `Orphan recovery: ${o.enqueued} enqueued, ${o.skippedLeaseConflict} skipped (lease), ${o.skippedAlreadyQueued} skipped (already queued), ${o.enqueueErrors.length} errors`,
           );
-          for (const err of result.errors) {
+          for (const err of o.enqueueErrors) {
+            console.error(`  Orphan enqueue error in run ${err.runId}: ${err.error}`);
+          }
+        }
+        if (
+          w.reactivated > 0 ||
+          w.timedOut > 0 ||
+          w.passedOnMergedPr > 0 ||
+          w.cancelledOnClosedPr > 0 ||
+          w.errors.length > 0 ||
+          w.enqueueErrors.length > 0
+        ) {
+          console.error(
+            `Reactivation sweep: ${w.reactivated} reactivated (${w.enqueued} enqueued, ${w.skippedLeaseConflict} skipped due to lease conflict), ${w.timedOut} timed out, ${w.passedOnMergedPr} passed (merged PR), ${w.cancelledOnClosedPr} cancelled (closed PR), ${w.stayedReady} stayed ready, ${w.skipped} skipped, ${w.errors.length} errors, ${w.enqueueErrors.length} enqueue errors`,
+          );
+          for (const err of w.errors) {
             console.error(`  Error in run ${err.runId}: ${err.error}`);
           }
-          for (const err of result.enqueueErrors) {
+          for (const err of w.enqueueErrors) {
             console.error(`  Enqueue error in run ${err.runId}: ${err.error}`);
           }
         }
-      },
-      (err) => {
+      })
+      .catch((err) => {
         isRunning = false;
-        console.error('Periodic reactivation sweep error:', err);
-      },
-    );
+        if (waitingResult === undefined) {
+          console.error('Periodic reactivation sweep error:', err);
+        } else {
+          console.error('Periodic sweep error (after waiting sweep):', err);
+        }
+      });
   }, intervalMs);
   return { stop: () => clearInterval(timer) };
 }
@@ -753,21 +810,42 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         let sweepTimer: { stop: () => void } | undefined;
         let isShuttingDown = false;
         if (c.workerRegistry && c.workerLoopDeps && serveWorkerId) {
-          const sweeper = c.buildWaitingRunsSweeper();
+          const waitingSweeper = c.buildWaitingRunsSweeper();
+          const orphanSweeper = c.buildOrphanedRunsSweeper();
 
-          // NEW: Explicitly run the reactivation sweep once at startup, so that
-          // waiting runs reactivated on boot get their jobs enqueued and leases held
-          // correctly. Start the periodic timer only after the initial sweep completes
-          // to avoid any race condition.
-          sweeper
-            .execute(serveWorkerId)
+          const initialOrphans = new SweepOrphanedRuns({
+            runRepository: c.runRepository,
+            isProcessAlive: checkPid,
+            now: () => new Date(),
+          }).execute();
+
+          Promise.resolve(orphanSweeper.execute(initialOrphans.orphanedRuns))
+            .then((orphanRecovery) => {
+              if (
+                orphanRecovery.enqueued > 0 ||
+                orphanRecovery.skippedLeaseConflict > 0 ||
+                orphanRecovery.skippedAlreadyQueued > 0 ||
+                orphanRecovery.enqueueErrors.length > 0
+              ) {
+                console.error(
+                  `Orphan recovery: ${orphanRecovery.enqueued} enqueued, ${orphanRecovery.skippedLeaseConflict} skipped (lease), ${orphanRecovery.skippedAlreadyQueued} skipped (already queued), ${orphanRecovery.enqueueErrors.length} errors`,
+                );
+                for (const err of orphanRecovery.enqueueErrors) {
+                  console.error(`  Orphan enqueue error in run ${err.runId}: ${err.error}`);
+                }
+              }
+              return waitingSweeper.execute(serveWorkerId);
+            })
             .catch((err) => {
               console.error('Initial startup reactivation sweep error:', err);
             })
             .finally(() => {
               if (c.serveSweepIntervalSeconds > 0 && !isShuttingDown) {
-                sweepTimer = startWaitingRunsSweepTimer(
-                  sweeper,
+                sweepTimer = startPeriodicSweepTimer(
+                  waitingSweeper,
+                  orphanSweeper,
+                  checkPid,
+                  c.runRepository,
                   c.serveSweepIntervalSeconds,
                   serveWorkerId,
                 );

@@ -18,6 +18,24 @@ exit 0
 STUB_EOF
   chmod +x "${STUB_BIN_DIR}/pi"
 
+  cat > "${STUB_BIN_DIR}/agy" <<'STUB_EOF'
+#!/usr/bin/env bash
+exit 0
+STUB_EOF
+  chmod +x "${STUB_BIN_DIR}/agy"
+
+  cat > "${STUB_BIN_DIR}/claude" <<'STUB_EOF'
+#!/usr/bin/env bash
+exit 0
+STUB_EOF
+  chmod +x "${STUB_BIN_DIR}/claude"
+
+  cat > "${STUB_BIN_DIR}/codex" <<'STUB_EOF'
+#!/usr/bin/env bash
+exit 0
+STUB_EOF
+  chmod +x "${STUB_BIN_DIR}/codex"
+
   export PATH="${STUB_BIN_DIR}:${PATH}"
   export AI_RUN_EVENTS_FILE="${TMPDIR_TEST}/events.jsonl"
   export AI_RUN_DISPLAY_ID="issue-1-20260516-120000"

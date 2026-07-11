@@ -29,6 +29,48 @@ describe('SweepOrphanedRuns', () => {
     expect(repo.updates[0]!.patch.failureReason).toMatch(/orphaned.*99999/);
   });
 
+  it('returns orphaned run entries so callers can re-enqueue them', () => {
+    const repo = new FakeRunRepository();
+    repo.addRun({
+      uuid: 'orphan-1',
+      displayId: 'issue-1-20260513-000000',
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T18:00:00Z'),
+      pid: 99999,
+    });
+    const isProcessAlive = (pid: number) => pid !== 99999;
+    const usecase = new SweepOrphanedRuns({ runRepository: repo, isProcessAlive, now: fixedNow });
+    const result = usecase.execute();
+    expect(result.swept).toBe(1);
+    expect(result.orphanedRuns).toHaveLength(1);
+    expect(result.orphanedRuns[0]!.uuid).toBe('orphan-1');
+    expect(result.orphanedRuns[0]!.previousPid).toBe(99999);
+    expect(result.orphanedRuns[0]!.run.failureReason).toMatch(/orphaned.*99999/);
+    expect(result.orphanedRuns[0]!.run.currentPhase).toBeUndefined();
+  });
+
+  it('does not include runs that are still alive in orphanedRuns', () => {
+    const repo = new FakeRunRepository();
+    repo.addRun({
+      uuid: 'alive-1',
+      displayId: 'issue-2-20260513-000000',
+      issueNumber: 2,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T18:00:00Z'),
+      pid: 1234,
+    });
+    const isProcessAlive = () => true;
+    const usecase = new SweepOrphanedRuns({ runRepository: repo, isProcessAlive, now: fixedNow });
+    const result = usecase.execute();
+    expect(result.swept).toBe(0);
+    expect(result.orphanedRuns).toEqual([]);
+  });
+
   it('produces a record that canResume() accepts and resolves correctly under planRunRecoveryAction', () => {
     const repo = new FakeRunRepository();
     repo.addRun({

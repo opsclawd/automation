@@ -291,7 +291,7 @@ exit 1
     }
   });
 
-  it('sweeps orphaned runs on compose', () => {
+  it('sweeps orphaned runs on compose and restores them to a non-terminal state', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     // Manually insert a "running" row with a dead PID
@@ -312,15 +312,15 @@ exit 1
       999999,
     );
     db.close();
-    // Compose should sweep it
+    // Compose should sweep the dead PID and the orphan sweeper should
+    // re-drive it back to running (no skip paths taken in this scenario).
     const container = composeRoot({
       metadataResolver: FAKE_METADATA_RESOLVER,
       repoRoot: root,
       scriptPath,
     });
     const run = container.runRepository.findByUuid('dead-pid-uuid');
-    expect(run?.status).toBe('failed');
-    expect(run?.failureReason).toMatch(/orphaned/);
+    expect(run?.status).toBe('running');
   });
 
   it('creates .ai-tmp/ directory at compose time', () => {
@@ -500,7 +500,7 @@ exit 1
         repoRoot: root,
         scriptPath,
       });
-      expect(container2.runRepository.findByUuid('dead-pid-uuid')?.status).toBe('failed');
+      expect(container2.runRepository.findByUuid('dead-pid-uuid')?.status).toBe('running');
       expect(existsSync(completedTmpDir)).toBe(false);
     } finally {
       if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;

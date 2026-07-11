@@ -108,3 +108,17 @@ describe('composeRoot — serve sweep wiring', () => {
     expect(result.enqueued).toBe(0);
   });
 });
+
+describe('composeRoot — OrphanedRunsSweeper wiring', () => {
+  it('exposes buildOrphanedRunsSweeper that constructs a working OrphanedRunsSweeper', async () => {
+    const { composeRoot } = await import('../compose.js');
+    const repoRoot = makeRepo({ withPostPrReview: true });
+    const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
+    expect(c.buildOrphanedRunsSweeper).toBeTypeOf('function');
+    const sweeper = c.buildOrphanedRunsSweeper();
+     
+    const result = await sweeper.execute([]);
+    expect(result.scanned).toBe(0);
+    expect(result.enqueued).toBe(0);
+  });
+});
