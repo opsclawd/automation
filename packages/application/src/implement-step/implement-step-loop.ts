@@ -885,10 +885,10 @@ export class ImplementStepLoop {
         return { outcome: 'failed', loop };
       }
 
-      // --- FINAL PAIR CHECK (#723) ---
-      // When both dimensions are clean and we're in final pair mode,
-      // verify HEAD hasn't changed and snapshots match
-      if (areAllDimensionsClean(dirtyDimensions) && isInFinalPair) {
+      // --- FINAL PAIR HEAD CHECK (#723) ---
+      // Always check HEAD when in final pair mode, regardless of dimension state.
+      // This catches HEAD changes even when a reviewer has failed.
+      if (isInFinalPair) {
         const currentHead = await deps.git?.headCommitSha(ctx.cwd);
         if (currentHead !== finalPairCandidateHead) {
           this.emit(
@@ -898,62 +898,10 @@ export class ImplementStepLoop {
             `final pair HEAD mismatch: expected ${finalPairCandidateHead}, got ${currentHead}`,
             { expected: finalPairCandidateHead, actual: currentHead, iterationIndex },
           );
-          // HEAD changed - not a stable final state, clear final pair and continue
-          isInFinalPair = false;
-          finalPairCandidateHead = undefined;
+          // HEAD changed - update candidate head and clear snapshots to start new final pair
+          finalPairCandidateHead = currentHead;
           finalPairSpecSnapshot = undefined;
           finalPairQualitySnapshot = undefined;
-          dirtyDimensions = markDimensionDirty(
-            markDimensionDirty(dirtyDimensions, 'spec'),
-            'quality',
-          );
-          persistReviewState();
-          loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
-          deps.loops.update(loop);
-          await appendHistory(
-            buildHistoryEntry(
-              iterationIndex,
-              specReview,
-              qualityReview,
-              undefined,
-              undefined,
-              'unresolved',
-            ),
-          );
-          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-          continue;
-        } else {
-          // HEAD stable - check snapshots match
-          const specSnapshot = specReview.snapshot?.snapshot ?? '';
-          const qualitySnapshot = qualityReview.snapshot?.snapshot ?? '';
-          const snapshotsMatch =
-            specSnapshot === finalPairSpecSnapshot && qualitySnapshot === finalPairQualitySnapshot;
-          if (snapshotsMatch) {
-            this.emit(
-              input,
-              'loop.final_pair.confirmed',
-              'info',
-              `final pair confirmed: HEAD and snapshots stable`,
-              { head: currentHead, iterationIndex },
-            );
-            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
-            deps.loops.update(loop);
-            await appendHistory(
-              buildHistoryEntry(
-                iterationIndex,
-                specReview,
-                qualityReview,
-                undefined,
-                undefined,
-                'resolved',
-              ),
-            );
-            this.emitIterationCompleted(input, iterationIndex, 'resolved');
-            return { outcome: 'success', loop };
-          }
-          // Snapshots changed - continue to capture new baseline
-          finalPairSpecSnapshot = specSnapshot;
-          finalPairQualitySnapshot = qualitySnapshot;
           persistReviewState();
           loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
           deps.loops.update(loop);
@@ -970,6 +918,58 @@ export class ImplementStepLoop {
           this.emitIterationCompleted(input, iterationIndex, 'unresolved');
           continue;
         }
+      }
+
+      // --- FINAL PAIR STABILITY CHECK (#723) ---
+      // When both dimensions are clean and we're in final pair mode,
+      // verify snapshots match for stability confirmation
+      if (areAllDimensionsClean(dirtyDimensions) && isInFinalPair) {
+        const specSnapshot = specReview.snapshot?.snapshot ?? '';
+        const qualitySnapshot = qualityReview.snapshot?.snapshot ?? '';
+        const snapshotsMatch =
+          specSnapshot === finalPairSpecSnapshot && qualitySnapshot === finalPairQualitySnapshot;
+        if (snapshotsMatch) {
+          const currentHead = await deps.git?.headCommitSha(ctx.cwd);
+          this.emit(
+            input,
+            'loop.final_pair.confirmed',
+            'info',
+            `final pair confirmed: HEAD and snapshots stable`,
+            { head: currentHead, iterationIndex },
+          );
+          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(loop);
+          await appendHistory(
+            buildHistoryEntry(
+              iterationIndex,
+              specReview,
+              qualityReview,
+              undefined,
+              undefined,
+              'resolved',
+            ),
+          );
+          this.emitIterationCompleted(input, iterationIndex, 'resolved');
+          return { outcome: 'success', loop };
+        }
+        // Snapshots changed - continue to capture new baseline
+        finalPairSpecSnapshot = specSnapshot;
+        finalPairQualitySnapshot = qualitySnapshot;
+        persistReviewState();
+        loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+        deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            qualityReview,
+            undefined,
+            undefined,
+            'unresolved',
+          ),
+        );
+        this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        continue;
       }
 
       if (specReview.verdict === 'pass' && qualityReview.verdict === 'pass') {
