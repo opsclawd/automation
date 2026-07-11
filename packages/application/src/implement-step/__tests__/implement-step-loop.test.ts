@@ -21,18 +21,20 @@ import type { EventBusPort } from '../../ports/event-bus-port.js';
 import type { GitPort } from '../../ports/git-port.js';
 
 function makeFakeGitPort(opts: {
-  headSha: string;
+  headSha: string | string[];
   statusOutput?: string;
   headShaThrows?: boolean;
   statusThrows?: boolean;
 }): GitPort {
+  let headShaIndex = 0;
+  const headShas = Array.isArray(opts.headSha) ? opts.headSha : [opts.headSha];
   return {
     createWorktree: async () => undefined,
     removeWorktree: async () => undefined,
     currentBranch: async () => 'main',
     headCommitSha: async () => {
       if (opts.headShaThrows) throw new Error('rev-parse failed');
-      return opts.headSha;
+      return headShas[headShaIndex++ % headShas.length];
     },
     resetHard: async () => undefined,
     diff: async () => '',
@@ -3224,7 +3226,7 @@ describe('final pair tracking (#723)', () => {
 
   it('exits final pair when HEAD changes before second review', async () => {
     const git = makeFakeGitPort({
-      headSha: 'sha-stable',
+      headSha: ['sha-stable', 'sha-changed'],
     });
     const deps = makeDeps({
       git,
@@ -3241,7 +3243,8 @@ describe('final pair tracking (#723)', () => {
         snapshot: { snapshot: 'quality-snapshot-1' },
       }),
     });
-    const result = await new ImplementStepLoop(deps).execute(baseInput());
+    const result = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 10 });
     expect(result.outcome).toBe('success');
+    expect(result.loop.iterations.length).toBeGreaterThan(1);
   });
 });

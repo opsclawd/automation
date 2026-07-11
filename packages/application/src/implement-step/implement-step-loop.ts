@@ -903,6 +903,10 @@ export class ImplementStepLoop {
           finalPairCandidateHead = undefined;
           finalPairSpecSnapshot = undefined;
           finalPairQualitySnapshot = undefined;
+          dirtyDimensions = markDimensionDirty(
+            markDimensionDirty(dirtyDimensions, 'spec'),
+            'quality',
+          );
           persistReviewState();
         } else {
           // HEAD stable - check snapshots match
