@@ -260,6 +260,7 @@ export class ReviewFixLoop {
                   deps.loops.update(thisLoop);
                   this.emitIterationCompleted(input, iterationIndex, 'fixed');
                   await this.appendHistoryEntry(ctx, {}, fix, reval, 'fixed', input);
+                  continue;
                 }
               }
               if (!autoCommitted) {

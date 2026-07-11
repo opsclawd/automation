@@ -899,6 +899,68 @@ describe('ReviewFixLoop', () => {
       expect(fixCalls).toBe(2); // Initial fix (1) + deterministic fix (2) -> cap hit
       expect(gateCalls).toBe(2);
     });
+
+    it('supports auto-commit fallback on deterministic bypass path when dirty worktree passes revalidation', async () => {
+      const { bus } = collectEvents();
+      const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+      let commitCalls = 0;
+      let addAllCalled = false;
+      git.addAll = async () => {
+        addAllCalled = true;
+      };
+      git.commit = async (cwd, message) => {
+        commitCalls += 1;
+        if (commitCalls === 1) {
+          expect(message).toContain('(auto-committed — agent left changes uncommitted)');
+        } else {
+          expect(message).toContain('fix: deterministic gate resolution (auto-committed)');
+        }
+        return 'sha-2';
+      };
+
+      let gateCalls = 0;
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        git,
+        runPostFixGate: async (): Promise<PostFixGateResult> => {
+          gateCalls += 1;
+          // Fail on iteration 2 to trigger deterministic fix path
+          return {
+            outcome: gateCalls === 1 ? 'fail' : 'pass',
+            output: 'build error diagnostics',
+          };
+        },
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls === 1 ? 'fail' : 'pass',
+            offendingFindings: [{ severity: 'high', summary: 'fix this' }],
+          };
+        },
+        runFix: async () => {
+          fixCalls += 1;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes',
+            headBeforeFix: 'sha-1',
+          };
+        },
+        runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+      });
+
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 4 });
+      expect(out.phaseOutcome).toBe('passed');
+      expect(addAllCalled).toBe(true);
+      expect(commitCalls).toBe(2);
+      expect(out.loop.iterations[0].outcome).toBe('fixed');
+      expect(out.loop.iterations[1].outcome).toBe('fixed');
+      expect(out.loop.iterations[1].kind).toBe('deterministic_fix');
+    });
   });
 
   describe('loop history', () => {
