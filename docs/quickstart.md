@@ -183,3 +183,8 @@ Example: two projects with different test runners:
 When run against `frontend`: commands are `["echo base-validation", "pnpm test"]`, model is `shared-default-model`.
 
 When run against `backend`: commands are `["echo base-validation", "make test"]`, timeouts override build to `180`, model is `backend-finetuned`.
+
+## Migration
+
+- Multi-repo: migration 0025 backfills every run with a stable `repositoryId`; new `POST /api/runs` requires `repositoryId` when more than one repository is enabled.
+
