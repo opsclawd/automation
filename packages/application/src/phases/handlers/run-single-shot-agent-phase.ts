@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { AgentContract, AgentProfileName, Failure, PhaseName } from '@ai-sdlc/domain';
 import type {
   AgentInvocationRequest,
@@ -312,9 +314,41 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'blocked', failure };
   }
 
-  // 9. Extract result
-  //    Skipped for phases where the agent produces draft artifacts only,
-  //    and the result values are determined by handler-level operations.
+  // 9. Worktree artifact verification and recovery
+  if (config.agentContract.requiredArtifacts) {
+    for (const artifactPath of config.agentContract.requiredArtifacts) {
+      const fullPath = join(ctx.cwd, artifactPath);
+      if (!existsSync(fullPath)) {
+        try {
+          const contents = await ctx.artifacts.read(ctx.runUuid, artifactPath);
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            phaseId: config.phase as string,
+            relativePath: artifactPath,
+            contents,
+          });
+          emit(
+            `${String(config.phase)}.worktree_artifact_recovered`,
+            'warn',
+            `re-materialized missing worktree artifact: ${artifactPath}`,
+            { path: artifactPath },
+          );
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          emit(
+            `${String(config.phase)}.worktree_artifact_recovery_failed`,
+            'error',
+            `failed to re-materialize missing worktree artifact ${artifactPath}: ${message}`,
+            { path: artifactPath, error: message },
+          );
+        }
+      }
+    }
+  }
+
+  // 10. Extract result
+  //     Skipped for phases where the agent produces draft artifacts only,
+  //     and the result values are determined by handler-level operations.
   if (!config.skipResultExtraction) {
     const extracted = await extractResult({
       invocation,
@@ -339,7 +373,7 @@ export async function runSingleShotAgentPhase(
     }
   }
 
-  // 10. Success
+  // 11. Success
   // When skipResultExtraction is set, the parent handler performs additional
   // deterministic work (e.g. GitHub operations) before completion. Skip the
   // phase.completed emit so the parent handler's own emit captures the true
