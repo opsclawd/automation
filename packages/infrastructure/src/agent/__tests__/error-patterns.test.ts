@@ -133,7 +133,7 @@ describe('testQuotaPatterns', () => {
   });
 
   it('does not match git SHAs containing 429 (default mode)', () => {
-    const result = testQuotaPatterns('de4297c feat: add helper function');
+    const result = testQuotaPatterns('status de4297c feat: add helper function');
     expect(result).toBeNull();
   });
 
@@ -349,7 +349,9 @@ describe('testProviderErrorPatterns', () => {
   });
 
   it('does not match git SHAs starting with 5 and followed by error (default mode)', () => {
-    const result = testProviderErrorPatterns('5a3e12c feat: add status parsing, but error occurs');
+    const result = testProviderErrorPatterns(
+      'status a500b2c feat: add status parsing, but error occurs',
+    );
     expect(result).toBeNull();
   });
 
