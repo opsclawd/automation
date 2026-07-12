@@ -3084,7 +3084,7 @@ describe('ImplementStepLoop terminal fix escalation', () => {
         agentOutcome: 'success',
         verdict: 'fail',
       }),
-      runFix: async (_ctx, opts) => {
+      runFix: async (_ctx, _opts) => {
         fixCalls += 1;
         return {
           invocationId: `fix-${fixCalls}`,

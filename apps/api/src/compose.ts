@@ -3315,9 +3315,10 @@ export function composeRoot(opts: ComposeOptions): Container {
               const task = manifest.manifest.tasks.find((t) => t.n === taskIndex);
               if (task) {
                 if (manifest.manifest.version === 2) {
-                  taskValidationCommands = (task as any).validation_commands ?? [];
+                  taskValidationCommands = (task as { validation_commands?: string[] })
+                    .validation_commands ?? [];
                 } else {
-                  taskValidationCommands = (task as any).validation ?? [];
+                  taskValidationCommands = (task as { validation?: string[] }).validation ?? [];
                 }
               }
             }
