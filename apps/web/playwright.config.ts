@@ -14,13 +14,16 @@ export default defineConfig({
   globalSetup: './e2e/globalSetup.ts',
   webServer: [
     {
-      // API server: uses --db-path and --runs-dir to point at the isolated
-      // test directory so e2e seed data doesn't collide with development data.
-      command: `pnpm --filter @ai-sdlc/api dev serve --port 4319 --db-path ${TEST_DB_PATH} --runs-dir ${TEST_AI_DIR}`,
+      command: `npx tsx apps/api/src/cli.ts serve --port 4319 --db-path ${TEST_DB_PATH} --runs-dir ${TEST_AI_DIR}`,
       url: 'http://127.0.0.1:4319/api/runs',
       cwd: '../..',
       reuseExistingServer: false,
       timeout: 60_000,
+      env: {
+        GH_TOKEN: 'invalid',
+        GITHUB_TOKEN: 'invalid',
+        GITHUB_REPOSITORY: 'unknown/unknown',
+      },
     },
     {
       // Web server: Next.js dev server for the frontend.

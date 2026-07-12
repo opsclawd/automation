@@ -1,8 +1,8 @@
-import Database from 'better-sqlite3';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openDatabase, applyMigrations } from '../../../packages/infrastructure/src/index.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -10,74 +10,16 @@ const TEST_AI_DIR = join(REPO_ROOT, 'test-results', 'e2e');
 const DB_PATH = join(TEST_AI_DIR, 'orchestrator-test.sqlite');
 const RUNS_DIR = TEST_AI_DIR;
 
-const MIGRATION_SQL = `
-CREATE TABLE IF NOT EXISTS schema_version (
-  version INTEGER PRIMARY KEY,
-  applied_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS runs (
-  uuid TEXT PRIMARY KEY,
-  display_id TEXT NOT NULL UNIQUE,
-  issue_number INTEGER NOT NULL,
-  type TEXT NOT NULL,
-  status TEXT NOT NULL,
-  current_phase TEXT,
-  completed_phases TEXT NOT NULL DEFAULT '[]',
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  failure_reason TEXT,
-  exit_code INTEGER,
-  duration_ms INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_runs_issue_status ON runs (issue_number, status);
-CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs (started_at DESC);
-CREATE TABLE IF NOT EXISTS phases (
-  id TEXT PRIMARY KEY,
-  run_uuid TEXT NOT NULL REFERENCES runs(uuid) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  status TEXT NOT NULL,
-  attempt INTEGER NOT NULL DEFAULT 1,
-  started_at TEXT,
-  completed_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_phases_run ON phases (run_uuid, name);
-CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_uuid TEXT NOT NULL REFERENCES runs(uuid) ON DELETE CASCADE,
-  phase TEXT,
-  level TEXT NOT NULL,
-  type TEXT NOT NULL,
-  message TEXT NOT NULL,
-  metadata TEXT NOT NULL DEFAULT '{}',
-  timestamp TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_events_run_ts ON events (run_uuid, timestamp);
-CREATE TABLE IF NOT EXISTS artifacts (
-  id TEXT PRIMARY KEY,
-  run_uuid TEXT NOT NULL REFERENCES runs(uuid) ON DELETE CASCADE,
-  phase TEXT,
-  type TEXT NOT NULL,
-  path TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts (run_uuid);
-CREATE TABLE IF NOT EXISTS failures (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_uuid TEXT NOT NULL REFERENCES runs(uuid) ON DELETE CASCADE,
-  phase TEXT,
-  step TEXT,
-  attempt INTEGER,
-  kind TEXT NOT NULL,
-  message TEXT NOT NULL,
-  exit_code INTEGER,
-  can_retry INTEGER NOT NULL,
-  suggested_action TEXT NOT NULL,
-  artifacts TEXT NOT NULL DEFAULT '[]',
-  detected_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_failures_run ON failures (run_uuid);
-INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (1, '1970-01-01T00:00:00.000Z');
-`;
+function sha256(val: string): string {
+  return createHash('sha256').update(val).digest('hex');
+}
+
+const HEALTHY_1_ID = sha256('owner/repo-healthy-1');
+const HEALTHY_2_ID = sha256('owner/repo-healthy-2');
+const DISABLED_ID = sha256('owner/repo-disabled');
+const UNKNOWN_ID = sha256('owner/repo-unknown');
+const DEGRADED_ID = sha256('owner/repo-degraded');
+const UNREACHABLE_ID = sha256('owner/repo-unreachable');
 
 interface SeedRun {
   uuid: string;
@@ -92,10 +34,9 @@ interface SeedRun {
   failure_reason: string | null;
   exit_code: number | null;
   duration_ms: number | null;
+  repo_id: string;
 }
 
-// R-001: used by LiveLogViewer tests (needs 'running' + combined.log only)
-// R-003: used by tabs + artifact viewer tests (needs failure + extra artifacts)
 const SEED_RUNS: SeedRun[] = [
   {
     uuid: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
@@ -110,11 +51,12 @@ const SEED_RUNS: SeedRun[] = [
     failure_reason: null,
     exit_code: null,
     duration_ms: 5000,
+    repo_id: HEALTHY_1_ID,
   },
   {
     uuid: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
     display_id: 'R-002',
-    issue_number: 2,
+    issue_number: 1, // Same issue number, distinct repo, distinct UUID & display_id
     type: 'issue_to_pr',
     status: 'running',
     current_phase: null,
@@ -124,6 +66,7 @@ const SEED_RUNS: SeedRun[] = [
     failure_reason: null,
     exit_code: null,
     duration_ms: 10000,
+    repo_id: HEALTHY_2_ID,
   },
   {
     uuid: 'c3d4e5f6-a7b8-9012-cdef-123456789012',
@@ -138,6 +81,7 @@ const SEED_RUNS: SeedRun[] = [
     failure_reason: null,
     exit_code: 1,
     duration_ms: 30000,
+    repo_id: HEALTHY_1_ID,
   },
 ];
 
@@ -145,6 +89,7 @@ const SEED_RUNS: SeedRun[] = [
 const extraUuids = Array.from({ length: 27 }, () => randomUUID());
 for (let i = 4; i <= 30; i++) {
   const displayId = `R-${i.toString().padStart(3, '0')}`;
+  const isLast = i === 30;
   SEED_RUNS.push({
     uuid: extraUuids[i - 4]!,
     display_id: displayId,
@@ -158,26 +103,135 @@ for (let i = 4; i <= 30; i++) {
     failure_reason: null,
     exit_code: 0,
     duration_ms: 5000,
+    repo_id: isLast ? 'unregistered-repo-id' : HEALTHY_1_ID,
   });
 }
 
 export default async function globalSetup() {
   mkdirSync(dirname(DB_PATH), { recursive: true });
   mkdirSync(RUNS_DIR, { recursive: true });
-  const db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.exec(MIGRATION_SQL);
+  const db = openDatabase(DB_PATH);
+  applyMigrations(db);
 
   db.exec('DELETE FROM failures');
   db.exec('DELETE FROM events');
+  db.exec('DELETE FROM artifacts');
+  db.exec('DELETE FROM phases');
   db.exec('DELETE FROM runs');
+  db.exec('DELETE FROM repositories');
+
+  const insertRepo = db.prepare(`
+    INSERT INTO repositories (
+      id, full_name, owner, name, local_base_path, default_branch, remote_url,
+      enabled, health_status, health_error, last_health_check_at, created_at, updated_at
+    ) VALUES (
+      @id, @full_name, @owner, @name, @local_base_path, @default_branch, @remote_url,
+      @enabled, @health_status, @health_error, @last_health_check_at, @created_at, @updated_at
+    )
+  `);
+
+  const reposData = [
+    {
+      id: HEALTHY_1_ID,
+      full_name: 'owner/repo-healthy-1',
+      owner: 'owner',
+      name: 'repo-healthy-1',
+      local_base_path: '/path/to/repo-healthy-1',
+      default_branch: 'main',
+      remote_url: 'git@github.com:owner/repo-healthy-1.git',
+      enabled: 1,
+      health_status: 'healthy',
+      health_error: null,
+      last_health_check_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: HEALTHY_2_ID,
+      full_name: 'owner/repo-healthy-2',
+      owner: 'owner',
+      name: 'repo-healthy-2',
+      local_base_path: '/path/to/repo-healthy-2',
+      default_branch: 'main',
+      remote_url: 'git@github.com:owner/repo-healthy-2.git',
+      enabled: 1,
+      health_status: 'healthy',
+      health_error: null,
+      last_health_check_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: DISABLED_ID,
+      full_name: 'owner/repo-disabled',
+      owner: 'owner',
+      name: 'repo-disabled',
+      local_base_path: '/path/to/repo-disabled',
+      default_branch: 'main',
+      remote_url: 'git@github.com:owner/repo-disabled.git',
+      enabled: 0,
+      health_status: 'healthy',
+      health_error: null,
+      last_health_check_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: UNKNOWN_ID,
+      full_name: 'owner/repo-unknown',
+      owner: 'owner',
+      name: 'repo-unknown',
+      local_base_path: '/path/to/repo-unknown',
+      default_branch: 'main',
+      remote_url: 'git@github.com:owner/repo-unknown.git',
+      enabled: 1,
+      health_status: 'unknown',
+      health_error: null,
+      last_health_check_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: DEGRADED_ID,
+      full_name: 'owner/repo-degraded',
+      owner: 'owner',
+      name: 'repo-degraded',
+      local_base_path: '/path/to/repo-degraded',
+      default_branch: 'main',
+      remote_url: 'git@github.com:owner/repo-degraded.git',
+      enabled: 1,
+      health_status: 'degraded',
+      health_error: 'health check failed',
+      last_health_check_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: UNREACHABLE_ID,
+      full_name: 'owner/repo-unreachable',
+      owner: 'owner',
+      name: 'repo-unreachable',
+      local_base_path: '/path/to/repo-unreachable',
+      default_branch: 'main',
+      remote_url: 'git@github.com:owner/repo-unreachable.git',
+      enabled: 1,
+      health_status: 'unreachable',
+      health_error: 'unreachable',
+      last_health_check_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+  ];
+
+  for (const r of reposData) {
+    insertRepo.run(r);
+  }
 
   const insert = db.prepare(`
     INSERT OR REPLACE INTO runs (uuid, display_id, issue_number, type, status, current_phase,
-      completed_phases, started_at, completed_at, failure_reason, exit_code, duration_ms)
+      completed_phases, started_at, completed_at, failure_reason, exit_code, duration_ms, repo_id)
     VALUES (@uuid, @display_id, @issue_number, @type, @status, @current_phase,
-      @completed_phases, @started_at, @completed_at, @failure_reason, @exit_code, @duration_ms)
+      @completed_phases, @started_at, @completed_at, @failure_reason, @exit_code, @duration_ms, @repo_id)
   `);
 
   const insertFailure = db.prepare(`

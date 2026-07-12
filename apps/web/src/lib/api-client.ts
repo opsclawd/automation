@@ -336,7 +336,8 @@ export async function listRepositories(params?: { all?: number }): Promise<Repos
   const url = getRequestUrl('/api/repositories', params);
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load repositories: ${r.status}`);
-  return r.json() as Promise<RepositoryDto[]>;
+  const data = await r.json();
+  return data.repositories as RepositoryDto[];
 }
 
 export async function getRepository(id: string): Promise<RepositoryDto> {
