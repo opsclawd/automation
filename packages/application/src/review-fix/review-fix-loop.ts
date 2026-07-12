@@ -37,15 +37,20 @@ import type {
   ReviewDimensionState,
   DispositionHistoryEntry,
 } from '../review-state/types.js';
+import { fingerprintFinding } from '../review-state/fingerprint.js';
 
-function computeNewState(
+async function computeNewState(
   prevState: ReviewDimensionState | undefined,
   newFindings: Array<{ severity: string; summary: string }>,
   fixVerdict: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix' | undefined,
   snapshot: ReviewSnapshot,
   now: Date,
-): ReviewDimensionState {
-  const newFingerprints = new Set(newFindings.map((f) => (f.summary ?? '').trim().toLowerCase()));
+): Promise<ReviewDimensionState> {
+  const newFingerprints = new Set<string>();
+  for (const f of newFindings) {
+    const fp = await fingerprintFinding('integration', f.severity, f.summary);
+    newFingerprints.add(fp);
+  }
   const prevRecords = prevState?.unresolvedRecords ?? [];
   const prevDispositions = prevState?.dispositionHistory ?? [];
 
@@ -98,7 +103,7 @@ function computeNewState(
   }
 
   for (const f of newFindings) {
-    const fp = (f.summary ?? '').trim().toLowerCase();
+    const fp = await fingerprintFinding('integration', f.severity, f.summary);
     const isBrandNew = !prevRecords.some((r) => r.fingerprint === fp);
     if (isBrandNew) {
       const record: ReviewFindingRecord = {
@@ -620,7 +625,7 @@ export class ReviewFixLoop {
           identity: review.reviewedCommitSha || '',
           capturedAt: deps.now().toISOString(),
         };
-        const nextState = computeNewState(
+        const nextState = await computeNewState(
           integrationState,
           review.verdict === 'pass' ? [] : (review.offendingFindings ?? []),
           lastFixVerdict,

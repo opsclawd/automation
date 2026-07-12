@@ -4,6 +4,7 @@ import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
 import { FakeReviewStateRepository } from '../../test-doubles/fake-review-state-repository.js';
 import { ReviewFixLoop } from '../review-fix-loop.js';
+import { fingerprintFinding } from '../../review-state/fingerprint.js';
 import type {
   ReviewFixLoopDeps,
   ReviewStepResult,
@@ -156,7 +157,10 @@ describe('ReviewFixLoop integration mode tests', () => {
     // iter 1: 'Abc' is open.
     // iter 2: fixer returned done_no_fixes_needed. 'Abc' recurred (rebutted -> recurred).
     // iter 3: fixer returned done_with_fixes. 'Abc' is addressed (resolved).
-    const abcHistory = integrationState?.dispositionHistory.filter((h) => h.fingerprint === 'abc');
+    const expectedFp = await fingerprintFinding('integration', 'high', 'Abc');
+    const abcHistory = integrationState?.dispositionHistory.filter(
+      (h) => h.fingerprint === expectedFp,
+    );
     expect(abcHistory).toBeDefined();
     expect(abcHistory?.map((h) => h.disposition)).toEqual(['open', 'recurred', 'addressed']);
   });

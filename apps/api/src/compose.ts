@@ -156,6 +156,7 @@ import {
   RemoveRepository,
   type RepositoryRegistryPort,
   TaskContextGenerator,
+  fingerprintFinding,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -2446,11 +2447,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           };
         }
 
-        const disputedFindings = offendingFindings.map((f) => ({
-          fingerprint: (f.summary ?? '').trim().toLowerCase(),
-          severity: f.severity,
-          summary: f.summary,
-        }));
+        const disputedFindings = await Promise.all(
+          offendingFindings.map(async (f) => ({
+            fingerprint: await fingerprintFinding('integration', f.severity, f.summary),
+            severity: f.severity,
+            summary: f.summary,
+          })),
+        );
         const fingerprints = disputedFindings.map((df) => df.fingerprint);
 
         const persistedDimensionStates = reviewStateRepository.listDimensionStates(
@@ -2472,8 +2475,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
         try {
           const codeReviewMd = await store.read(String(ctx.runId), 'code-review.md');
-          for (const fp of fingerprints) {
-            const fpIdx = codeReviewMd.toLowerCase().indexOf(fp);
+          for (const df of disputedFindings) {
+            const searchStr = (df.summary ?? '').trim().toLowerCase();
+            const fpIdx = codeReviewMd.toLowerCase().indexOf(searchStr);
             if (fpIdx !== -1) {
               const lines = codeReviewMd.split('\n');
               const linesBefore = codeReviewMd.slice(0, fpIdx).split('\n');
@@ -2539,6 +2543,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             iteration: ctx.iterationIndex,
             invocation_type: 'initial',
             review_mode: 'integration_full',
+            review_snapshot_kind: 'git',
+            review_snapshot_identity: startCommitSha,
+            review_dimensions: ['integration'],
+            review_scope_source: 'review-fix',
           },
         });
 
