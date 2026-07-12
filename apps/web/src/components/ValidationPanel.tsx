@@ -12,14 +12,20 @@ const PILL: Record<string, string> = {
   timed_out: 'bg-amber-100 text-amber-800',
 };
 
-export function ValidationPanel({ runUuid }: { runUuid: string }) {
+export function ValidationPanel({
+  repositoryId,
+  runUuid,
+}: {
+  repositoryId: string;
+  runUuid: string;
+}) {
   const [runs, setRuns] = useState<ValidationRunDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState(0);
 
   useEffect(() => {
     let live = true;
-    listValidation(runUuid)
+    listValidation(repositoryId, runUuid)
       .then((r) => {
         if (live) setRuns(r);
       })
@@ -29,7 +35,7 @@ export function ValidationPanel({ runUuid }: { runUuid: string }) {
     return () => {
       live = false;
     };
-  }, [runUuid]);
+  }, [repositoryId, runUuid]);
 
   if (error) return <div className="text-sm text-red-600">Failed to load validation: {error}</div>;
   if (runs === null) return <div className="text-sm text-slate-500">Loading validation…</div>;
@@ -77,8 +83,18 @@ export function ValidationPanel({ runUuid }: { runUuid: string }) {
               <pre className="mt-1 whitespace-pre-wrap text-xs text-red-700">{c.classifier}</pre>
             )}
             <div className="mt-2 flex flex-col gap-1">
-              <ArtifactViewer runId={runUuid} fileName={c.stdoutPath} fileSize={0} />
-              <ArtifactViewer runId={runUuid} fileName={c.stderrPath} fileSize={0} />
+              <ArtifactViewer
+                repositoryId={repositoryId}
+                runId={runUuid}
+                fileName={c.stdoutPath}
+                fileSize={0}
+              />
+              <ArtifactViewer
+                repositoryId={repositoryId}
+                runId={runUuid}
+                fileName={c.stderrPath}
+                fileSize={0}
+              />
             </div>
           </li>
         ))}

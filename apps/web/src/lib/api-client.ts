@@ -7,6 +7,7 @@ export interface RunDto {
   uuid: string;
   displayId: string;
   issueNumber: number;
+  repoId: string;
   status: string;
   currentPhase: string | null;
   completedPhases: string[];
@@ -17,6 +18,39 @@ export interface RunDto {
   failureReason: string | null;
 }
 
+export interface RepositoryDto {
+  id: string;
+  fullName: string;
+  owner: string;
+  name: string;
+  localBasePath: string;
+  defaultBranch: string;
+  remoteUrl: string;
+  enabled: boolean;
+  healthStatus: 'unknown' | 'healthy' | 'degraded' | 'unreachable';
+  healthError: string | null;
+  lastHealthCheckAt: string | null;
+  configMetadata: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const RUN_STATUSES = [
+  'queued',
+  'running',
+  'waiting',
+  'passed',
+  'failed',
+  'cancelled',
+  'blocked',
+  'needs_human_review',
+] as const;
+
+export const repositoryHref = (repositoryId: string) =>
+  `/repositories/${encodeURIComponent(repositoryId)}`;
+export const repositoryRunHref = (repositoryId: string, uuid: string) =>
+  `${repositoryHref(repositoryId)}/runs/${encodeURIComponent(uuid)}`;
+
 export interface FailureDto {
   kind: string;
   message: string;
@@ -26,9 +60,6 @@ export interface FailureDto {
   artifacts: string[];
 }
 
-// Server Components fetch directly against the API origin; client components
-// should use relative `/api/...` paths so the request goes through Next's
-// /api/* rewrite (see next.config.mjs) and avoids CORS issues.
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4319';
 
 export interface MetaDto {
@@ -50,18 +81,44 @@ export interface ListRunsResult {
   offset: number;
 }
 
+function getRequestUrl(
+  path: string,
+  params: Record<string, string | number | undefined | null> = {},
+): string {
+  const base = typeof window === 'undefined' ? apiUrl : '';
+  const search = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) {
+      search.append(k, String(v));
+    }
+  }
+  const qs = search.toString();
+  return `${base}${path}${qs ? `?${qs}` : ''}`;
+}
+
 export async function listRuns(params?: {
   limit: number;
   offset?: number;
+  repositoryId?: string;
+  status?: string;
 }): Promise<ListRunsResult> {
-  const qs = params ? `?limit=${params.limit}&offset=${params.offset ?? 0}` : '';
-  const r = await fetch(`${apiUrl}/api/runs${qs}`, { cache: 'no-store' });
+  const url = getRequestUrl('/api/runs', {
+    limit: params?.limit,
+    offset: params?.offset ?? 0,
+    repositoryId: params?.repositoryId,
+    status: params?.status,
+  });
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load runs: ${r.status}`);
   return r.json() as Promise<ListRunsResult>;
 }
 
-export async function getRun(uuid: string): Promise<{ run: RunDto; failure: FailureDto | null }> {
-  const r = await fetch(`${apiUrl}/api/runs/${uuid}`, { cache: 'no-store' });
+export async function getRun(
+  repositoryId: string,
+  uuid: string,
+): Promise<{ run: RunDto; failure: FailureDto | null }> {
+  const url = getRequestUrl(`/api/runs/${uuid}`, { repositoryId });
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load run: ${r.status}`);
   return r.json();
 }
@@ -72,33 +129,46 @@ export interface ArtifactFile {
   modifiedAt: string;
 }
 
-export async function listArtifacts(uuid: string): Promise<ArtifactFile[]> {
-  const r = await fetch(`${apiUrl}/api/runs/${uuid}/artifacts`, { cache: 'no-store' });
+export async function listArtifacts(repositoryId: string, uuid: string): Promise<ArtifactFile[]> {
+  const url = getRequestUrl(`/api/runs/${uuid}/artifacts`, { repositoryId });
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load artifacts: ${r.status}`);
   return (await r.json()).files as ArtifactFile[];
 }
 
-export async function getArtifact(uuid: string, path: string): Promise<string> {
-  const r = await fetch(`${apiUrl}/api/runs/${uuid}/artifacts/${encodeURIComponent(path)}`, {
-    cache: 'no-store',
+export async function getArtifact(
+  repositoryId: string,
+  uuid: string,
+  path: string,
+): Promise<string> {
+  const url = getRequestUrl(`/api/runs/${uuid}/artifacts/${encodeURIComponent(path)}`, {
+    repositoryId,
   });
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load artifact: ${r.status}`);
   return r.text();
 }
 
-export async function listRunEvents(runUuid: string, since?: string): Promise<ApiEvent[]> {
-  const base = typeof window === 'undefined' ? apiUrl : '';
-  const qs = since ? `?since=${encodeURIComponent(since)}` : '';
-  // cache: 'no-store' only takes effect in server components (Next.js fetch extension);
-  // browser fetch silently ignores it. Kept for server-side call-site correctness.
-  const r = await fetch(`${base}/api/runs/${runUuid}/events${qs}`, { cache: 'no-store' });
+export async function listRunEvents(
+  repositoryId: string,
+  runUuid: string,
+  since?: string,
+): Promise<ApiEvent[]> {
+  const url = getRequestUrl(`/api/runs/${runUuid}/events`, {
+    repositoryId,
+    since,
+  });
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load run events: ${r.status}`);
   return ((await r.json()) as { events: ApiEvent[] }).events;
 }
 
-export async function listValidation(runUuid: string): Promise<ValidationRunDto[]> {
-  const base = typeof window === 'undefined' ? apiUrl : '';
-  const r = await fetch(`${base}/api/runs/${runUuid}/validation`, { cache: 'no-store' });
+export async function listValidation(
+  repositoryId: string,
+  runUuid: string,
+): Promise<ValidationRunDto[]> {
+  const url = getRequestUrl(`/api/runs/${runUuid}/validation`, { repositoryId });
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load validation: ${r.status}`);
   return ((await r.json()) as { validationRuns: ValidationRunDto[] }).validationRuns;
 }
@@ -108,16 +178,16 @@ export interface PrReviewData {
   pollAttempts: PollAttemptDto[];
 }
 
-export async function listPrReview(runUuid: string): Promise<PrReviewData> {
-  const base = typeof window === 'undefined' ? apiUrl : '';
-  const r = await fetch(`${base}/api/runs/${runUuid}/pr-review`, { cache: 'no-store' });
+export async function listPrReview(repositoryId: string, runUuid: string): Promise<PrReviewData> {
+  const url = getRequestUrl(`/api/runs/${runUuid}/pr-review`, { repositoryId });
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load pr-review: ${r.status}`);
   return (await r.json()) as PrReviewData;
 }
 
-export async function listReviewFix(runUuid: string): Promise<LoopDto[]> {
-  const base = typeof window === 'undefined' ? apiUrl : '';
-  const r = await fetch(`${base}/api/runs/${runUuid}/review-fix`, { cache: 'no-store' });
+export async function listReviewFix(repositoryId: string, runUuid: string): Promise<LoopDto[]> {
+  const url = getRequestUrl(`/api/runs/${runUuid}/review-fix`, { repositoryId });
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load review-fix: ${r.status}`);
   return ((await r.json()) as { loops: LoopDto[] }).loops;
 }
@@ -162,10 +232,11 @@ export class RunActionConfirmationRequiredError extends Error {
 }
 
 export async function cancelRunAction(
+  repositoryId: string,
   runUuid: string,
   reason?: string,
 ): Promise<RunActionSuccessDto> {
-  const base = typeof window === 'undefined' ? apiUrl : '';
+  const url = getRequestUrl(`/api/runs/${runUuid}/cancel`, { repositoryId });
   const init: RequestInit = {
     method: 'POST',
     cache: 'no-store',
@@ -174,7 +245,7 @@ export async function cancelRunAction(
     init.body = JSON.stringify({ reason });
     init.headers = { 'Content-Type': 'application/json' };
   }
-  const r = await fetch(`${base}/api/runs/${runUuid}/cancel`, init);
+  const r = await fetch(url, init);
   if (!r.ok) {
     if (r.status === 409) {
       try {
@@ -194,10 +265,11 @@ export async function cancelRunAction(
 }
 
 export async function retryRunAction(
+  repositoryId: string,
   runUuid: string,
   confirm?: boolean,
 ): Promise<RunActionSuccessDto> {
-  const base = typeof window === 'undefined' ? apiUrl : '';
+  const url = getRequestUrl(`/api/runs/${runUuid}/retry`, { repositoryId });
   const init: RequestInit = {
     method: 'POST',
     cache: 'no-store',
@@ -206,7 +278,7 @@ export async function retryRunAction(
     init.body = JSON.stringify({ confirm });
     init.headers = { 'Content-Type': 'application/json' };
   }
-  const r = await fetch(`${base}/api/runs/${runUuid}/retry`, init);
+  const r = await fetch(url, init);
   if (!r.ok) {
     if (r.status === 409) {
       try {
@@ -226,10 +298,11 @@ export async function retryRunAction(
 }
 
 export async function resumeRunAction(
+  repositoryId: string,
   runUuid: string,
   input?: { fromPhase?: string; confirm?: boolean },
 ): Promise<RunActionSuccessDto> {
-  const base = typeof window === 'undefined' ? apiUrl : '';
+  const url = getRequestUrl(`/api/runs/${runUuid}/resume`, { repositoryId });
   const init: RequestInit = {
     method: 'POST',
     cache: 'no-store',
@@ -240,7 +313,7 @@ export async function resumeRunAction(
     init.body = JSON.stringify(input);
     init.headers = { 'Content-Type': 'application/json' };
   }
-  const r = await fetch(`${base}/api/runs/${runUuid}/resume`, init);
+  const r = await fetch(url, init);
   if (!r.ok) {
     if (r.status === 409) {
       try {
@@ -257,4 +330,53 @@ export async function resumeRunAction(
     throw new Error(`failed to resume run action: ${r.status}`);
   }
   return r.json() as Promise<RunActionSuccessDto>;
+}
+
+export async function listRepositories(params?: { all?: number }): Promise<RepositoryDto[]> {
+  const url = getRequestUrl('/api/repositories', params);
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`failed to load repositories: ${r.status}`);
+  return r.json() as Promise<RepositoryDto[]>;
+}
+
+export async function getRepository(id: string): Promise<RepositoryDto> {
+  const url = getRequestUrl(`/api/repositories/${id}`);
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`failed to load repository: ${r.status}`);
+  return r.json() as Promise<RepositoryDto>;
+}
+
+export async function refreshRepositoryHealth(id: string): Promise<RepositoryDto> {
+  const url = getRequestUrl(`/api/repositories/${id}/refresh`);
+  const r = await fetch(url, { method: 'POST', cache: 'no-store' });
+  if (!r.ok) throw new Error(`failed to refresh repository health: ${r.status}`);
+  return r.json() as Promise<RepositoryDto>;
+}
+
+export async function startRun(
+  repositoryId: string,
+  issueNumber: number,
+): Promise<{ run: RunDto }> {
+  const url = getRequestUrl('/api/runs');
+  const r = await fetch(url, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repositoryId, issueNumber }),
+  });
+  if (!r.ok) throw new Error(`failed to start run: ${r.status}`);
+  return r.json() as Promise<{ run: RunDto }>;
+}
+
+export async function getStatusMetrics(repositoryId: string): Promise<Record<string, number>> {
+  const promises = RUN_STATUSES.map(async (status) => {
+    const res = await listRuns({ repositoryId, status, limit: 1 });
+    return { status, total: res.total };
+  });
+  const results = await Promise.all(promises);
+  const metrics: Record<string, number> = {};
+  for (const r of results) {
+    metrics[r.status] = r.total;
+  }
+  return metrics;
 }

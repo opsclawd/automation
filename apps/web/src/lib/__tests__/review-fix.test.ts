@@ -67,7 +67,7 @@ describe('listReviewFix', () => {
   });
 
   it('calls the correct URL and unwraps .loops from the response', async () => {
-    const loops = await listReviewFix('abc-123');
+    const loops = await listReviewFix('repo-123', 'abc-123');
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/runs/abc-123/review-fix'), {
       cache: 'no-store',
     });
@@ -80,7 +80,9 @@ describe('listReviewFix', () => {
       ok: false,
       status: 500,
     } as Response);
-    await expect(listReviewFix('abc-123')).rejects.toThrow('failed to load review-fix: 500');
+    await expect(listReviewFix('repo-123', 'abc-123')).rejects.toThrow(
+      'failed to load review-fix: 500',
+    );
   });
 });
 

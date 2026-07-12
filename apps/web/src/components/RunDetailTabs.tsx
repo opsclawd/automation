@@ -2,15 +2,16 @@
 
 import { useState } from 'react';
 import { Tabs } from './Tabs';
-import { LiveLogViewer } from '@/app/runs/[id]/LiveLogViewer';
+import { LiveLogViewer } from './LiveLogViewer';
 import { ArtifactViewer } from './ArtifactViewer';
 import { ValidationPanel } from './ValidationPanel';
 import { PrReviewPanel } from './PrReviewPanel';
 import { ReviewFixPanel } from './ReviewFixPanel';
-import { TimelineIsland } from '@/app/runs/[id]/timeline-island';
+import { TimelineIsland } from './TimelineIsland';
 import type { RunDto, FailureDto, ArtifactFile } from '@/lib/api-client';
 
 interface RunDetailTabsProps {
+  repositoryId: string;
   run: RunDto;
   failure: FailureDto | null;
   files: ArtifactFile[];
@@ -27,13 +28,20 @@ const TAB_ITEMS = [
   { id: 'timeline', label: 'Timeline' },
 ];
 
-export function RunDetailTabs({ run, failure, files, initialCombinedContent }: RunDetailTabsProps) {
+export function RunDetailTabs({
+  repositoryId,
+  run,
+  failure,
+  files,
+  initialCombinedContent,
+}: RunDetailTabsProps) {
   const [activeTab, setActiveTab] = useState('logs');
 
   return (
     <Tabs tabs={TAB_ITEMS} active={activeTab} onChange={setActiveTab}>
       {activeTab === 'logs' && (
         <LiveLogViewer
+          repositoryId={repositoryId}
           runId={run.uuid}
           runStatus={run.status}
           initialContent={initialCombinedContent}
@@ -45,18 +53,29 @@ export function RunDetailTabs({ run, failure, files, initialCombinedContent }: R
           <ul className="text-sm space-y-1">
             {files.map((f) => (
               <li key={f.path} className="flex items-center gap-2">
-                <ArtifactViewer runId={run.uuid} fileName={f.path} fileSize={f.size} />
+                <ArtifactViewer
+                  repositoryId={repositoryId}
+                  runId={run.uuid}
+                  fileName={f.path}
+                  fileSize={f.size}
+                />
               </li>
             ))}
           </ul>
         </div>
       )}
 
-      {activeTab === 'validation' && <ValidationPanel runUuid={run.uuid} />}
+      {activeTab === 'validation' && (
+        <ValidationPanel repositoryId={repositoryId} runUuid={run.uuid} />
+      )}
 
-      {activeTab === 'review-fix' && <ReviewFixPanel runUuid={run.uuid} />}
+      {activeTab === 'review-fix' && (
+        <ReviewFixPanel repositoryId={repositoryId} runUuid={run.uuid} />
+      )}
 
-      {activeTab === 'pr-review' && <PrReviewPanel runUuid={run.uuid} />}
+      {activeTab === 'pr-review' && (
+        <PrReviewPanel repositoryId={repositoryId} runUuid={run.uuid} />
+      )}
 
       {activeTab === 'failure' && failure && (
         <div className="rounded border bg-red-50 p-3 text-sm space-y-1">
@@ -82,7 +101,9 @@ export function RunDetailTabs({ run, failure, files, initialCombinedContent }: R
         </div>
       )}
 
-      {activeTab === 'timeline' && <TimelineIsland runUuid={run.uuid} />}
+      {activeTab === 'timeline' && (
+        <TimelineIsland repositoryId={repositoryId} runUuid={run.uuid} />
+      )}
     </Tabs>
   );
 }

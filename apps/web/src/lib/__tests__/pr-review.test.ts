@@ -64,7 +64,7 @@ describe('listPrReview', () => {
       ok: true,
       json: () => Promise.resolve(data),
     });
-    await expect(listPrReview('abc-123')).resolves.toEqual(data);
+    await expect(listPrReview('repo-123', 'abc-123')).resolves.toEqual(data);
   });
 
   it('rejects with status code on non-ok response', async () => {
@@ -72,12 +72,12 @@ describe('listPrReview', () => {
       ok: false,
       status: 500,
     });
-    await expect(listPrReview('abc-123')).rejects.toThrow(/500/);
+    await expect(listPrReview('repo-123', 'abc-123')).rejects.toThrow(/500/);
   });
 
   it('propagates network errors', async () => {
     const error = new TypeError('Failed to fetch');
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(error);
-    await expect(listPrReview('abc-123')).rejects.toThrow(error);
+    await expect(listPrReview('repo-123', 'abc-123')).rejects.toThrow(error);
   });
 });

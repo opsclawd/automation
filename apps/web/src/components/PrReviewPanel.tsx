@@ -19,19 +19,25 @@ function Check({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
-export function PrReviewPanel({ runUuid }: { runUuid: string }) {
+export function PrReviewPanel({
+  repositoryId,
+  runUuid,
+}: {
+  repositoryId: string;
+  runUuid: string;
+}) {
   const [data, setData] = useState<PrReviewData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
-    listPrReview(runUuid)
+    listPrReview(repositoryId, runUuid)
       .then((d) => live && setData(d))
       .catch((e) => live && setError(String(e)));
     return () => {
       live = false;
     };
-  }, [runUuid]);
+  }, [repositoryId, runUuid]);
 
   if (error) return <div className="text-sm text-red-600">Failed to load PR review: {error}</div>;
   if (data === null) return <div className="text-sm text-slate-500">Loading PR review...</div>;

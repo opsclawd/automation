@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import { formatBytes } from '@/lib/format';
 
 interface ArtifactViewerProps {
+  repositoryId: string;
   runId: string;
   fileName: string;
   fileSize?: number;
@@ -24,7 +25,7 @@ function getExt(path: string): string {
   return i >= 0 ? path.slice(i).toLowerCase() : '';
 }
 
-export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProps) {
+export function ArtifactViewer({ repositoryId, runId, fileName, fileSize }: ArtifactViewerProps) {
   const [state, setState] = useState<ViewState>('closed');
   const [content, setContent] = useState<string>('');
   const reqId = useRef(0);
@@ -48,9 +49,12 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
     const myId = ++reqId.current;
     setState('loading');
     try {
-      const r = await fetch(`/api/runs/${runId}/artifacts/${encodeURIComponent(fileName)}`, {
-        cache: 'no-store',
-      });
+      const r = await fetch(
+        `/api/runs/${runId}/artifacts/${encodeURIComponent(fileName)}?repositoryId=${encodeURIComponent(repositoryId)}`,
+        {
+          cache: 'no-store',
+        },
+      );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       if (reqId.current !== myId) return;
       const text = await r.text();
@@ -75,7 +79,7 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
         <span className="ml-2 text-slate-500">{formatBytes(fileSize)}</span>
       )}
       <a
-        href={`/api/runs/${runId}/artifacts/${encodeURIComponent(fileName)}`}
+        href={`/api/runs/${runId}/artifacts/${encodeURIComponent(fileName)}?repositoryId=${encodeURIComponent(repositoryId)}`}
         download
         className="ml-2 text-xs text-slate-400 hover:text-slate-600"
       >
@@ -141,7 +145,7 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
         <div className="mt-2 text-sm text-slate-500">
           Preview not available for this file type.{' '}
           <a
-            href={`/api/runs/${runId}/artifacts/${encodeURIComponent(fileName)}`}
+            href={`/api/runs/${runId}/artifacts/${encodeURIComponent(fileName)}?repositoryId=${encodeURIComponent(repositoryId)}`}
             download
             className="text-blue-600 underline"
           >

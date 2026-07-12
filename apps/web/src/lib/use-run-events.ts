@@ -20,7 +20,7 @@ function eventKey(e: ApiEvent): string {
   return `${e.type}:${e.phase ?? '_'}:${e.timestamp}:${path}:${msg}`;
 }
 
-export function useRunEvents(runUuid: string): UseRunEventsResult {
+export function useRunEvents(repositoryId: string, runUuid: string): UseRunEventsResult {
   const [events, setEvents] = useState<ApiEvent[]>([]);
   const [error, setError] = useState<Error | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -42,7 +42,7 @@ export function useRunEvents(runUuid: string): UseRunEventsResult {
     }
 
     function startBackfill(attempt: number) {
-      listRunEvents(runUuid)
+      listRunEvents(repositoryId, runUuid)
         .then((backfill) => {
           if (cancelled) return;
           setEvents(backfill);
@@ -50,9 +50,11 @@ export function useRunEvents(runUuid: string): UseRunEventsResult {
           setError(null);
 
           const lastTimestamp = backfill.at(-1)?.timestamp;
-          const streamUrl = lastTimestamp
-            ? `/api/runs/${runUuid}/events/stream?since=${encodeURIComponent(lastTimestamp)}`
-            : `/api/runs/${runUuid}/events/stream`;
+          const search = new URLSearchParams({ repositoryId });
+          if (lastTimestamp) {
+            search.set('since', lastTimestamp);
+          }
+          const streamUrl = `/api/runs/${runUuid}/events/stream?${search.toString()}`;
 
           es = new EventSource(streamUrl);
           es.onmessage = (msg) => {
@@ -92,7 +94,7 @@ export function useRunEvents(runUuid: string): UseRunEventsResult {
       es?.close();
       if (retryTimer !== null) clearTimeout(retryTimer);
     };
-  }, [runUuid]);
+  }, [repositoryId, runUuid]);
 
   return { events, error, isLoading };
 }
