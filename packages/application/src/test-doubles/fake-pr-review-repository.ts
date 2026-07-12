@@ -79,6 +79,11 @@ export class FakePrReviewRepository implements PrReviewRepositoryPort {
     this.commentAttempts.push(attempt);
   }
 
+  updateCommentAttempt(attempt: PrReviewCommentAttempt): void {
+    const i = this.commentAttempts.findIndex((a) => a.attemptId === attempt.attemptId);
+    if (i >= 0) this.commentAttempts[i] = attempt;
+  }
+
   listCommentAttempts(runId: RunId, commentId: number): PrReviewCommentAttempt[] {
     return this.commentAttempts
       .filter((a) => a.runId === runId && a.commentId === commentId)

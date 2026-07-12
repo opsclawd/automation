@@ -19,9 +19,6 @@ CREATE TABLE IF NOT EXISTS pr_review_comment_attempts (
   FOREIGN KEY (run_uuid, comment_id) REFERENCES pr_review_comments(run_uuid, comment_id) ON DELETE CASCADE,
   UNIQUE (run_uuid, comment_id, retry_number)
 );
-
-CREATE INDEX IF NOT EXISTS idx_pr_review_comment_attempts_run_comment
-  ON pr_review_comment_attempts (run_uuid, comment_id, retry_number);
 CREATE INDEX IF NOT EXISTS idx_pr_review_comment_attempts_run
   ON pr_review_comment_attempts (run_uuid, created_at);
 `;

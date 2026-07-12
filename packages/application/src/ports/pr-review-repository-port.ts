@@ -17,5 +17,6 @@ export interface PrReviewRepositoryPort {
   listPollAttempts(runId: RunId): PollAttempt[];
   latestPollAttempt(runId: RunId): PollAttempt | undefined;
   appendCommentAttempt(attempt: PrReviewCommentAttempt): void;
+  updateCommentAttempt(attempt: PrReviewCommentAttempt): void;
   listCommentAttempts(runId: RunId, commentId: number): PrReviewCommentAttempt[];
 }

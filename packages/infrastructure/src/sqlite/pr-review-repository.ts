@@ -329,6 +329,23 @@ export class PrReviewRepository implements PrReviewRepositoryPort {
       });
   }
 
+  updateCommentAttempt(a: PrReviewCommentAttempt): void {
+    this.db
+      .prepare(
+        `UPDATE pr_review_comment_attempts SET
+           completed_head=@completedHead, verifier_feedback=@verifierFeedback,
+           build_feedback=@buildFeedback, disposition=@disposition
+         WHERE attempt_id=@attemptId`,
+      )
+      .run({
+        attemptId: a.attemptId,
+        completedHead: a.completedHead ?? null,
+        verifierFeedback: a.verifierFeedback ?? null,
+        buildFeedback: a.buildFeedback ?? null,
+        disposition: a.disposition ?? null,
+      });
+  }
+
   listCommentAttempts(runId: RunId, commentId: number): PrReviewCommentAttempt[] {
     const rows = this.db
       .prepare(
