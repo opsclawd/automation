@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { RepositoryDto, RUN_STATUSES } from '../lib/api-client';
+import { RepositoryDto, RUN_STATUSES, repositoryHref } from '../lib/api-client';
 
 interface RunFiltersProps {
   repositories: RepositoryDto[];
@@ -32,7 +32,7 @@ export default function RunFilters({
       nextStatus = newVal;
     }
 
-    const route = nextRepoId ? `/repositories/${nextRepoId}` : '/';
+    const route = nextRepoId ? repositoryHref(nextRepoId) : '/';
 
     if (nextStatus) {
       params.set('status', nextStatus);
@@ -42,7 +42,10 @@ export default function RunFilters({
     router.push(`${route}${query ? `?${query}` : ''}`);
   };
 
-  const formAction = currentRepositoryId ? `/repositories/${currentRepositoryId}` : '/';
+  // The noscript form always targets the root page (never the current
+  // /repositories/[id] route), because only the root page reads the
+  // repositoryId query parameter to determine which repository to filter by.
+  const formAction = '/';
 
   return (
     <form

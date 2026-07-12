@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { repositoryHref } from '../lib/api-client';
 
 interface RunPaginationProps {
   page: number;
@@ -15,7 +16,7 @@ export default function RunPagination({
 }: RunPaginationProps) {
   const getPageUrl = (targetPage: number) => {
     const params = new URLSearchParams();
-    const route = currentRepositoryId ? `/repositories/${currentRepositoryId}` : '/';
+    const route = currentRepositoryId ? repositoryHref(currentRepositoryId) : '/';
     if (currentStatus) {
       params.set('status', currentStatus);
     }
