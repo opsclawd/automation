@@ -33,6 +33,7 @@ export interface BuildFixPromptInput {
   useFallback: boolean;
   extraPromptSections?: string[] | undefined;
   deterministicDiagnostic?: string | undefined;
+  reconciliationContext?: string | undefined;
 }
 
 export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): string {
@@ -194,6 +195,17 @@ export function buildReviewFixFixPrompt(input: BuildFixPromptInput): string {
     );
   }
 
+  if (input.reconciliationContext) {
+    sections.push(
+      '## RECONCILIATION CONTEXT',
+      'The orchestrator escalated a review/fix contradiction to an arbiter, which ruled:',
+      '```',
+      input.reconciliationContext,
+      '```',
+      '',
+    );
+  }
+
   sections.push(
     '## TASK',
     'Read the code review findings.',
@@ -267,11 +279,11 @@ export function buildReviewFixFixPrompt(input: BuildFixPromptInput): string {
 export interface BuildWholePrArbiterPromptInput {
   cwd: string;
   repoId: string;
-  disputedFinding: {
+  disputedFindings: Array<{
     fingerprint: string;
     severity: string;
     summary: string;
-  };
+  }>;
   dispositionHistory: Array<{
     fingerprint: string;
     disposition: string;
@@ -295,13 +307,13 @@ export function buildWholePrArbiterPrompt(input: BuildWholePrArbiterPromptInput)
     `Working directory: ${input.cwd}`,
     `Repository: ${input.repoId}`,
     '',
-    '## DISPUTED INTEGRATION FINDING',
-    `- Fingerprint: ${input.disputedFinding.fingerprint}`,
-    `- Severity: ${input.disputedFinding.severity}`,
-    `- Summary: ${input.disputedFinding.summary}`,
-    '',
-    '## DISPOSITION HISTORY',
+    '## DISPUTED INTEGRATION FINDINGS',
   ];
+
+  for (const f of input.disputedFindings) {
+    sections.push(`- [${f.severity}] ${f.summary} (Fingerprint: ${f.fingerprint})`);
+  }
+  sections.push('', '## DISPOSITION HISTORY');
 
   if (input.dispositionHistory.length > 0) {
     for (const h of input.dispositionHistory) {
@@ -341,11 +353,11 @@ export function buildWholePrArbiterPrompt(input: BuildWholePrArbiterPromptInput)
   sections.push(
     '',
     '## TASK',
-    'Determine if the disputed integration finding is valid or invalid based on the evidence.',
+    'Determine if the disputed integration findings are valid or invalid based on the evidence.',
     'You must return one of:',
-    '- finding_valid: the finding is correct and the fixer must address it',
-    '- finding_invalid: the finding is incorrect or the fixer is right to rebut it',
-    '- ambiguous: the issue is unclear from the evidence',
+    '- finding_valid: at least one finding is correct and the fixer must address it',
+    '- finding_invalid: all findings are incorrect or the fixer is right to rebut them',
+    '- ambiguous: the issues are unclear from the evidence',
     '- insufficient_evidence: you lack the evidence to decide',
     '',
     'After arbitrating, write a result.json file with:',

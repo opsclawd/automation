@@ -2046,7 +2046,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           metadata: {
             iteration: ctx.iterationIndex,
             invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
-            reviewMode: mode,
+            review_mode: mode,
+            ...(prevReviewedCommitSha ? { review_base_identity: prevReviewedCommitSha } : {}),
             review_snapshot_kind: 'git',
             review_snapshot_identity: startCommitSha,
             review_dimensions: ['integration'],
@@ -2142,6 +2143,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           historyContext?: string;
           deterministicDiagnostic?: string;
           attemptKind?: 'standard' | 'deterministic';
+          reconciliationContext?: string;
         },
       ): Promise<FixStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
@@ -2159,6 +2161,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           useFallback: opts.useFallback,
           extraPromptSections: opts.extraPromptSections,
           deterministicDiagnostic: opts.deterministicDiagnostic,
+          reconciliationContext: opts.reconciliationContext,
         });
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -2434,8 +2437,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           `whole-pr-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
         );
 
-        const findingToUse = reviewResult.offendingFindings?.[0];
-        if (!findingToUse) {
+        const offendingFindings = reviewResult.offendingFindings ?? [];
+        if (offendingFindings.length === 0) {
           return {
             outcome: 'insufficient_evidence',
             evidence: '',
@@ -2443,12 +2446,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           };
         }
 
-        const fp = (findingToUse.summary ?? '').trim().toLowerCase();
-        const disputedFinding = {
-          fingerprint: fp,
-          severity: findingToUse.severity,
-          summary: findingToUse.summary,
-        };
+        const disputedFindings = offendingFindings.map((f) => ({
+          fingerprint: (f.summary ?? '').trim().toLowerCase(),
+          severity: f.severity,
+          summary: f.summary,
+        }));
+        const fingerprints = disputedFindings.map((df) => df.fingerprint);
 
         const persistedDimensionStates = reviewStateRepository.listDimensionStates(
           String(ctx.runId),
@@ -2459,7 +2462,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           (ds) => ds.dimension === 'integration',
         );
         const dispositionHistory =
-          matchingDimensionState?.dispositionHistory.filter((h) => h.fingerprint === fp) ?? [];
+          matchingDimensionState?.dispositionHistory.filter((h) =>
+            fingerprints.includes(h.fingerprint),
+          ) ?? [];
 
         const relevantExcerpts: string[] = [];
         if (reviewResult.excerpt) {
@@ -2467,16 +2472,23 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
         try {
           const codeReviewMd = await store.read(String(ctx.runId), 'code-review.md');
-          const fpIdx = codeReviewMd.toLowerCase().indexOf(fp);
-          if (fpIdx !== -1) {
-            const lines = codeReviewMd.split('\n');
-            const linesBefore = codeReviewMd.slice(0, fpIdx).split('\n');
-            const idx = linesBefore.length - 1;
-            const start = Math.max(0, idx - 5);
-            const end = Math.min(lines.length, idx + 15);
-            relevantExcerpts.push(lines.slice(start, end).join('\n'));
+          for (const fp of fingerprints) {
+            const fpIdx = codeReviewMd.toLowerCase().indexOf(fp);
+            if (fpIdx !== -1) {
+              const lines = codeReviewMd.split('\n');
+              const linesBefore = codeReviewMd.slice(0, fpIdx).split('\n');
+              const idx = linesBefore.length - 1;
+              const start = Math.max(0, idx - 5);
+              const end = Math.min(lines.length, idx + 15);
+              relevantExcerpts.push(lines.slice(start, end).join('\n'));
+            }
           }
-        } catch {}
+        } catch (err) {
+          console.warn(`[runWholePrArbiter] failed to read code-review.md:`, err);
+          relevantExcerpts.push(
+            `(Failed to read code-review.md: ${err instanceof Error ? err.message : String(err)})`,
+          );
+        }
 
         let fixDelta = '';
         if (fixResult.headBeforeFix) {
@@ -2491,13 +2503,16 @@ export function composeRoot(opts: ComposeOptions): Container {
                 (lastNewline > 0 ? trimmed.slice(0, lastNewline) : trimmed) +
                 '\n[... diff truncated due to size limit ...]';
             }
-          } catch {}
+          } catch (err) {
+            console.warn(`[runWholePrArbiter] failed to execute git diff:`, err);
+            fixDelta = `(Failed to execute git diff: ${err instanceof Error ? err.message : String(err)})`;
+          }
         }
 
         const arbiterPrompt = buildWholePrArbiterPrompt({
           cwd: ctx.cwd,
           repoId: ctx.repoId,
-          disputedFinding,
+          disputedFindings,
           dispositionHistory,
           relevantExcerpts,
           fixDelta,
@@ -2523,7 +2538,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           metadata: {
             iteration: ctx.iterationIndex,
             invocation_type: 'initial',
-            reviewMode: 'integration_full',
+            review_mode: 'integration_full',
           },
         });
 

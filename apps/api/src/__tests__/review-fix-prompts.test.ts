@@ -86,6 +86,18 @@ describe('review-fix prompts builders', () => {
       expect(result).toContain('## WORKSPACE CONSTRAINTS');
       expect(result).toContain('The previous fix attempt failed.');
     });
+
+    it('contains ## RECONCILIATION CONTEXT and the arbiter rationale when reconciliationContext is provided', () => {
+      const result = buildReviewFixFixPrompt({
+        cwd: '/test/cwd',
+        repoId: 'test-repo',
+        useFallback: false,
+        reconciliationContext: 'Finding is valid because the API requires composition-root wiring',
+      });
+
+      expect(result).toContain('## RECONCILIATION CONTEXT');
+      expect(result).toContain('Finding is valid because the API requires composition-root wiring');
+    });
   });
 });
 
@@ -157,11 +169,13 @@ describe('buildWholePrArbiterPrompt', () => {
     const prompt = buildWholePrArbiterPrompt({
       cwd: '/wt',
       repoId: 'owner/repo',
-      disputedFinding: {
-        fingerprint: 'fp-1',
-        severity: 'critical',
-        summary: 'Wiring mismatch',
-      },
+      disputedFindings: [
+        {
+          fingerprint: 'fp-1',
+          severity: 'critical',
+          summary: 'Wiring mismatch',
+        },
+      ],
       dispositionHistory: [
         {
           fingerprint: 'fp-1',
@@ -175,7 +189,7 @@ describe('buildWholePrArbiterPrompt', () => {
       fixRebuttal: 'It is correct.',
     });
 
-    expect(prompt).toContain('## DISPUTED INTEGRATION FINDING');
+    expect(prompt).toContain('## DISPUTED INTEGRATION FINDINGS');
     expect(prompt).toContain('Wiring mismatch');
     expect(prompt).toContain('## DISPOSITION HISTORY');
     expect(prompt).toContain('Initial failure');
