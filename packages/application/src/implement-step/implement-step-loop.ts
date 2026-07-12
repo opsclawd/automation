@@ -245,6 +245,8 @@ export class ImplementStepLoop {
       const outcome = options.outcome;
       if (outcome === 'unresolved' || outcome === 'failed') {
         consecutiveFixedWithoutResolution = 0;
+      } else if (outcome === 'fixed') {
+        consecutiveFixedWithoutResolution += 1;
       }
       return domainCompleteIteration(currentLoop, options);
     };
@@ -1797,7 +1799,6 @@ export class ImplementStepLoop {
               autoCommitted = true;
               // Success: treat this as a productive fix that advanced HEAD.
               consecutiveFixFailures = 0;
-              consecutiveFixedWithoutResolution += 1;
               lastFixHeadBeforeFix = undefined;
               loop = completeIteration(loop, {
                 outcome: 'fixed',
@@ -1913,7 +1914,6 @@ export class ImplementStepLoop {
         }
       }
 
-      consecutiveFixedWithoutResolution += 1;
       loop = completeIteration(loop, {
         outcome: 'fixed',
         fixInvocationId: fix.invocationId,
