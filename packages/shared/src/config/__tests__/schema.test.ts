@@ -1,6 +1,45 @@
 import { describe, it, expect } from 'vitest';
 import { orchestratorConfigSchema } from '../schema.js';
 
+describe('phases.implement.deltaScopedReReview', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: {
+      skip: [],
+      reviewFix: { maxIterations: 5 },
+      implement: { maxIterations: 1 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
+
+  it('defaults deltaScopedReReview to true when omitted', () => {
+    const parsed = orchestratorConfigSchema.parse(baseConfig);
+    expect(parsed.phases.implement.deltaScopedReReview).toBe(true);
+  });
+
+  it('accepts deltaScopedReReview=false to disable intermediate delta scoping', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      phases: {
+        ...baseConfig.phases,
+        implement: { maxIterations: 1, deltaScopedReReview: false },
+      },
+    });
+    expect(parsed.phases.implement.deltaScopedReReview).toBe(false);
+  });
+
+  it('accepts explicit deltaScopedReReview=true', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      phases: {
+        ...baseConfig.phases,
+        implement: { maxIterations: 1, deltaScopedReReview: true },
+      },
+    });
+    expect(parsed.phases.implement.deltaScopedReReview).toBe(true);
+  });
+});
+
 describe('phases.reviewFix.architectPass', () => {
   const baseConfig = {
     validation: { commands: ['pnpm test'], timeout: 60 },

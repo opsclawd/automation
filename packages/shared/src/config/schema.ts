@@ -102,9 +102,17 @@ const phasesSchema = z.object({
      * Defaults to 5 when read via configuration. Programmatic API (consumers of
      * `ImplementStepLoopInput` that omit the field) falls back to
      * `DEFAULT_MAX_TYPE_CHECK_RETRIES` exported from
-     * `@ai-sdlc/application/implement-step-loop`.
+     * `@ai-sdlc/application/inplement-step-loop`.
      */
     maxTypeCheckRetries: z.number().int().positive().default(5),
+    /**
+     * When true (default), iteration >= 2 scopes the reviewer to the diff
+     * since the previously reviewed commit for intermediate reviews.
+     * Set to false to disable delta-scoped re-review for intermediate passes.
+     * Initial full review and final full review are always mandatory and
+     * cannot be disabled by configuration (#723).
+     */
+    deltaScopedReReview: z.boolean().default(true),
   }),
   fixValidate: z
     .object({

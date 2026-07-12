@@ -7,16 +7,32 @@ export interface BuildArbiterPromptContext {
   cwd: string;
 }
 
+export interface DisputedFinding {
+  fingerprint: string;
+  severity: string;
+  summary: string;
+  file?: string;
+  suggested_fix?: string;
+}
+
+export interface DispositionHistoryEntry {
+  fingerprint: string;
+  disposition: 'open' | 'addressed' | 'rebutted' | 'settled' | 'recurred';
+  reason?: string;
+}
+
 export interface BuildArbiterPromptInputs {
   tcResult: TypecheckResult;
-  /** Most-recent spec-review result.json excerpt (first ~4 KB). */
-  specExcerpt: string;
-  /** Most-recent quality-review result.json excerpt (first ~4 KB). */
-  qualityExcerpt: string;
-  /** Most-recent fix result.json excerpt (first ~4 KB). */
-  fixExcerpt: string;
+  /** The disputed finding that requires arbitration. */
+  disputedFinding: DisputedFinding;
+  /** Disposition history for the disputed finding. */
+  dispositionHistory: DispositionHistoryEntry[];
   /** The fix agent's free-text rebuttal (may be empty). */
   fixRebuttal: string;
+  /** Deterministic diagnostics (typecheck errors that are objective evidence). */
+  deterministicDiagnostics?: string;
+  /** Exact fix delta (git diff between base and HEAD). */
+  fixDelta?: string;
   /** The plan.md body of this Task N (e.g. `extractTaskBody` output). */
   taskBody: string;
 }
@@ -33,7 +49,9 @@ export function buildArbiterPrompt(
 ): string {
   const typecheckSection = buildTypecheckSection(inputs.tcResult);
 
-  return [
+  const sections: string[] = [];
+
+  sections.push(
     '# TASK',
     `You are arbitrating a review/fix contradiction for step ${ctx.stepIndex}: ${ctx.stepTitle}.`,
     '',
@@ -56,27 +74,49 @@ export function buildArbiterPrompt(
     '',
     '### Plan task body (the source of truth)',
     '```',
-    inputs.taskBody,
+    inputs.taskBody || '(empty)',
     '```',
     '',
-    '### Most-recent spec-review result.json (excerpt)',
+    '### DISPUTED FINDING',
     '```json',
-    inputs.specExcerpt || '(empty)',
+    JSON.stringify(inputs.disputedFinding, null, 2),
     '```',
     '',
-    '### Most-recent quality-review result.json (excerpt)',
-    '```json',
-    inputs.qualityExcerpt || '(empty)',
-    '```',
-    '',
-    '### Most-recent fix result.json (excerpt)',
-    '```json',
-    inputs.fixExcerpt || '(empty)',
-    '```',
-    '',
+  );
+
+  if (inputs.dispositionHistory.length > 0) {
+    sections.push(
+      '### DISPOSITION HISTORY',
+      '```json',
+      JSON.stringify(inputs.dispositionHistory, null, 2),
+      '```',
+      '',
+    );
+  }
+
+  sections.push(
     '### Fixer rebuttal (verbatim)',
     inputs.fixRebuttal || '(no rebuttal provided)',
     '',
+  );
+
+  if (inputs.deterministicDiagnostics) {
+    sections.push(
+      '### DETERMINISTIC DIAGNOSTICS',
+      '```',
+      inputs.deterministicDiagnostics,
+      '```',
+      '',
+    );
+  }
+
+  if (inputs.fixDelta) {
+    sections.push('### EXACT FIX DELTA', '```diff', inputs.fixDelta, '```', '');
+  } else {
+    sections.push('### EXACT FIX DELTA', '(not available — cannot determine fix delta)', '');
+  }
+
+  sections.push(
     '## DECISION FRAMEWORK',
     'Pick exactly one of these outcomes:',
     '- **finding_valid** — the reviewer is right; the fix step missed a real defect. Cite the typecheck error, the spec-review finding, or the plan task body that proves it.',
@@ -88,7 +128,7 @@ export function buildArbiterPrompt(
     '- Typecheck FAIL with an error in the code the reviewer flagged → strong evidence for finding_valid.',
     '- Typecheck PASS and the reviewer only cites style → finding_invalid.',
     '- Findings that contradict the verbatim plan task body → finding_invalid.',
-    '- Findings that match the plan task body verbatim and the fix ignored them → finding_valid.',
+    '- Findings that match the verbatim plan task body verbatim and the fix ignored them → finding_valid.',
     '',
     '## OUTPUT',
     'Write a single file named `result.json` at the working-directory root with this exact shape (no extra keys, no comments):',
@@ -106,7 +146,9 @@ export function buildArbiterPrompt(
     '- Do NOT read additional files beyond the inputs above.',
     '- Do NOT write any code, scratch files, or modifications to the repo.',
     'STOP RULE: as soon as `result.json` is written, end your turn.',
-  ].join('\n');
+  );
+
+  return sections.join('\n');
 }
 
 export interface BuildImplementStepFinalReviewArbiterPromptInputs {
@@ -122,9 +164,6 @@ export function buildImplementStepFinalReviewArbiterPrompt(
   ctx: BuildArbiterPromptContext,
   inputs: BuildImplementStepFinalReviewArbiterPromptInputs,
 ): string {
-  // A failing typecheck on the trailing pass short-circuits to human review
-  // before arbitration can ever occur. Therefore, the typecheck result
-  // is guaranteed to be PASS when this builder is called.
   const typecheckSection =
     '## TYPECHECK RESULT\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nThe typecheck is green. Treat typecheck-valid code as objectively correct unless you find explicit evidence of a different defect.';
 
@@ -173,7 +212,7 @@ export function buildImplementStepFinalReviewArbiterPrompt(
     'Deterministic signals (use them, do not re-derive):',
     '- Typecheck PASS and the reviewer only cites style → finding_invalid.',
     '- Findings that contradict the verbatim plan task body → finding_invalid.',
-    '- Findings that match the plan task body verbatim → finding_valid.',
+    '- Findings that match the verbatim plan task body verbatim → finding_valid.',
     '',
     '## OUTPUT',
     'Write a single file named `result.json` at the working-directory root with this exact shape (no extra keys, no comments):',

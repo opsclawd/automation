@@ -45,6 +45,7 @@ import {
   createFindingEvidenceInspector,
   listProcesses,
   killProcess,
+  ReviewStateRepository,
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
@@ -629,36 +630,117 @@ class SingleRepoAdapter implements RepositoryPort {
   }
 }
 
-export function buildSpecReviewPrompt(
-  ctx: { stepIndex: number; stepTitle: string; cwd: string },
-  typecheckSection: string,
-  implReport = '',
-): string {
+export interface BuildSpecReviewPromptOptions {
+  ctx: { stepIndex: number; stepTitle: string; cwd: string };
+  typecheckSection: string;
+  implReport?: string;
+  scope: {
+    mode: 'initial_full' | 'intermediate_delta' | 'final_full';
+    dimensions?: Array<'spec' | 'quality'>;
+    baseIdentity?: string;
+    snapshotIdentity?: string;
+    unresolvedFindings?: Array<{
+      fingerprint: string;
+      severity: string;
+      summary: string;
+      file?: string;
+      suggested_fix?: string;
+    }>;
+    dispositions?: Array<{
+      fingerprint: string;
+      disposition: string;
+      reason?: string;
+    }>;
+  };
+}
+
+export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): string {
+  const { ctx, typecheckSection, implReport = '', scope } = options;
+  const { mode, baseIdentity, snapshotIdentity, unresolvedFindings, dispositions } = scope;
   const reportExcerpt = implReport.split('\n').slice(0, 50).join('\n');
-  return [
-    '# TASK',
-    `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`,
-    '',
-    'Check that the implementation matches plan.md task requirements exactly.',
-    '',
-    '## HARD CONSTRAINT — READ-ONLY REVIEW',
-    'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
-    'filesystem or executes application/test code. Read-only shell commands for',
-    'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
-    'git show) — if your runtime has no dedicated file-read tool, use these instead',
-    'of declining to review. Review by reading files only:',
-    'plan.md, implementation-log.md, git diff output, and changed source files.',
-    'If the task was verification-only (no files changed), check the implementer report',
-    'below to confirm all required verifications passed, then write result.json with',
-    '"pass". Do not re-run the verifications yourself.',
-    '',
-    '## CRITICAL: Do Not Trust the Report Alone',
-    'The implementer report below is what the agent claims it built. You MUST read the',
-    "actual committed code and verify line by line. Do not take the implementer's word.",
-    '',
-    '## What the Implementer Claims',
-    reportExcerpt,
-    '',
+
+  const sections: string[] = [];
+
+  sections.push('# TASK', `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`, '');
+
+  if (mode === 'intermediate_delta') {
+    sections.push(
+      '## REVIEW MODE: DELTA (intermediate)',
+      '',
+      'This is an intermediate delta review. Focus on changes since the last review.',
+      '',
+    );
+
+    if (baseIdentity && snapshotIdentity) {
+      sections.push(
+        `## EXACT DIFF COMMAND`,
+        `Run: git diff ${baseIdentity}..${snapshotIdentity}`,
+        '',
+      );
+    }
+
+    sections.push(
+      '## HARD CONSTRAINT — READ-ONLY REVIEW',
+      'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
+      'filesystem or executes application/test code. Read-only shell commands for',
+      'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
+      'git show) — if your runtime has no dedicated file-read tool, use these instead',
+      'of declining to review. Review by reading files only.',
+      '',
+    );
+
+    if (unresolvedFindings && unresolvedFindings.length > 0) {
+      sections.push(
+        '## UNRESOLVED FINDINGS (from prior review)',
+        'These findings were marked as unresolved. Verify whether they are still present:',
+        '',
+        ...unresolvedFindings.map(
+          (f) => `- [${f.severity}] ${f.summary}${f.file ? ` (${f.file})` : ''}`,
+        ),
+        '',
+        '## SETTLED FINDINGS REQUIRE NEW DELTA EVIDENCE',
+        'If a finding was previously marked as addressed/rebutted/settled, you MUST see',
+        'new evidence in the delta to re-flag it. A finding is only valid if it can be',
+        'directly attributed to a change in the delta.',
+        '',
+      );
+    }
+
+    if (dispositions && dispositions.length > 0) {
+      sections.push(
+        '## PRIOR DISPOSITIONS',
+        ...dispositions.map((d) => `- ${d.fingerprint}: ${d.disposition}`),
+        '',
+      );
+    }
+  } else {
+    sections.push(
+      `## REVIEW MODE: ${mode === 'initial_full' ? 'INITIAL FULL' : 'FINAL FULL'}`,
+      '',
+      'This is a full review. Inspect the complete implementation scope.',
+      '',
+      '## HARD CONSTRAINT — READ-ONLY REVIEW',
+      'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
+      'filesystem or executes application/test code. Read-only shell commands for',
+      'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
+      'git show) — if your runtime has no dedicated file-read tool, use these instead',
+      'of declining to review. Review by reading files only:',
+      'plan.md, implementation-log.md, git diff output, and changed source files.',
+      'If the task was verification-only (no files changed), check the implementer report',
+      'below to confirm all required verifications passed, then write result.json with',
+      '"pass". Do not re-run the verifications yourself.',
+      '',
+      '## CRITICAL: Do Not Trust the Report Alone',
+      'The implementer report below is what the agent claims it built. You MUST read the',
+      "actual committed code and verify line by line. Do not take the implementer's word.",
+      '',
+      '## What the Implementer Claims',
+      reportExcerpt,
+      '',
+    );
+  }
+
+  sections.push(
     '## CONTEXT',
     '',
     WORKSPACE_CONSTRAINTS,
@@ -701,28 +783,116 @@ export function buildSpecReviewPrompt(
     '- Start the review over',
     '- Do anything at all',
     'Any action after writing result.json is a contract violation.',
-  ].join('\n');
+  );
+
+  return sections.join('\n');
 }
 
-export function buildQualityReviewPrompt(
-  ctx: { stepIndex: number; stepTitle: string; cwd: string },
-  typecheckSection: string,
-): string {
-  return [
+export interface BuildQualityReviewPromptOptions {
+  ctx: { stepIndex: number; stepTitle: string; cwd: string };
+  typecheckSection: string;
+  scope: {
+    mode: 'initial_full' | 'intermediate_delta' | 'final_full';
+    dimensions?: Array<'spec' | 'quality'>;
+    baseIdentity?: string;
+    snapshotIdentity?: string;
+    unresolvedFindings?: Array<{
+      fingerprint: string;
+      severity: string;
+      summary: string;
+      file?: string;
+      suggested_fix?: string;
+    }>;
+    dispositions?: Array<{
+      fingerprint: string;
+      disposition: string;
+      reason?: string;
+    }>;
+  };
+}
+
+export function buildQualityReviewPrompt(options: BuildQualityReviewPromptOptions): string {
+  const { ctx, typecheckSection, scope } = options;
+  const { mode, baseIdentity, snapshotIdentity, unresolvedFindings, dispositions } = scope;
+
+  const sections: string[] = [];
+
+  sections.push(
     '# TASK',
     `Review implementation quality for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
     '',
     'Check for code quality: maintainability, performance, security, test coverage.',
     '',
-    '## HARD CONSTRAINT — READ-ONLY REVIEW',
-    'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
-    'filesystem or executes application/test code. Read-only shell commands for',
-    'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
-    'git show) — if your runtime has no dedicated file-read tool, use these instead',
-    'of declining to review. If the task was verification-only (no files changed),',
-    'write result.json with "pass" — quality review does not apply to',
-    'verification-only steps.',
-    '',
+  );
+
+  if (mode === 'intermediate_delta') {
+    sections.push(
+      '## REVIEW MODE: DELTA (intermediate)',
+      '',
+      'This is an intermediate delta review. Focus on quality issues in changes since the last review.',
+      '',
+    );
+
+    if (baseIdentity && snapshotIdentity) {
+      sections.push(
+        '## EXACT DIFF COMMAND',
+        `Run: git diff ${baseIdentity}..${snapshotIdentity}`,
+        '',
+      );
+    }
+
+    sections.push(
+      '## HARD CONSTRAINT — READ-ONLY REVIEW',
+      'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
+      'filesystem or executes application/test code. Read-only shell commands for',
+      'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
+      'git show) — if your runtime has no dedicated file-read tool, use these instead',
+      'of declining to review.',
+      '',
+    );
+
+    if (unresolvedFindings && unresolvedFindings.length > 0) {
+      sections.push(
+        '## UNRESOLVED FINDINGS (from prior review)',
+        'These findings were marked as unresolved. Verify whether they are still present:',
+        '',
+        ...unresolvedFindings.map(
+          (f) => `- [${f.severity}] ${f.summary}${f.file ? ` (${f.file})` : ''}`,
+        ),
+        '',
+        '## SETTLED FINDINGS REQUIRE NEW DELTA EVIDENCE',
+        'If a finding was previously marked as addressed/rebutted/settled, you MUST see',
+        'new evidence in the delta to re-flag it.',
+        '',
+      );
+    }
+
+    if (dispositions && dispositions.length > 0) {
+      sections.push(
+        '## PRIOR DISPOSITIONS',
+        ...dispositions.map((d) => `- ${d.fingerprint}: ${d.disposition}`),
+        '',
+      );
+    }
+  } else {
+    sections.push(
+      `## REVIEW MODE: ${mode === 'initial_full' ? 'INITIAL FULL' : 'FINAL FULL'}`,
+      '',
+      'This is a full review. Inspect the complete implementation scope.',
+      '',
+      '## HARD CONSTRAINT — READ-ONLY REVIEW',
+      'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
+      'filesystem or executes application/test code. Read-only shell commands for',
+      'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
+      'git show) — if your runtime has no dedicated file-read tool, use these instead',
+      'of declining to review. If the task was verification-only (no files changed),',
+      'write result.json with "pass" — quality review does not apply to',
+      'verification-only steps.',
+      '',
+    );
+  }
+
+  sections.push(
     '## CONTEXT',
     '',
     WORKSPACE_CONSTRAINTS,
@@ -764,7 +934,9 @@ export function buildQualityReviewPrompt(
     'JSON string, use the raw character (`) — do NOT escape it with a backslash.',
     'Only escape double quotes ("), backslashes (\\), and control characters as',
     'required by the JSON spec.',
-  ].join('\n');
+  );
+
+  return sections.join('\n');
 }
 
 export interface BuildImplementStepFixPromptInput {
@@ -2785,7 +2957,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       };
 
-      const runSpecReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
+      const runSpecReview = async (
+        ctx: StepLoopContext,
+        tcResult: TypecheckResult,
+        scope: {
+          mode: 'initial_full' | 'intermediate_delta' | 'final_full';
+          dimensions?: Array<'spec' | 'quality'>;
+        },
+      ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(
@@ -2804,7 +2983,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         } catch (err) {
           if (!(err instanceof ArtifactNotFoundError)) throw err;
         }
-        const reviewPrompt = buildSpecReviewPrompt(ctx, typecheckSection, implReport);
+        const reviewPrompt = buildSpecReviewPrompt({
+          ctx: { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
+          typecheckSection,
+          implReport,
+          scope,
+        });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         const isSemanticRetry = ctx.iterationIndex > 1;
@@ -2823,6 +3007,9 @@ export function composeRoot(opts: ComposeOptions): Container {
               implementation_task_number: ctx.stepIndex,
               iteration: ctx.iterationIndex,
               invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
+              review_mode: scope.mode,
+              review_dimensions: scope.dimensions ?? ['spec'],
+              review_scope_source: 'implement-step',
             },
             ...(isSemanticRetry
               ? {
@@ -2867,7 +3054,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
-      const runQualityReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
+      const runQualityReview = async (
+        ctx: StepLoopContext,
+        tcResult: TypecheckResult,
+        scope: {
+          mode: 'initial_full' | 'intermediate_delta' | 'final_full';
+          dimensions?: Array<'spec' | 'quality'>;
+        },
+      ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(
@@ -2879,7 +3073,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return QUALITY_FAIL for it."
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to quality checks until the type error is resolved.`;
 
-        const reviewPrompt = buildQualityReviewPrompt(ctx, typecheckSection);
+        const reviewPrompt = buildQualityReviewPrompt({
+          ctx: { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
+          typecheckSection,
+          scope,
+        });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         const isSemanticRetry = ctx.iterationIndex > 1;
@@ -2898,6 +3096,9 @@ export function composeRoot(opts: ComposeOptions): Container {
               implementation_task_number: ctx.stepIndex,
               iteration: ctx.iterationIndex,
               invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
+              review_mode: scope.mode,
+              review_dimensions: scope.dimensions ?? ['quality'],
+              review_scope_source: 'implement-step',
             },
             ...(isSemanticRetry
               ? {
@@ -3052,10 +3253,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             );
             const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
 
-            const { specExcerpt, qualityExcerpt, fixExcerpt } = await readArbiterExcerpts(
-              artifacts,
-              String(ctx.runId),
-            );
+            const { specExcerpt } = await readArbiterExcerpts(artifacts, String(ctx.runId));
 
             let taskBody = '';
             try {
@@ -3074,16 +3272,62 @@ export function composeRoot(opts: ComposeOptions): Container {
               taskBody = '';
             }
 
+            let disputedFinding: {
+              fingerprint: string;
+              severity: string;
+              summary: string;
+              file?: string;
+              suggested_fix?: string;
+            } = { fingerprint: 'unknown', severity: 'P1', summary: 'Review finding' };
+            let dispositionHistory: Array<{
+              fingerprint: string;
+              disposition: 'open' | 'addressed' | 'rebutted' | 'settled' | 'recurred';
+              reason?: string;
+            }> = [];
+            try {
+              if (specExcerpt) {
+                const parsed = JSON.parse(specExcerpt);
+                if (parsed.findings && parsed.findings.length > 0) {
+                  const firstFinding = parsed.findings[0];
+                  disputedFinding = {
+                    fingerprint: `fp-${Date.now()}`,
+                    severity: firstFinding.severity || 'P1',
+                    summary: firstFinding.summary || 'Unknown finding',
+                    ...(firstFinding.file ? { file: firstFinding.file } : {}),
+                    ...(firstFinding.suggested_fix
+                      ? { suggested_fix: firstFinding.suggested_fix }
+                      : {}),
+                  };
+                  dispositionHistory = [
+                    { fingerprint: disputedFinding.fingerprint, disposition: 'open' },
+                  ];
+                }
+              }
+            } catch {
+              // If we can't parse the excerpt, use defaults
+            }
+
+            const arbiterInputs: {
+              tcResult: typeof tcResult;
+              disputedFinding: typeof disputedFinding;
+              dispositionHistory: typeof dispositionHistory;
+              fixRebuttal: string;
+              taskBody: string;
+              deterministicDiagnostics?: string;
+            } = {
+              tcResult,
+              disputedFinding,
+              dispositionHistory,
+              fixRebuttal: fixResult.rebuttal ?? '',
+              taskBody,
+            };
+            if (tcResult.outcome === 'fail' && tcResult.output) {
+              arbiterInputs.deterministicDiagnostics = tcResult.output;
+            }
+
             const arbiterPrompt = buildArbiterPrompt(
               { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
-              {
-                tcResult,
-                specExcerpt,
-                qualityExcerpt,
-                fixExcerpt,
-                fixRebuttal: fixResult.rebuttal ?? '',
-                taskBody,
-              },
+              arbiterInputs,
             );
             writeFileSync(promptPath, arbiterPrompt, 'utf-8');
 
@@ -3289,6 +3533,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         : undefined;
 
+      const reviewStateRepository = new ReviewStateRepository(db);
+
       implementStepLoop = new ImplementStepLoop({
         runImplement,
         runTypecheck,
@@ -3324,6 +3570,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         git: gitAdapter,
         now: () => new Date(),
         idFactory: () => randomUUID(),
+        reviewStateRepository,
       });
 
       // --- Plan-review loop (#666) ---
