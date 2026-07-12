@@ -209,8 +209,8 @@ export class ProcessPrReviewComments {
             }
             currentDiff = await d.git.diff(
               input.cwd,
-              previousAttempt.completedHead,
               runningStartSha,
+              previousAttempt.completedHead,
             );
           }
         } catch (error: unknown) {
