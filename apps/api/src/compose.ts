@@ -3896,6 +3896,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           if (snapshot) {
             agentInvocationRepository.update(AgentInvocationId(invocationId), {
               metadata: {
+                review_scope_source: 'plan-review',
                 review_mode: mode,
                 review_snapshot_kind: 'plan_artifact',
                 review_dimensions: ['plan'],

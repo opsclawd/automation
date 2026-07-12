@@ -101,6 +101,7 @@ export class PlanReviewLoop {
 
     let iter1Snapshot: PlanReviewSnapshot | undefined;
     let finalFullPhase = false;
+    let forceInitialFull = false;
     let preFinalFullSnapshot: PlanReviewSnapshot | undefined;
 
     let lastDeterministicMismatch: string | null = null;
@@ -218,6 +219,7 @@ export class PlanReviewLoop {
       isConfirmation: boolean = false,
     ): PlanReviewStepOptions | undefined => {
       if (!deltaScopedReReview) return undefined;
+      if (mode === 'initial_full') return undefined;
       if (iterationIndex < 2 && mode !== 'final_full') return undefined;
       if (mode === 'final_full' && !isConfirmation) {
         return {
@@ -271,9 +273,13 @@ export class PlanReviewLoop {
 
       const reviewMode: ReviewMode = finalFullPhase
         ? 'final_full'
-        : iterationIndex === 1
+        : iterationIndex === 1 || forceInitialFull
           ? 'initial_full'
           : 'intermediate_delta';
+
+      if (reviewMode === 'initial_full') {
+        forceInitialFull = false;
+      }
 
       this.emit(
         input,
@@ -358,7 +364,7 @@ export class PlanReviewLoop {
 
       loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
 
-      if (iterationIndex === 1 && review.snapshot) {
+      if (reviewMode === 'initial_full' && review.snapshot) {
         iter1Snapshot = review.snapshot;
         this.emit(
           input,
@@ -391,7 +397,7 @@ export class PlanReviewLoop {
       let eligibleFindings: ReadonlyArray<PlanReviewFinding> = [];
       if (deltaScopedReReview) {
         const rawFindings = review.findings ?? [];
-        if (iterationIndex === 1) {
+        if (reviewMode === 'initial_full') {
           frozenPrevFindings = rawFindings;
           for (const f of frozenPrevFindings) {
             frozenDispositions.set(f.citation, 'still_open');
@@ -402,7 +408,7 @@ export class PlanReviewLoop {
         } else {
           eligibleFindings = this.classifyFindings(
             rawFindings,
-            iterationIndex,
+            reviewMode === 'initial_full',
             frozenPrevFindings,
             recentFixCitations,
           );
@@ -473,16 +479,86 @@ export class PlanReviewLoop {
           );
           return { outcome: 'success', loop, proceedWithConcerns: false };
         }
-        loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+        if (reviewMode === 'initial_full') {
+          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'plan-review.loop.iteration.completed',
+            'info',
+            `iteration ${iterationIndex} completed: resolved`,
+            { index: iterationIndex, outcome: 'resolved' },
+          );
+          return { outcome: 'success', loop, proceedWithConcerns: false };
+        }
+        if (iterationIndex === loop.maxIterations) {
+          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'plan-review.loop.iteration.completed',
+            'info',
+            `iteration ${iterationIndex} completed: resolved (max iterations reached)`,
+            { index: iterationIndex, outcome: 'resolved' },
+          );
+          return { outcome: 'success', loop, proceedWithConcerns: false };
+        }
+
+        const open = loop.iterations[loop.iterations.length - 1]!;
+        const convergedIteration: import('@ai-sdlc/domain').LoopIteration = {
+          ...open,
+          reviewInvocationId: review.invocationId,
+          completedAt: deps.now(),
+          outcome: 'resolved',
+        };
+        loop = {
+          ...loop,
+          iterations: [...loop.iterations.slice(0, -1), convergedIteration],
+          status: 'running',
+        };
         deps.loops.update(loop);
         this.emit(
           input,
           'plan-review.loop.iteration.completed',
           'info',
-          `iteration ${iterationIndex} completed: resolved`,
+          `iteration ${iterationIndex} completed: resolved (delta converged)`,
           { index: iterationIndex, outcome: 'resolved' },
         );
-        return { outcome: 'success', loop, proceedWithConcerns: false };
+
+        const iterationsBeforeSync = loop.iterations.length;
+        const finalSyncResult = await checkAndFixManifest({
+          ...baseCtx,
+          iterationIndex: loop.iterations.length + 1,
+        });
+        loop = finalSyncResult.loop;
+        if (!finalSyncResult.success) {
+          loop = exhaust(loop, deps.now());
+          deps.loops.update(loop);
+          return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+        }
+
+        if (loop.iterations.length > iterationsBeforeSync) {
+          finalFullPhase = false;
+          preFinalFullSnapshot = undefined;
+          this.emit(
+            input,
+            'plan-review.loop.final_review.reopened',
+            'info',
+            `manifest fix mutated plan during convergence; reopening delta cycle`,
+            { iteration: iterationIndex },
+          );
+        } else {
+          finalFullPhase = true;
+          preFinalFullSnapshot = review.snapshot;
+          this.emit(
+            input,
+            'plan-review.loop.final_review.started',
+            'info',
+            `delta converged; entering final_full review phase`,
+            { iteration: iterationIndex },
+          );
+        }
+        continue;
       }
 
       // --- PROCEED_WITH_CONCERNS — AC #3 ---
@@ -521,6 +597,23 @@ export class PlanReviewLoop {
             ...(review.knownLimitations ? { knownLimitations: review.knownLimitations } : {}),
           };
         }
+        if (iterationIndex === loop.maxIterations) {
+          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'plan-review.loop.iteration.completed',
+            'info',
+            `iteration ${iterationIndex} completed: resolved (proceed with concerns — max iterations reached)`,
+            { index: iterationIndex, outcome: 'resolved', knownLimitations: true },
+          );
+          return {
+            outcome: 'success',
+            loop,
+            proceedWithConcerns: true,
+            ...(review.knownLimitations ? { knownLimitations: review.knownLimitations } : {}),
+          };
+        }
         const open = loop.iterations[loop.iterations.length - 1]!;
         const convergedIteration: import('@ai-sdlc/domain').LoopIteration = {
           ...open,
@@ -541,6 +634,7 @@ export class PlanReviewLoop {
           `iteration ${iterationIndex} completed: resolved (delta converged with concerns)`,
           { index: iterationIndex, outcome: 'resolved' },
         );
+        const iterationsBeforeSync = loop.iterations.length;
         const finalSyncResult = await checkAndFixManifest({
           ...baseCtx,
           iterationIndex: loop.iterations.length + 1,
@@ -551,15 +645,27 @@ export class PlanReviewLoop {
           deps.loops.update(loop);
           return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
         }
-        finalFullPhase = true;
-        preFinalFullSnapshot = review.snapshot;
-        this.emit(
-          input,
-          'plan-review.loop.final_review.started',
-          'info',
-          `delta converged with concerns; entering final_full review phase`,
-          { iteration: iterationIndex },
-        );
+        if (loop.iterations.length > iterationsBeforeSync) {
+          finalFullPhase = false;
+          preFinalFullSnapshot = undefined;
+          this.emit(
+            input,
+            'plan-review.loop.final_review.reopened',
+            'info',
+            `manifest fix mutated plan during convergence with concerns; reopening delta cycle`,
+            { iteration: iterationIndex },
+          );
+        } else {
+          finalFullPhase = true;
+          preFinalFullSnapshot = review.snapshot;
+          this.emit(
+            input,
+            'plan-review.loop.final_review.started',
+            'info',
+            `delta converged with concerns; entering final_full review phase`,
+            { iteration: iterationIndex },
+          );
+        }
         continue;
       }
 
@@ -571,8 +677,6 @@ export class PlanReviewLoop {
           `final_full review found P1; reopening delta cycle`,
           { iteration: iterationIndex },
         );
-        loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
-        deps.loops.update(loop);
         this.emit(
           input,
           'plan-review.loop.iteration.completed',
@@ -581,8 +685,11 @@ export class PlanReviewLoop {
           { index: iterationIndex, outcome: 'unresolved' },
         );
         finalFullPhase = false;
+        forceInitialFull = true;
         iter1Snapshot = undefined;
-        continue;
+        frozenPrevFindings = undefined;
+        frozenDispositions.clear();
+        recentFixCitations = [];
       }
 
       // --- FIX ---
@@ -1358,11 +1465,11 @@ export class PlanReviewLoop {
    */
   private classifyFindings(
     raw: ReadonlyArray<PlanReviewFinding>,
-    iterationIndex: number,
+    isInitialFull: boolean,
     frozenFindings: ReadonlyArray<PlanReviewFinding> | undefined,
     recentFixCitations: ReadonlyArray<string>,
   ): ReadonlyArray<PlanReviewFinding> {
-    if (iterationIndex === 1) {
+    if (isInitialFull) {
       // Discovery pass: every grounded finding is eligible.
       return raw.filter((f) => f.evidence === 'grounded');
     }
