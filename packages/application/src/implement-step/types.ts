@@ -184,6 +184,7 @@ export interface ImplementFixStepOptions extends FixStepOptions {
   typecheckErrors?: string | TypescriptError[];
   isTerminalFix?: boolean;
   holisticFindings?: HolisticFile[];
+  fallbackReason?: string;
 }
 
 export interface ArbiterResult {

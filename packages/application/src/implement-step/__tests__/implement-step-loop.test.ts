@@ -3133,6 +3133,302 @@ describe('ImplementStepLoop auto-commit fallback', () => {
     expect(events.find((e) => e.type === 'fix.auto_commit.failed')).toBeUndefined();
     expect(result.loop.iterations[0].outcome).toBe('unresolved');
   });
+
+  it('escalates the fourth fixer after three consecutive fixed iterations without resolution', async () => {
+    const { events, bus } = collectEvents();
+    const fixOptsPassed: ImplementFixStepOptions[] = [];
+    const shas = ['sha-1', 'sha-2', 'sha-3', 'sha-4', 'sha-5'];
+    let shaIndex = 0;
+    const git = makeFakeGitPort({
+      headSha: shas,
+      statusOutput: '',
+    });
+    git.headCommitSha = async () => {
+      const val = shas[shaIndex];
+      return val;
+    };
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (ctx, opts) => {
+        fixOptsPassed.push(opts);
+        const invocationId = `fix-${fixOptsPassed.length}`;
+        shaIndex++;
+        return {
+          invocationId,
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: shas[shaIndex - 1],
+        };
+      },
+      fixFallbackProfile: AgentProfileName('opencode-frontier-fallback'),
+    });
+
+    await new ImplementStepLoop(deps).execute({
+      ...baseInput(),
+      maxIterations: 4,
+    });
+
+    expect(fixOptsPassed).toHaveLength(4);
+    expect(fixOptsPassed[0].useFallback).toBe(false);
+    expect(fixOptsPassed[1].useFallback).toBe(false);
+    expect(fixOptsPassed[2].useFallback).toBe(false);
+    expect(fixOptsPassed[3].useFallback).toBe(true);
+    expect(fixOptsPassed[3].previousInvocationId).toBe('fix-3');
+    expect(fixOptsPassed[3].fallbackReason).toBe('non_convergent_fixed_iterations');
+
+    const fallbackEvent = events.find((e) => e.type === 'phase.fallback.escalated');
+    expect(fallbackEvent).toBeDefined();
+    expect(fallbackEvent?.metadata.triggerReason).toBe('non_convergent_fixed_iterations');
+    expect(fallbackEvent?.metadata.count).toBe(3);
+    expect(fallbackEvent?.metadata.threshold).toBe(3);
+  });
+
+  it('emits non_convergent_fixed_iterations only once per Step and links the fallback to the third fix', async () => {
+    const { events, bus } = collectEvents();
+    const fixOptsPassed: ImplementFixStepOptions[] = [];
+    const shas = ['sha-1', 'sha-2', 'sha-3', 'sha-4', 'sha-5', 'sha-6'];
+    let shaIndex = 0;
+    const git = makeFakeGitPort({
+      headSha: shas,
+      statusOutput: '',
+    });
+    git.headCommitSha = async () => shas[shaIndex];
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (ctx, opts) => {
+        fixOptsPassed.push(opts);
+        const invocationId = `fix-${fixOptsPassed.length}`;
+        shaIndex++;
+        return {
+          invocationId,
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: shas[shaIndex - 1],
+        };
+      },
+      fixFallbackProfile: AgentProfileName('opencode-frontier-fallback'),
+    });
+
+    await new ImplementStepLoop(deps).execute({
+      ...baseInput(),
+      maxIterations: 5,
+    });
+
+    expect(fixOptsPassed).toHaveLength(5);
+    expect(fixOptsPassed[3].useFallback).toBe(true);
+    expect(fixOptsPassed[3].previousInvocationId).toBe('fix-3');
+    expect(fixOptsPassed[4].useFallback).toBe(true);
+
+    const fallbackEvents = events.filter(
+      (e) =>
+        e.type === 'phase.fallback.escalated' &&
+        e.metadata.triggerReason === 'non_convergent_fixed_iterations',
+    );
+    expect(fallbackEvents).toHaveLength(1);
+  });
+
+  it('resets the productive-churn streak after an unresolved or failed iteration', async () => {
+    const { events, bus } = collectEvents();
+    const fixOptsPassed: ImplementFixStepOptions[] = [];
+    const shas = ['sha-1', 'sha-2', 'sha-3', 'sha-4', 'sha-5', 'sha-6'];
+    let shaIndex = 0;
+    const git = makeFakeGitPort({
+      headSha: shas,
+      statusOutput: '',
+    });
+    git.headCommitSha = async () => shas[shaIndex];
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (ctx, opts) => {
+        fixOptsPassed.push(opts);
+        const invocationId = `fix-${fixOptsPassed.length}`;
+        if (fixOptsPassed.length === 2) {
+          return {
+            invocationId,
+            agentOutcome: 'success',
+            verdict: 'cannot_fix',
+          };
+        }
+        shaIndex++;
+        return {
+          invocationId,
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: shas[shaIndex - 1],
+        };
+      },
+      fixFallbackProfile: AgentProfileName('opencode-frontier-fallback'),
+    });
+
+    const _result = await new ImplementStepLoop(deps).execute({
+      ...baseInput(),
+      maxIterations: 4,
+    });
+
+    for (const opts of fixOptsPassed) {
+      expect(opts.useFallback).toBe(false);
+    }
+    const fallbackEvents = events.filter((e) => e.type === 'phase.fallback.escalated');
+    expect(fallbackEvents).toHaveLength(0);
+  });
+
+  it('does not emit productive-churn escalation when the next review resolves normally', async () => {
+    const { events, bus } = collectEvents();
+    const fixOptsPassed: ImplementFixStepOptions[] = [];
+    const shas = ['sha-1', 'sha-2', 'sha-3', 'sha-4'];
+    let shaIndex = 0;
+    const git = makeFakeGitPort({
+      headSha: shas,
+      statusOutput: '',
+    });
+    git.headCommitSha = async () => shas[shaIndex];
+
+    let reviewAttempts = 0;
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => {
+        reviewAttempts++;
+        return {
+          invocationId: 'sr-1',
+          agentOutcome: 'success',
+          verdict: reviewAttempts >= 4 ? 'pass' : 'fail',
+        };
+      },
+      runFix: async (ctx, opts) => {
+        fixOptsPassed.push(opts);
+        const invocationId = `fix-${fixOptsPassed.length}`;
+        shaIndex++;
+        return {
+          invocationId,
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: shas[shaIndex - 1],
+        };
+      },
+      fixFallbackProfile: AgentProfileName('opencode-frontier-fallback'),
+    });
+
+    const result = await new ImplementStepLoop(deps).execute({
+      ...baseInput(),
+      maxIterations: 5,
+    });
+
+    expect(result.outcome).toBe('success');
+    expect(fixOptsPassed).toHaveLength(3);
+    for (const opts of fixOptsPassed) {
+      expect(opts.useFallback).toBe(false);
+    }
+    const fallbackEvents = events.filter((e) => e.type === 'phase.fallback.escalated');
+    expect(fallbackEvents).toHaveLength(0);
+  });
+
+  it('auto-commits the successful repaired done_with_fixes path when HEAD is unchanged and typecheck passes', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+    let commitCalled = false;
+    let addAllCalled = false;
+    git.addAll = async () => {
+      addAllCalled = true;
+    };
+    git.commit = async (_cwd, _message) => {
+      commitCalled = true;
+      return 'sha-2';
+    };
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async () => ({
+        invocationId: 'f1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-1',
+      }),
+    });
+
+    const result = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(addAllCalled).toBe(true);
+    expect(commitCalled).toBe(true);
+    expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
+    expect(result.loop.iterations[0].outcome).toBe('fixed');
+  });
+
+  it('retains two_consecutive_fix_failures escalation independently of productive churn', async () => {
+    const { events, bus } = collectEvents();
+    const fixOptsPassed: ImplementFixStepOptions[] = [];
+    const deps = makeDeps({
+      events: bus,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (ctx, opts) => {
+        fixOptsPassed.push(opts);
+        return {
+          invocationId: `fix-${fixOptsPassed.length}`,
+          agentOutcome: 'success',
+          verdict: 'cannot_fix',
+        };
+      },
+      fixFallbackProfile: AgentProfileName('opencode-frontier-fallback'),
+    });
+
+    await new ImplementStepLoop(deps).execute({
+      ...baseInput(),
+      maxIterations: 3,
+    });
+
+    expect(fixOptsPassed).toHaveLength(3);
+    expect(fixOptsPassed[0].useFallback).toBe(false);
+    expect(fixOptsPassed[1].useFallback).toBe(false);
+    expect(fixOptsPassed[2].useFallback).toBe(true);
+    expect(fixOptsPassed[2].previousInvocationId).toBe('fix-2');
+    expect(fixOptsPassed[2].fallbackReason).toBe('two_consecutive_fix_failures');
+
+    const fallbackEvent = events.find((e) => e.type === 'phase.fallback.escalated');
+    expect(fallbackEvent).toBeDefined();
+    expect(fallbackEvent?.metadata.triggerReason).toBe('two_consecutive_fix_failures');
+  });
 });
 
 describe('dirty dimension tracking (#723)', () => {

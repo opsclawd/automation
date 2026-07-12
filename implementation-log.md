@@ -1,18 +1,12 @@
-# Implementation Log - Task 3
+# Implementation Log - Task 4: Escalate three productive fixed iterations exactly once
 
-## Overview
-Wired the repaired fix verdicts through the implement composition seam in `apps/api/src/compose.ts`.
-
-## Changes Made
-- **`apps/api/src/compose.ts`**:
-  - Computed the repair baseline from the agent invocation db record (`patched.endCommitSha`) falling back to the invocation start SHA (`startCommitSha`).
-  - Passed `cwd` and `repairExpectedHead` into `readFixVerdict`.
-  - Moved the call to `archiveStepResultDurably` behind `fixVerdict.ok` so that archiving only happens on a successful original or repaired verdict.
-- **`apps/api/src/__tests__/compose.test.ts`**:
-  - Added four TDD tests validating the required behavioral invariants.
-
-## Testing & Verification
-- Ran the focused tests: `pnpm --filter @ai-sdlc/api test -- src/__tests__/compose.test.ts -t "implRunFix"` -> Passed.
-- Ran typecheck: `pnpm -r typecheck` -> Passed.
-- Ran lint: `pnpm lint` -> Passed.
-- Ran build: `pnpm -r build` -> Passed.
+Implemented the following requirements:
+- Extended `ImplementFixStepOptions` with `fallbackReason?: string`.
+- Propagated the `fallbackReason` from `ImplementFixStepOptions` in the `implRunFix` composition closure in `apps/api/src/compose.ts` instead of using the hardcoded `two_consecutive_fix_failures`.
+- Added streak tracking (`consecutiveFixedWithoutResolution`) and fallback trigger logic inside `ImplementStepLoop`.
+- Configured fallback triggering on hitting 3 productive (`fixed` or auto-committed `fixed`) iterations without resolution.
+- Integrated one-shot guards to ensure the productive churn escalation triggers exactly once per step.
+- Included diagnostic logging/events in case no fallback profile is configured.
+- Ensured reset behavior is triggered on any `unresolved` or `failed` iterations.
+- Preserved existing failure fallback triggers and verifiers.
+- Added comprehensive unit tests covering the productive churn escalation, streak resets, normal convergence, and recovery-compatible auto-commits.

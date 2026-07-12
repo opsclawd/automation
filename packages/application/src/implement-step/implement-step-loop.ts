@@ -1,7 +1,7 @@
 import {
   createLoop,
   startIteration,
-  completeIteration,
+  completeIteration as domainCompleteIteration,
   exhaust,
   updateOpenIteration,
   AgentProfileName,
@@ -227,6 +227,26 @@ export class ImplementStepLoop {
       if (reviewsStarted > originalMax + (bonusIterationUsed ? 1 : 0)) return false;
       const last = current.iterations[current.iterations.length - 1];
       return last?.outcome === 'fixed';
+    };
+
+    const PRODUCTIVE_CHURN_THRESHOLD = 3;
+    let consecutiveFixedWithoutResolution = 0;
+    let emittedProductiveChurnEscalation = false;
+    let emittedProductiveChurnDiagnostic = false;
+
+    const completeIteration = (
+      currentLoop: typeof loop,
+      options: {
+        outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed';
+        fixInvocationId?: string;
+        now: Date;
+      },
+    ): typeof loop => {
+      const outcome = options.outcome;
+      if (outcome === 'unresolved' || outcome === 'failed') {
+        consecutiveFixedWithoutResolution = 0;
+      }
+      return domainCompleteIteration(currentLoop, options);
     };
 
     let consecutiveFixFailures = 0;
@@ -1111,14 +1131,49 @@ export class ImplementStepLoop {
 
       // --- FALLBACK ESCALATION ---
       const escalateForFixFailures = consecutiveFixFailures >= 2;
-      const useFallback = escalateForFixFailures && deps.fixFallbackProfile !== undefined;
-      if (useFallback) {
-        this.emitEscalation(
-          input,
-          'two_consecutive_fix_failures',
-          deps.fixProfile,
-          deps.fixFallbackProfile!,
-        );
+      const escalateForProductiveChurn =
+        consecutiveFixedWithoutResolution >= PRODUCTIVE_CHURN_THRESHOLD;
+
+      let useFallback = false;
+      let currentFallbackReason: string | undefined = undefined;
+
+      if (escalateForFixFailures) {
+        useFallback = deps.fixFallbackProfile !== undefined;
+        if (useFallback) {
+          currentFallbackReason = 'two_consecutive_fix_failures';
+          this.emitEscalation(
+            input,
+            'two_consecutive_fix_failures',
+            deps.fixProfile,
+            deps.fixFallbackProfile!,
+          );
+        }
+      } else if (escalateForProductiveChurn) {
+        if (deps.fixFallbackProfile !== undefined) {
+          useFallback = true;
+          currentFallbackReason = 'non_convergent_fixed_iterations';
+          if (!emittedProductiveChurnEscalation) {
+            emittedProductiveChurnEscalation = true;
+            this.emitEscalation(
+              input,
+              'non_convergent_fixed_iterations',
+              deps.fixProfile,
+              deps.fixFallbackProfile,
+              { count: consecutiveFixedWithoutResolution, threshold: PRODUCTIVE_CHURN_THRESHOLD },
+            );
+          }
+        } else {
+          if (!emittedProductiveChurnDiagnostic) {
+            emittedProductiveChurnDiagnostic = true;
+            this.emit(
+              input,
+              'loop.productive_churn.diagnostic',
+              'warn',
+              'productive-churn escalation triggered but no fallback profile is configured',
+              { count: consecutiveFixedWithoutResolution, threshold: PRODUCTIVE_CHURN_THRESHOLD },
+            );
+          }
+        }
       }
 
       // --- TRAILING RE-REVIEW SHORT-CIRCUIT (#680) ---
@@ -1416,6 +1471,7 @@ export class ImplementStepLoop {
         },
         {
           useFallback,
+          ...(currentFallbackReason !== undefined ? { fallbackReason: currentFallbackReason } : {}),
           ...(historyContext !== undefined ? { historyContext } : {}),
           ...(pendingReconciliationContext !== undefined
             ? { reconciliationContext: pendingReconciliationContext }
@@ -1741,6 +1797,7 @@ export class ImplementStepLoop {
               autoCommitted = true;
               // Success: treat this as a productive fix that advanced HEAD.
               consecutiveFixFailures = 0;
+              consecutiveFixedWithoutResolution += 1;
               lastFixHeadBeforeFix = undefined;
               loop = completeIteration(loop, {
                 outcome: 'fixed',
@@ -1856,6 +1913,7 @@ export class ImplementStepLoop {
         }
       }
 
+      consecutiveFixedWithoutResolution += 1;
       loop = completeIteration(loop, {
         outcome: 'fixed',
         fixInvocationId: fix.invocationId,
@@ -2163,12 +2221,14 @@ export class ImplementStepLoop {
     triggerReason: string,
     fromProfile: AgentProfileName,
     toProfile: AgentProfileName,
+    extraMetadata?: Record<string, unknown>,
   ): void {
     this.emit(input, 'phase.fallback.escalated', 'warn', `escalating phase to ${toProfile}`, {
       fromProfile: fromProfile as unknown as string,
       toProfile: toProfile as unknown as string,
       triggerReason,
       triggerOwner: 'use_case',
+      ...extraMetadata,
     });
   }
 

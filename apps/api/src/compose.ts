@@ -3667,7 +3667,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             ...(opts.previousInvocationId
               ? {
                   fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
-                  fallbackReason: 'two_consecutive_fix_failures',
+                  fallbackReason: opts.fallbackReason ?? 'two_consecutive_fix_failures',
                   metadata: {
                     implementation_task_number: ctx.stepIndex,
                     iteration: ctx.iterationIndex,

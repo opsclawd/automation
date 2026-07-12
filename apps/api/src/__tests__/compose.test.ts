@@ -1411,6 +1411,19 @@ exit 1
     expect(code).toMatch(/if\s*\(\s*fixVerdict\.ok\s*\)\s*\{\s*archiveStepResultDurably/);
   });
 
+  it('implRunFix uses the fallbackReason from options when registering the fallback invocation', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
+    expect(fixMatch).toBeTruthy();
+    const code = fixMatch![0];
+    expect(code).toMatch(
+      /fallbackReason:\s*opts\.fallbackReason\s*\?\?\s*'two_consecutive_fix_failures'/,
+    );
+  });
+
   describe('worktreeSetup behavior', () => {
     const fakeAgentConfig = {
       validation: { commands: ['echo ok'], timeout: 60 },
