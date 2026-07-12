@@ -2,17 +2,12 @@ import { z } from 'zod';
 
 export const taskManifestEntryV1Schema = z
   .object({
-    n: z
-      .number()
-      .int()
-      .min(1, {
-        message: 'manifest task entry must have a valid n (number) and non-empty title (string)',
-      }),
-    title: z
-      .string()
-      .min(1, {
-        message: 'manifest task entry must have a valid n (number) and non-empty title (string)',
-      }),
+    n: z.number().int().min(1, {
+      message: 'manifest task entry must have a valid n (number) and non-empty title (string)',
+    }),
+    title: z.string().min(1, {
+      message: 'manifest task entry must have a valid n (number) and non-empty title (string)',
+    }),
     files: z.array(z.string()).nullish(),
     validation: z.array(z.string()).nullish(),
   })

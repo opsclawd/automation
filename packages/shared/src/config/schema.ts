@@ -106,6 +106,18 @@ const phasesSchema = z.object({
      */
     maxTypeCheckRetries: z.number().int().positive().default(5),
     /**
+     * Threshold for holistic re-derivation (#766). When the loop hits this
+     * iteration index (1-based), it assesses repeat-offender files.
+     * Defaults to 3.
+     */
+    holisticThresholdIteration: z.number().int().positive().default(3),
+    /**
+     * Threshold for holistic re-derivation (#766). When a file has this
+     * many findings across prior iterations, it triggers re-derivation mode.
+     * Defaults to 2.
+     */
+    holisticThresholdFindings: z.number().int().positive().default(2),
+    /**
      * When true (default), iteration >= 2 scopes the reviewer to the diff
      * since the previously reviewed commit for intermediate reviews.
      * Set to false to disable delta-scoped re-review for intermediate passes.

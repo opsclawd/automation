@@ -1345,6 +1345,18 @@ exit 1
     expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?isTerminalFix/);
   });
 
+  it('implRunFix forwards holisticFindings into buildImplementStepFixPrompt (#766)', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
+    expect(fixMatch).toBeTruthy();
+    // The loop's per-file finding accumulation is useless if the seam drops
+    // it — same silent-no-op class as #670/#763.
+    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?holisticFindings/);
+  });
+
   describe('worktreeSetup behavior', () => {
     const fakeAgentConfig = {
       validation: { commands: ['echo ok'], timeout: 60 },

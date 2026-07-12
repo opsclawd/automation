@@ -90,9 +90,7 @@ Something else.
     );
     expect(result.content).toContain('## Explicitly Out-of-Scope\n\n- UI changes');
     expect(result.content).toContain('## Behavioral Invariants');
-    expect(result.content).toContain(
-      '- **Invariant 1**: Desc 1 (Test: `test_inv_1`)',
-    );
+    expect(result.content).toContain('- **Invariant 1**: Desc 1 (Test: `test_inv_1`)');
     expect(result.diagnostics.truncated).toHaveLength(0);
     expect(result.diagnostics.unresolvedReferences).toHaveLength(0);
   });

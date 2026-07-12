@@ -21,6 +21,8 @@ import type {
   ArbiterResult,
   ImplementResult,
   ImplementStepOptions,
+  HolisticFile,
+  HolisticFinding,
   ReviewMode,
   DimensionName,
   DimensionState,
@@ -280,20 +282,86 @@ export class ImplementStepLoop {
     };
 
     // --- History helpers (closure over deps/loop) ---
-    const readFixerHistoryContext = async (): Promise<string | undefined> => {
+    const readFixerHistory = async (): Promise<ImplementStepHistoryEntry[] | undefined> => {
       if (!deps.loopHistory) return undefined;
       try {
         const history = await deps.loopHistory.read(baseCtx);
         if (!history || history.length === 0) return undefined;
-        return deps.loopHistory.format(history);
+        return history;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         this.emit(input, 'implement_step_history.read_failed', 'warn', msg, {
           stepIndex: input.stepIndex,
           error: msg,
         });
-        return '';
+        return undefined;
       }
+    };
+
+    const formatFixerHistory = (history: ImplementStepHistoryEntry[]): string | undefined => {
+      if (!deps.loopHistory || !history || history.length === 0) return undefined;
+      return deps.loopHistory.format(history);
+    };
+
+    const detectHolisticFiles = (
+      history: ImplementStepHistoryEntry[],
+      currentFindings: Array<{
+        severity: string;
+        summary: string;
+        file?: string;
+        suggested_fix?: string;
+      }>,
+      iterationIndex: number,
+      thresholdIteration: number,
+      thresholdFindings: number,
+    ): HolisticFile[] | undefined => {
+      if (iterationIndex < thresholdIteration) return undefined;
+
+      const findingsByFile = new Map<string, HolisticFinding[]>();
+
+      for (const entry of history) {
+        const allFindings = [
+          ...(entry.specReview.findings ?? []),
+          ...(entry.qualityReview.findings ?? []),
+        ];
+
+        for (const f of allFindings) {
+          if (!f.file) continue;
+          const list = findingsByFile.get(f.file) ?? [];
+          list.push({
+            severity: f.severity,
+            summary: f.summary,
+            ...(f.suggested_fix !== undefined ? { suggested_fix: f.suggested_fix } : {}),
+            iteration: entry.iteration,
+            // For holistic re-derivation, findings from prior iterations are
+            // treated as 'resolved' constraints that must remain satisfied.
+            status: 'resolved',
+          });
+          findingsByFile.set(f.file, list);
+        }
+      }
+
+      const holisticFiles: HolisticFile[] = [];
+      for (const [file, priorFindings] of findingsByFile.entries()) {
+        if (priorFindings.length >= thresholdFindings) {
+          // Threshold met for this file based on prior history. Include both
+          // historical (resolved) and current (open) findings for the file.
+          const currentForFile = currentFindings.filter((f) => f.file === file);
+          const allForFile = [
+            ...priorFindings,
+            ...currentForFile.map((f) => ({
+              severity: f.severity,
+              summary: f.summary,
+              ...(f.suggested_fix !== undefined ? { suggested_fix: f.suggested_fix } : {}),
+              iteration: iterationIndex,
+              status: 'open' as const,
+            })),
+          ];
+          holisticFiles.push({ file, findings: allForFile });
+        }
+      }
+
+      return holisticFiles.length > 0 ? holisticFiles : undefined;
     };
 
     const appendHistory = async (entry: ImplementStepHistoryEntry): Promise<void> => {
@@ -1143,7 +1211,39 @@ export class ImplementStepLoop {
             pendingReconciliationContext = arbiterResult.rationale;
 
             // Perform the bonus fix iteration immediately
-            const bonusFixHistoryContext = await readFixerHistoryContext();
+            const bonusFixHistory = await readFixerHistory();
+            const bonusFixHistoryContext = bonusFixHistory
+              ? formatFixerHistory(bonusFixHistory)
+              : undefined;
+            const thresholdIteration = opts.holisticThresholdIteration ?? 3;
+            const thresholdFindings = opts.holisticThresholdFindings ?? 2;
+            const bonusHolisticFindings = bonusFixHistory
+              ? detectHolisticFiles(
+                  bonusFixHistory,
+                  [...(specReview.findings ?? []), ...(qualityReview.findings ?? [])],
+                  iterationIndex,
+                  thresholdIteration,
+                  thresholdFindings,
+                )
+              : undefined;
+
+            if (bonusHolisticFindings) {
+              for (const h of bonusHolisticFindings) {
+                this.emit(
+                  input,
+                  'fix.holistic_rederivation',
+                  'info',
+                  `holistic re-derivation triggered for ${h.file}`,
+                  {
+                    file: h.file,
+                    iteration: iterationIndex,
+                    findings: h.findings.filter((f) => f.status === 'resolved').length,
+                    totalFindings: h.findings.length,
+                  },
+                );
+              }
+            }
+
             const bonusFix = await deps.runFix(
               {
                 ...ctx,
@@ -1159,6 +1259,7 @@ export class ImplementStepLoop {
                   ? { historyContext: bonusFixHistoryContext }
                   : {}),
                 reconciliationContext: pendingReconciliationContext,
+                ...(bonusHolisticFindings ? { holisticFindings: bonusHolisticFindings } : {}),
               },
             );
             pendingReconciliationContext = undefined;
@@ -1273,7 +1374,37 @@ export class ImplementStepLoop {
       }
 
       // --- FIX ---
-      const historyContext = await readFixerHistoryContext();
+      const fixHistory = await readFixerHistory();
+      const historyContext = fixHistory ? formatFixerHistory(fixHistory) : undefined;
+      const thresholdIteration = opts.holisticThresholdIteration ?? 3;
+      const thresholdFindings = opts.holisticThresholdFindings ?? 2;
+      const holisticFindings = fixHistory
+        ? detectHolisticFiles(
+            fixHistory,
+            [...(specReview.findings ?? []), ...(qualityReview.findings ?? [])],
+            iterationIndex,
+            thresholdIteration,
+            thresholdFindings,
+          )
+        : undefined;
+
+      if (holisticFindings) {
+        for (const h of holisticFindings) {
+          this.emit(
+            input,
+            'fix.holistic_rederivation',
+            'info',
+            `holistic re-derivation triggered for ${h.file}`,
+            {
+              file: h.file,
+              iteration: iterationIndex,
+              findings: h.findings.filter((f) => f.status === 'resolved').length,
+              totalFindings: h.findings.length,
+            },
+          );
+        }
+      }
+
       const fix = await deps.runFix(
         {
           ...ctx,
@@ -1295,6 +1426,7 @@ export class ImplementStepLoop {
           ...(useFallback && lastFixInvocationId !== undefined
             ? { previousInvocationId: lastFixInvocationId }
             : {}),
+          ...(holisticFindings ? { holisticFindings } : {}),
         },
       );
       pendingReconciliationContext = undefined;
@@ -1765,7 +1897,41 @@ export class ImplementStepLoop {
         { profile: deps.terminalFixProfile, priorIterations: loop.iterations.length },
       );
 
-      const historyContext = await readFixerHistoryContext();
+      const terminalFixHistory = await readFixerHistory();
+      const historyContext = terminalFixHistory
+        ? formatFixerHistory(terminalFixHistory)
+        : undefined;
+
+      const thresholdIteration = opts.holisticThresholdIteration ?? 3;
+      const thresholdFindings = opts.holisticThresholdFindings ?? 2;
+      const terminalHolisticFindings = terminalFixHistory
+        ? detectHolisticFiles(
+            terminalFixHistory,
+            [], // Terminal fix addresses all open findings in history
+            loop.iterations.length,
+            thresholdIteration,
+            thresholdFindings,
+          )
+        : undefined;
+
+      if (terminalHolisticFindings) {
+        for (const h of terminalHolisticFindings) {
+          this.emit(
+            input,
+            'fix.holistic_rederivation',
+            'info',
+            `holistic re-derivation triggered for ${h.file} (terminal fix)`,
+            {
+              file: h.file,
+              iteration: loop.iterations.length,
+              findings: h.findings.filter((f) => f.status === 'resolved').length,
+              totalFindings: h.findings.length,
+              isTerminalFix: true,
+            },
+          );
+        }
+      }
+
       const terminalFixStart = deps.now();
       const terminalFix = await deps.runFix(
         {
@@ -1781,6 +1947,7 @@ export class ImplementStepLoop {
           useFallback: false,
           isTerminalFix: true,
           ...(historyContext !== undefined ? { historyContext } : {}),
+          ...(terminalHolisticFindings ? { holisticFindings: terminalHolisticFindings } : {}),
         },
       );
 
