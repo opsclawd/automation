@@ -5,7 +5,6 @@ interface RunPaginationProps {
   totalPages: number;
   currentRepositoryId?: string | undefined;
   currentStatus?: string | undefined;
-  actionRoute: string;
 }
 
 export default function RunPagination({
@@ -13,19 +12,16 @@ export default function RunPagination({
   totalPages,
   currentRepositoryId = '',
   currentStatus = '',
-  actionRoute,
 }: RunPaginationProps) {
   const getPageUrl = (targetPage: number) => {
     const params = new URLSearchParams();
-    if (currentRepositoryId) {
-      params.set('repositoryId', currentRepositoryId);
-    }
+    const route = currentRepositoryId ? `/repositories/${currentRepositoryId}` : '/';
     if (currentStatus) {
       params.set('status', currentStatus);
     }
     params.set('page', String(targetPage));
     const qs = params.toString();
-    return `${actionRoute}${qs ? `?${qs}` : ''}`;
+    return `${route}${qs ? `?${qs}` : ''}`;
   };
 
   return (

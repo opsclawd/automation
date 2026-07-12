@@ -27,7 +27,7 @@ import {
 } from '@ai-sdlc/application';
 import type { RunRepositoryPort } from '@ai-sdlc/application';
 import type { SweepOrphanedRunEntry } from '@ai-sdlc/application';
-import { composeRoot, type ComposeOptions } from './compose.js';
+import { composeRoot, type ComposeOptions, seedTestDatabase } from './compose.js';
 import { resolveTargetRepoRootOrExit, findRepoRoot } from './cli/target-repo-root.js';
 import { composeWithTarget } from './cli/compose-with-target.js';
 import { WorkerScheduler } from './worker-scheduler.js';
@@ -970,6 +970,21 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         process.on('SIGTERM', shutdown);
       },
     );
+
+  program
+    .command('seed-test-db')
+    .description('Seed the test database for e2e tests')
+    .requiredOption('--db-path <path>', 'Path to the SQLite database file')
+    .requiredOption('--runs-dir <path>', 'Path to the runs directory')
+    .action(async (opts: { dbPath: string; runsDir: string }) => {
+      try {
+        seedTestDatabase(opts.dbPath, opts.runsDir);
+        process.exit(0);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    });
 
   program
     .command('runs')

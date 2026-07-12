@@ -50,7 +50,6 @@ export default async function Page(props: {
         repositories={repositories}
         currentRepositoryId={repositoryId}
         currentStatus={status}
-        actionRoute="/"
       />
 
       <RunTable runs={runs} repositoryMap={repositoryMap} showRepository={true} />
@@ -61,7 +60,6 @@ export default async function Page(props: {
           totalPages={totalPages}
           currentRepositoryId={repositoryId}
           currentStatus={status}
-          actionRoute="/"
         />
       )}
     </main>

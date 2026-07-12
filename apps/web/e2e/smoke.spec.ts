@@ -225,7 +225,7 @@ test('global_filters_reset_to_first_page_and_pagination_preserves_both_filters',
   await page.getByRole('link', { name: 'Next' }).click();
   await expect(page.getByText('Page 2 of 2')).toBeVisible();
   const url = new URL(page.url());
-  expect(url.searchParams.get('repositoryId')).toBe(HEALTHY_1_ID);
+  expect(url.pathname).toContain(`/repositories/${HEALTHY_1_ID}`);
   expect(url.searchParams.get('page')).toBe('2');
 });
 

@@ -7,14 +7,12 @@ interface RunFiltersProps {
   repositories: RepositoryDto[];
   currentRepositoryId?: string | undefined;
   currentStatus?: string | undefined;
-  actionRoute: string;
 }
 
 export default function RunFilters({
   repositories,
   currentRepositoryId = '',
   currentStatus = '',
-  actionRoute,
 }: RunFiltersProps) {
   const router = useRouter();
 
@@ -34,21 +32,22 @@ export default function RunFilters({
       nextStatus = newVal;
     }
 
-    if (nextRepoId) {
-      params.set('repositoryId', nextRepoId);
-    }
+    const route = nextRepoId ? `/repositories/${nextRepoId}` : '/';
+
     if (nextStatus) {
       params.set('status', nextStatus);
     }
 
     const query = params.toString();
-    router.push(`${actionRoute}${query ? `?${query}` : ''}`);
+    router.push(`${route}${query ? `?${query}` : ''}`);
   };
+
+  const formAction = currentRepositoryId ? `/repositories/${currentRepositoryId}` : '/';
 
   return (
     <form
       method="GET"
-      action={actionRoute}
+      action={formAction}
       className="flex flex-wrap gap-4 items-center mb-6 bg-slate-50 p-4 rounded border"
     >
       <div className="flex flex-col gap-1">
