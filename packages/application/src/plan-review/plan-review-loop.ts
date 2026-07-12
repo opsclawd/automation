@@ -18,8 +18,43 @@ import type {
   PlanReviewSnapshot,
 } from './types.js';
 import type { ReviewMode } from '../review-state/types.js';
+import type { ReviewAttempt } from '../ports/review-state-repository-port.js';
 
 export const DEFAULT_REVIEWER_MAX_RETRIES = 2;
+
+function buildPlanReviewAttempt(params: {
+  attemptId: string;
+  runId: string;
+  phaseId: string;
+  reviewMode: ReviewMode;
+  snapshot?: PlanReviewSnapshot;
+  verdict?: string;
+  now: () => Date;
+}): ReviewAttempt {
+  const { attemptId, runId, phaseId, reviewMode, snapshot, verdict, now } = params;
+  const result: ReviewAttempt = {
+    attemptId,
+    runId,
+    scope: 'plan-review',
+    step: phaseId,
+    reviewMode,
+    dimension: 'plan',
+    createdAt: now().toISOString(),
+    artifacts: [],
+  };
+  if (snapshot) {
+    result.snapshot = {
+      kind: 'plan_artifact',
+      identity: snapshot.planMdDigest,
+      ...(snapshot.manifestDigest ? { baseIdentity: snapshot.manifestDigest } : {}),
+      capturedAt: snapshot.capturedAt,
+    };
+  }
+  if (verdict) {
+    result.verdict = verdict;
+  }
+  return result;
+}
 
 export class PlanReviewLoop {
   constructor(private readonly deps: PlanReviewLoopDeps) {}
@@ -308,6 +343,18 @@ export class PlanReviewLoop {
         return { outcome: 'failed', loop, proceedWithConcerns: false };
       }
 
+      deps.reviewStateRepository?.appendAttempt(
+        buildPlanReviewAttempt({
+          attemptId: review.invocationId,
+          runId: input.runId as string,
+          phaseId: input.phaseId as string,
+          reviewMode,
+          ...(review.snapshot ? { snapshot: review.snapshot } : {}),
+          ...(review.verdict ? { verdict: review.verdict } : {}),
+          now: deps.now,
+        }),
+      );
+
       loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
 
       if (iterationIndex === 1 && review.snapshot) {
@@ -487,6 +534,26 @@ export class PlanReviewLoop {
       }
 
       if (finalFullPhase && review.verdict === 'p1_found') {
+        if (
+          review.snapshot &&
+          iter1Snapshot &&
+          review.snapshot.planMdDigest !== iter1Snapshot.planMdDigest
+        ) {
+          this.emit(
+            input,
+            'plan-review.loop.final_review.artifact_drift_detected',
+            'error',
+            `artifact digest drift detected in final_full review; escalating to human`,
+            {
+              iteration: iterationIndex,
+              iter1Digest: iter1Snapshot.planMdDigest,
+              finalDigest: review.snapshot.planMdDigest,
+            },
+          );
+          loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+          deps.loops.update(loop);
+          return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+        }
         this.emit(
           input,
           'plan-review.loop.final_review.finding_reopens_cycle',
@@ -811,6 +878,18 @@ export class PlanReviewLoop {
           return { outcome: 'failed', loop, proceedWithConcerns: false };
         }
 
+        deps.reviewStateRepository?.appendAttempt(
+          buildPlanReviewAttempt({
+            attemptId: finalReview.invocationId,
+            runId: input.runId as string,
+            phaseId: input.phaseId as string,
+            reviewMode: 'final_full',
+            ...(finalReview.snapshot ? { snapshot: finalReview.snapshot } : {}),
+            ...(finalReview.verdict ? { verdict: finalReview.verdict } : {}),
+            now: deps.now,
+          }),
+        );
+
         if (finalReview.verdict === 'pass' || finalReview.verdict === 'p2_only') {
           const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
             index: finalIterationIndex,
@@ -1084,6 +1163,17 @@ export class PlanReviewLoop {
                 confirmReview?.agentOutcome === 'success' &&
                 confirmReview.verdict !== undefined
               ) {
+                deps.reviewStateRepository?.appendAttempt(
+                  buildPlanReviewAttempt({
+                    attemptId: confirmReview.invocationId,
+                    runId: input.runId as string,
+                    phaseId: input.phaseId as string,
+                    reviewMode: 'final_full',
+                    ...(confirmReview.snapshot ? { snapshot: confirmReview.snapshot } : {}),
+                    ...(confirmReview.verdict ? { verdict: confirmReview.verdict } : {}),
+                    now: deps.now,
+                  }),
+                );
                 if (
                   confirmReview.verdict === 'pass' ||
                   confirmReview.verdict === 'p2_only' ||
@@ -1290,7 +1380,7 @@ export class PlanReviewLoop {
     const hasP1 = eligible.some((f) => f.severity === 'P1');
     if (hasP0) return 'p1_found';
     if (hasP1) {
-      return reviewerVerdict === 'proceed_with_concerns' ? 'proceed_with_concerns' : 'p1_found';
+      return reviewerVerdict === 'proceed_with_concerns' ? 'p1_found' : reviewerVerdict;
     }
 
     if (reviewerVerdict === 'p1_found' || reviewerVerdict === 'proceed_with_concerns') {
