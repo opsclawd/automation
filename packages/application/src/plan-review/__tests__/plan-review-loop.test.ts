@@ -611,6 +611,87 @@ describe('PlanReviewLoop', () => {
     });
   });
 
+  it('gate-manufactured recovery — contradiction arbiter returns insufficient_evidence → success', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        // Iteration 1: return pass, but with findings that the evidence-bound
+        // gate will use to manufacture a p1_found verdict.
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+          findings: [
+            {
+              severity: 'P1' as const,
+              citation: 'plan.md:42',
+              failureScenario: 'Manufactured defect',
+              evidence: 'grounded' as const,
+            },
+          ],
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_no_fixes_needed' as const,
+      }),
+      runArbiter: async (): Promise<ArbiterResult> => ({
+        outcome: 'insufficient_evidence',
+        evidence: 'missing artifacts',
+        rationale: 'cannot see cited files',
+      }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+    expect(events.some((e) => e.metadata?.resolvedBy === 'gate-manufactured-recovery')).toBe(true);
+  });
+
+  it('gate-manufactured recovery — final review arbiter returns insufficient_evidence → success', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        // Iteration 1: standard pass.
+        // Iteration 2 (trailing final review): manufactured P1.
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+          findings:
+            reviewCalls === 1
+              ? []
+              : [
+                  {
+                    severity: 'P1' as const,
+                    citation: 'plan.md:42',
+                    failureScenario: 'Manufactured defect',
+                    evidence: 'grounded' as const,
+                  },
+                ],
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<ArbiterResult> => ({
+        outcome: 'insufficient_evidence',
+        evidence: 'missing artifacts',
+        rationale: 'cannot see cited files',
+      }),
+    });
+    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+    expect(events.some((e) => e.metadata?.resolvedBy === 'gate-manufactured-recovery')).toBe(true);
+  });
+
   it('bonus iteration — trailing arbiter finding_valid triggers bonus fix → succeeds', async () => {
     let reviewCalls = 0;
     let fixCalls = 0;

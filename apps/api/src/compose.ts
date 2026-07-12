@@ -4400,16 +4400,21 @@ export function composeRoot(opts: ComposeOptions): Container {
                 `plan-review-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
               );
               const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
-              const { planExcerpt, findingsExcerpt, fixExcerpt } = await readPlanReviewExcerpts(
-                artifacts,
-                String(ctx.runId),
-              );
+              const {
+                planExcerpt,
+                findingsExcerpt,
+                fixExcerpt,
+                manifestExcerpt,
+                designExcerpt,
+              } = await readPlanReviewExcerpts(artifacts, String(ctx.runId));
               const arbiterPrompt = buildPlanReviewArbiterPrompt(
                 { cwd: ctx.cwd, runId: String(ctx.runId) },
                 {
                   planExcerpt,
                   findingsExcerpt,
                   fixExcerpt,
+                  manifestExcerpt,
+                  designExcerpt,
                   fixRebuttal: fixResult.rebuttal ?? '',
                 },
               );
@@ -4502,13 +4507,11 @@ export function composeRoot(opts: ComposeOptions): Container {
               `plan-review-final-review-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
             );
             const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
-            const { planExcerpt, findingsExcerpt } = await readPlanReviewFinalExcerpts(
-              artifacts,
-              String(ctx.runId),
-            );
+            const { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt } =
+              await readPlanReviewFinalExcerpts(artifacts, String(ctx.runId));
             const arbiterPrompt = buildPlanReviewFinalReviewArbiterPrompt(
               { cwd: ctx.cwd, runId: String(ctx.runId) },
-              { planExcerpt, findingsExcerpt },
+              { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt },
             );
             writeFileSync(promptPath, arbiterPrompt, 'utf-8');
 

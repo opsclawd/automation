@@ -432,6 +432,7 @@ export class PlanReviewLoop {
       // output still flows through the same empty-set verdict
       // normalization as an explicit `[]`.
       let eligibleFindings: ReadonlyArray<PlanReviewFinding> = [];
+      let isGateManufactured = false;
       if (deltaScopedReReview) {
         const rawFindings = review.findings ?? [];
         if (reviewMode === 'initial_full') {
@@ -453,6 +454,7 @@ export class PlanReviewLoop {
         // The failure check above guarantees `review.verdict` is defined;
         // assert for the type checker.
         const adjustedVerdict = this.computeVerdict(review.verdict!, eligibleFindings);
+        isGateManufactured = review.verdict === 'pass' && adjustedVerdict === 'p1_found';
         if (adjustedVerdict !== review.verdict) {
           this.emit(
             input,
@@ -829,6 +831,22 @@ export class PlanReviewLoop {
               invocation_type: 'initial',
             },
           });
+          if (arbiterResult.outcome === 'insufficient_evidence' && isGateManufactured) {
+            this.emit(
+              input,
+              'plan-review.review.contradiction.resolved',
+              'info',
+              `arbiter returned insufficient_evidence on gate-manufactured P1 at iteration ${iterationIndex}; resolving as pass`,
+              {
+                ruling: 'finding_invalid',
+                resolvedBy: 'gate-manufactured-recovery',
+                iterationIndex,
+              },
+            );
+            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+            deps.loops.update(loop);
+            return { outcome: 'success', loop, proceedWithConcerns: false };
+          }
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
             this.emit(
               input,
@@ -1044,6 +1062,28 @@ export class PlanReviewLoop {
           }),
         );
 
+        let eligibleFinalFindings: ReadonlyArray<PlanReviewFinding> = [];
+        let finalIsGateManufactured = false;
+        if (deltaScopedReReview) {
+          eligibleFinalFindings = (finalReview.findings ?? []).filter((f) => f.evidence === 'grounded');
+          const adjustedFinalVerdict = this.computeVerdict(finalReview.verdict!, eligibleFinalFindings);
+          if (adjustedFinalVerdict !== finalReview.verdict) {
+            this.emit(
+              input,
+              'plan-review.review.evidence.gate_applied',
+              'info',
+              `evidence-bound gate adjusted final verdict from ${finalReview.verdict} to ${adjustedFinalVerdict} at iteration ${finalIterationIndex}`,
+              {
+                iterationIndex: finalIterationIndex,
+                originalVerdict: finalReview.verdict,
+                adjustedVerdict: adjustedFinalVerdict,
+              },
+            );
+          }
+          finalIsGateManufactured = finalReview.verdict === 'pass' && adjustedFinalVerdict === 'p1_found';
+          finalReview = { ...finalReview, verdict: adjustedFinalVerdict };
+        }
+
         if (
           finalReview.snapshot &&
           preFinalFullSnapshot &&
@@ -1148,6 +1188,39 @@ export class PlanReviewLoop {
               invocation_type: 'initial',
             },
           });
+          if (arbiterResult.outcome === 'insufficient_evidence' && finalIsGateManufactured) {
+            this.emit(
+              input,
+              'plan-review.final_review.arbiter.resolved',
+              'info',
+              `arbiter returned insufficient_evidence on gate-manufactured P1 (final review) at iteration ${finalIterationIndex}; resolving as pass`,
+              {
+                ruling: 'finding_invalid',
+                resolvedBy: 'gate-manufactured-recovery',
+                iterationIndex: finalIterationIndex,
+              },
+            );
+            const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+              index: finalIterationIndex,
+              reviewInvocationId: finalReview.invocationId,
+              startedAt: deps.now(),
+              completedAt: deps.now(),
+              outcome: 'resolved',
+            };
+            loop = {
+              ...loop,
+              iterations: [...loop.iterations, finalIteration],
+              status: 'converged',
+              completedAt: deps.now(),
+            };
+            deps.loops.update(loop);
+            return {
+              outcome: 'success',
+              loop,
+              proceedWithConcerns: false,
+              ...(finalReview.knownLimitations ? { knownLimitations: finalReview.knownLimitations } : {}),
+            };
+          }
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
             this.emit(
               input,
