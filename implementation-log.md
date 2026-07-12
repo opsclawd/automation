@@ -1,13 +1,26 @@
-# Implementation Log
+# Implementation Log - Task 2
 
-## Task 1: Allow bounded repair of a missing result destination
+## Status
+DONE
 
-- Updated `packages/infrastructure/src/agent/structured-result-repair.ts` to allow a missing destination only when `cappedRawArtifact` is empty, while preserving the worktree-path, transcript-evidence, and live-HEAD checks before repair runs.
-- Added an explicit pre-repair destination snapshot so failed repairs restore original destination contents when the file existed, and delete synthetic destinations when it did not.
-- Kept the repair request bounded to the primary invocation by preserving `startCommitSha`, `fallbackOfInvocationId`, and the existing prompt shape.
-- Expanded `packages/infrastructure/src/agent/__tests__/structured-result-repair.test.ts` with the four required cases covering missing-destination repair, live-HEAD rejection, cleanup of a synthetic destination, and restoration after writing outside the destination.
+## What was implemented
+- Extended `ExtractResultInput` interface in [extract-result.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-760/packages/application/src/results/extract-result.ts) with an optional `repairExpectedHead` string.
+- Updated extraction logic so that `repairStructuredResult` selects `input.repairExpectedHead ?? invocation.endCommitSha ?? invocation.startCommitSha` as the repair baseline without inspecting live Git state in application code.
+- Extended the `readFixVerdict` options parameter in [read-verdicts.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-760/packages/application/src/review-fix/read-verdicts.ts) to accept `repairExpectedHead`, forwarding both `cwd` and `repairExpectedHead` to `extractResult`.
+- Kept `readReviewVerdict` behavior unchanged.
 
-## Verification
+## What was tested
+- Added 3 direct extraction tests in [extract-result.test.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-760/packages/application/src/__tests__/extract-result.test.ts):
+  - `uses an explicit repairExpectedHead before the invocation start SHA`
+  - `uses endCommitSha as the repair baseline when no explicit baseline is supplied`
+  - `re-validates a repaired fix-review artifact exactly once and rejects invalid repaired JSON`
+- Added a verdict-wrapper test in [read-verdicts.test.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-760/packages/application/src/review-fix/__tests__/read-verdicts.test.ts):
+  - `forwards cwd and repairExpectedHead from readFixVerdict to extractResult`
+- Verified all application tests and full workspace test suite pass.
+- Verified workspace builds and typechecks without error.
 
-- `pnpm --filter @ai-sdlc/infrastructure test -- src/agent/__tests__/structured-result-repair.test.ts`
-- `pnpm --filter @ai-sdlc/infrastructure typecheck`
+## Files changed
+- `packages/application/src/results/extract-result.ts`
+- `packages/application/src/review-fix/read-verdicts.ts`
+- `packages/application/src/__tests__/extract-result.test.ts`
+- `packages/application/src/review-fix/__tests__/read-verdicts.test.ts`

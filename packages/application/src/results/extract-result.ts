@@ -27,6 +27,7 @@ export interface ExtractResultInput {
   };
   cwd?: string | undefined;
   rerunContext?: { cwd: string; [key: string]: unknown } | undefined;
+  repairExpectedHead?: string | undefined;
 }
 
 async function readAndValidate(
@@ -139,7 +140,7 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
     schemaContractText: meta.schemaContractText,
     cappedRawArtifact: rawText,
     transcriptEvidence: '',
-    expectedHead: invocation.startCommitSha,
+    expectedHead: input.repairExpectedHead ?? invocation.endCommitSha ?? invocation.startCommitSha,
     classification: initial.violationCode,
     primaryInvocation: {
       id: invocation.id,

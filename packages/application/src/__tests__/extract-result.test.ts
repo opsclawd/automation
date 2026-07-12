@@ -238,6 +238,86 @@ describe('extractResult coordinator', () => {
       expect(outcome.detail).toBe('artifact not found: result.json in run r1');
     }
   });
+
+  it('uses an explicit repairExpectedHead before the invocation start SHA', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'r1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ bad: 'shape' }),
+    });
+    const repair = new FakeStructuredResultRepair();
+    repair.response = { outcome: 'failed' };
+
+    await extractResult({
+      invocation: makeInvocation({
+        phaseId: PhaseName('implement'),
+        startCommitSha: 'start-sha',
+        endCommitSha: 'end-sha',
+        stdoutPath,
+      }),
+      ports: { artifacts, repair },
+      repairExpectedHead: 'explicit-sha',
+    });
+
+    expect(repair.calls[0]?.expectedHead).toBe('explicit-sha');
+  });
+
+  it('uses endCommitSha as the repair baseline when no explicit baseline is supplied', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'r1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ bad: 'shape' }),
+    });
+    const repair = new FakeStructuredResultRepair();
+    repair.response = { outcome: 'failed' };
+
+    await extractResult({
+      invocation: makeInvocation({
+        phaseId: PhaseName('implement'),
+        startCommitSha: 'start-sha',
+        endCommitSha: 'end-sha',
+        stdoutPath,
+      }),
+      ports: { artifacts, repair },
+    });
+
+    expect(repair.calls[0]?.expectedHead).toBe('end-sha');
+  });
+
+  it('re-validates a repaired fix-review artifact exactly once and rejects invalid repaired JSON', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'r1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ bad: 'shape' }),
+    });
+    const repair = new FakeStructuredResultRepair();
+    let revalidateCalls = 0;
+    repair.response = async () => {
+      revalidateCalls++;
+      await artifacts.write({
+        runId: 'r1',
+        relativePath: 'result.json',
+        contents: JSON.stringify({ bad: 'shape' }),
+      });
+      return { outcome: 'repaired', repairInvocationId: AgentInvocationId('rep-123') };
+    };
+
+    const outcome = await extractResult({
+      invocation: makeInvocation({
+        phaseId: PhaseName('fix-review'),
+        stdoutPath,
+      }),
+      ports: { artifacts, repair },
+    });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.classification).toBe('unrecoverable_artifact');
+    expect(repair.calls).toHaveLength(1);
+    expect(revalidateCalls).toBe(1);
+  });
 });
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
