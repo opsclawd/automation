@@ -1738,7 +1738,7 @@ export class PlanReviewLoop {
       iterationIndex: priorIterations + 1,
     };
 
-    await deps.runFix(fixCtx, {
+    const fixResult = await deps.runFix(fixCtx, {
       isTerminalFix: true,
       triggerReason,
       historyContext: formattedHistory,
@@ -1746,6 +1746,10 @@ export class PlanReviewLoop {
         invocation_type: 'terminal_fix',
       },
     });
+
+    if (fixResult.agentOutcome === 'failed') {
+      return { outcome: 'failed', loop, proceedWithConcerns: false };
+    }
 
     if (deps.validateTerminalFix) {
       const valResult = await deps.validateTerminalFix(fixCtx);

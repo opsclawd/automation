@@ -1455,6 +1455,36 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
       expect(validateCalls).toBe(1);
     });
 
+    it('returns outcome failed if deps.runFix outcome is failed during terminal escalation', async () => {
+      let validateCalls = 0;
+      const { deps } = makeDeps({
+        terminalFixProfile: 'terminal-fix-profile',
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success',
+          verdict: 'p1_found',
+          findings: groundedP1Findings(),
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'failed',
+        }),
+        validateTerminalFix: async () => {
+          validateCalls++;
+          return {
+            passed: true,
+            diagnostics: [],
+            changedArtifacts: { 'plan.md': { priorDigest: 'd1', postDigest: 'd2' } },
+            summary: 'Valid change',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('failed');
+      expect(validateCalls).toBe(0);
+    });
+
     it('routes regular arbiter ambiguous and insufficient_evidence to terminal repair', async () => {
       let runFixOpts: PlanFixOptions | undefined;
       const { deps } = makeDeps({

@@ -4502,30 +4502,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
 
         if (opts.isTerminalFix) {
-          let data: {
-            verdict: import('@ai-sdlc/application').PlanFixResult['verdict'];
-            summary: string;
-            rebuttal?: string;
-          } = { verdict: 'done_with_fixes', summary: 'Terminal fix executed' };
-          const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
-          const resultJsonPath = inv?.resultJsonPath || PLAN_FIX_RESULT_ARTIFACT;
-          const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
-          try {
-            const raw = await artifacts.read(String(ctx.runId), resultJsonPath);
-            const parsed = planFixResultSchema.safeParse(JSON.parse(raw));
-            if (parsed.success) {
-              data = parsed.data;
-            }
-          } catch {
-            // optional observability data, ignore errors
-          }
           return {
             invocationId,
             agentOutcome: 'success',
             headBeforeFix: startCommitSha,
-            summary: data.summary,
-            ...(data.verdict ? { verdict: data.verdict } : {}),
-            ...('rebuttal' in data && data.rebuttal ? { rebuttal: data.rebuttal } : {}),
+            verdict: 'done_with_fixes',
+            summary: 'Terminal fix executed',
           };
         }
 

@@ -1615,6 +1615,6 @@ exit 1
       /expectedArtifacts:\s*opts\.isTerminalFix\s*\?\s*\[\s*'plan\.md'\s*\]\s*:\s*\[\s*PLAN_FIX_RESULT_ARTIFACT,\s*'plan\.md'\s*\]/,
     );
     expect(src).toContain('if (opts.isTerminalFix) {');
-    expect(src).toContain('resultJsonPath = inv?.resultJsonPath || PLAN_FIX_RESULT_ARTIFACT');
+    expect(src).toContain("verdict: 'done_with_fixes'");
   });
 });
