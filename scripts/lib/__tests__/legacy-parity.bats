@@ -28,3 +28,35 @@ setup() {
   run pnpm --filter @ai-sdlc/infrastructure test -- error-patterns.test.ts --run
   [ "$status" -eq 0 ]
 }
+@test "parity[#250]: opencode-adapter streams child stdout but not stderr to process streams" {
+  local spawn_section
+  spawn_section=$(sed -n '/const child = execa/,/watchdogInterval = this.startWatchdog/p' packages/infrastructure/src/agent/opencode-adapter.ts)
+
+  echo "$spawn_section" | grep -q "child.stdout.pipe(process.stdout, { end: false })" || {
+    echo "Failure: stdout piping missing or incorrect format in opencode-adapter"
+    return 1
+  }
+
+  echo "$spawn_section" | grep -q "child.stderr.pipe(process.stderr" && {
+    echo "Failure: stderr piping should not be present in opencode-adapter"
+    return 1
+  }
+  return 0
+}
+
+@test "parity[#250]: external-cli-runner streams both child stdout and stderr to process streams" {
+  local spawn_section
+  spawn_section=$(sed -n '/const child = execa/,/cancelSignal?.addEventListener/p' packages/infrastructure/src/agent/external-cli-runner.ts)
+
+  echo "$spawn_section" | grep -q "child.stdout.pipe(process.stdout, { end: false })" || {
+    echo "Failure: stdout piping missing or incorrect format in external-cli-runner"
+    return 1
+  }
+
+  echo "$spawn_section" | grep -q "child.stderr.pipe(process.stderr, { end: false })" || {
+    echo "Failure: stderr piping missing or incorrect format in external-cli-runner"
+    return 1
+  }
+  return 0
+}
+
