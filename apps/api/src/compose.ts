@@ -2939,6 +2939,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         ctx: StepLoopContext,
         resultJsonPath: string,
         artifactName: string,
+        scope?: { mode: string; startCommitSha: string },
       ): void => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const destination = join(runsDir, runDir, 'phase-artifacts', artifactName);
@@ -2954,6 +2955,31 @@ export function composeRoot(opts: ComposeOptions): Container {
             timestamp: new Date().toISOString(),
             metadata: { source: join(ctx.cwd, resultJsonPath), destination },
           });
+        }
+        if (scope) {
+          const modeSpecificName = `${artifactName.replace('.json', '')}.${scope.mode}.${scope.startCommitSha}.json`;
+          const modeSpecificDestination = join(
+            runsDir,
+            runDir,
+            'phase-artifacts',
+            modeSpecificName,
+          );
+          try {
+            mkdirSync(dirname(modeSpecificDestination), { recursive: true });
+            copyFileSync(join(ctx.cwd, resultJsonPath), modeSpecificDestination);
+          } catch (err) {
+            persistingEventBusForLoop.publish(String(ctx.runId), {
+              runId: String(ctx.runId),
+              level: 'warn',
+              type: 'artifact.copy_failed',
+              message: `Failed to copy artifact (mode-specific): ${err instanceof Error ? err.message : String(err)}`,
+              timestamp: new Date().toISOString(),
+              metadata: {
+                source: join(ctx.cwd, resultJsonPath),
+                destination: modeSpecificDestination,
+              },
+            });
+          }
         }
       };
 
@@ -3032,6 +3058,26 @@ export function composeRoot(opts: ComposeOptions): Container {
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
+        const postInvokeHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+          encoding: 'utf-8',
+        }).trim();
+        if (postInvokeHead !== startCommitSha) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'warn',
+            type: 'review.stale_head',
+            message: `HEAD changed during spec-review invocation (${startCommitSha} -> ${postInvokeHead})`,
+            timestamp: new Date().toISOString(),
+            metadata: {
+              phaseId: 'spec-review',
+              stepIndex: ctx.stepIndex,
+              startCommitSha,
+              postInvokeHead,
+            },
+          });
+          return { invocationId: '', agentOutcome: 'failed' as const };
+        }
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
@@ -3040,6 +3086,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           ctx,
           patched.resultJsonPath ?? 'result.json',
           SPEC_REVIEW_RESULT_ARTIFACT,
+          { mode: scope.mode, startCommitSha },
         );
         const verdict = await readReviewVerdict(
           patched,
@@ -3121,6 +3168,26 @@ export function composeRoot(opts: ComposeOptions): Container {
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
+        const postInvokeHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+          encoding: 'utf-8',
+        }).trim();
+        if (postInvokeHead !== startCommitSha) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'warn',
+            type: 'review.stale_head',
+            message: `HEAD changed during quality-review invocation (${startCommitSha} -> ${postInvokeHead})`,
+            timestamp: new Date().toISOString(),
+            metadata: {
+              phaseId: 'quality-review',
+              stepIndex: ctx.stepIndex,
+              startCommitSha,
+              postInvokeHead,
+            },
+          });
+          return { invocationId: '', agentOutcome: 'failed' as const };
+        }
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
@@ -3129,6 +3196,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           ctx,
           patched.resultJsonPath ?? 'result.json',
           QUALITY_REVIEW_RESULT_ARTIFACT,
+          { mode: scope.mode, startCommitSha },
         );
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const verdict = await readReviewVerdict(
