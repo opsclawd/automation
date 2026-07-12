@@ -1,10 +1,17 @@
-import type { RunId, PrReviewComment, PrReviewReply, PollAttempt } from '@ai-sdlc/domain';
+import type {
+  RunId,
+  PrReviewComment,
+  PrReviewReply,
+  PollAttempt,
+  PrReviewCommentAttempt,
+} from '@ai-sdlc/domain';
 import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.js';
 
 export class FakePrReviewRepository implements PrReviewRepositoryPort {
   comments = new Map<string, PrReviewComment>();
   replies: PrReviewReply[] = [];
   polls: PollAttempt[] = [];
+  commentAttempts: PrReviewCommentAttempt[] = [];
 
   private key(runId: RunId, commentId: number): string {
     return `${runId}:${commentId}`;
@@ -55,5 +62,29 @@ export class FakePrReviewRepository implements PrReviewRepositoryPort {
       }
     }
     return best;
+  }
+
+  appendCommentAttempt(attempt: PrReviewCommentAttempt): void {
+    const exists = this.commentAttempts.some(
+      (a) =>
+        a.runId === attempt.runId &&
+        a.commentId === attempt.commentId &&
+        a.retryNumber === attempt.retryNumber,
+    );
+    if (exists) {
+      throw new Error(
+        `Unique constraint violation: attempt for run ${attempt.runId} comment ${attempt.commentId} retry ${attempt.retryNumber} already exists`,
+      );
+    }
+    this.commentAttempts.push(attempt);
+  }
+
+  listCommentAttempts(runId: RunId, commentId: number): PrReviewCommentAttempt[] {
+    return this.commentAttempts
+      .filter((a) => a.runId === runId && a.commentId === commentId)
+      .sort((a, b) => {
+        if (a.retryNumber !== b.retryNumber) return a.retryNumber - b.retryNumber;
+        return a.createdAt.getTime() - b.createdAt.getTime();
+      });
   }
 }

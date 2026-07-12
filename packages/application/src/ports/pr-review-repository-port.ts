@@ -1,4 +1,10 @@
-import type { RunId, PrReviewComment, PrReviewReply, PollAttempt } from '@ai-sdlc/domain';
+import type {
+  RunId,
+  PrReviewComment,
+  PrReviewReply,
+  PollAttempt,
+  PrReviewCommentAttempt,
+} from '@ai-sdlc/domain';
 
 export interface PrReviewRepositoryPort {
   upsertComment(comment: PrReviewComment): void;
@@ -10,4 +16,6 @@ export interface PrReviewRepositoryPort {
   updatePollAttempt(attempt: PollAttempt): void;
   listPollAttempts(runId: RunId): PollAttempt[];
   latestPollAttempt(runId: RunId): PollAttempt | undefined;
+  appendCommentAttempt(attempt: PrReviewCommentAttempt): void;
+  listCommentAttempts(runId: RunId, commentId: number): PrReviewCommentAttempt[];
 }

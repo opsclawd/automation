@@ -25,6 +25,7 @@ import * as createRepositories from './migrations/0022-create-repositories.js';
 import * as backfillRepositoryRegistry from './migrations/0023-backfill-repository-registry.js';
 import * as addInvocationMetadata from './migrations/0024-add-invocation-metadata.js';
 import * as addReviewState from './migrations/0025-add-review-state.js';
+import * as addCommentAttempts from './migrations/0026-add-pr-review-comment-attempts.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -52,6 +53,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: backfillRepositoryRegistry.version, sql: backfillRepositoryRegistry.sql },
   { version: addInvocationMetadata.version, sql: addInvocationMetadata.sql },
   { version: addReviewState.version, sql: addReviewState.sql },
+  { version: addCommentAttempts.version, sql: addCommentAttempts.sql },
 ];
 
 export function registerCustomFunctions(db: Db): void {
