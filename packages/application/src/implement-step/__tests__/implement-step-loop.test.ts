@@ -3429,6 +3429,74 @@ describe('ImplementStepLoop auto-commit fallback', () => {
     expect(fallbackEvent).toBeDefined();
     expect(fallbackEvent?.metadata.triggerReason).toBe('two_consecutive_fix_failures');
   });
+
+  it('resets emittedProductiveChurn flags when streak resets, allowing subsequent streaks to escalate', async () => {
+    const { events, bus } = collectEvents();
+    const fixOptsPassed: ImplementFixStepOptions[] = [];
+    const shas = ['sha-1', 'sha-2', 'sha-3', 'sha-4', 'sha-5', 'sha-6', 'sha-7', 'sha-8', 'sha-9'];
+    let shaIndex = 0;
+    const git = makeFakeGitPort({
+      headSha: shas,
+      statusOutput: '',
+    });
+    git.headCommitSha = async () => shas[shaIndex];
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (ctx, opts) => {
+        fixOptsPassed.push(opts);
+        const invocationId = `fix-${fixOptsPassed.length}`;
+        if (fixOptsPassed.length === 4) {
+          return {
+            invocationId,
+            agentOutcome: 'success',
+            verdict: 'cannot_fix',
+          };
+        }
+        shaIndex++;
+        return {
+          invocationId,
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: shas[shaIndex - 1],
+        };
+      },
+      fixFallbackProfile: AgentProfileName('opencode-frontier-fallback'),
+    });
+
+    await new ImplementStepLoop(deps).execute({
+      ...baseInput(),
+      maxIterations: 8,
+    });
+
+    expect(fixOptsPassed).toHaveLength(8);
+    expect(fixOptsPassed[0].useFallback).toBe(false);
+    expect(fixOptsPassed[1].useFallback).toBe(false);
+    expect(fixOptsPassed[2].useFallback).toBe(false);
+    expect(fixOptsPassed[3].useFallback).toBe(true);
+    expect(fixOptsPassed[3].fallbackReason).toBe('non_convergent_fixed_iterations');
+
+    expect(fixOptsPassed[4].useFallback).toBe(false);
+    expect(fixOptsPassed[5].useFallback).toBe(false);
+    expect(fixOptsPassed[6].useFallback).toBe(false);
+    expect(fixOptsPassed[7].useFallback).toBe(true);
+    expect(fixOptsPassed[7].fallbackReason).toBe('non_convergent_fixed_iterations');
+
+    const fallbackEvents = events.filter(
+      (e) =>
+        e.type === 'phase.fallback.escalated' &&
+        e.metadata.triggerReason === 'non_convergent_fixed_iterations',
+    );
+    expect(fallbackEvents).toHaveLength(2);
+  });
 });
 
 describe('dirty dimension tracking (#723)', () => {

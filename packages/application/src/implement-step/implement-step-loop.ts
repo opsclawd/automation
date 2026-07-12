@@ -245,6 +245,8 @@ export class ImplementStepLoop {
       const outcome = options.outcome;
       if (outcome === 'unresolved' || outcome === 'failed') {
         consecutiveFixedWithoutResolution = 0;
+        emittedProductiveChurnEscalation = false;
+        emittedProductiveChurnDiagnostic = false;
       } else if (outcome === 'fixed') {
         consecutiveFixedWithoutResolution += 1;
       }
