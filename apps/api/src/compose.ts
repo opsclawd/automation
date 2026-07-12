@@ -3391,16 +3391,30 @@ export function composeRoot(opts: ComposeOptions): Container {
                   'arbiter could not locate a disputed finding in spec-review or quality-review result artifacts',
               };
             }
+            const persistedDimensionStates = reviewStateRepository.listDimensionStates(
+              String(ctx.runId),
+              'implement',
+              String(ctx.stepIndex),
+            );
+            const matchingDimensionState = persistedDimensionStates.find((ds) =>
+              ds.unresolvedRecords.some(
+                (r) => r.summary === findingToUse.summary && r.severity === findingToUse.severity,
+              ),
+            );
+            const matchingRecord = matchingDimensionState?.unresolvedRecords.find(
+              (r) => r.summary === findingToUse.summary && r.severity === findingToUse.severity,
+            );
             disputedFinding = {
-              fingerprint: `fp-${Date.now()}`,
+              fingerprint: matchingRecord?.fingerprint ?? `fp-${Date.now()}`,
               severity: findingToUse.severity || 'P1',
               summary: findingToUse.summary || 'Unknown finding',
               ...(findingToUse.file ? { file: findingToUse.file } : {}),
               ...(findingToUse.suggested_fix ? { suggested_fix: findingToUse.suggested_fix } : {}),
             };
-            dispositionHistory = [
-              { fingerprint: disputedFinding.fingerprint, disposition: 'open' as const },
-            ];
+            dispositionHistory =
+              matchingDimensionState?.dispositionHistory.filter(
+                (dh) => dh.fingerprint === disputedFinding.fingerprint,
+              ) ?? [];
 
             const arbiterInputs: {
               tcResult: typeof tcResult;
@@ -3668,6 +3682,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         now: () => new Date(),
         idFactory: () => randomUUID(),
         reviewStateRepository,
+        options: {
+          deltaScopedReReview: config.phases.implement.deltaScopedReReview,
+        },
       });
 
       // --- Plan-review loop (#666) ---
