@@ -40,6 +40,18 @@ describe('buildImplementStepFixPrompt', () => {
     expect(prompt).toContain('## WHAT THE REVIEWERS FOUND (verbatim)');
     expect(prompt).toContain('"findings": []');
     expect(prompt).toContain('Apply the suggested fixes when you can.');
+    expect(prompt).not.toContain('TERMINAL ATTEMPT');
+  });
+
+  it('renders the terminal framing block when isTerminalFix is set (#763)', async () => {
+    const artifacts = makeStore();
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', {
+      ...input,
+      isTerminalFix: true,
+    });
+    expect(prompt).toContain('## TERMINAL ATTEMPT — FINAL FIX PASS');
+    expect(prompt).toContain('Address ALL open findings');
+    expect(prompt).toContain('deterministic verification');
   });
 
   it('inlines spec findings verbatim when only the spec archive is present', async () => {
@@ -176,7 +188,7 @@ describe('buildImplementStepFixPrompt', () => {
       historyContext: historyBody,
     });
     expect(prompt).toContain('## PRIOR FIX HISTORY');
-      expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
+    expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain(historyBody);
   });
 

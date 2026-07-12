@@ -3121,7 +3121,11 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     const { bus, events } = collectEvents();
     const deps = makeDeps({
       events: bus,
-      runSpecReview: async () => ({ invocationId: 'sr-fail', agentOutcome: 'success', verdict: 'fail' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
       terminalFixProfile: AgentProfileName('top-tier-fixer'),
       runRevalidation: async () => ({ validationRunId: 'v1', passed: false }),
     });
@@ -3138,7 +3142,11 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     const { bus, events } = collectEvents();
     const deps = makeDeps({
       events: bus,
-      runSpecReview: async () => ({ invocationId: 'sr-fail', agentOutcome: 'success', verdict: 'fail' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
       terminalFixProfile: undefined,
     });
 
@@ -3156,5 +3164,125 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     expect(out.outcome).toBe('success');
     expect(out.loop.iterations).toHaveLength(1);
     expect(out.loop.status).toBe('converged');
+  });
+
+  // #763 design addendum: the terminal fixer's result artifact is
+  // informational, never load-bearing — acceptance is assessed from git
+  // state (HEAD advanced, or dirty tree auto-committed after typecheck)
+  // plus deterministic verification.
+  it('accepts a terminal fix whose artifact broke contract but whose commit landed (HEAD advanced)', async () => {
+    const { bus, events } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-2', statusOutput: '' });
+    let revalidationCalled = false;
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (_ctx, opts) =>
+        opts.isTerminalFix
+          ? {
+              // Fixer did the work and committed, but fumbled result.json —
+              // the exact run-83e8f9aa iteration-5 failure shape.
+              invocationId: 'fix-terminal',
+              agentOutcome: 'contract_violation' as const,
+              headBeforeFix: 'sha-1',
+            }
+          : { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' },
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+      runRevalidation: async () => {
+        revalidationCalled = true;
+        return { validationRunId: 'v1', passed: true };
+      },
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('success');
+    expect(revalidationCalled).toBe(true);
+    const accepted = events.find((e) => e.type === 'step.terminal_fix.accepted');
+    expect(accepted).toBeDefined();
+    expect(accepted?.metadata.headAdvanced).toBe(true);
+    expect(accepted?.metadata.verdictArtifact).toBe(null);
+  });
+
+  it('auto-commits a dirty terminal fix after typecheck passes, then accepts on verification', async () => {
+    const { bus, events } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+    let addAllCalled = false;
+    let commitCalled = false;
+    git.addAll = async () => {
+      addAllCalled = true;
+    };
+    git.commit = async (_cwd, message) => {
+      commitCalled = true;
+      expect(message).toContain('terminal fix — auto-committed');
+      return 'sha-new';
+    };
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (_ctx, opts) =>
+        opts.isTerminalFix
+          ? {
+              invocationId: 'fix-terminal',
+              agentOutcome: 'success' as const,
+              verdict: 'done_with_fixes' as const,
+              headBeforeFix: 'sha-1',
+            }
+          : { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' },
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+      runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('success');
+    expect(addAllCalled).toBe(true);
+    expect(commitCalled).toBe(true);
+    const accepted = events.find((e) => e.type === 'step.terminal_fix.accepted');
+    expect(accepted?.metadata.autoCommitted).toBe(true);
+  });
+
+  it('rejects a terminal fix claiming done_with_fixes when git shows no work at all', async () => {
+    const { bus, events } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' });
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (_ctx, opts) =>
+        opts.isTerminalFix
+          ? {
+              // Artifact claims success but HEAD never moved and the tree is
+              // clean — the artifact must not be trusted over git state.
+              invocationId: 'fix-terminal',
+              agentOutcome: 'success' as const,
+              verdict: 'done_with_fixes' as const,
+              headBeforeFix: 'sha-1',
+            }
+          : { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' },
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('needs_human_review');
+    const failed = events.find((e) => e.type === 'step.terminal_fix.failed');
+    expect(failed).toBeDefined();
+    expect(failed?.metadata.headAdvanced).toBe(false);
+    expect(failed?.metadata.autoCommitted).toBe(false);
   });
 });

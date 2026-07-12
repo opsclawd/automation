@@ -1406,56 +1406,13 @@ export class ImplementStepLoop {
         },
       );
 
-      if (terminalFix.agentOutcome === 'success' && terminalFix.verdict === 'done_with_fixes') {
-        // Deterministic verification: typecheck + manifest commands + tests
-        const tcResult = await deps.runTypecheck(baseCtx);
-        let revalidationPassed = true;
-        let revalidationDurationMs = 0;
-
-        if (tcResult.outcome === 'pass' && deps.runRevalidation) {
-          const revalStart = deps.now();
-          const revalResult = await deps.runRevalidation(baseCtx);
-          revalidationPassed = revalResult.passed;
-          revalidationDurationMs = deps.now().getTime() - revalStart.getTime();
-        }
-
-        const verificationPassed = tcResult.outcome === 'pass' && revalidationPassed;
-
-        if (verificationPassed) {
-          this.emit(
-            input,
-            'step.terminal_fix.accepted',
-            'info',
-            `terminal fix accepted after successful deterministic verification`,
-            {
-              profile: deps.terminalFixProfile,
-              priorIterations: loop.iterations.length,
-              durationMs: deps.now().getTime() - terminalFixStart.getTime(),
-              revalidationDurationMs,
-            },
-          );
-          return { outcome: 'success', loop };
-        } else {
-          this.emit(
-            input,
-            'step.terminal_fix.rejected',
-            'warn',
-            `terminal fix rejected: deterministic verification failed`,
-            {
-              profile: deps.terminalFixProfile,
-              priorIterations: loop.iterations.length,
-              typecheckOutcome: tcResult.outcome,
-              revalidationPassed,
-            },
-          );
-          return { outcome: 'needs_human_review', loop };
-        }
-      } else {
+      // cannot_fix is an explicit surrender — respect it without salvage.
+      if (terminalFix.verdict === 'cannot_fix') {
         this.emit(
           input,
           'step.terminal_fix.failed',
           'error',
-          `terminal fixer failed or returned non-fix verdict: ${terminalFix.agentOutcome} / ${terminalFix.verdict}`,
+          `terminal fixer declared cannot_fix`,
           {
             profile: deps.terminalFixProfile,
             priorIterations: loop.iterations.length,
@@ -1465,6 +1422,118 @@ export class ImplementStepLoop {
         );
         return { outcome: 'needs_human_review', loop };
       }
+
+      // #763 design addendum: the fixer's self-reported result artifact is
+      // informational, never load-bearing. When a git port is available,
+      // assess whether the fixer produced work from git state — HEAD
+      // advanced, or a dirty tree that auto-commits after passing typecheck
+      // (the run-83e8f9aa iteration-5 failure discarded a fully verified fix
+      // over a missing result.json; this branch must not repeat that).
+      // Without a git port, fall back to the verdict artifact.
+      let producedWork =
+        terminalFix.agentOutcome === 'success' && terminalFix.verdict === 'done_with_fixes';
+      let headAdvanced = false;
+      let autoCommitted = false;
+      let typecheckAfterFix: TypecheckResult | undefined;
+
+      if (deps.git) {
+        const headAfter = await deps.git.headCommitSha(baseCtx.cwd);
+        headAdvanced =
+          terminalFix.headBeforeFix !== undefined &&
+          headAfter !== undefined &&
+          headAfter !== terminalFix.headBeforeFix;
+        const statusOutput = await deps.git.status(baseCtx.cwd);
+        const dirty = statusOutput.trim().length > 0;
+
+        if (dirty) {
+          // Never commit a broken tree: typecheck gates the auto-commit. A
+          // failed commit is not retried — the clean outcome below is
+          // needs_human_review, and the dirty state is preserved for the
+          // human (#679 precedent: never revert uncommitted agent work).
+          typecheckAfterFix = await deps.runTypecheck(baseCtx);
+          if (typecheckAfterFix.outcome === 'pass') {
+            try {
+              await deps.git.addAll(baseCtx.cwd);
+              await deps.git.commit(
+                baseCtx.cwd,
+                `fix: ${input.stepTitle} (terminal fix — auto-committed)`,
+              );
+              autoCommitted = true;
+            } catch {
+              // fall through: producedWork reflects headAdvanced only
+            }
+          }
+        }
+        producedWork = headAdvanced || autoCommitted;
+      }
+
+      if (!producedWork) {
+        this.emit(
+          input,
+          'step.terminal_fix.failed',
+          'error',
+          `terminal fixer produced no verifiable work (agentOutcome: ${terminalFix.agentOutcome}, verdict: ${String(terminalFix.verdict)})`,
+          {
+            profile: deps.terminalFixProfile,
+            priorIterations: loop.iterations.length,
+            agentOutcome: terminalFix.agentOutcome,
+            verdict: terminalFix.verdict,
+            headAdvanced,
+            autoCommitted,
+          },
+        );
+        return { outcome: 'needs_human_review', loop };
+      }
+
+      // Deterministic verification: typecheck + validation commands + tests.
+      // The auto-commit path already typechecked this exact tree content;
+      // reuse that result rather than re-running.
+      const tcResult = typecheckAfterFix ?? (await deps.runTypecheck(baseCtx));
+      let revalidationPassed = true;
+      let revalidationDurationMs = 0;
+
+      if (tcResult.outcome === 'pass' && deps.runRevalidation) {
+        const revalStart = deps.now();
+        const revalResult = await deps.runRevalidation(baseCtx);
+        revalidationPassed = revalResult.passed;
+        revalidationDurationMs = deps.now().getTime() - revalStart.getTime();
+      }
+
+      const verificationPassed = tcResult.outcome === 'pass' && revalidationPassed;
+
+      if (verificationPassed) {
+        this.emit(
+          input,
+          'step.terminal_fix.accepted',
+          'info',
+          `terminal fix accepted after successful deterministic verification`,
+          {
+            profile: deps.terminalFixProfile,
+            priorIterations: loop.iterations.length,
+            durationMs: deps.now().getTime() - terminalFixStart.getTime(),
+            revalidationDurationMs,
+            headAdvanced,
+            autoCommitted,
+            verdictArtifact: terminalFix.verdict ?? null,
+          },
+        );
+        return { outcome: 'success', loop };
+      }
+      this.emit(
+        input,
+        'step.terminal_fix.rejected',
+        'warn',
+        `terminal fix rejected: deterministic verification failed`,
+        {
+          profile: deps.terminalFixProfile,
+          priorIterations: loop.iterations.length,
+          typecheckOutcome: tcResult.outcome,
+          revalidationPassed,
+          headAdvanced,
+          autoCommitted,
+        },
+      );
+      return { outcome: 'needs_human_review', loop };
     }
 
     return { outcome: 'failed', loop };
