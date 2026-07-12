@@ -2130,8 +2130,8 @@ describe('ProcessPrReviewComments — retry diff generation', () => {
 
     expect(git.diffCalls.length).toBeGreaterThanOrEqual(2);
     expect(git.diffCalls[0]).toEqual({ cwd: '/work/tree', base: 'origin/HEAD', head: 'sha-2' });
-    expect(git.diffCalls[1].base).toBe('sha-2');
-    expect(git.diffCalls[1].head).toBe('sha-6');
+    expect(git.diffCalls[1].base).toBe('sha-6');
+    expect(git.diffCalls[1].head).toBe('sha-2');
   });
 
   it('blocks comment immediately if git.diff throws for completedHead retry', async () => {

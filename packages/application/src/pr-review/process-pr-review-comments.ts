@@ -209,8 +209,8 @@ export class ProcessPrReviewComments {
             }
             currentDiff = await d.git.diff(
               input.cwd,
-              runningStartSha,
               previousAttempt.completedHead,
+              runningStartSha,
             );
           }
         } catch (error: unknown) {
@@ -331,6 +331,18 @@ export class ProcessPrReviewComments {
           !lastOutput.processed &&
           !lastOutput.blocked
         ) {
+          // Prefer the last attempt's concrete verification failure over the
+          // generic reason — pre-push verify failures never reach 'replied'
+          // state, so the final verifyComment pass above is skipped and this
+          // branch is where their outcome must be surfaced (#629).
+          let fallbackReason = `task failed after ${ESCALATION_BUDGET} attempts`;
+          if (lastOutput.codeVerifyReason !== undefined) {
+            fallbackReason = `verified incorrect: ${lastOutput.codeVerifyReason}`;
+          } else if (lastOutput.buildError !== undefined) {
+            fallbackReason = `build failed: ${lastOutput.buildError}`;
+          }
+          d.prReviewRepo.upsertComment(blockComment(currentComment!, fallbackReason));
+
           // No verifier produced a result (e.g. agent crashed, no commit to
           // anchor against). Keep the original generic-fallback behavior.
           const rollbackOk = await d.rollbackFix?.(
@@ -348,17 +360,6 @@ export class ProcessPrReviewComments {
               String(input.runId),
             );
           }
-          // Prefer the last attempt's concrete verification failure over the
-          // generic reason — pre-push verify failures never reach 'replied'
-          // state, so the final verifyComment pass above is skipped and this
-          // branch is where their outcome must be surfaced (#629).
-          let fallbackReason = `task failed after ${ESCALATION_BUDGET} attempts`;
-          if (lastOutput.codeVerifyReason !== undefined) {
-            fallbackReason = `verified incorrect: ${lastOutput.codeVerifyReason}`;
-          } else if (lastOutput.buildError !== undefined) {
-            fallbackReason = `build failed: ${lastOutput.buildError}`;
-          }
-          d.prReviewRepo.upsertComment(blockComment(currentComment!, fallbackReason));
           lastOutput = {
             commentId: task.commentId,
             action: 'failed',

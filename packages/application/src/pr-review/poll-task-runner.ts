@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import type { PrReviewComment, PrReviewCommentAttempt } from '@ai-sdlc/domain';
 import { markProcessed, blockComment, markReplied } from '@ai-sdlc/domain';
 import type { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
@@ -164,7 +166,26 @@ export class PollTaskRunner {
         },
       });
 
-      const resultArtifactPath = invocation.resultJsonPath ?? '';
+      let resultArtifactPath = invocation.resultJsonPath ?? '';
+      if (resultArtifactPath) {
+        const srcPath = path.isAbsolute(resultArtifactPath)
+          ? resultArtifactPath
+          : path.join(input.cwd, resultArtifactPath);
+        if (fs.existsSync(srcPath)) {
+          const durableDir = attempt.promptPath
+            ? path.dirname(attempt.promptPath)
+            : path.join(input.cwd, '.ai-pr-review');
+          fs.mkdirSync(durableDir, { recursive: true });
+          const durableFileName = `result-${attemptId}-${path.basename(resultArtifactPath)}`;
+          const destPath = path.join(durableDir, durableFileName);
+          try {
+            fs.copyFileSync(srcPath, destPath);
+            resultArtifactPath = destPath;
+          } catch {
+            // ignore / handle
+          }
+        }
+      }
       attempt.resultArtifactPath = resultArtifactPath;
       d.prReviewRepo.updateCommentAttempt(attempt);
 
