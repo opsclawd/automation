@@ -655,23 +655,22 @@ describe('PlanReviewLoop', () => {
     const { deps, events } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
-        // Iteration 1: standard pass.
-        // Iteration 2 (trailing final review): manufactured P1.
+        // To reach the final review arbiter with maxIterations=1, iteration 1
+        // must be a fix iteration (not a pass).
+        // Iteration 1: p1_found -> fix.
+        // Iteration 2 (trailing final review pass): manufactured P1 (pass -> p1_found).
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: 'pass' as const,
-          findings:
-            reviewCalls === 1
-              ? []
-              : [
-                  {
-                    severity: 'P1' as const,
-                    citation: 'plan.md:42',
-                    failureScenario: 'Manufactured defect',
-                    evidence: 'grounded' as const,
-                  },
-                ],
+          verdict: reviewCalls === 1 ? ('p1_found' as const) : ('pass' as const),
+          findings: [
+            {
+              severity: 'P1' as const,
+              citation: 'plan.md:42',
+              failureScenario: reviewCalls === 1 ? 'Real defect' : 'Manufactured defect',
+              evidence: 'grounded' as const,
+            },
+          ],
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
