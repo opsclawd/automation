@@ -1153,10 +1153,16 @@ export interface BuildPostPrReviewTaskPromptInput {
   mode: 'initial_full' | 'intermediate_delta';
   previousBuildError?: string;
   previousCodeVerifyReason?: string;
+  dispositions?: Array<{
+    fingerprint: string;
+    disposition: string;
+    reason?: string;
+  }>;
 }
 
 export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptInput): string {
-  const { cwd, comment, diff, mode, previousBuildError, previousCodeVerifyReason } = input;
+  const { cwd, comment, diff, mode, previousBuildError, previousCodeVerifyReason, dispositions } =
+    input;
   const sections: string[] = [
     '# PR Review Comment Task',
     '',
@@ -1204,6 +1210,15 @@ export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptIn
       `> ${previousCodeVerifyReason}`,
       '',
       'Please revisit your fix with this feedback in mind before trying again.',
+      '',
+    );
+  }
+
+  if (mode === 'intermediate_delta' && dispositions && dispositions.length > 0) {
+    sections.push(
+      '## Prior Attempt Dispositions',
+      '',
+      ...dispositions.map((d) => `- ${d.disposition}: ${d.reason ?? 'no reason'}`),
       '',
     );
   }
@@ -5051,6 +5066,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         mode,
         previousBuildError,
         previousCodeVerifyReason,
+        dispositions,
       }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
@@ -5062,6 +5078,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mode,
           ...(previousBuildError !== undefined ? { previousBuildError } : {}),
           ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
+          ...(dispositions !== undefined ? { dispositions } : {}),
         });
         writeFileSync(promptPath, content, 'utf-8');
         return promptPath;

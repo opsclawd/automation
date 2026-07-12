@@ -225,7 +225,7 @@ describe('PollTaskRunner — happy path', () => {
   });
 
   it('returns buildError when verification fails due to build', async () => {
-    const { deps, git, agent } = makeDeps({
+    const { deps, git, agent, repo } = makeDeps({
       verifyBuildPasses: async () => ({ passed: false, error: 'tsc failed: TS2322' }),
     });
     agent.clearQueue('post-pr-review-profile');
@@ -254,10 +254,15 @@ describe('PollTaskRunner — happy path', () => {
     expect(git.pushes).toHaveLength(0);
     expect(git.headByCwd.get('/work/tree')).toBe('abc123'); // reset to start SHA
     expect(git.cleanUntrackedCalls).toContain('/work/tree');
+
+    const attempts = repo.listCommentAttempts(runId, 9001);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].completedHead).toBe('newSha');
+    expect(attempts[0].disposition).toBe('failure');
   });
 
   it('returns codeVerifyReason when verification fails due to code change verification', async () => {
-    const { deps, git, agent, github } = makeDeps({
+    const { deps, git, agent, github, repo } = makeDeps({
       verifyCodeChange: async () => ({ pass: false, reason: 'unwanted change' }),
     });
     agent.clearQueue('post-pr-review-profile');
@@ -275,6 +280,11 @@ describe('PollTaskRunner — happy path', () => {
     expect(github.repliesPosted).toHaveLength(0);
     expect(git.headByCwd.get('/work/tree')).toBe('abc123'); // reset to start SHA
     expect(git.cleanUntrackedCalls).toContain('/work/tree');
+
+    const attempts = repo.listCommentAttempts(runId, 9001);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].completedHead).toBe('newSha');
+    expect(attempts[0].disposition).toBe('failure');
   });
 
   it('passes previousBuildError to renderTaskPrompt', async () => {
@@ -358,6 +368,27 @@ describe('PollTaskRunner — failure isolation', () => {
       attemptId: expect.any(String),
     });
     expect(github.repliesPosted).toHaveLength(0);
+  });
+
+  it('persists failure disposition and completedHead before rollback when an exception is thrown', async () => {
+    const { deps, git, repo, agent } = makeDeps({
+      verifyBuildPasses: async () => {
+        throw new Error('Database connection lost');
+      },
+    });
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'brokenFixSha');
+      return makeSuccessAgentResult();
+    });
+    const runner = new PollTaskRunner(deps);
+    await expect(runner.execute(makeInput())).rejects.toThrow('Database connection lost');
+
+    expect(git.headByCwd.get('/work/tree')).toBe('abc123'); // rolled back to start SHA
+    const attempts = repo.listCommentAttempts(runId, 9001);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].completedHead).toBe('brokenFixSha');
+    expect(attempts[0].disposition).toBe('failure');
   });
 });
 

@@ -36,6 +36,11 @@ export interface ProcessPrReviewDeps {
     mode: PostPrReviewAttemptMode;
     previousBuildError?: string;
     previousCodeVerifyReason?: string;
+    dispositions?: Array<{
+      fingerprint: string;
+      disposition: string;
+      reason?: string;
+    }>;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -158,7 +163,6 @@ export class ProcessPrReviewComments {
       };
     }
 
-    const diff = await d.git.diff(input.cwd, 'origin/HEAD');
     const startCommitSha = await d.git.headCommitSha(input.cwd);
     const originalStartCommitSha = startCommitSha;
     const originalStart = originalStartCommitSha;
@@ -193,7 +197,29 @@ export class ProcessPrReviewComments {
         if (!currentComment) break;
         if (currentComment.state !== 'pending' && currentComment.state !== 'replied') break;
 
-        const currentDiff = attempt === 1 ? diff : await d.git.diff(input.cwd, 'origin/HEAD');
+        const previousAttempts = d.prReviewRepo.listCommentAttempts(input.runId, task.commentId);
+        const currentDiff =
+          attempt === 1
+            ? await d.git.diff(input.cwd, 'origin/HEAD')
+            : await (async () => {
+                const previousAttempt = previousAttempts[previousAttempts.length - 1];
+                if (previousAttempt?.completedHead) {
+                  const currentHead = await d.git.headCommitSha(input.cwd);
+                  return d.git.diff(input.cwd, previousAttempt.completedHead, currentHead);
+                }
+                return await d.git.diff(input.cwd, 'origin/HEAD');
+              })();
+        const dispositions = previousAttempts.map((a) => {
+          const item: { fingerprint: string; disposition: string; reason?: string } = {
+            fingerprint: a.attemptId,
+            disposition: a.disposition ?? 'failure',
+          };
+          const r = a.verifierFeedback ?? a.buildFeedback;
+          if (r !== undefined) {
+            item.reason = r;
+          }
+          return item;
+        });
         const reviewMode: PostPrReviewAttemptMode =
           attempt === 1 ? 'initial_full' : 'intermediate_delta';
         const retryNumber = attempt;
@@ -208,6 +234,7 @@ export class ProcessPrReviewComments {
             unresolvedCommentCount: unresolved.length,
             reviewMode,
             retryNumber,
+            dispositions,
             ...(previousBuildError !== undefined ? { previousBuildError } : {}),
             ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
           });
