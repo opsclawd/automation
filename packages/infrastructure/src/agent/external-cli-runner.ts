@@ -62,13 +62,6 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     forceKillAfterDelay: input.forceKillAfterDelayMs ?? 5_000,
   });
 
-  if (child.stdout) {
-    child.stdout.pipe(process.stdout, { end: false });
-  }
-  if (child.stderr) {
-    child.stderr.pipe(process.stderr, { end: false });
-  }
-
   // Send SIGTERM to the process group on cancel/abort while the PID is still
   // provably alive (avoids the PID-reuse race in finally). SIGKILL escalation
   // is handled by execa's forceKillAfterDelay after the grace period.

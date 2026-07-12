@@ -153,10 +153,6 @@ export class OpenCodeAgentAdapter implements AgentPort {
         env: childEnv,
       });
 
-      if (child.stdout) {
-        child.stdout.pipe(process.stdout, { end: false });
-      }
-
       watchdogInterval = this.startWatchdog(
         child as ReturnType<typeof execa>,
         sessionLogDir,
