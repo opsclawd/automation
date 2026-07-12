@@ -50,21 +50,36 @@ async function readExcerpt(
 export async function readPlanReviewExcerpts(
   artifacts: ArtifactStore,
   runId: string,
-): Promise<{ planExcerpt: string; findingsExcerpt: string; fixExcerpt: string }> {
+): Promise<{
+  planExcerpt: string;
+  findingsExcerpt: string;
+  fixExcerpt: string;
+  manifestExcerpt: string;
+  designExcerpt: string;
+}> {
   return {
     planExcerpt: await readExcerpt(artifacts, runId, 'plan.md'),
     findingsExcerpt: await readExcerpt(artifacts, runId, PLAN_REVIEW_FINDINGS_ARTIFACT),
     fixExcerpt: await readExcerpt(artifacts, runId, PLAN_FIX_RESULT_ARTIFACT),
+    manifestExcerpt: await readExcerpt(artifacts, runId, 'task-manifest.json'),
+    designExcerpt: await readExcerpt(artifacts, runId, 'design.md'),
   };
 }
 
 export async function readPlanReviewFinalExcerpts(
   artifacts: ArtifactStore,
   runId: string,
-): Promise<{ planExcerpt: string; findingsExcerpt: string }> {
+): Promise<{
+  planExcerpt: string;
+  findingsExcerpt: string;
+  manifestExcerpt: string;
+  designExcerpt: string;
+}> {
   return {
     planExcerpt: await readExcerpt(artifacts, runId, 'plan.md'),
     findingsExcerpt: await readExcerpt(artifacts, runId, PLAN_REVIEW_FINDINGS_ARTIFACT),
+    manifestExcerpt: await readExcerpt(artifacts, runId, 'task-manifest.json'),
+    designExcerpt: await readExcerpt(artifacts, runId, 'design.md'),
   };
 }
 
@@ -78,6 +93,8 @@ export interface BuildPlanReviewArbiterPromptInputs {
   findingsExcerpt: string;
   fixExcerpt: string;
   fixRebuttal: string;
+  manifestExcerpt?: string;
+  designExcerpt?: string;
 }
 
 export function buildPlanReviewArbiterPrompt(
@@ -116,13 +133,23 @@ export function buildPlanReviewArbiterPrompt(
     inputs.fixExcerpt || '(empty)',
     '```',
     '',
+    '### task-manifest.json (excerpt)',
+    '```json',
+    inputs.manifestExcerpt || '(empty)',
+    '```',
+    '',
+    '### design.md (excerpt)',
+    '```',
+    inputs.designExcerpt || '(empty)',
+    '```',
+    '',
     '### Fixer rebuttal (verbatim)',
     inputs.fixRebuttal || '(no rebuttal provided)',
     '',
     '## DECISION FRAMEWORK',
     'Pick exactly one of these outcomes:',
-    '- **finding_valid** — the reviewer is right; the plan has a real defect. Cite the plan section or finding that proves it.',
-    '- **finding_invalid** — the reviewer is wrong; the plan is correct and no defect exists. Cite the plan section that disproves the finding.',
+    '- **finding_valid** — the reviewer is right; the plan has a real defect. Cite the plan section, task-manifest.json task, or finding that proves it.',
+    '- **finding_invalid** — the reviewer is wrong; the plan is correct and no defect exists. Cite the plan section or task-manifest.json task that disproves the finding.',
     '- **ambiguous** — both interpretations are defensible. Cite what each side claims.',
     '- **insufficient_evidence** — the artifacts are unreadable or absent. Cite what is missing.',
     '',
@@ -147,6 +174,8 @@ export function buildPlanReviewArbiterPrompt(
 export interface BuildPlanReviewFinalReviewArbiterPromptInputs {
   planExcerpt: string;
   findingsExcerpt: string;
+  manifestExcerpt?: string;
+  designExcerpt?: string;
 }
 
 export function buildPlanReviewFinalReviewArbiterPrompt(
@@ -180,10 +209,20 @@ export function buildPlanReviewFinalReviewArbiterPrompt(
     inputs.findingsExcerpt || '(empty)',
     '```',
     '',
+    '### task-manifest.json (excerpt)',
+    '```json',
+    inputs.manifestExcerpt || '(empty)',
+    '```',
+    '',
+    '### design.md (excerpt)',
+    '```',
+    inputs.designExcerpt || '(empty)',
+    '```',
+    '',
     '## DECISION FRAMEWORK',
     'Pick exactly one of these outcomes:',
-    '- **finding_valid** — the reviewer is right; the plan has a real defect. Cite the plan section or finding that proves it.',
-    '- **finding_invalid** — the reviewer is wrong; the plan is correct and no defect exists. Cite the plan section that disproves the finding.',
+    '- **finding_valid** — the reviewer is right; the plan has a real defect. Cite the plan section, task-manifest.json task, or finding that proves it.',
+    '- **finding_invalid** — the reviewer is wrong; the plan is correct and no defect exists. Cite the plan section or task-manifest.json task that disproves the finding.',
     '- **ambiguous** — both interpretations are defensible. Cite what each side claims.',
     '- **insufficient_evidence** — the artifacts are unreadable or absent. Cite what is missing.',
     '',

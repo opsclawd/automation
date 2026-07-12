@@ -74,6 +74,13 @@ describe('readPlanReviewExcerpts', () => {
     expect(excerpts.planExcerpt).toContain('# plan');
     expect(excerpts.findingsExcerpt).toContain('# findings');
     expect(excerpts.fixExcerpt).toContain('{}');
+    expect(Object.keys(excerpts)).toEqual([
+      'planExcerpt',
+      'findingsExcerpt',
+      'fixExcerpt',
+      'manifestExcerpt',
+      'designExcerpt',
+    ]);
   });
 
   it('returns empty strings when artifacts are absent', async () => {
@@ -82,6 +89,8 @@ describe('readPlanReviewExcerpts', () => {
     expect(excerpts.planExcerpt).toBe('');
     expect(excerpts.findingsExcerpt).toBe('');
     expect(excerpts.fixExcerpt).toBe('');
+    expect(excerpts.manifestExcerpt).toBe('');
+    expect(excerpts.designExcerpt).toBe('');
   });
 });
 
@@ -169,7 +178,12 @@ describe('readPlanReviewFinalExcerpts', () => {
     const excerpts = await readPlanReviewFinalExcerpts(store, 'run-1');
     expect(excerpts.planExcerpt).toContain('# plan');
     expect(excerpts.findingsExcerpt).toContain('# findings');
-    expect(Object.keys(excerpts)).toEqual(['planExcerpt', 'findingsExcerpt']);
+    expect(Object.keys(excerpts)).toEqual([
+      'planExcerpt',
+      'findingsExcerpt',
+      'manifestExcerpt',
+      'designExcerpt',
+    ]);
   });
 
   it('returns empty strings when artifacts are absent', async () => {
@@ -177,6 +191,8 @@ describe('readPlanReviewFinalExcerpts', () => {
     const excerpts = await readPlanReviewFinalExcerpts(store, 'run-1');
     expect(excerpts.planExcerpt).toBe('');
     expect(excerpts.findingsExcerpt).toBe('');
+    expect(excerpts.manifestExcerpt).toBe('');
+    expect(excerpts.designExcerpt).toBe('');
   });
 });
 
