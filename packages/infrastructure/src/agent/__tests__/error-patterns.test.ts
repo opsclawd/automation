@@ -114,6 +114,12 @@ describe('testQuotaPatterns', () => {
     expect(result).toBeTruthy();
   });
 
+  it('does not match larger numbers starting with 429 (default mode)', () => {
+    expect(testQuotaPatterns('status 4290')).toBeNull();
+    expect(testQuotaPatterns('HTTP 4290')).toBeNull();
+    expect(testQuotaPatterns('statusCode 4299')).toBeNull();
+  });
+
   it('does not match bare 429 in arbitrary text (default mode)', () => {
     const result = testQuotaPatterns('fix: scope 429 error pattern to HTTP contexts (#245)');
     expect(result).toBeNull();
@@ -123,6 +129,11 @@ describe('testQuotaPatterns', () => {
     const result = testQuotaPatterns(
       'de9307c feat: add manifest-validation helper functions (#240)',
     );
+    expect(result).toBeNull();
+  });
+
+  it('does not match git SHAs containing 429 (default mode)', () => {
+    const result = testQuotaPatterns('status de4297c feat: add helper function');
     expect(result).toBeNull();
   });
 
@@ -334,6 +345,13 @@ describe('testProviderErrorPatterns', () => {
 
   it('does not match bare 503 in commit title (default mode)', () => {
     const result = testProviderErrorPatterns('fix: handle 503 error in retry logic');
+    expect(result).toBeNull();
+  });
+
+  it('does not match git SHAs starting with 5 and followed by error (default mode)', () => {
+    const result = testProviderErrorPatterns(
+      'status a500b2c feat: add status parsing, but error occurs',
+    );
     expect(result).toBeNull();
   });
 
