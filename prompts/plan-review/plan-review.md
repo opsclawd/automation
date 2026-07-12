@@ -23,6 +23,10 @@ Look for these defect classes (the legacy bash loop enumerated the same):
    retries have a budget and backoff.
 3. **Side effects** — external writes (DB, files, subprocesses) are
    scoped, idempotent, or compensated on failure.
+4. **Behavioral Invariants** — state-machine, loop, or stateful tasks
+   MUST declare their invariants in the `invariants` manifest field. A
+   task touching stateful control flow with no declared invariants is
+   a P1 finding.
 
 ## OUTPUT
 Write a single file named `plan-review-findings.md` at the working-directory

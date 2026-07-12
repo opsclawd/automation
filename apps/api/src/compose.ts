@@ -389,6 +389,8 @@ export function buildImplementPrompt(
     `   is authoritative for this task's scope.`,
     `2. Implement exactly what Task ${taskN} specifies — nothing more.`,
     `3. Write tests following TDD where applicable, scoped to Task ${taskN}.`,
+    '   IF the Task Context above includes a "Behavioral Invariants" section,',
+    '   you MUST write the named tests listed there BEFORE implementation.',
     `4. Verify Task ${taskN}'s implementation works.`,
     '5. Commit your work:',
     '   a. Record HEAD before: PRE_HEAD=$(git rev-parse HEAD)',
