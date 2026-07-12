@@ -947,11 +947,15 @@ describe('PlanReviewLoop', () => {
       },
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
-    expect(out.outcome).toBe('success');
+    // The delta pass converges only at maxIterations, leaving no budget for
+    // the mandatory final_full verification pass — success here would bypass
+    // the #716 final gates, so the loop escalates instead.
+    expect(out.outcome).toBe('needs_human_review');
     expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[0]?.kind).toBe('review');
     expect(out.loop.iterations[1]?.kind).toBe('deterministic_fix');
     expect(out.loop.iterations[2]?.kind).toBe('review');
+    expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
     expect(reviewCalls).toBe(2);
     expect(fixCalls).toBe(2);
   });

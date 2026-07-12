@@ -104,6 +104,43 @@ export class PlanReviewLoop {
     let forceInitialFull = false;
     let preFinalFullSnapshot: PlanReviewSnapshot | undefined;
 
+    // Resume restoration (#723): attempts persisted by an earlier process of
+    // this same run mean an initial_full pass already happened. Restore the
+    // latest persisted snapshot so a resumed loop starts in
+    // intermediate_delta mode instead of repeating a full discovery review.
+    // planMdPath is not persisted on attempts; the canonical worktree-relative
+    // path is used everywhere and the prompt scope block only renders digests.
+    let restoredSnapshot = false;
+    if (deltaScopedReReview && deps.reviewStateRepository) {
+      const priorAttempts = deps.reviewStateRepository.listAttempts(
+        input.runId as string,
+        'plan-review',
+        input.phaseId as string,
+        'plan',
+      );
+      const latestWithSnapshot = [...priorAttempts]
+        .reverse()
+        .find((a) => a.snapshot?.kind === 'plan_artifact');
+      if (latestWithSnapshot?.snapshot) {
+        iter1Snapshot = {
+          planMdDigest: latestWithSnapshot.snapshot.identity,
+          ...(latestWithSnapshot.snapshot.baseIdentity
+            ? { manifestDigest: latestWithSnapshot.snapshot.baseIdentity }
+            : {}),
+          planMdPath: 'plan.md',
+          capturedAt: latestWithSnapshot.snapshot.capturedAt,
+        };
+        restoredSnapshot = true;
+        this.emit(
+          input,
+          'plan-review.snapshot.restored',
+          'info',
+          `restored persisted review snapshot from attempt ${latestWithSnapshot.attemptId}; resuming in intermediate_delta mode`,
+          { attemptId: latestWithSnapshot.attemptId, planMdDigest: iter1Snapshot.planMdDigest },
+        );
+      }
+    }
+
     let lastDeterministicMismatch: string | null = null;
     let lastDeterministicWasUnresolvedWithNoChanges = false;
 
@@ -273,7 +310,7 @@ export class PlanReviewLoop {
 
       const reviewMode: ReviewMode = finalFullPhase
         ? 'final_full'
-        : iterationIndex === 1 || forceInitialFull
+        : (iterationIndex === 1 && !restoredSnapshot) || forceInitialFull
           ? 'initial_full'
           : 'intermediate_delta';
 
@@ -492,16 +529,19 @@ export class PlanReviewLoop {
           return { outcome: 'success', loop, proceedWithConcerns: false };
         }
         if (iterationIndex === loop.maxIterations) {
-          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          // The delta cycle converged only on the final iteration, leaving no
+          // budget for the mandatory final_full verification pass. Returning
+          // success here would bypass the #716 final gates — escalate instead.
+          loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
           deps.loops.update(loop);
           this.emit(
             input,
-            'plan-review.loop.iteration.completed',
-            'info',
-            `iteration ${iterationIndex} completed: resolved (max iterations reached)`,
-            { index: iterationIndex, outcome: 'resolved' },
+            'plan-review.loop.final_review.skipped_budget_exhausted',
+            'warn',
+            `iteration ${iterationIndex} passed at max iterations without a final_full pass; escalating to human review`,
+            { index: iterationIndex, outcome: 'unresolved' },
           );
-          return { outcome: 'success', loop, proceedWithConcerns: false };
+          return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
         }
 
         const open = loop.iterations[loop.iterations.length - 1]!;
@@ -677,13 +717,9 @@ export class PlanReviewLoop {
           `final_full review found P1; reopening delta cycle`,
           { iteration: iterationIndex },
         );
-        this.emit(
-          input,
-          'plan-review.loop.iteration.completed',
-          'info',
-          `iteration ${iterationIndex} completed: unresolved (final_full P1 found — cycle reopened)`,
-          { index: iterationIndex, outcome: 'unresolved' },
-        );
+        // No iteration.completed emit here: this iteration falls through to
+        // the fix step below and is completed (with its real outcome) there —
+        // emitting now would produce a duplicate completion event.
         finalFullPhase = false;
         forceInitialFull = true;
         iter1Snapshot = undefined;
