@@ -105,6 +105,18 @@ const phasesSchema = z.object({
      * `@ai-sdlc/application/implement-step-loop`.
      */
     maxTypeCheckRetries: z.number().int().positive().default(5),
+    /**
+     * Threshold for holistic re-derivation (#723). When the loop hits this
+     * iteration index (1-based), it assesses repeat-offender files.
+     * Defaults to 3.
+     */
+    holisticThresholdIteration: z.number().int().positive().default(3),
+    /**
+     * Threshold for holistic re-derivation (#723). When a file has this
+     * many findings across prior iterations, it triggers re-derivation mode.
+     * Defaults to 2.
+     */
+    holisticThresholdFindings: z.number().int().positive().default(2),
   }),
   fixValidate: z
     .object({

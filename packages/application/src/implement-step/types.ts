@@ -143,9 +143,23 @@ export interface ImplementStepHistoryPort {
  *   iteration following a detected build-breaking regression. Routed into
  *   the fixer prompt via a `## TYPECHECK ERRORS (previous fix)` section.
  */
+export interface HolisticFinding {
+  severity: string;
+  summary: string;
+  suggested_fix?: string;
+  iteration: number;
+  status: 'open' | 'resolved';
+}
+
+export interface HolisticFile {
+  file: string;
+  findings: HolisticFinding[];
+}
+
 export interface ImplementFixStepOptions extends FixStepOptions {
   typecheckErrors?: string | TypescriptError[];
   isTerminalFix?: boolean;
+  holisticFindings?: HolisticFile[];
 }
 
 export interface ArbiterResult {
@@ -179,6 +193,18 @@ export interface ImplementStepLoopOptions {
    * trailing review arbiter rules `finding_valid`.
    */
   bonusIteration?: boolean;
+  /**
+   * Threshold for holistic re-derivation (#723). When the loop hits this
+   * iteration index (1-based), it assesses repeat-offender files.
+   * Defaults to 3.
+   */
+  holisticThresholdIteration?: number;
+  /**
+   * Threshold for holistic re-derivation (#723). When a file has this
+   * many findings across prior iterations, it triggers re-derivation mode.
+   * Defaults to 2.
+   */
+  holisticThresholdFindings?: number;
 }
 
 export interface ImplementStepLoopDeps {

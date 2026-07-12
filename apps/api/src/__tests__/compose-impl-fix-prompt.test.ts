@@ -207,4 +207,30 @@ describe('buildImplementStepFixPrompt', () => {
       prompt.indexOf('## PRIOR FIX HISTORY'),
     );
   });
+
+  it('renders a HOLISTIC RE-DERIVATION REQUIRED section when holisticFindings are provided (#723)', async () => {
+    const artifacts = makeStore();
+    const holisticFindings = [
+      {
+        file: 'src/repeat-offender.ts',
+        findings: [
+          { severity: 'P1', summary: 'f1', iteration: 1, status: 'open' as const },
+          { severity: 'P1', summary: 'f2', iteration: 2, status: 'open' as const },
+        ],
+      },
+    ];
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', {
+      ...input,
+      holisticFindings,
+    });
+    expect(prompt).toContain('## HOLISTIC RE-DERIVATION REQUIRED');
+    expect(prompt).toContain('re-derive the affected');
+    expect(prompt).toContain('### File: src/repeat-offender.ts');
+    expect(prompt).toContain('"summary": "f1"');
+    expect(prompt).toContain('"summary": "f2"');
+    // The holistic section must appear BEFORE the CONTEXT block.
+    expect(prompt.indexOf('## HOLISTIC RE-DERIVATION REQUIRED')).toBeLessThan(
+      prompt.indexOf('## CONTEXT'),
+    );
+  });
 });

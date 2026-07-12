@@ -149,6 +149,7 @@ import {
   RemoveRepository,
   type RepositoryRegistryPort,
   TaskContextGenerator,
+  type HolisticFile,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -796,6 +797,12 @@ export interface BuildImplementStepFixPromptInput {
    * fixer to address ALL open findings coherently in a single pass.
    */
   isTerminalFix?: boolean;
+  /**
+   * Optional holistic findings for repeat-offender files (#723). When
+   * present, instructs the fixer to re-derive the affected unit holistically
+   * to satisfy all listed constraints.
+   */
+  holisticFindings?: HolisticFile[];
 }
 
 export async function buildImplementStepFixPrompt(
@@ -922,6 +929,28 @@ export async function buildImplementStepFixPrompt(
     'write result.json with "done_no_fixes_needed" and a non-empty `rebuttal`',
     'citing the finding and your reason.',
     '',
+    ...(input.holisticFindings && input.holisticFindings.length > 0
+      ? [
+          '## HOLISTIC RE-DERIVATION REQUIRED',
+          '',
+          'The following file(s) have repeated findings across multiple iterations.',
+          'Instead of applying minimal point-patches, you MUST re-derive the affected',
+          'functions or sections as a whole so they satisfy every listed constraint',
+          'simultaneously. Point-patching these files has proven to be regressive.',
+          '',
+          ...input.holisticFindings.map((h) => {
+            return [
+              `### File: ${h.file}`,
+              '',
+              'All findings (open and resolved) to be satisfied as invariants:',
+              '```json',
+              JSON.stringify(h.findings, null, 2),
+              '```',
+              '',
+            ].join('\n');
+          }),
+        ]
+      : []),
     ...(input.reconciliationContext && input.reconciliationContext.trim().length > 0
       ? [
           '## ARBITER RULING — ADDRESS THIS FINDING',
@@ -2999,6 +3028,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           ...(opts.historyContext !== undefined ? { historyContext: opts.historyContext } : {}),
           ...(opts.typecheckErrors !== undefined ? { typecheckErrors: opts.typecheckErrors } : {}),
           ...(opts.isTerminalFix ? { isTerminalFix: true } : {}),
+          ...(opts.holisticFindings !== undefined
+            ? { holisticFindings: opts.holisticFindings }
+            : {}),
         });
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -3947,6 +3979,10 @@ export function composeRoot(opts: ComposeOptions): Container {
           maxTypeCheckRetries: config.phases.implement.maxTypeCheckRetries,
           manifest: sctx.manifest,
           planMd: sctx.planMd,
+          options: {
+            holisticThresholdIteration: config.phases.implement.holisticThresholdIteration,
+            holisticThresholdFindings: config.phases.implement.holisticThresholdFindings,
+          },
         });
         return { outcome: result.outcome };
       };

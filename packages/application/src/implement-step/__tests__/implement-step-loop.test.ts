@@ -2061,6 +2061,61 @@ describe('ImplementStepLoop', () => {
     expect(fixOptsCapture[1]?.historyContext).toContain('outcome=fixed');
   });
 
+  it('triggers holistic re-derivation when thresholds are met (#723)', async () => {
+    const history = makeInMemoryImplementHistory();
+    const fixOptsCapture: ImplementFixStepOptions[] = [];
+    const { events, bus } = collectEvents();
+    let specCalls = 0;
+    const deps = makeDeps({
+      events: bus,
+      loopHistory: history.port,
+      runSpecReview: async (
+        _ctx: StepLoopContext,
+        _tc: TypecheckResult,
+      ): Promise<SpecReviewResult> => {
+        specCalls += 1;
+        return {
+          invocationId: `sr-${specCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: specCalls <= 3 ? ('fail' as const) : ('pass' as const),
+          findings: [
+            { severity: 'P1', summary: `finding ${specCalls}`, file: 'src/repeat-offender.ts' },
+          ],
+        };
+      },
+      runFix: async (_ctx: StepLoopContext, opts: ImplementFixStepOptions): Promise<FixResult> => {
+        fixOptsCapture.push(opts);
+        return {
+          invocationId: `fix-${fixOptsCapture.length}`,
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+        };
+      },
+    });
+
+    await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
+
+    // Iteration 1: fixOptsCapture[0] (no holistic)
+    // Iteration 2: fixOptsCapture[1] (no holistic, only 1 prior finding)
+    // Iteration 3: fixOptsCapture[2] (triggered: iteration 3 >= 3, 2 prior findings for file)
+    expect(fixOptsCapture[0]?.holisticFindings).toBeUndefined();
+    expect(fixOptsCapture[1]?.holisticFindings).toBeUndefined();
+    expect(fixOptsCapture[2]?.holisticFindings).toBeDefined();
+    expect(fixOptsCapture[2]?.holisticFindings![0]?.file).toBe('src/repeat-offender.ts');
+    // Iteration 3 fix receives 2 prior findings (resolved) + 1 current finding (open)
+    expect(fixOptsCapture[2]?.holisticFindings![0]?.findings).toHaveLength(3);
+    expect(fixOptsCapture[2]?.holisticFindings![0]?.findings[0]?.summary).toBe('finding 1');
+    expect(fixOptsCapture[2]?.holisticFindings![0]?.findings[1]?.summary).toBe('finding 2');
+    expect(fixOptsCapture[2]?.holisticFindings![0]?.findings[2]?.summary).toBe('finding 3');
+    expect(fixOptsCapture[2]?.holisticFindings![0]?.findings[2]?.status).toBe('open');
+
+    const holisticEvent = events.find((e) => e.type === 'fix.holistic_rederivation');
+    expect(holisticEvent).toBeDefined();
+    expect(holisticEvent?.metadata.file).toBe('src/repeat-offender.ts');
+    expect(holisticEvent?.metadata.iteration).toBe(3);
+    expect(holisticEvent?.metadata.findings).toBe(2);
+  });
+
   it('returns needs_human_review when typecheck regresses and revertFix is unavailable (#671)', async () => {
     let tcCalls = 0;
     const deps = makeDeps({
@@ -3284,5 +3339,53 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     expect(failed).toBeDefined();
     expect(failed?.metadata.headAdvanced).toBe(false);
     expect(failed?.metadata.autoCommitted).toBe(false);
+  });
+
+  it('triggers holistic re-derivation for terminal fix when thresholds are met (#723)', async () => {
+    const history = makeInMemoryImplementHistory();
+    const fixOptsCapture: ImplementFixStepOptions[] = [];
+    const { bus, events } = collectEvents();
+    let specCalls = 0;
+    const deps = makeDeps({
+      events: bus,
+      loopHistory: history.port,
+      runSpecReview: async () => {
+        specCalls += 1;
+        return {
+          invocationId: `sr-${specCalls}`,
+          agentOutcome: 'success',
+          verdict: 'fail',
+          findings: [{ severity: 'P1', summary: `f ${specCalls}`, file: 'src/bad.ts' }],
+        };
+      },
+      runFix: async (_ctx, opts) => {
+        fixOptsCapture.push(opts);
+        return { invocationId: `fix-${fixOptsCapture.length}`, agentOutcome: 'success', verdict: 'done_with_fixes' };
+      },
+      terminalFixProfile: AgentProfileName('terminator'),
+      runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+    });
+
+    // maxIterations=2.
+    // Iteration 1: sr1 fail -> fix1 -> fixed.
+    // Iteration 2: sr2 fail -> fix2 -> fixed.
+    // Trailing (Iteration 3): sr3 fail -> unresolved.
+    // Budget exhausted -> terminal fix.
+    // thresholdIteration=3, thresholdFindings=2.
+    // In terminal fix (iter 3), src/bad.ts has 2 findings from iter 1 and 2.
+    await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+
+    expect(fixOptsCapture).toHaveLength(3); // fix1, fix2, terminalFix
+    const terminalFixOpts = fixOptsCapture[2];
+    expect(terminalFixOpts?.isTerminalFix).toBe(true);
+    expect(terminalFixOpts?.holisticFindings).toBeDefined();
+    expect(terminalFixOpts?.holisticFindings![0]?.file).toBe('src/bad.ts');
+    // Iterations 1, 2 failed sr review. Iteration 3 (trailing) also failed sr review.
+    // So there are 3 findings in history.
+    expect(terminalFixOpts?.holisticFindings![0]?.findings).toHaveLength(3);
+
+    const holisticEvent = events.find((e) => e.type === 'fix.holistic_rederivation' && e.metadata.isTerminalFix === true);
+    expect(holisticEvent).toBeDefined();
+    expect(holisticEvent?.metadata.file).toBe('src/bad.ts');
   });
 });

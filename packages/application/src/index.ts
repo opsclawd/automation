@@ -73,6 +73,8 @@ export type {
   ImplementStepHistoryEntry,
   ImplementStepHistoryPort,
   ImplementFixStepOptions,
+  HolisticFinding,
+  HolisticFile,
 } from './implement-step/types.js';
 export * from './artifacts/index.js';
 export * from './run-recovery-actions.js';
