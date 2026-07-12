@@ -198,16 +198,32 @@ export class ProcessPrReviewComments {
         if (currentComment.state !== 'pending' && currentComment.state !== 'replied') break;
 
         const previousAttempts = d.prReviewRepo.listCommentAttempts(input.runId, task.commentId);
-        const currentDiff =
-          attempt === 1
-            ? await d.git.diff(input.cwd, 'origin/HEAD', runningStartSha)
-            : await (async () => {
-                const previousAttempt = previousAttempts[previousAttempts.length - 1];
-                if (previousAttempt?.completedHead) {
-                  return d.git.diff(input.cwd, runningStartSha, previousAttempt.completedHead);
-                }
-                return await d.git.diff(input.cwd, 'origin/HEAD', runningStartSha);
-              })();
+        let currentDiff: string;
+        try {
+          if (attempt === 1) {
+            currentDiff = await d.git.diff(input.cwd, 'origin/HEAD', runningStartSha);
+          } else {
+            const previousAttempt = previousAttempts[previousAttempts.length - 1];
+            if (!previousAttempt || !previousAttempt.completedHead) {
+              throw new Error(`Missing completedHead snapshot for retry attempt ${attempt}`);
+            }
+            currentDiff = await d.git.diff(
+              input.cwd,
+              previousAttempt.completedHead,
+              runningStartSha,
+            );
+          }
+        } catch (error: unknown) {
+          const reason = `Diff generation failed: ${error instanceof Error ? error.message : String(error)}`;
+          d.prReviewRepo.upsertComment(blockComment(currentComment, reason));
+          lastOutput = {
+            commentId: task.commentId,
+            action: 'failed',
+            processed: false,
+            blocked: true,
+          };
+          break;
+        }
         const dispositions = previousAttempts.map((a) => {
           const item: { fingerprint: string; disposition: string; reason?: string } = {
             fingerprint: a.attemptId,
