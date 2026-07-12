@@ -65,6 +65,11 @@ export class FakePrReviewRepository implements PrReviewRepositoryPort {
   }
 
   appendCommentAttempt(attempt: PrReviewCommentAttempt): void {
+    if (this.commentAttempts.some((a) => a.attemptId === attempt.attemptId)) {
+      throw new Error(
+        `Unique constraint violation: attempt ID ${attempt.attemptId} already exists`,
+      );
+    }
     const exists = this.commentAttempts.some(
       (a) =>
         a.runId === attempt.runId &&

@@ -323,6 +323,48 @@ describe('PrReviewRepository', () => {
     expect(repo.listCommentAttempts(runId, 100)).toHaveLength(0);
   });
 
+  it('updateCommentAttempt persists optional fields and they are retrievable via listCommentAttempts', () => {
+    const repo = new PrReviewRepository(db);
+    repo.upsertComment(
+      createPrReviewComment({
+        runId,
+        prNumber: 7,
+        commentId: 100,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r',
+        body: 'fix',
+        now: new Date(),
+      }),
+    );
+    const attempt: PrReviewCommentAttempt = {
+      attemptId: 'a1',
+      runId,
+      commentId: 100,
+      retryNumber: 0,
+      startHead: 'abc123',
+      reviewMode: 'post-fix',
+      promptPath: '/prompts/review.md',
+      resultArtifactPath: '/artifacts/result.md',
+      action: 'review',
+      createdAt: new Date('2026-07-12T00:00:00Z'),
+    };
+    repo.appendCommentAttempt(attempt);
+    repo.updateCommentAttempt({
+      ...attempt,
+      completedHead: 'def456',
+      verifierFeedback: 'commit verified',
+      buildFeedback: 'build passed',
+      disposition: 'success',
+    });
+    const listed = repo.listCommentAttempts(runId, 100);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].completedHead).toBe('def456');
+    expect(listed[0].verifierFeedback).toBe('commit verified');
+    expect(listed[0].buildFeedback).toBe('build passed');
+    expect(listed[0].disposition).toBe('success');
+  });
+
   it('listCommentAttempts orders by retry number and creation time', () => {
     const repo = new PrReviewRepository(db);
     repo.upsertComment(
