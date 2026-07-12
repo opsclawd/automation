@@ -3036,6 +3036,9 @@ export function composeRoot(opts: ComposeOptions): Container {
               review_mode: scope.mode,
               review_dimensions: scope.dimensions ?? ['spec'],
               review_scope_source: 'implement-step',
+              review_snapshot_kind: 'git',
+              review_snapshot_identity: startCommitSha,
+              review_base_identity: undefined,
             },
             ...(isSemanticRetry
               ? {
@@ -3146,6 +3149,9 @@ export function composeRoot(opts: ComposeOptions): Container {
               review_mode: scope.mode,
               review_dimensions: scope.dimensions ?? ['quality'],
               review_scope_source: 'implement-step',
+              review_snapshot_kind: 'git',
+              review_snapshot_identity: startCommitSha,
+              review_base_identity: undefined,
             },
             ...(isSemanticRetry
               ? {
