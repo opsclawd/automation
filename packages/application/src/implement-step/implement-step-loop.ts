@@ -2012,7 +2012,17 @@ export class ImplementStepLoop {
         producedWork = headAdvanced || autoCommitted;
       }
 
-      if (!producedWork) {
+      // A clean tree with `done_no_fixes_needed` is not a failure — it is the
+      // terminal fixer rebutting the outstanding findings ("the code is
+      // already correct; nothing to change"). Trust the rebuttal exactly the
+      // way a terminal fix is trusted: the deterministic gate on the current
+      // tree decides. The whole-PR review downstream remains the backstop if
+      // the rebuttal is wrong. Only a fixer that CLAIMED fixes but produced
+      // none (or crashed) is untrustworthy.
+      const isTerminalRebuttal =
+        terminalFix.agentOutcome === 'success' && terminalFix.verdict === 'done_no_fixes_needed';
+
+      if (!producedWork && !isTerminalRebuttal) {
         this.emit(
           input,
           'step.terminal_fix.failed',
@@ -2051,7 +2061,9 @@ export class ImplementStepLoop {
           input,
           'step.terminal_fix.accepted',
           'info',
-          `terminal fix accepted after successful deterministic verification`,
+          isTerminalRebuttal && !producedWork
+            ? `terminal fixer rebutted the outstanding findings; current tree accepted after successful deterministic verification`
+            : `terminal fix accepted after successful deterministic verification`,
           {
             profile: deps.terminalFixProfile,
             priorIterations: loop.iterations.length,
@@ -2060,6 +2072,10 @@ export class ImplementStepLoop {
             headAdvanced,
             autoCommitted,
             verdictArtifact: terminalFix.verdict ?? null,
+            resolvedBy: isTerminalRebuttal && !producedWork ? 'terminal_rebuttal' : 'terminal_fix',
+            ...(isTerminalRebuttal && terminalFix.rebuttal
+              ? { rebuttal: terminalFix.rebuttal }
+              : {}),
           },
         );
         return { outcome: 'success', loop };
