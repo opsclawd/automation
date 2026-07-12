@@ -516,6 +516,7 @@ export class ImplementStepLoop {
     while (canStartReviewCycle(loop)) {
       const iterationIndex = loop.iterations.length + 1;
       const isTrailingReview = iterationIndex > originalMax;
+      const startedInFinalPair = isInFinalPair;
       const ctx: StepLoopContext = { ...baseCtx, iterationIndex };
 
       // --- TRAILING RE-REVIEW STARTED (#680) ---
@@ -888,7 +889,7 @@ export class ImplementStepLoop {
       // --- FINAL PAIR HEAD CHECK (#723) ---
       // Always check HEAD when in final pair mode, regardless of dimension state.
       // This catches HEAD changes even when a reviewer has failed.
-      if (isInFinalPair) {
+      if (startedInFinalPair) {
         const currentHead = await deps.git?.headCommitSha(ctx.cwd);
         if (currentHead !== finalPairCandidateHead) {
           this.emit(
