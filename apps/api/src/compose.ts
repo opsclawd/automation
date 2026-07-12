@@ -790,6 +790,12 @@ export interface BuildImplementStepFixPromptInput {
   typecheckErrors?:
     | string
     | { file: string; line: number; col: number; code: string; message: string }[];
+  /**
+   * True when this is the one-shot terminal escalation after the review loop
+   * exhausted its budget (#763). Rendered as a framing block instructing the
+   * fixer to address ALL open findings coherently in a single pass.
+   */
+  isTerminalFix?: boolean;
 }
 
 export async function buildImplementStepFixPrompt(
@@ -885,6 +891,21 @@ export async function buildImplementStepFixPrompt(
     '# TASK',
     `Fix implementation issues for step ${input.stepIndex}: ${input.stepTitle}`,
     '',
+    ...(input.isTerminalFix
+      ? [
+          '## TERMINAL ATTEMPT — FINAL FIX PASS',
+          '',
+          'The review loop exhausted its iteration budget without converging. You are',
+          'the terminal fixer: there will be no further review/fix rounds after this.',
+          'Address ALL open findings from the history and the sections below in one',
+          'coherent pass. Prefer re-deriving the affected functions so every finding',
+          'is satisfied simultaneously over minimal point-patches — point-patches are',
+          'how the previous rounds kept introducing adjacent regressions.',
+          'Your work is accepted on deterministic verification (typecheck, validation',
+          'commands, tests) — make sure they pass before committing.',
+          '',
+        ]
+      : []),
     '## WHAT THE REVIEWERS FOUND (verbatim)',
     '',
     'The most-recent spec-review result.json findings:',
@@ -2351,6 +2372,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       const arbiterProfileName: string | undefined = resolveArbiterProfileName(
         config.agent.phaseProfiles,
       );
+      const terminalFixProfileName: string | undefined =
+        config.agent.phaseProfiles['terminal-fix']?.profile ?? arbiterProfileName;
 
       const makeArtifactStore = (runUuid: string, cwd: string): ArtifactStore =>
         artifactStoreForRun(runUuid, cwd);
@@ -2864,6 +2887,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           invocationId,
           agentOutcome: 'success' as const,
           verdict: verdict.verdict,
+          ...(verdict.ok && verdict.offendingFindings
+            ? { findings: verdict.offendingFindings }
+            : {}),
         };
       };
 
@@ -2940,6 +2966,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           invocationId,
           agentOutcome: 'success' as const,
           verdict: verdict.verdict,
+          ...(verdict.ok && verdict.offendingFindings
+            ? { findings: verdict.offendingFindings }
+            : {}),
         };
       };
 
@@ -2950,10 +2979,15 @@ export function composeRoot(opts: ComposeOptions): Container {
           promptDir,
           `fix-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
         );
+        // Terminal escalation must actually run on the terminal profile —
+        // routing only on useFallback here silently re-runs the economy fixer
+        // that just exhausted the loop (#763; same seam bug class as #670).
         const profile =
-          opts.useFallback && implFixFallbackProfileName
-            ? implFixFallbackProfileName
-            : implFixProfileName;
+          opts.isTerminalFix && terminalFixProfileName
+            ? terminalFixProfileName
+            : opts.useFallback && implFixFallbackProfileName
+              ? implFixFallbackProfileName
+              : implFixProfileName;
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const fixPrompt = await buildImplementStepFixPrompt(artifacts, String(ctx.runId), {
           cwd: ctx.cwd,
@@ -2964,6 +2998,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             : {}),
           ...(opts.historyContext !== undefined ? { historyContext: opts.historyContext } : {}),
           ...(opts.typecheckErrors !== undefined ? { typecheckErrors: opts.typecheckErrors } : {}),
+          ...(opts.isTerminalFix ? { isTerminalFix: true } : {}),
         });
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -3036,6 +3071,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           invocationId,
           agentOutcome: fixVerdict.ok ? ('success' as const) : ('contract_violation' as const),
           ...(fixVerdict.ok ? { verdict: fixVerdict.verdict } : {}),
+          ...(fixVerdict.ok && fixVerdict.rebuttal ? { rebuttal: fixVerdict.rebuttal } : {}),
           headBeforeFix: startCommitSha,
         };
       };
@@ -3295,6 +3331,58 @@ export function composeRoot(opts: ComposeOptions): Container {
         runSpecReview,
         runQualityReview,
         runFix: implRunFix,
+        runRevalidation: async (ctx) => {
+          const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+          let taskValidationCommands: string[] = [];
+          try {
+            const manifestRaw = await artifacts.read(String(ctx.runId), 'task-manifest.json');
+            const manifest = parseTaskManifest(manifestRaw);
+            if (manifest.success) {
+              const taskIndex = (ctx as StepLoopContext).stepIndex;
+              const task = manifest.manifest.tasks.find((t) => t.n === taskIndex);
+              if (task) {
+                if (manifest.manifest.version === 2) {
+                  taskValidationCommands =
+                    (task as { validation_commands?: string[] }).validation_commands ?? [];
+                } else {
+                  taskValidationCommands = (task as { validation?: string[] }).validation ?? [];
+                }
+              }
+            }
+          } catch {
+            // Task manifest might not be present or parseable; fall back to global only
+          }
+          const runDir =
+            runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
+          const revalidateLogDir = join(
+            runsDir,
+            runDir,
+            'revalidate',
+            ctx.loopId,
+            String(ctx.phaseId),
+            `iter-${ctx.iterationIndex}`,
+          );
+          const vr = await runValidation.execute({
+            runId: RunId(String(ctx.runId)),
+            phaseId: PhaseName('validate'),
+            cwd: ctx.cwd,
+            logDir: revalidateLogDir,
+            commands: [...config.validation.commands, ...taskValidationCommands],
+            timeoutSeconds: config.validation.timeout,
+          });
+          const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
+          await artifacts.write({
+            runId: String(ctx.runId),
+            phaseId: 'validate',
+            relativePath: 'validation.result',
+            contents: vr.passed ? 'passed\n' : 'failed\n',
+          });
+          return {
+            validationRunId: vr.validationRun.id,
+            passed: vr.passed,
+            ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
+          };
+        },
         ...(runArbiter ? { runArbiter } : {}),
         ...(implementStepFinalReviewRunArbiter
           ? { runFinalReviewArbiter: implementStepFinalReviewRunArbiter }
@@ -3308,6 +3396,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         fixProfile: AgentProfileName(implFixProfileName),
         ...(implFixFallbackProfileName
           ? { fixFallbackProfile: AgentProfileName(implFixFallbackProfileName) }
+          : {}),
+        ...(terminalFixProfileName
+          ? { terminalFixProfile: AgentProfileName(terminalFixProfileName) }
           : {}),
         loopHistory: implementStepHistory,
         // Reuses the same `git reset --hard` closure already declared for the
