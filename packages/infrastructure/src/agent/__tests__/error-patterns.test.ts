@@ -114,6 +114,12 @@ describe('testQuotaPatterns', () => {
     expect(result).toBeTruthy();
   });
 
+  it('does not match larger numbers starting with 429 (default mode)', () => {
+    expect(testQuotaPatterns('status 4290')).toBeNull();
+    expect(testQuotaPatterns('HTTP 4290')).toBeNull();
+    expect(testQuotaPatterns('statusCode 4299')).toBeNull();
+  });
+
   it('does not match bare 429 in arbitrary text (default mode)', () => {
     const result = testQuotaPatterns('fix: scope 429 error pattern to HTTP contexts (#245)');
     expect(result).toBeNull();

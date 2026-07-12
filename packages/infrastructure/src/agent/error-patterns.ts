@@ -2,7 +2,7 @@ export const QUOTA_PATTERNS = [
   /Usage limit reached/i,
   /"statusCode":\s*429/,
   /rate[\s_-]*limit[\s_-]*exceed/i,
-  /(?:status(?:Code)?|HTTP)\D{0,12}429/i,
+  /(?:status(?:Code)?|HTTP)\D{0,12}429\b/i,
   /Not Enough Credits/i,
   /quota[s]?(?:[\s_:,().-]|limit[s]?|rate|is|has|been|daily|monthly)*exceed/i,
 ] as const;
