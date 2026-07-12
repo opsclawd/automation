@@ -124,9 +124,14 @@ function markDimensionClean(
   return { ...dirtyDimensions, [dimension]: 'clean' };
 }
 
-function getReviewMode(iterationIndex: number, isInFinalPair: boolean): ReviewMode {
+function getReviewMode(
+  iterationIndex: number,
+  isInFinalPair: boolean,
+  deltaScopedReReview: boolean,
+): ReviewMode {
   if (isInFinalPair) return 'final_full';
-  return iterationIndex === 1 ? 'initial_full' : 'intermediate_delta';
+  if (iterationIndex === 1) return 'initial_full';
+  return deltaScopedReReview ? 'intermediate_delta' : 'initial_full';
 }
 
 function buildReviewSnapshot(identity: string): ReviewSnapshot {
@@ -645,7 +650,8 @@ export class ImplementStepLoop {
       });
 
       // --- DIMENSION SCOPE COMPUTATION (#723) ---
-      const reviewMode = getReviewMode(iterationIndex, isInFinalPair);
+      const deltaScopedReReview = opts.deltaScopedReReview ?? true;
+      const reviewMode = getReviewMode(iterationIndex, isInFinalPair, deltaScopedReReview);
       const dirtyDims = getDirtyDimensions(dirtyDimensions);
       const specDimensions =
         dirtyDims.includes('spec') || isInFinalPair ? (['spec'] as DimensionName[]) : undefined;

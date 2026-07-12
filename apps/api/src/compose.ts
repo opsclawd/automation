@@ -3253,7 +3253,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             );
             const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
 
-            const { specExcerpt } = await readArbiterExcerpts(artifacts, String(ctx.runId));
+            const { specExcerpt, qualityExcerpt } = await readArbiterExcerpts(
+              artifacts,
+              String(ctx.runId),
+            );
 
             let taskBody = '';
             try {
@@ -3272,6 +3275,19 @@ export function composeRoot(opts: ComposeOptions): Container {
               taskBody = '';
             }
 
+            let fixDelta = '';
+            try {
+              if (fixResult.headBeforeFix) {
+                fixDelta = execFileSync(
+                  'git',
+                  ['diff', '--unified=3', `${fixResult.headBeforeFix}..HEAD`],
+                  { cwd: ctx.cwd, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
+                );
+              }
+            } catch {
+              fixDelta = '';
+            }
+
             let disputedFinding: {
               fingerprint: string;
               severity: string;
@@ -3284,28 +3300,39 @@ export function composeRoot(opts: ComposeOptions): Container {
               disposition: 'open' | 'addressed' | 'rebutted' | 'settled' | 'recurred';
               reason?: string;
             }> = [];
-            try {
-              if (specExcerpt) {
-                const parsed = JSON.parse(specExcerpt);
+            const parseExcerptForFinding = (excerpt: string) => {
+              if (!excerpt) return null;
+              try {
+                const parsed = JSON.parse(excerpt);
                 if (parsed.findings && parsed.findings.length > 0) {
-                  const firstFinding = parsed.findings[0];
-                  disputedFinding = {
-                    fingerprint: `fp-${Date.now()}`,
-                    severity: firstFinding.severity || 'P1',
-                    summary: firstFinding.summary || 'Unknown finding',
-                    ...(firstFinding.file ? { file: firstFinding.file } : {}),
-                    ...(firstFinding.suggested_fix
-                      ? { suggested_fix: firstFinding.suggested_fix }
-                      : {}),
-                  };
-                  dispositionHistory = [
-                    { fingerprint: disputedFinding.fingerprint, disposition: 'open' },
-                  ];
+                  return parsed.findings[0];
                 }
+              } catch {
+                return null;
               }
-            } catch {
-              // If we can't parse the excerpt, use defaults
+              return null;
+            };
+            const specFinding = parseExcerptForFinding(specExcerpt);
+            const qualityFinding = parseExcerptForFinding(qualityExcerpt);
+            const findingToUse = specFinding ?? qualityFinding;
+            if (!findingToUse) {
+              return {
+                outcome: 'insufficient_evidence' as const,
+                evidence: '',
+                rationale:
+                  'arbiter could not locate a disputed finding in spec-review or quality-review result artifacts',
+              };
             }
+            disputedFinding = {
+              fingerprint: `fp-${Date.now()}`,
+              severity: findingToUse.severity || 'P1',
+              summary: findingToUse.summary || 'Unknown finding',
+              ...(findingToUse.file ? { file: findingToUse.file } : {}),
+              ...(findingToUse.suggested_fix ? { suggested_fix: findingToUse.suggested_fix } : {}),
+            };
+            dispositionHistory = [
+              { fingerprint: disputedFinding.fingerprint, disposition: 'open' as const },
+            ];
 
             const arbiterInputs: {
               tcResult: typeof tcResult;
@@ -3314,12 +3341,14 @@ export function composeRoot(opts: ComposeOptions): Container {
               fixRebuttal: string;
               taskBody: string;
               deterministicDiagnostics?: string;
+              fixDelta: string;
             } = {
               tcResult,
               disputedFinding,
               dispositionHistory,
               fixRebuttal: fixResult.rebuttal ?? '',
               taskBody,
+              fixDelta,
             };
             if (tcResult.outcome === 'fail' && tcResult.output) {
               arbiterInputs.deterministicDiagnostics = tcResult.output;

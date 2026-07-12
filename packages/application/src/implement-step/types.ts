@@ -193,6 +193,14 @@ export interface ImplementStepLoopOptions {
    * trailing review arbiter rules `finding_valid`.
    */
   bonusIteration?: boolean;
+  /**
+   * When true (default), iteration >= 2 scopes the reviewer to the diff
+   * since the previously reviewed commit for intermediate reviews.
+   * Set to false to disable delta-scoped re-review for intermediate passes.
+   * Initial full review and final full review are always mandatory and
+   * cannot be disabled (#723).
+   */
+  deltaScopedReReview?: boolean;
 }
 
 export interface ReviewState {

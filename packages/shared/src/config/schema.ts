@@ -102,7 +102,7 @@ const phasesSchema = z.object({
      * Defaults to 5 when read via configuration. Programmatic API (consumers of
      * `ImplementStepLoopInput` that omit the field) falls back to
      * `DEFAULT_MAX_TYPE_CHECK_RETRIES` exported from
-     * `@ai-sdlc/application/inplement-step-loop`.
+     * `@ai-sdlc/application/implement-step-loop`.
      */
     maxTypeCheckRetries: z.number().int().positive().default(5),
     /**
