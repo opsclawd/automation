@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { open as fsOpen, stat as fsStat, access as fsAccess } from 'node:fs/promises';
 import os from 'node:os';
@@ -3736,6 +3736,45 @@ export function composeRoot(opts: ComposeOptions): Container {
         return result.success ? null : result.error;
       };
 
+      const computeSnapshot = async (
+        cwd: string,
+        _mode: import('@ai-sdlc/application').ReviewMode | undefined,
+      ): Promise<import('@ai-sdlc/application').PlanReviewSnapshot | undefined> => {
+        const planMdPath = join(cwd, 'plan.md');
+        const manifestPath = join(cwd, 'task-manifest.json');
+        const designPath = join(cwd, 'design.md');
+        let planMdDigest: string;
+        try {
+          planMdDigest = createHash('sha256')
+            .update(readFileSync(planMdPath, 'utf-8'), 'utf-8')
+            .digest('hex');
+        } catch {
+          return undefined;
+        }
+        const snapshot: import('@ai-sdlc/application').PlanReviewSnapshot = {
+          planMdDigest,
+          planMdPath,
+          capturedAt: new Date().toISOString(),
+        };
+        try {
+          snapshot.manifestDigest = createHash('sha256')
+            .update(readFileSync(manifestPath, 'utf-8'), 'utf-8')
+            .digest('hex');
+          snapshot.manifestPath = manifestPath;
+        } catch {
+          // optional
+        }
+        try {
+          snapshot.designDigest = createHash('sha256')
+            .update(readFileSync(designPath, 'utf-8'), 'utf-8')
+            .digest('hex');
+          snapshot.designPath = designPath;
+        } catch {
+          // optional
+        }
+        return snapshot;
+      };
+
       const planReviewRunReview = async (
         ctx: import('@ai-sdlc/application').PlanReviewContext,
         reviewOpts?: import('@ai-sdlc/application').PlanReviewStepOptions,
@@ -3847,6 +3886,16 @@ export function composeRoot(opts: ComposeOptions): Container {
           } else {
             parsedFindings = await parsePlanReviewFindings(findings);
           }
+          const mode = reviewOpts?.mode;
+          const snapshot = await computeSnapshot(ctx.cwd, mode);
+          if (snapshot) {
+            agentInvocationRepository.update(AgentInvocationId(invocationId), {
+              metadata: {
+                review_mode: mode,
+                review_snapshot_identity: snapshot.planMdDigest,
+              },
+            });
+          }
           return {
             invocationId,
             agentOutcome: 'success',
@@ -3859,6 +3908,8 @@ export function composeRoot(opts: ComposeOptions): Container {
                 }
               : {}),
             findings: parsedFindings.findings as ReadonlyArray<PlanReviewFinding>,
+            ...(snapshot ? { snapshot } : {}),
+            ...(mode ? { mode } : {}),
           };
         } catch {
           return { invocationId, agentOutcome: 'failed' };
@@ -4193,6 +4244,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         reviewerMaxRetries: 2,
         now: () => new Date(),
         idFactory: () => randomUUID(),
+        reviewStateRepository,
         options: {
           // (#716) Composition-root seam: thread the operator-configured
           // `deltaScopedReReview` flag into the loop. When false, the loop

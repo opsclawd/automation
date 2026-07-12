@@ -1290,10 +1290,7 @@ export class PlanReviewLoop {
     const hasP1 = eligible.some((f) => f.severity === 'P1');
     if (hasP0) return 'p1_found';
     if (hasP1) {
-      if (reviewerVerdict === 'proceed_with_concerns') {
-        return 'p1_found';
-      }
-      return reviewerVerdict;
+      return reviewerVerdict === 'proceed_with_concerns' ? 'proceed_with_concerns' : 'p1_found';
     }
 
     if (reviewerVerdict === 'p1_found' || reviewerVerdict === 'proceed_with_concerns') {
