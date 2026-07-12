@@ -3892,7 +3892,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             agentInvocationRepository.update(AgentInvocationId(invocationId), {
               metadata: {
                 review_mode: mode,
+                review_snapshot_kind: 'plan_artifact',
+                review_dimensions: ['plan'],
                 review_snapshot_identity: snapshot.planMdDigest,
+                ...(snapshot.manifestDigest
+                  ? { review_base_identity: snapshot.manifestDigest }
+                  : {}),
               },
             });
           }

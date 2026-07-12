@@ -101,6 +101,7 @@ export class PlanReviewLoop {
 
     let iter1Snapshot: PlanReviewSnapshot | undefined;
     let finalFullPhase = false;
+    let preFinalFullSnapshot: PlanReviewSnapshot | undefined;
 
     let lastDeterministicMismatch: string | null = null;
     let lastDeterministicWasUnresolvedWithNoChanges = false;
@@ -221,7 +222,7 @@ export class PlanReviewLoop {
       if (mode === 'final_full' && !isConfirmation) {
         return {
           mode,
-          ...(iter1Snapshot ? { snapshot: iter1Snapshot } : {}),
+          ...(preFinalFullSnapshot ? { snapshot: preFinalFullSnapshot } : {}),
         };
       }
       const stepOptions: PlanReviewStepOptions = {
@@ -396,12 +397,16 @@ export class PlanReviewLoop {
             frozenDispositions.set(f.citation, 'still_open');
           }
         }
-        eligibleFindings = this.classifyFindings(
-          rawFindings,
-          iterationIndex,
-          frozenPrevFindings,
-          recentFixCitations,
-        );
+        if (finalFullPhase) {
+          eligibleFindings = rawFindings.filter((f) => f.evidence === 'grounded');
+        } else {
+          eligibleFindings = this.classifyFindings(
+            rawFindings,
+            iterationIndex,
+            frozenPrevFindings,
+            recentFixCitations,
+          );
+        }
         // The failure check above guarantees `review.verdict` is defined;
         // assert for the type checker.
         const adjustedVerdict = this.computeVerdict(review.verdict!, eligibleFindings);
@@ -523,6 +528,7 @@ export class PlanReviewLoop {
           return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
         }
         finalFullPhase = true;
+        preFinalFullSnapshot = review.snapshot;
         this.emit(
           input,
           'plan-review.loop.final_review.started',
@@ -536,8 +542,8 @@ export class PlanReviewLoop {
       if (finalFullPhase && review.verdict === 'p1_found') {
         if (
           review.snapshot &&
-          iter1Snapshot &&
-          review.snapshot.planMdDigest !== iter1Snapshot.planMdDigest
+          preFinalFullSnapshot &&
+          review.snapshot.planMdDigest !== preFinalFullSnapshot.planMdDigest
         ) {
           this.emit(
             input,
@@ -546,7 +552,7 @@ export class PlanReviewLoop {
             `artifact digest drift detected in final_full review; escalating to human`,
             {
               iteration: iterationIndex,
-              iter1Digest: iter1Snapshot.planMdDigest,
+              preFinalDigest: preFinalFullSnapshot.planMdDigest,
               finalDigest: review.snapshot.planMdDigest,
             },
           );
@@ -798,6 +804,7 @@ export class PlanReviewLoop {
         const finalIterationIndex = loop.iterations.length + 1;
         const finalCtx: PlanReviewContext = { ...baseCtx, iterationIndex: finalIterationIndex };
         finalFullPhase = true;
+        preFinalFullSnapshot = review.snapshot;
 
         this.emit(
           input,
@@ -1379,9 +1386,7 @@ export class PlanReviewLoop {
     const hasP0 = eligible.some((f) => f.severity === 'P0');
     const hasP1 = eligible.some((f) => f.severity === 'P1');
     if (hasP0) return 'p1_found';
-    if (hasP1) {
-      return reviewerVerdict === 'proceed_with_concerns' ? 'p1_found' : reviewerVerdict;
-    }
+    if (hasP1) return 'p1_found';
 
     if (reviewerVerdict === 'p1_found' || reviewerVerdict === 'proceed_with_concerns') {
       return 'p2_only';
