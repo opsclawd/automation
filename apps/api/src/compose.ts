@@ -2351,6 +2351,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       const arbiterProfileName: string | undefined = resolveArbiterProfileName(
         config.agent.phaseProfiles,
       );
+      const terminalFixProfileName: string | undefined =
+        config.agent.phaseProfiles['terminal-fix']?.profile ?? arbiterProfileName;
 
       const makeArtifactStore = (runUuid: string, cwd: string): ArtifactStore =>
         artifactStoreForRun(runUuid, cwd);
@@ -2864,6 +2866,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           invocationId,
           agentOutcome: 'success' as const,
           verdict: verdict.verdict,
+          ...(verdict.ok && verdict.offendingFindings
+            ? { findings: verdict.offendingFindings }
+            : {}),
         };
       };
 
@@ -2940,6 +2945,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           invocationId,
           agentOutcome: 'success' as const,
           verdict: verdict.verdict,
+          ...(verdict.ok && verdict.offendingFindings
+            ? { findings: verdict.offendingFindings }
+            : {}),
         };
       };
 
@@ -3036,6 +3044,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           invocationId,
           agentOutcome: fixVerdict.ok ? ('success' as const) : ('contract_violation' as const),
           ...(fixVerdict.ok ? { verdict: fixVerdict.verdict } : {}),
+          ...(fixVerdict.ok && fixVerdict.rebuttal ? { rebuttal: fixVerdict.rebuttal } : {}),
           headBeforeFix: startCommitSha,
         };
       };
@@ -3295,6 +3304,56 @@ export function composeRoot(opts: ComposeOptions): Container {
         runSpecReview,
         runQualityReview,
         runFix: implRunFix,
+        runRevalidation: async (ctx) => {
+          const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+          let taskValidationCommands: string[] = [];
+          try {
+            const manifestRaw = await artifacts.read(String(ctx.runId), 'task-manifest.json');
+            const manifest = parseTaskManifest(manifestRaw);
+            if (manifest.success) {
+              const taskIndex = (ctx as StepLoopContext).stepIndex;
+              const task = manifest.manifest.tasks.find((t) => t.n === taskIndex);
+              if (task) {
+                if (manifest.manifest.version === 2) {
+                  taskValidationCommands = (task as any).validation_commands ?? [];
+                } else {
+                  taskValidationCommands = (task as any).validation ?? [];
+                }
+              }
+            }
+          } catch {
+            // Task manifest might not be present or parseable; fall back to global only
+          }
+          const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
+          const revalidateLogDir = join(
+            runsDir,
+            runDir,
+            'revalidate',
+            ctx.loopId,
+            String(ctx.phaseId),
+            `iter-${ctx.iterationIndex}`,
+          );
+          const vr = await runValidation.execute({
+            runId: RunId(String(ctx.runId)),
+            phaseId: PhaseName('validate'),
+            cwd: ctx.cwd,
+            logDir: revalidateLogDir,
+            commands: [...config.validation.commands, ...taskValidationCommands],
+            timeoutSeconds: config.validation.timeout,
+          });
+          const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
+          await artifacts.write({
+            runId: String(ctx.runId),
+            phaseId: 'validate',
+            relativePath: 'validation.result',
+            contents: vr.passed ? 'passed\n' : 'failed\n',
+          });
+          return {
+            validationRunId: vr.validationRun.id,
+            passed: vr.passed,
+            ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
+          };
+        },
         ...(runArbiter ? { runArbiter } : {}),
         ...(implementStepFinalReviewRunArbiter
           ? { runFinalReviewArbiter: implementStepFinalReviewRunArbiter }
@@ -3308,6 +3367,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         fixProfile: AgentProfileName(implFixProfileName),
         ...(implFixFallbackProfileName
           ? { fixFallbackProfile: AgentProfileName(implFixFallbackProfileName) }
+          : {}),
+        ...(terminalFixProfileName
+          ? { terminalFixProfile: AgentProfileName(terminalFixProfileName) }
           : {}),
         loopHistory: implementStepHistory,
         // Reuses the same `git reset --hard` closure already declared for the

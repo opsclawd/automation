@@ -23,9 +23,15 @@ export function formatImplementStepHistoryForPrompt(
     lines.push(`- Iteration ${entry.iteration}:`);
     if (entry.specReview.verdict) {
       lines.push(`  Spec Review: ${entry.specReview.verdict}`);
+      if (entry.specReview.findings && entry.specReview.findings.length > 0) {
+        lines.push(`    Findings: ${JSON.stringify(entry.specReview.findings)}`);
+      }
     }
     if (entry.qualityReview.verdict) {
       lines.push(`  Quality Review: ${entry.qualityReview.verdict}`);
+      if (entry.qualityReview.findings && entry.qualityReview.findings.length > 0) {
+        lines.push(`    Findings: ${JSON.stringify(entry.qualityReview.findings)}`);
+      }
     }
     if (entry.fix) {
       if (entry.fix.verdict) {
@@ -36,6 +42,9 @@ export function formatImplementStepHistoryForPrompt(
       }
       if (entry.fix.summary) {
         lines.push(`  Fix Summary: ${entry.fix.summary}`);
+      }
+      if (entry.fix.rebuttal) {
+        lines.push(`  Fix Rebuttal: ${entry.fix.rebuttal}`);
       }
     }
     if (entry.reverted) {
@@ -66,6 +75,10 @@ export function formatImplementStepHistoryForPrompt(
       lines.push(
         '  No commit: claimed done_with_fixes but HEAD did not advance and worktree is clean',
       );
+    }
+    if (entry.arbiter) {
+      lines.push(`  Arbiter Ruling: ${entry.arbiter.outcome}`);
+      lines.push(`    Rationale: ${entry.arbiter.rationale}`);
     }
     lines.push(`  Outcome: ${entry.outcome}`);
   }

@@ -3071,3 +3071,90 @@ describe('ImplementStepLoop auto-commit fallback', () => {
     expect(result.loop.iterations[0].outcome).toBe('unresolved');
   });
 });
+
+describe('ImplementStepLoop terminal fix escalation', () => {
+  it('AC #1 — triggers successful terminal fix when budget exhausts', async () => {
+    const { bus, events } = collectEvents();
+    let fixCalls = 0;
+    let revalidationCalled = false;
+    const deps = makeDeps({
+      events: bus,
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (_ctx, opts) => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+        };
+      },
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+      runRevalidation: async () => {
+        revalidationCalled = true;
+        return { validationRunId: 'v1', passed: true };
+      },
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    // Iteration 1: spec-fail -> fix -> fixed
+    // Trailing (Iteration 2): spec-fail -> unresolved
+    // Budget exhausted -> terminal fix
+    expect(out.outcome).toBe('success');
+    expect(fixCalls).toBe(2); // 1 normal + 1 terminal
+    expect(revalidationCalled).toBe(true);
+
+    const started = events.find((e) => e.type === 'step.terminal_fix.started');
+    expect(started).toBeDefined();
+    expect(started?.metadata.profile).toBe('top-tier-fixer');
+
+    const accepted = events.find((e) => e.type === 'step.terminal_fix.accepted');
+    expect(accepted).toBeDefined();
+    expect(accepted?.metadata.priorIterations).toBe(2);
+  });
+
+  it('AC #4 — returns needs_human_review when terminal fix verification fails', async () => {
+    const { bus, events } = collectEvents();
+    const deps = makeDeps({
+      events: bus,
+      runSpecReview: async () => ({ invocationId: 'sr-fail', agentOutcome: 'success', verdict: 'fail' }),
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+      runRevalidation: async () => ({ validationRunId: 'v1', passed: false }),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('needs_human_review');
+    const rejected = events.find((e) => e.type === 'step.terminal_fix.rejected');
+    expect(rejected).toBeDefined();
+    expect(rejected?.metadata.revalidationPassed).toBe(false);
+  });
+
+  it('AC #6 — preserves old behavior (fail) when no terminal profile configured', async () => {
+    const { bus, events } = collectEvents();
+    const deps = makeDeps({
+      events: bus,
+      runSpecReview: async () => ({ invocationId: 'sr-fail', agentOutcome: 'success', verdict: 'fail' }),
+      terminalFixProfile: undefined,
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('failed');
+    expect(events.find((e) => e.type === 'step.terminal_fix.started')).toBeUndefined();
+  });
+
+  it('normal convergence is untouched', async () => {
+    const deps = makeDeps({
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+    });
+    const out = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.status).toBe('converged');
+  });
+});

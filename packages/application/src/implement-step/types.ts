@@ -3,7 +3,7 @@ import type { TaskManifest } from '../results/schemas/task-manifest.js';
 import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
-import type { FixStepOptions } from '../review-fix/types.js';
+import type { FixStepOptions, RevalidationResult } from '../review-fix/types.js';
 import type { GitPort } from '../ports/git-port.js';
 
 export interface StepLoopContext {
@@ -50,12 +50,14 @@ export interface SpecReviewResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
   verdict?: 'pass' | 'fail';
+  findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
 }
 
 export interface QualityReviewResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
   verdict?: 'pass' | 'fail';
+  findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
 }
 
 export interface FixResult {
@@ -78,16 +80,25 @@ export interface ImplementStepHistoryEntry {
   specReview: {
     verdict?: 'pass' | 'fail';
     invocationId?: string;
+    findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
   };
   qualityReview: {
     verdict?: 'pass' | 'fail';
     invocationId?: string;
+    findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
   };
   fix?: {
     verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
     invocationId?: string;
     headBeforeFix?: string;
     summary?: string;
+    rebuttal?: string;
+  };
+  /** ruling from a contradiction or final review arbiter */
+  arbiter?: {
+    outcome: 'finding_valid' | 'finding_invalid' | 'ambiguous' | 'insufficient_evidence';
+    evidence: string;
+    rationale: string;
   };
   /**
    * When the iteration's top-of-iteration typecheck failed and the previous
@@ -134,6 +145,7 @@ export interface ImplementStepHistoryPort {
  */
 export interface ImplementFixStepOptions extends FixStepOptions {
   typecheckErrors?: string | TypescriptError[];
+  isTerminalFix?: boolean;
 }
 
 export interface ArbiterResult {
@@ -178,6 +190,7 @@ export interface ImplementStepLoopDeps {
     tcResult: TypecheckResult,
   ) => Promise<QualityReviewResult>;
   runFix: (ctx: StepLoopContext, opts: ImplementFixStepOptions) => Promise<FixResult>;
+  runRevalidation?: (ctx: StepLoopContext) => Promise<RevalidationResult>;
   implementProfile: AgentProfileName;
   implementFallbackProfile?: AgentProfileName;
   runArbiter?: (
@@ -204,6 +217,7 @@ export interface ImplementStepLoopDeps {
   events: EventBusPort;
   fixProfile: AgentProfileName;
   fixFallbackProfile?: AgentProfileName;
+  terminalFixProfile?: AgentProfileName;
   /** History port for the current step (read/append/format for the fixer). */
   loopHistory?: ImplementStepHistoryPort;
   /**
