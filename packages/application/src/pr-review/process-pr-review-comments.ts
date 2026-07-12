@@ -200,14 +200,13 @@ export class ProcessPrReviewComments {
         const previousAttempts = d.prReviewRepo.listCommentAttempts(input.runId, task.commentId);
         const currentDiff =
           attempt === 1
-            ? await d.git.diff(input.cwd, 'origin/HEAD')
+            ? await d.git.diff(input.cwd, 'origin/HEAD', runningStartSha)
             : await (async () => {
                 const previousAttempt = previousAttempts[previousAttempts.length - 1];
                 if (previousAttempt?.completedHead) {
-                  const currentHead = await d.git.headCommitSha(input.cwd);
-                  return d.git.diff(input.cwd, previousAttempt.completedHead, currentHead);
+                  return d.git.diff(input.cwd, runningStartSha, previousAttempt.completedHead);
                 }
-                return await d.git.diff(input.cwd, 'origin/HEAD');
+                return await d.git.diff(input.cwd, 'origin/HEAD', runningStartSha);
               })();
         const dispositions = previousAttempts.map((a) => {
           const item: { fingerprint: string; disposition: string; reason?: string } = {
