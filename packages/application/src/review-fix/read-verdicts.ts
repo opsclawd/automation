@@ -9,16 +9,28 @@ const SEVERITY_RANK: Record<string, number> = {
   high: 1,
   medium: 2,
   low: 3,
+  // The spec/quality review prompts instruct reviewers to emit P0-P3
+  // severities (see buildSpecReviewPrompt/buildQualityReviewPrompt in
+  // apps/api/src/compose.ts), while blockOnSeverity config speaks
+  // critical/high/medium/low. Without these aliases the gate can neither
+  // block nor override P-labeled findings, so the reviewer's raw verdict
+  // always rules and the severity dial is inert.
+  p0: 0,
+  p1: 1,
+  p2: 2,
+  p3: 3,
 };
+
+function severityRank(severity: string): number | undefined {
+  return SEVERITY_RANK[severity.trim().toLowerCase()];
+}
 
 export function severityGate(
   findings: WholePrReviewResult['findings'],
   threshold: string,
 ): { blocked: boolean; offendingFindings: WholePrReviewResult['findings'] } {
-  const thresholdRank = SEVERITY_RANK[threshold] ?? SEVERITY_RANK['high']!;
-  const offending = findings.filter(
-    (f) => (SEVERITY_RANK[f.severity] ?? Infinity) <= thresholdRank,
-  );
+  const thresholdRank = severityRank(threshold) ?? SEVERITY_RANK['high']!;
+  const offending = findings.filter((f) => (severityRank(f.severity) ?? Infinity) <= thresholdRank);
   return { blocked: offending.length > 0, offendingFindings: offending };
 }
 
@@ -27,9 +39,9 @@ function allKnownSeveritiesBelowThreshold(
   threshold: string,
 ): boolean {
   if (findings.length === 0) return false;
-  const thresholdRank = SEVERITY_RANK[threshold] ?? SEVERITY_RANK['high']!;
+  const thresholdRank = severityRank(threshold) ?? SEVERITY_RANK['high']!;
   return findings.every((f) => {
-    const rank = SEVERITY_RANK[f.severity];
+    const rank = severityRank(f.severity);
     if (rank === undefined) return false;
     return rank > thresholdRank;
   });

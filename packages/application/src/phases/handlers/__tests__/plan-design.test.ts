@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { existsSync } from 'node:fs';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { PlanDesignHandler } from '../plan-design.js';
 import { PlanWriteHandler } from '../plan-write.js';
@@ -41,6 +42,14 @@ vi.mock('../../../prompts/load-prompt-template.js', () => ({
 vi.mock('../../../prompts/render-prompt.js', () => ({
   renderPrompt: mockRenderPrompt,
 }));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    existsSync: vi.fn(),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1086,5 +1095,52 @@ describe.each([
     expect(result.outcome).toBe('passed');
     expect(agent.invocations).toHaveLength(1);
     expect(eventsOf(ctx, `${String(handler.phase)}.completed`)).toHaveLength(1);
+  });
+
+  it('regression: re-materializes missing worktree artifact and emits recovery event', async () => {
+    setupCtx();
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue.md',
+      contents: '# Test\n',
+    });
+
+    const artifactName = handler.phase === 'plan-design' ? 'design.md' : 'plan.md';
+
+    // Seed the durable artifact
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: artifactName,
+      contents: '# Content',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult());
+
+    // Mock existsSync: return true for everything EXCEPT our artifact
+    vi.mocked(existsSync).mockImplementation((path) => {
+      if (typeof path === 'string' && path.endsWith(artifactName)) {
+        return false;
+      }
+      return true;
+    });
+
+    const writeSpy = vi.spyOn(ctx.artifacts, 'write');
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    // Verify recovery event emitted
+    expect(eventsOf(ctx, `${String(handler.phase)}.worktree_artifact_recovered`)).toHaveLength(1);
+
+    // Verify it was re-written to the artifact store (which in production
+    // re-materializes the worktree copy)
+    expect(writeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        relativePath: artifactName,
+        contents: '# Content',
+      }),
+    );
   });
 });

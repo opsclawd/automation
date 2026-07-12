@@ -1328,6 +1328,23 @@ exit 1
     expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?historyContext/);
   });
 
+  it('implRunFix routes isTerminalFix to the terminal profile and forwards it to the prompt builder (#763)', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
+    expect(fixMatch).toBeTruthy();
+    // Profile selection must consult opts.isTerminalFix and prefer the
+    // terminal profile. Without this, the terminal escalation silently
+    // re-runs the economy fixer that just exhausted the loop while events
+    // report the terminal profile ran (same seam bug class as #670).
+    expect(fixMatch![0]).toMatch(/opts\.isTerminalFix\s*&&\s*terminalFixProfileName/);
+    expect(fixMatch![0]).toMatch(/\?\s*terminalFixProfileName/);
+    // The terminal framing block must reach the prompt builder.
+    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?isTerminalFix/);
+  });
+
   describe('worktreeSetup behavior', () => {
     const fakeAgentConfig = {
       validation: { commands: ['echo ok'], timeout: 60 },

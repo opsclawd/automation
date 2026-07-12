@@ -59,6 +59,16 @@ interface LeaseRepo {
   release(repoId: RepositoryId, workerId: WorkerId): void;
 }
 
+// Event types that are recorded (persisted to the DB, available for later
+// inspection/measurement) but not worth printing to the live --verbose CLI
+// stream: they carry no actionable signal for a human watching progress,
+// just internal bookkeeping (e.g. a retry-dedup fingerprint hash).
+const CLI_STREAM_SUPPRESSED_EVENT_TYPES: ReadonlySet<string> = new Set(['semantic_retry']);
+
+function shouldStreamEventToCli(event: { type: string }): boolean {
+  return !CLI_STREAM_SUPPRESSED_EVENT_TYPES.has(event.type);
+}
+
 function startLeaseHeartbeat(
   leaseRepo: LeaseRepo,
   repoId: RepositoryId,
@@ -585,7 +595,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
             if (tee) {
               unsubscribe = c.eventBus.subscribe(ids.uuid, (event) => {
-                console.error(`[ts] ${event.message}`);
+                if (shouldStreamEventToCli(event)) {
+                  console.error(`[ts] ${event.message}`);
+                }
               });
             }
 
@@ -1374,7 +1386,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const tee = opts.verbose ?? Boolean(process.stdout.isTTY);
               if (tee) {
                 unsubscribe = c.eventBus.subscribe(RunId(opts.uuid), (event) => {
-                  console.error(`[ts] ${event.message}`);
+                  if (shouldStreamEventToCli(event)) {
+                    console.error(`[ts] ${event.message}`);
+                  }
                 });
               }
 

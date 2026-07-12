@@ -20,11 +20,13 @@ const RECOVERABLE_RUN_STATUSES = new Set<RunRecord['status']>([
   'failed',
   'blocked',
   'needs_human_review',
+  'cancelled',
 ]);
 const RECOVERABLE_PHASE_STATUSES = new Set<Phase['status']>([
   'failed',
   'blocked',
   'needs_human_review',
+  'running',
 ]);
 
 function isRecoverableRunStatus(status: RunRecord['status']): boolean {
@@ -80,7 +82,7 @@ export function planRunRecoveryAction(input: {
         action: 'retry',
         allowed: false,
         statusCodeOnDenied: 409,
-        denialReason: `Cannot retry a run that is not in failed, blocked, or needs_human_review state (status is '${run.status}')`,
+        denialReason: `Cannot retry a run that is not in failed, blocked, needs_human_review, or cancelled state (status is '${run.status}')`,
         requiresConfirmation: false,
       };
     }
@@ -120,7 +122,7 @@ export function planRunRecoveryAction(input: {
         action: 'resume',
         allowed: false,
         statusCodeOnDenied: 409,
-        denialReason: `Cannot resume a run that is not in failed, blocked, or needs_human_review state (status is '${run.status}')`,
+        denialReason: `Cannot resume a run that is not in failed, blocked, needs_human_review, or cancelled state (status is '${run.status}')`,
         requiresConfirmation: false,
       };
     }

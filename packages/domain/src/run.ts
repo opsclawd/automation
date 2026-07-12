@@ -205,11 +205,16 @@ export function reactivate(run: Run): Run {
 }
 
 export function canResume(run: Run): boolean {
-  return run.status === 'failed' || run.status === 'blocked' || run.status === 'needs_human_review';
+  return (
+    run.status === 'failed' ||
+    run.status === 'blocked' ||
+    run.status === 'needs_human_review' ||
+    run.status === 'cancelled'
+  );
 }
 
 /**
- * Resume a failed run.
+ * Resume a failed or cancelled run.
  *
  * When `phase` is provided (phase-level retry), the run resumes from that
  * specific phase — prior completed and skipped phases are preserved.
@@ -219,7 +224,7 @@ export function canResume(run: Run): boolean {
 export function resumeRun(run: Run, phase?: string): Run {
   if (!canResume(run)) {
     throw new RunStateError(
-      `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed', 'blocked', or 'needs_human_review'`,
+      `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed', 'blocked', 'needs_human_review', or 'cancelled'`,
     );
   }
   const {

@@ -18,10 +18,11 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
     if (
       run.status !== 'failed' &&
       run.status !== 'blocked' &&
-      run.status !== 'needs_human_review'
+      run.status !== 'needs_human_review' &&
+      run.status !== 'cancelled'
     ) {
       throw new Error(
-        `Cannot retry phase for run ${input.runId}: status is '${run.status}', expected 'failed', 'blocked', or 'needs_human_review'`,
+        `Cannot retry phase for run ${input.runId}: status is '${run.status}', expected 'failed', 'blocked', 'needs_human_review', or 'cancelled'`,
       );
     }
     const phases = this.deps.phaseRepo.listByRun(input.runId);
@@ -33,7 +34,10 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
       .filter(
         (p) =>
           p.name === phaseName &&
-          (p.status === 'failed' || p.status === 'blocked' || p.status === 'needs_human_review'),
+          (p.status === 'failed' ||
+            p.status === 'blocked' ||
+            p.status === 'needs_human_review' ||
+            p.status === 'running'),
       )
       .map((p) => p.attempt ?? 0);
     const maxAttempt =
@@ -50,7 +54,11 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
 function latestRecoverablePhaseName(phases: Phase[]): string | undefined {
   const recoverable = phases
     .filter(
-      (p) => p.status === 'failed' || p.status === 'blocked' || p.status === 'needs_human_review',
+      (p) =>
+        p.status === 'failed' ||
+        p.status === 'blocked' ||
+        p.status === 'needs_human_review' ||
+        p.status === 'running',
     )
     .slice()
     .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0));
