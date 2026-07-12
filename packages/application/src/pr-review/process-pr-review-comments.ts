@@ -22,6 +22,7 @@ import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.
 import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
 import { PollTaskRunner } from './poll-task-runner.js';
 import type { PollTaskOutput } from './poll-task-runner.js';
+import type { ArtifactStore } from '../ports/artifact-store.js';
 
 export interface ProcessPrReviewDeps {
   github: GitHubPort;
@@ -63,6 +64,7 @@ export interface ProcessPrReviewDeps {
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
+  artifactStore: ArtifactStore;
   baseBranch?: string;
   repoRoot?: string | undefined;
   onWarning?: (message: string, metadata: Record<string, unknown>, runId: string) => void;

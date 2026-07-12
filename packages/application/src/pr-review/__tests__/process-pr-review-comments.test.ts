@@ -5,6 +5,7 @@ import {
   FakeGitPort,
   FakePrReviewRepository,
   FakeAgentPort,
+  FakeArtifactStore,
 } from '../../test-doubles/index.js';
 import type { AgentInvocationResult } from '../../ports/agent-invocation-types.js';
 import {
@@ -114,6 +115,7 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
   git.remoteRefs.set('origin/feat-x', 'abc123');
 
   let replyCounter = 0;
+  const artifactStore = new FakeArtifactStore();
   // Mirror production: the prompt is rendered per comment and the agent's
   // result.json carries that comment's id, so the extracted result's
   // commentId always matches the comment being processed.
@@ -123,6 +125,7 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
     git,
     agent,
     prReviewRepo: repo,
+    artifactStore,
     renderTaskPrompt: async ({ comment }) => {
       currentCommentId = comment.commentId;
       return '/tmp/prompt.md';
@@ -1672,6 +1675,7 @@ describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / sq
       resolveProfileForPhase: () => 'post-pr-review-profile' as never,
       idFactory: () => 'id-1',
       now: () => new Date('2026-06-04T00:10:00Z'),
+      artifactStore: new FakeArtifactStore(),
     };
 
     const uc = new ProcessPrReviewComments(deps);

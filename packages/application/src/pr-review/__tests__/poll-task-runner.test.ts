@@ -5,6 +5,7 @@ import {
   FakeGitPort,
   FakePrReviewRepository,
   FakeAgentPort,
+  FakeArtifactStore,
 } from '../../test-doubles/index.js';
 import type { AgentInvocationResult } from '../../ports/agent-invocation-types.js';
 import {
@@ -86,11 +87,13 @@ function makeDeps(overrides: Partial<PollTaskRunnerDeps> = {}): {
   git.logBetweenResults.set('abc123|abc123', ['abc123']);
 
   let replyCounter = 0;
+  const artifactStore = new FakeArtifactStore();
   const deps: PollTaskRunnerDeps = {
     github,
     git,
     agent,
     prReviewRepo: repo,
+    artifactStore,
     renderTaskPrompt: async () => '/tmp/prompt.md',
     extractTaskResult: async () => ({
       ok: true,

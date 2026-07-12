@@ -1,5 +1,3 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import type { PrReviewComment, PrReviewCommentAttempt } from '@ai-sdlc/domain';
 import { markProcessed, blockComment, markReplied } from '@ai-sdlc/domain';
 import type { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
@@ -11,6 +9,7 @@ import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.
 import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
 import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import { verifyComment } from './verify-comment.js';
+import type { ArtifactStore } from '../ports/artifact-store.js';
 
 export interface PollTaskRunnerDeps {
   github: GitHubPort;
@@ -51,6 +50,7 @@ export interface PollTaskRunnerDeps {
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
+  artifactStore: ArtifactStore;
 }
 
 export type PostPrReviewAttemptMode = 'initial_full' | 'intermediate_delta';
@@ -168,22 +168,18 @@ export class PollTaskRunner {
 
       let resultArtifactPath = invocation.resultJsonPath ?? '';
       if (resultArtifactPath) {
-        const srcPath = path.isAbsolute(resultArtifactPath)
-          ? resultArtifactPath
-          : path.join(input.cwd, resultArtifactPath);
-        if (fs.existsSync(srcPath)) {
-          const durableDir = attempt.promptPath
-            ? path.dirname(attempt.promptPath)
-            : path.join(input.cwd, '.ai-pr-review');
-          fs.mkdirSync(durableDir, { recursive: true });
-          const durableFileName = `result-${attemptId}-${path.basename(resultArtifactPath)}`;
-          const destPath = path.join(durableDir, durableFileName);
-          try {
-            fs.copyFileSync(srcPath, destPath);
-            resultArtifactPath = destPath;
-          } catch {
-            // ignore / handle
-          }
+        try {
+          const contents = await d.artifactStore.read(String(input.runId), resultArtifactPath);
+          const relativeDurablePath = `.ai-pr-review/result-${attemptId}-result.json`;
+          const written = await d.artifactStore.write({
+            runId: String(input.runId),
+            phaseId: String(input.phaseId),
+            relativePath: relativeDurablePath,
+            contents,
+          });
+          resultArtifactPath = written.absolutePath;
+        } catch {
+          // ignore / handle
         }
       }
       attempt.resultArtifactPath = resultArtifactPath;

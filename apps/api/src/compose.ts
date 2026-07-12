@@ -1418,6 +1418,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         updatedAt: new Date(),
       });
 
+  let artifactStoreForRun: (runUuid: string, worktreeRoot: string) => ArtifactStore;
+
   interface RepositoryRow {
     id: string;
     full_name: string;
@@ -1941,6 +1943,14 @@ export function composeRoot(opts: ComposeOptions): Container {
           definition.outputs,
         ]),
       );
+      artifactStoreForRun = (runUuid: string, worktreeRoot: string): ArtifactStore => {
+        const runRecord = runRepository.findByUuid(runUuid);
+        const durableRunId = runRecord?.displayId ?? runUuid;
+        return createFilesystemArtifactStore({
+          durableRoot: join(runsDir, durableRunId, 'phase-artifacts'),
+          worktreeRoot,
+        });
+      };
       const optionalOrchestratorArtifacts = [
         'task-manifest.json',
         'validation.result',
@@ -1953,14 +1963,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         'pr-summary.md',
         'pr-url.txt',
       ];
-      const artifactStoreForRun = (runUuid: string, worktreeRoot: string): ArtifactStore => {
-        const runRecord = runRepository.findByUuid(runUuid);
-        const durableRunId = runRecord?.displayId ?? runUuid;
-        return createFilesystemArtifactStore({
-          durableRoot: join(runsDir, durableRunId, 'phase-artifacts'),
-          worktreeRoot,
-        });
-      };
       capturingAgent = createArtifactCapturingAgent({
         agent: router,
         artifactStoreForRequest: (request) => artifactStoreForRun(request.runId, request.cwd),
@@ -5350,6 +5352,32 @@ export function composeRoot(opts: ComposeOptions): Container {
       resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
       idFactory: () => randomUUID(),
       now: () => new Date(),
+      artifactStore: {
+        read: async (runId, relativePath) => {
+          const run = runRepository.findByUuid(runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          return artifactStoreForRun(runId, cwd).read(runId, relativePath);
+        },
+        write: async (input) => {
+          const run = runRepository.findByUuid(input.runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${input.runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          return artifactStoreForRun(input.runId, cwd).write(input);
+        },
+        list: async (runId) => {
+          const run = runRepository.findByUuid(runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          return artifactStoreForRun(runId, cwd).list(runId);
+        },
+      },
       baseBranch: opts.baseBranch ?? resolvedDefaultBranch,
       repoRoot: opts.repoRoot,
       onWarning: (message, metadata, runId) => {
