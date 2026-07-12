@@ -435,6 +435,30 @@ export class PlanReviewLoop {
         review = gatedReview;
       }
 
+      // --- ARTIFACT DIGEST DRIFT CHECK (always escalates in final_full) ---
+      if (finalFullPhase) {
+        if (
+          review.snapshot &&
+          preFinalFullSnapshot &&
+          review.snapshot.planMdDigest !== preFinalFullSnapshot.planMdDigest
+        ) {
+          this.emit(
+            input,
+            'plan-review.loop.final_review.artifact_drift_detected',
+            'error',
+            `artifact digest drift detected in final_full review; escalating to human`,
+            {
+              iteration: iterationIndex,
+              preFinalDigest: preFinalFullSnapshot.planMdDigest,
+              finalDigest: review.snapshot.planMdDigest,
+            },
+          );
+          loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+          deps.loops.update(loop);
+          return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+        }
+      }
+
       // --- RESOLUTION ON PASS / P2-ONLY ---
       if (review.verdict === 'pass' || review.verdict === 'p2_only') {
         if (finalFullPhase) {
@@ -540,26 +564,6 @@ export class PlanReviewLoop {
       }
 
       if (finalFullPhase && review.verdict === 'p1_found') {
-        if (
-          review.snapshot &&
-          preFinalFullSnapshot &&
-          review.snapshot.planMdDigest !== preFinalFullSnapshot.planMdDigest
-        ) {
-          this.emit(
-            input,
-            'plan-review.loop.final_review.artifact_drift_detected',
-            'error',
-            `artifact digest drift detected in final_full review; escalating to human`,
-            {
-              iteration: iterationIndex,
-              preFinalDigest: preFinalFullSnapshot.planMdDigest,
-              finalDigest: review.snapshot.planMdDigest,
-            },
-          );
-          loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
-          deps.loops.update(loop);
-          return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
-        }
         this.emit(
           input,
           'plan-review.loop.final_review.finding_reopens_cycle',
@@ -896,6 +900,38 @@ export class PlanReviewLoop {
             now: deps.now,
           }),
         );
+
+        if (
+          finalReview.snapshot &&
+          preFinalFullSnapshot &&
+          finalReview.snapshot.planMdDigest !== preFinalFullSnapshot.planMdDigest
+        ) {
+          this.emit(
+            input,
+            'plan-review.loop.final_review.artifact_drift_detected',
+            'error',
+            `artifact digest drift detected in final_full review; escalating to human`,
+            {
+              iteration: finalIterationIndex,
+              preFinalDigest: preFinalFullSnapshot.planMdDigest,
+              finalDigest: finalReview.snapshot.planMdDigest,
+            },
+          );
+          const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+            index: finalIterationIndex,
+            reviewInvocationId: finalReview.invocationId,
+            startedAt: deps.now(),
+            completedAt: deps.now(),
+            outcome: 'unresolved',
+          };
+          loop = {
+            ...loop,
+            iterations: [...loop.iterations, finalIteration],
+          };
+          loop = exhaust(loop, deps.now());
+          deps.loops.update(loop);
+          return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+        }
 
         if (finalReview.verdict === 'pass' || finalReview.verdict === 'p2_only') {
           const finalIteration: import('@ai-sdlc/domain').LoopIteration = {

@@ -1,6 +1,11 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { open as fsOpen, stat as fsStat, access as fsAccess } from 'node:fs/promises';
+import {
+  open as fsOpen,
+  stat as fsStat,
+  access as fsAccess,
+  readFile as fsReadFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import {
   existsSync,
@@ -3746,7 +3751,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         let planMdDigest: string;
         try {
           planMdDigest = createHash('sha256')
-            .update(readFileSync(planMdPath, 'utf-8'), 'utf-8')
+            .update(await fsReadFile(planMdPath, 'utf-8'), 'utf-8')
             .digest('hex');
         } catch {
           return undefined;
@@ -3758,7 +3763,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
         try {
           snapshot.manifestDigest = createHash('sha256')
-            .update(readFileSync(manifestPath, 'utf-8'), 'utf-8')
+            .update(await fsReadFile(manifestPath, 'utf-8'), 'utf-8')
             .digest('hex');
           snapshot.manifestPath = manifestPath;
         } catch {
@@ -3766,7 +3771,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
         try {
           snapshot.designDigest = createHash('sha256')
-            .update(readFileSync(designPath, 'utf-8'), 'utf-8')
+            .update(await fsReadFile(designPath, 'utf-8'), 'utf-8')
             .digest('hex');
           snapshot.designPath = designPath;
         } catch {
