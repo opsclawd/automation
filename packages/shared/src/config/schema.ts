@@ -105,6 +105,14 @@ const phasesSchema = z.object({
      * `@ai-sdlc/application/implement-step-loop`.
      */
     maxTypeCheckRetries: z.number().int().positive().default(5),
+    /**
+     * When true (default), iteration >= 2 scopes the reviewer to the diff
+     * since the previously reviewed commit for intermediate reviews.
+     * Set to false to disable delta-scoped re-review for intermediate passes.
+     * Initial full review and final full review are always mandatory and
+     * cannot be disabled by configuration (#723).
+     */
+    deltaScopedReReview: z.boolean().default(true),
   }),
   fixValidate: z
     .object({

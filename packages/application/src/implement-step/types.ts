@@ -5,6 +5,7 @@ import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { FixStepOptions, RevalidationResult } from '../review-fix/types.js';
 import type { GitPort } from '../ports/git-port.js';
+import type { ReviewStateRepositoryPort } from '../ports/review-state-repository-port.js';
 
 export interface StepLoopContext {
   loopId: string;
@@ -46,11 +47,32 @@ export interface TypecheckResult {
   structuredErrors?: TypescriptError[];
 }
 
+export type ReviewMode = 'initial_full' | 'intermediate_delta' | 'final_full';
+
+export type DimensionName = 'spec' | 'quality';
+
+export type DimensionState = 'clean' | 'dirty' | 'recurred';
+
+export interface ReviewFindings {
+  findings: unknown[];
+}
+
+export interface ReviewSnapshot {
+  snapshot: string;
+}
+
+export interface ReviewScopeOptions {
+  mode: ReviewMode;
+  dimensions?: DimensionName[];
+}
+
 export interface SpecReviewResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
   verdict?: 'pass' | 'fail';
   findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
+  snapshot?: ReviewSnapshot;
+  mode?: ReviewMode;
 }
 
 export interface QualityReviewResult {
@@ -58,6 +80,8 @@ export interface QualityReviewResult {
   agentOutcome: StepAgentOutcome;
   verdict?: 'pass' | 'fail';
   findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
+  snapshot?: ReviewSnapshot;
+  mode?: ReviewMode;
 }
 
 export interface FixResult {
@@ -179,15 +203,34 @@ export interface ImplementStepLoopOptions {
    * trailing review arbiter rules `finding_valid`.
    */
   bonusIteration?: boolean;
+  /**
+   * When true (default), iteration >= 2 scopes the reviewer to the diff
+   * since the previously reviewed commit for intermediate reviews.
+   * Set to false to disable delta-scoped re-review for intermediate passes.
+   * Initial full review and final full review are always mandatory and
+   * cannot be disabled (#723).
+   */
+  deltaScopedReReview?: boolean;
+}
+
+export interface ReviewState {
+  dirtyDimensions: Record<DimensionName, DimensionState>;
+  finalPairCandidateHead: string | undefined;
+  finalPairSnapshots: { spec: string | undefined; quality: string | undefined };
 }
 
 export interface ImplementStepLoopDeps {
   runImplement: (ctx: StepLoopContext, opts?: ImplementStepOptions) => Promise<ImplementResult>;
   runTypecheck: (ctx: StepLoopContext) => Promise<TypecheckResult>;
-  runSpecReview: (ctx: StepLoopContext, tcResult: TypecheckResult) => Promise<SpecReviewResult>;
+  runSpecReview: (
+    ctx: StepLoopContext,
+    tcResult: TypecheckResult,
+    scope: ReviewScopeOptions,
+  ) => Promise<SpecReviewResult>;
   runQualityReview: (
     ctx: StepLoopContext,
     tcResult: TypecheckResult,
+    scope: ReviewScopeOptions,
   ) => Promise<QualityReviewResult>;
   runFix: (ctx: StepLoopContext, opts: ImplementFixStepOptions) => Promise<FixResult>;
   runRevalidation?: (ctx: StepLoopContext) => Promise<RevalidationResult>;
@@ -246,6 +289,16 @@ export interface ImplementStepLoopDeps {
    * omitted, defaults to `{ endOnReview: true }`.
    */
   options?: ImplementStepLoopOptions;
+  /**
+   * Review state for dimension-level tracking (#723). Tracks dirty dimensions
+   * and final pair state. The loop reads and updates this object in-place.
+   */
+  reviewState?: ReviewState;
+  /**
+   * Port for persisting review attempts and dimension states to durable storage.
+   * When absent, review state is only kept in memory (in `reviewState`).
+   */
+  reviewStateRepository?: ReviewStateRepositoryPort;
 }
 
 export interface ImplementStepLoopInput {

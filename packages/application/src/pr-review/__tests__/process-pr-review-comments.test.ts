@@ -5,6 +5,7 @@ import {
   FakeGitPort,
   FakePrReviewRepository,
   FakeAgentPort,
+  FakeArtifactStore,
 } from '../../test-doubles/index.js';
 import type { AgentInvocationResult } from '../../ports/agent-invocation-types.js';
 import {
@@ -114,6 +115,7 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
   git.remoteRefs.set('origin/feat-x', 'abc123');
 
   let replyCounter = 0;
+  const artifactStore = new FakeArtifactStore();
   // Mirror production: the prompt is rendered per comment and the agent's
   // result.json carries that comment's id, so the extracted result's
   // commentId always matches the comment being processed.
@@ -123,6 +125,7 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
     git,
     agent,
     prReviewRepo: repo,
+    artifactStore,
     renderTaskPrompt: async ({ comment }) => {
       currentCommentId = comment.commentId;
       return '/tmp/prompt.md';
@@ -1672,6 +1675,7 @@ describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / sq
       resolveProfileForPhase: () => 'post-pr-review-profile' as never,
       idFactory: () => 'id-1',
       now: () => new Date('2026-06-04T00:10:00Z'),
+      artifactStore: new FakeArtifactStore(),
     };
 
     const uc = new ProcessPrReviewComments(deps);
@@ -2100,5 +2104,79 @@ describe('ProcessPrReviewComments - codeVerified retry behavior', () => {
     expect(result.blocked).toBe(1);
     expect(rollbackCalls).toHaveLength(1);
     expect(git.pushes).toHaveLength(0);
+  });
+});
+
+describe('ProcessPrReviewComments — retry diff generation', () => {
+  it('uses explicit commit SHAs for diff generation to avoid working-tree leaks and reverse diffs', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+    });
+    const buildResults = [{ passed: false, error: 'attempt 1 build failure' }, { passed: true }];
+    let buildIndex = 0;
+    const { deps, git } = makeDeps({
+      agent,
+      verifyBuildPasses: async () => {
+        const res = buildResults[buildIndex++];
+        return res ?? { passed: true };
+      },
+    });
+
+    await new ProcessPrReviewComments(deps).execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(git.diffCalls.length).toBeGreaterThanOrEqual(2);
+    expect(git.diffCalls[0]).toEqual({ cwd: '/work/tree', base: 'origin/HEAD', head: 'sha-2' });
+    expect(git.diffCalls[1].base).toBe('sha-6');
+    expect(git.diffCalls[1].head).toBe('sha-2');
+  });
+
+  it('blocks comment immediately if git.diff throws for completedHead retry', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+    });
+    const buildResults = [{ passed: false, error: 'attempt 1 build failure' }, { passed: true }];
+    let buildIndex = 0;
+    const { deps, git, repo } = makeDeps({
+      agent,
+      verifyBuildPasses: async () => {
+        const res = buildResults[buildIndex++];
+        return res ?? { passed: true };
+      },
+    });
+
+    let diffCallCount = 0;
+    git.diff = async (_cwd, _base, _head) => {
+      diffCallCount++;
+      if (diffCallCount > 1) {
+        throw new Error('git diff failed: completedHead commit not found');
+      }
+      return 'fake diff';
+    };
+
+    const out = await new ProcessPrReviewComments(deps).execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(out.outcome).toBe('PARTIAL_PROGRESS');
+    expect(out.blocked).toBe(1);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).toBe('blocked');
+    expect(comment?.blockedReason).toContain(
+      'Diff generation failed: git diff failed: completedHead commit not found',
+    );
   });
 });

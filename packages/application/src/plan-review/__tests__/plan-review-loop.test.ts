@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { RunId, PhaseName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
+import { FakeReviewStateRepository } from '../../test-doubles/fake-review-state-repository.js';
 import { PlanReviewLoop } from '../plan-review-loop.js';
 import type {
   PlanReviewLoopDeps,
@@ -126,9 +127,10 @@ describe('PlanReviewLoop', () => {
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
-    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
     expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
   });
 
   it('AC #5.3 — contradiction → arbiter → finding_invalid', async () => {
@@ -169,8 +171,8 @@ describe('PlanReviewLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 2 ? ('pass' as const) : ('p1_found' as const),
-          findings: reviewCalls === 2 ? [] : groundedP1Findings(),
+          verdict: reviewCalls >= 2 ? ('pass' as const) : ('p1_found' as const),
+          findings: reviewCalls >= 2 ? [] : groundedP1Findings(),
         };
       },
       runFix: async (_ctx: PlanReviewContext, opts: PlanFixOptions): Promise<PlanFixResult> => {
@@ -310,9 +312,11 @@ describe('PlanReviewLoop', () => {
     });
     // The trailing final review is a fresh full-plan review, NOT a
     // delta-scoped re-review (#716, design §4 Assumption 9) — its job is
-    // to catch anything missed by the iterative loop. So `runReview` is
-    // called with `undefined` opts, NOT `buildReviewStepOptions()`.
-    expect(reviewOptions[2]).toBeUndefined();
+    // to catch anything missed by the iterative loop. We check that it runs
+    // with mode final_full without prevFindings or recentFixCitations constraints.
+    expect(reviewOptions[2]).toEqual({
+      mode: 'final_full',
+    });
   });
 
   it('refreshes recentFixCitations from computeLastFixDiffCitations even when headBeforeFix is undefined', async () => {
@@ -329,8 +333,8 @@ describe('PlanReviewLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 2 ? ('pass' as const) : ('p1_found' as const),
-          findings: reviewCalls === 2 ? [] : groundedP1Findings(),
+          verdict: reviewCalls >= 2 ? ('pass' as const) : ('p1_found' as const),
+          findings: reviewCalls >= 2 ? [] : groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -373,9 +377,9 @@ describe('PlanReviewLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 2 ? ('pass' as const) : ('p1_found' as const),
+          verdict: reviewCalls >= 2 ? ('pass' as const) : ('p1_found' as const),
           findings:
-            reviewCalls === 2
+            reviewCalls >= 2
               ? []
               : [
                   {
@@ -831,17 +835,19 @@ describe('PlanReviewLoop', () => {
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
-    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[0]?.kind).toBe('deterministic_fix');
     expect(out.loop.iterations[0]?.reviewInvocationId).toBeUndefined();
     expect(out.loop.iterations[0]?.fixInvocationId).toBe('fix-1');
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
     expect(out.loop.iterations[1]?.kind).toBe('review');
     expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+    expect(out.loop.iterations[2]?.kind).toBe('review');
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
     expect(fixManifestMismatchSeen).toBe(
       'manifest tasks missing from plan.md prose: Task 4, Task 5, Task 6',
     );
-    expect(reviewCalls).toBe(1);
+    expect(reviewCalls).toBe(2);
     expect(fixCalls).toBe(1);
   });
 
@@ -941,11 +947,15 @@ describe('PlanReviewLoop', () => {
       },
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
-    expect(out.outcome).toBe('success');
+    // The delta pass converges only at maxIterations, leaving no budget for
+    // the mandatory final_full verification pass — success here would bypass
+    // the #716 final gates, so the loop escalates instead.
+    expect(out.outcome).toBe('needs_human_review');
     expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[0]?.kind).toBe('review');
     expect(out.loop.iterations[1]?.kind).toBe('deterministic_fix');
     expect(out.loop.iterations[2]?.kind).toBe('review');
+    expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
     expect(reviewCalls).toBe(2);
     expect(fixCalls).toBe(2);
   });
@@ -1027,7 +1037,7 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
     const { deps } = makeDeps({ runReview });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls[1]?.opts?.prevFindings).toEqual([
       {
         severity: 'P1',
@@ -1047,7 +1057,7 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls[1]?.opts).toBeUndefined();
   });
 
@@ -1082,8 +1092,9 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
     const { deps } = makeDeps({ runReview });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
-    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
   });
 
   it('AC #2 positive control — finding targeting recent-fix citation is eligible', async () => {
@@ -1115,7 +1126,7 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
       runReview,
       computeLastFixDiffCitations: () => ['plan.md:42'],
     });
-    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 4 });
     expect(out.outcome).toBe('success');
     expect(calls[1]?.opts?.prevFindings).toBeDefined();
     // The frozen finding is re-flagged with the same citation → eligible.
@@ -1177,5 +1188,119 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
     expect(calls[1]?.opts?.prevFindings).toEqual(
       frozen.map((f) => ({ ...f, disposition: 'still_open' })),
     );
+  });
+
+  it('artifact digest drift in final_full review escalates to human review even when verdict is pass', async () => {
+    let reviewCalls = 0;
+    const { deps } = makeDeps({
+      maxIterations: 1,
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        if (reviewCalls === 1) {
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'p1_found' as const,
+            findings: groundedP1Findings(),
+            snapshot: {
+              planMdDigest: 'digest-before-fix',
+              planMdPath: '/wt/plan.md',
+              capturedAt: '2026-07-08T00:00:00.000Z',
+            },
+          };
+        }
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+          findings: [],
+          snapshot: {
+            planMdDigest: 'digest-after-fix',
+            planMdPath: '/wt/plan.md',
+            capturedAt: '2026-07-08T00:00:00.000Z',
+          },
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+    });
+    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+  });
+
+  it('reviewStateRepository.appendAttempt is called for each review', async () => {
+    let reviewCalls = 0;
+    const fakeRepo = new FakeReviewStateRepository();
+    const { deps } = makeDeps({
+      reviewStateRepository: fakeRepo,
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 1 ? 'p1_found' : 'pass',
+          findings: reviewCalls === 1 ? groundedP1Findings() : [],
+          snapshot:
+            reviewCalls === 1
+              ? {
+                  planMdDigest: 'digest-1',
+                  planMdPath: '/wt/plan.md',
+                  capturedAt: '2026-07-08T00:00:00.000Z',
+                }
+              : undefined,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+    });
+    await new PlanReviewLoop(deps).execute(baseInput());
+    const attempts = fakeRepo.listAttempts('run-1', 'plan-review', 'plan-review');
+    expect(attempts).toHaveLength(3);
+    expect(attempts[0]?.verdict).toBe('p1_found');
+    expect(attempts[1]?.verdict).toBe('pass');
+    expect(attempts[2]?.verdict).toBe('pass');
+  });
+
+  it('reviewStateRepository.appendAttempt is called for each review including final_full', async () => {
+    let reviewCalls = 0;
+    const fakeRepo = new FakeReviewStateRepository();
+    const { deps } = makeDeps({
+      reviewStateRepository: fakeRepo,
+      maxIterations: 1,
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 1 ? 'p1_found' : 'pass',
+          findings: reviewCalls === 1 ? groundedP1Findings() : [],
+          snapshot:
+            reviewCalls === 1
+              ? {
+                  planMdDigest: 'digest-1',
+                  planMdPath: '/wt/plan.md',
+                  capturedAt: '2026-07-08T00:00:00.000Z',
+                }
+              : undefined,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+    });
+    await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+    const attempts = fakeRepo.listAttempts('run-1', 'plan-review', 'plan-review');
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]?.reviewMode).toBe('initial_full');
+    expect(attempts[1]?.reviewMode).toBe('final_full');
   });
 });

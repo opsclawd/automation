@@ -21,7 +21,12 @@ import type {
   ArbiterResult,
   ImplementResult,
   ImplementStepOptions,
+  ReviewMode,
+  DimensionName,
+  DimensionState,
+  ReviewScopeOptions,
 } from './types.js';
+import type { ReviewAttempt, ReviewDimensionState, ReviewSnapshot } from '../review-state/types.js';
 import { verifyFixCommit, type FixCommitVerification } from '../fix-commit-verifier.js';
 
 function normalizeMessage(message: string): string {
@@ -92,6 +97,100 @@ function normalizeTypecheckOutput(output: string): string {
     .toLowerCase();
 }
 
+function getDirtyDimensions(
+  dirtyDimensions: Record<DimensionName, DimensionState>,
+): DimensionName[] {
+  return (Object.entries(dirtyDimensions) as [DimensionName, DimensionState][])
+    .filter(([, state]) => state === 'dirty' || state === 'recurred')
+    .map(([dim]) => dim);
+}
+
+function areAllDimensionsClean(dirtyDimensions: Record<DimensionName, DimensionState>): boolean {
+  return Object.values(dirtyDimensions).every((state) => state === 'clean');
+}
+
+function markDimensionDirty(
+  dirtyDimensions: Record<DimensionName, DimensionState>,
+  dimension: DimensionName,
+  newState: DimensionState = 'dirty',
+): Record<DimensionName, DimensionState> {
+  return { ...dirtyDimensions, [dimension]: newState };
+}
+
+function markDimensionClean(
+  dirtyDimensions: Record<DimensionName, DimensionState>,
+  dimension: DimensionName,
+): Record<DimensionName, DimensionState> {
+  return { ...dirtyDimensions, [dimension]: 'clean' };
+}
+
+function getReviewMode(
+  iterationIndex: number,
+  isInFinalPair: boolean,
+  deltaScopedReReview: boolean,
+): ReviewMode {
+  if (isInFinalPair) return 'final_full';
+  if (iterationIndex === 1) return 'initial_full';
+  return deltaScopedReReview ? 'intermediate_delta' : 'initial_full';
+}
+
+function buildReviewSnapshot(identity: string): ReviewSnapshot {
+  return { kind: 'git', identity, capturedAt: new Date().toISOString() };
+}
+
+function buildReviewAttempt(params: {
+  attemptId: string;
+  runId: string;
+  reviewMode: ReviewMode;
+  dimension: DimensionName;
+  step: string;
+  snapshot?: { snapshot: string };
+  verdict?: string;
+  now: () => Date;
+}): ReviewAttempt {
+  const { attemptId, runId, reviewMode, dimension, step, snapshot, verdict, now } = params;
+  const result: ReviewAttempt = {
+    attemptId,
+    runId,
+    scope: 'implement',
+    step,
+    reviewMode,
+    dimension,
+    createdAt: now().toISOString(),
+    artifacts: [],
+  };
+  if (snapshot) {
+    result.snapshot = buildReviewSnapshot(snapshot.snapshot);
+  }
+  if (verdict) {
+    result.verdict = verdict;
+  }
+  return result;
+}
+
+function buildDimensionState(params: {
+  dimension: DimensionName;
+  snapshot?: { snapshot: string };
+  verdict?: string;
+  state: DimensionState;
+}): ReviewDimensionState {
+  const { dimension, snapshot, verdict, state } = params;
+  const result: ReviewDimensionState = {
+    dimension,
+    dirty: state === 'dirty' || state === 'recurred',
+    provisionallyClean: state === 'clean',
+    unresolvedRecords: [],
+    dispositionHistory: [],
+  };
+  if (snapshot) {
+    result.latestSnapshot = buildReviewSnapshot(snapshot.snapshot);
+  }
+  if (verdict) {
+    result.latestVerdict = verdict;
+  }
+  return result;
+}
+
 export class ImplementStepLoop {
   constructor(private readonly deps: ImplementStepLoopDeps) {}
 
@@ -135,6 +234,37 @@ export class ImplementStepLoop {
     let contradictionRetriedThisStep = false;
     let arbiterInvokedThisStep = false;
     let pendingReconciliationContext: string | undefined;
+
+    // --- DIMENSION STATE TRACKING (#723) ---
+    // Initialize dirty dimensions: both start dirty for initial_full pass
+    let dirtyDimensions: Record<DimensionName, DimensionState> = {
+      spec: 'dirty',
+      quality: 'dirty',
+    };
+    let isInFinalPair = false;
+    let finalPairCandidateHead: string | undefined;
+    let finalPairSpecSnapshot: string | undefined;
+    let finalPairQualitySnapshot: string | undefined;
+
+    // Initialize or use provided reviewState
+    if (deps.reviewState) {
+      dirtyDimensions = { ...deps.reviewState.dirtyDimensions };
+      finalPairCandidateHead = deps.reviewState.finalPairCandidateHead;
+      finalPairSpecSnapshot = deps.reviewState.finalPairSnapshots.spec;
+      finalPairQualitySnapshot = deps.reviewState.finalPairSnapshots.quality;
+    }
+
+    // Persist review state helper
+    const persistReviewState = (): void => {
+      if (deps.reviewState) {
+        deps.reviewState.dirtyDimensions = { ...dirtyDimensions };
+        deps.reviewState.finalPairCandidateHead = finalPairCandidateHead;
+        deps.reviewState.finalPairSnapshots = {
+          spec: finalPairSpecSnapshot,
+          quality: finalPairQualitySnapshot,
+        };
+      }
+    };
 
     const baseCtx: StepLoopContext = {
       loopId: loop.id,
@@ -404,6 +534,7 @@ export class ImplementStepLoop {
     while (canStartReviewCycle(loop)) {
       const iterationIndex = loop.iterations.length + 1;
       const isTrailingReview = iterationIndex > originalMax;
+      const startedInFinalPair = isInFinalPair;
       const ctx: StepLoopContext = { ...baseCtx, iterationIndex };
 
       // --- TRAILING RE-REVIEW STARTED (#680) ---
@@ -531,24 +662,52 @@ export class ImplementStepLoop {
         index: iterationIndex,
       });
 
+      // --- DIMENSION SCOPE COMPUTATION (#723) ---
+      const deltaScopedReReview = opts.deltaScopedReReview ?? true;
+      const reviewMode = getReviewMode(iterationIndex, isInFinalPair, deltaScopedReReview);
+      const dirtyDims = getDirtyDimensions(dirtyDimensions);
+      const specDimensions =
+        dirtyDims.includes('spec') || isInFinalPair ? (['spec'] as DimensionName[]) : undefined;
+      const qualityDimensions =
+        dirtyDims.includes('quality') || isInFinalPair
+          ? (['quality'] as DimensionName[])
+          : undefined;
+      const specScope: ReviewScopeOptions =
+        specDimensions !== undefined
+          ? { mode: reviewMode, dimensions: specDimensions }
+          : { mode: reviewMode };
+      const qualityScope: ReviewScopeOptions =
+        qualityDimensions !== undefined
+          ? { mode: reviewMode, dimensions: qualityDimensions }
+          : { mode: reviewMode };
+
       // --- SPEC-REVIEW ---
       const MAX_SPEC_REVIEW_ATTEMPTS = 3;
       let specReview: SpecReviewResult;
       let specReviewAttempts = 0;
       const specReviewAttemptInvocationIds: string[] = [];
+      const shouldReviewSpec = dirtyDims.includes('spec') || isInFinalPair;
       do {
         specReviewAttempts += 1;
-        specReview = await deps.runSpecReview(
-          {
-            ...ctx,
-            metadata: {
-              implementation_task_number: input.stepIndex,
-              iteration: iterationIndex,
-              invocation_type: specReviewAttempts === 1 ? 'initial' : 'retry',
-            },
-          },
-          tcResult,
-        );
+        specReview = shouldReviewSpec
+          ? await deps.runSpecReview(
+              {
+                ...ctx,
+                metadata: {
+                  implementation_task_number: input.stepIndex,
+                  iteration: iterationIndex,
+                  invocation_type: specReviewAttempts === 1 ? 'initial' : 'retry',
+                },
+              },
+              tcResult,
+              specScope,
+            )
+          : {
+              invocationId: '',
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              snapshot: { snapshot: finalPairSpecSnapshot ?? '' },
+            };
         specReviewAttemptInvocationIds.push(specReview.invocationId);
         if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
           break;
@@ -569,6 +728,47 @@ export class ImplementStepLoop {
           );
         }
       } while (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS);
+
+      // --- UPDATE SPEC DIMENSION STATE (#723) ---
+      if (shouldReviewSpec) {
+        if (specReview.verdict === 'pass') {
+          dirtyDimensions = markDimensionClean(dirtyDimensions, 'spec');
+        } else if (specReview.verdict === 'fail') {
+          isInFinalPair = false;
+          const prevState = dirtyDimensions.spec;
+          dirtyDimensions = markDimensionDirty(
+            dirtyDimensions,
+            'spec',
+            prevState === 'clean' ? 'dirty' : 'recurred',
+          );
+        }
+        persistReviewState();
+        if (deps.reviewStateRepository && specReview.agentOutcome === 'success') {
+          const snapshot = specReview.snapshot as { snapshot: string } | undefined;
+          const attemptArgs = {
+            attemptId: specReview.invocationId,
+            runId: input.runId as string,
+            reviewMode,
+            dimension: 'spec' as DimensionName,
+            step: String(input.stepIndex),
+            now: deps.now,
+            ...(snapshot ? { snapshot } : {}),
+            ...(specReview.verdict ? { verdict: specReview.verdict } : {}),
+          };
+          deps.reviewStateRepository.appendAttempt(buildReviewAttempt(attemptArgs));
+          deps.reviewStateRepository.upsertDimensionState(
+            input.runId as string,
+            'implement',
+            String(input.stepIndex),
+            buildDimensionState({
+              dimension: 'spec',
+              state: dirtyDimensions.spec,
+              ...(snapshot ? { snapshot } : {}),
+              ...(specReview.verdict ? { verdict: specReview.verdict } : {}),
+            }),
+          );
+        }
+      }
 
       this.emit(
         input,
@@ -600,19 +800,28 @@ export class ImplementStepLoop {
       let qualityReview: QualityReviewResult;
       let qualityReviewAttempts = 0;
       const qualityReviewAttemptInvocationIds: string[] = [];
+      const shouldReviewQuality = dirtyDims.includes('quality') || isInFinalPair;
       do {
         qualityReviewAttempts += 1;
-        qualityReview = await deps.runQualityReview(
-          {
-            ...ctx,
-            metadata: {
-              implementation_task_number: input.stepIndex,
-              iteration: iterationIndex,
-              invocation_type: qualityReviewAttempts === 1 ? 'initial' : 'retry',
-            },
-          },
-          tcResult,
-        );
+        qualityReview = shouldReviewQuality
+          ? await deps.runQualityReview(
+              {
+                ...ctx,
+                metadata: {
+                  implementation_task_number: input.stepIndex,
+                  iteration: iterationIndex,
+                  invocation_type: qualityReviewAttempts === 1 ? 'initial' : 'retry',
+                },
+              },
+              tcResult,
+              qualityScope,
+            )
+          : {
+              invocationId: '',
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              snapshot: { snapshot: finalPairQualitySnapshot ?? '' },
+            };
         qualityReviewAttemptInvocationIds.push(qualityReview.invocationId);
         if (qualityReview.agentOutcome === 'success' && qualityReview.verdict !== undefined) {
           break;
@@ -633,6 +842,47 @@ export class ImplementStepLoop {
           );
         }
       } while (qualityReviewAttempts < MAX_QUALITY_REVIEW_ATTEMPTS);
+
+      // --- UPDATE QUALITY DIMENSION STATE (#723) ---
+      if (shouldReviewQuality) {
+        if (qualityReview.verdict === 'pass') {
+          dirtyDimensions = markDimensionClean(dirtyDimensions, 'quality');
+        } else if (qualityReview.verdict === 'fail') {
+          isInFinalPair = false;
+          const prevState = dirtyDimensions.quality;
+          dirtyDimensions = markDimensionDirty(
+            dirtyDimensions,
+            'quality',
+            prevState === 'clean' ? 'dirty' : 'recurred',
+          );
+        }
+        persistReviewState();
+        if (deps.reviewStateRepository && qualityReview.agentOutcome === 'success') {
+          const snapshot = qualityReview.snapshot as { snapshot: string } | undefined;
+          const attemptArgs = {
+            attemptId: qualityReview.invocationId,
+            runId: input.runId as string,
+            reviewMode,
+            dimension: 'quality' as DimensionName,
+            step: String(input.stepIndex),
+            now: deps.now,
+            ...(snapshot ? { snapshot } : {}),
+            ...(qualityReview.verdict ? { verdict: qualityReview.verdict } : {}),
+          };
+          deps.reviewStateRepository.appendAttempt(buildReviewAttempt(attemptArgs));
+          deps.reviewStateRepository.upsertDimensionState(
+            input.runId as string,
+            'implement',
+            String(input.stepIndex),
+            buildDimensionState({
+              dimension: 'quality',
+              state: dirtyDimensions.quality,
+              ...(snapshot ? { snapshot } : {}),
+              ...(qualityReview.verdict ? { verdict: qualityReview.verdict } : {}),
+            }),
+          );
+        }
+      }
 
       this.emit(
         input,
@@ -655,7 +905,126 @@ export class ImplementStepLoop {
         return { outcome: 'failed', loop };
       }
 
+      // --- FINAL PAIR HEAD CHECK (#723) ---
+      // Always check HEAD when in final pair mode, regardless of dimension state.
+      // This catches HEAD changes even when a reviewer has failed.
+      if (startedInFinalPair) {
+        const currentHead = await deps.git?.headCommitSha(ctx.cwd);
+        if (currentHead !== finalPairCandidateHead) {
+          this.emit(
+            input,
+            'loop.final_pair.head_changed',
+            'warn',
+            `final pair HEAD mismatch: expected ${finalPairCandidateHead}, got ${currentHead}`,
+            { expected: finalPairCandidateHead, actual: currentHead, iterationIndex },
+          );
+          // HEAD changed - update candidate head and clear snapshots to start new final pair
+          finalPairCandidateHead = currentHead;
+          finalPairSpecSnapshot = undefined;
+          finalPairQualitySnapshot = undefined;
+          persistReviewState();
+          loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+          deps.loops.update(loop);
+          await appendHistory(
+            buildHistoryEntry(
+              iterationIndex,
+              specReview,
+              qualityReview,
+              undefined,
+              undefined,
+              'unresolved',
+            ),
+          );
+          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+          continue;
+        }
+      }
+
+      // --- FINAL PAIR STABILITY CHECK (#723) ---
+      // When both dimensions are clean and we're in final pair mode,
+      // verify snapshots match for stability confirmation
+      if (areAllDimensionsClean(dirtyDimensions) && isInFinalPair) {
+        const specSnapshot = specReview.snapshot?.snapshot ?? '';
+        const qualitySnapshot = qualityReview.snapshot?.snapshot ?? '';
+        const snapshotsMatch =
+          specSnapshot === finalPairSpecSnapshot && qualitySnapshot === finalPairQualitySnapshot;
+        if (snapshotsMatch) {
+          const currentHead = await deps.git?.headCommitSha(ctx.cwd);
+          this.emit(
+            input,
+            'loop.final_pair.confirmed',
+            'info',
+            `final pair confirmed: HEAD and snapshots stable`,
+            { head: currentHead, iterationIndex },
+          );
+          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(loop);
+          await appendHistory(
+            buildHistoryEntry(
+              iterationIndex,
+              specReview,
+              qualityReview,
+              undefined,
+              undefined,
+              'resolved',
+            ),
+          );
+          this.emitIterationCompleted(input, iterationIndex, 'resolved');
+          return { outcome: 'success', loop };
+        }
+        // Snapshots changed - continue to capture new baseline
+        finalPairSpecSnapshot = specSnapshot;
+        finalPairQualitySnapshot = qualitySnapshot;
+        persistReviewState();
+        loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+        deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            qualityReview,
+            undefined,
+            undefined,
+            'unresolved',
+          ),
+        );
+        this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        continue;
+      }
+
       if (specReview.verdict === 'pass' && qualityReview.verdict === 'pass') {
+        // All dimensions clean - enter final pair tracking on next iteration
+        if (areAllDimensionsClean(dirtyDimensions) && !isInFinalPair) {
+          const head = await deps.git?.headCommitSha(ctx.cwd);
+          if (head) {
+            isInFinalPair = true;
+            finalPairCandidateHead = head;
+            finalPairSpecSnapshot = specReview.snapshot?.snapshot ?? '';
+            finalPairQualitySnapshot = qualityReview.snapshot?.snapshot ?? '';
+            this.emit(
+              input,
+              'loop.final_pair.candidate',
+              'info',
+              `entering final pair candidate state`,
+              { head, iterationIndex },
+            );
+            persistReviewState();
+            loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+            deps.loops.update(loop);
+            await appendHistory(
+              buildHistoryEntry(
+                iterationIndex,
+                specReview,
+                qualityReview,
+                undefined,
+                undefined,
+                'unresolved',
+              ),
+            );
+            this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+            continue;
+          }
+        }
         loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
         deps.loops.update(loop);
         await appendHistory(
@@ -978,9 +1347,15 @@ export class ImplementStepLoop {
         if (!contradictionRetriedThisStep) {
           // --- 1-SHOT RECONCILIATION RE-RUN (#45 port) ---
           contradictionRetriedThisStep = true;
+          const contradictionScope: ReviewScopeOptions = {
+            mode: 'intermediate_delta',
+          };
           let rerunSpec = specReview;
           if (specReview.verdict === 'fail') {
-            rerunSpec = await deps.runSpecReview(ctx, tcResult);
+            rerunSpec = await deps.runSpecReview(ctx, tcResult, {
+              ...contradictionScope,
+              dimensions: ['spec'],
+            });
             this.emit(
               input,
               'step.spec-review.attempts',
@@ -995,7 +1370,10 @@ export class ImplementStepLoop {
           }
           let rerunQuality = qualityReview;
           if (qualityReview.verdict === 'fail') {
-            rerunQuality = await deps.runQualityReview(ctx, tcResult);
+            rerunQuality = await deps.runQualityReview(ctx, tcResult, {
+              ...contradictionScope,
+              dimensions: ['quality'],
+            });
             this.emit(
               input,
               'step.quality-review.attempts',

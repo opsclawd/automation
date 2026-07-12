@@ -9,42 +9,45 @@ const ctx = {
 const typecheckSection =
   "## TYPECHECK RESULT (do not re-run — read-only phase)\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return QUALITY_FAIL for it.";
 
+const makeOptions = (
+  overrides?: Partial<Parameters<typeof buildQualityReviewPrompt>[0]['scope']>,
+) => ({
+  ctx,
+  typecheckSection,
+  scope: {
+    mode: 'initial_full' as const,
+    dimensions: ['quality'] as Array<'spec' | 'quality'>,
+    ...overrides,
+  },
+});
+
 describe('buildQualityReviewPrompt', () => {
   it('includes a CONTEXT section with Working directory anchored to ctx.cwd', () => {
-    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    const prompt = buildQualityReviewPrompt(makeOptions());
     expect(prompt).toContain('## CONTEXT');
     expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain(`Working directory: ${ctx.cwd}`);
   });
 
   it('output section uses absolute path for result.json', () => {
-    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    const prompt = buildQualityReviewPrompt(makeOptions());
     expect(prompt).toContain(`Write ${ctx.cwd}/result.json`);
     expect(prompt).not.toContain('Write result.json');
   });
 
   it('includes negative constraint forbidding relative paths', () => {
-    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    const prompt = buildQualityReviewPrompt(makeOptions());
     expect(prompt).toContain('Do NOT write to a relative path');
   });
 
   it('instructs the agent to use its file-write tool, not print the JSON in chat', () => {
-    // Weaker models (e.g. gpt-5.4-mini) sometimes answer with the result JSON
-    // as their final chat message instead of writing result.json to disk,
-    // triggering a missing_required_artifact fallback. Make the requirement explicit.
-    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    const prompt = buildQualityReviewPrompt(makeOptions());
     expect(prompt).toContain('You MUST use your file-write tool');
     expect(prompt).toContain('Printing the');
   });
 
   it('permits read-only inspection commands instead of forbidding all shell use', () => {
-    // A weaker model (e.g. gpt-5.4-mini on codex) with no dedicated file-read
-    // tool has no way to comply with a blanket "no shell commands" rule —
-    // codex's only real file-read mechanism is `cat`. Confirmed live: this
-    // caused a quality-review invocation to burn ~1M tokens flailing between
-    // web search and other tools rather than just reading the diff, then
-    // fail without ever writing result.json.
-    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    const prompt = buildQualityReviewPrompt(makeOptions());
     expect(prompt).toContain('HARD CONSTRAINT — READ-ONLY REVIEW');
     expect(prompt).toContain('MUST NOT run tests, run builds');
     expect(prompt).toContain('Read-only shell commands for');
@@ -52,18 +55,18 @@ describe('buildQualityReviewPrompt', () => {
   });
 
   it('includes the typecheck section', () => {
-    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    const prompt = buildQualityReviewPrompt(makeOptions());
     expect(prompt).toContain('## TYPECHECK RESULT');
     expect(prompt).toContain('Result: PASS');
   });
 
   it('includes the step index and title in the task header', () => {
-    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    const prompt = buildQualityReviewPrompt(makeOptions());
     expect(prompt).toContain('Review implementation quality for step 3: Add pagination');
   });
 
   it('output section defines the findings array contract', () => {
-    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    const prompt = buildQualityReviewPrompt(makeOptions());
     expect(prompt).toContain('"findings"');
     expect(prompt).toContain('"severity"');
     expect(prompt).toContain('"file": "<optional repo-relative path>"');
@@ -72,7 +75,53 @@ describe('buildQualityReviewPrompt', () => {
   });
 
   it('output section forbids omitting findings on fail', () => {
-    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    const prompt = buildQualityReviewPrompt(makeOptions());
     expect(prompt).toContain('Do NOT omit `findings` on "fail"');
+  });
+
+  it('renders mode as INITIAL FULL for initial_full mode', () => {
+    const prompt = buildQualityReviewPrompt(makeOptions({ mode: 'initial_full' }));
+    expect(prompt).toContain('## REVIEW MODE: INITIAL FULL');
+  });
+
+  it('renders mode as FINAL FULL for final_full mode', () => {
+    const prompt = buildQualityReviewPrompt(makeOptions({ mode: 'final_full' }));
+    expect(prompt).toContain('## REVIEW MODE: FINAL FULL');
+  });
+
+  it('renders delta mode with diff command for intermediate_delta', () => {
+    const prompt = buildQualityReviewPrompt(
+      makeOptions({
+        mode: 'intermediate_delta',
+        baseIdentity: 'abc123',
+        snapshotIdentity: 'def456',
+      }),
+    );
+    expect(prompt).toContain('## REVIEW MODE: DELTA (intermediate)');
+    expect(prompt).toContain('git diff abc123..def456');
+  });
+
+  it('renders unresolved findings for intermediate_delta', () => {
+    const prompt = buildQualityReviewPrompt(
+      makeOptions({
+        mode: 'intermediate_delta',
+        unresolvedFindings: [
+          { fingerprint: 'fp1', severity: 'P2', summary: 'Memory leak in cache' },
+        ],
+      }),
+    );
+    expect(prompt).toContain('## UNRESOLVED FINDINGS (from prior review)');
+    expect(prompt).toContain('Memory leak in cache');
+  });
+
+  it('renders prior dispositions for intermediate_delta', () => {
+    const prompt = buildQualityReviewPrompt(
+      makeOptions({
+        mode: 'intermediate_delta',
+        dispositions: [{ fingerprint: 'fp1', disposition: 'rebutted' }],
+      }),
+    );
+    expect(prompt).toContain('## PRIOR DISPOSITIONS');
+    expect(prompt).toContain('fp1: rebutted');
   });
 });

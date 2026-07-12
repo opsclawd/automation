@@ -3,13 +3,14 @@ import { ArtifactNotFoundError, WORKSPACE_CONSTRAINTS } from '@ai-sdlc/applicati
 import type {
   PlanReviewFinding,
   PlanReviewStepOptions,
+  PlanReviewSnapshot,
   EvidenceResolver,
   ArtifactStore,
 } from '@ai-sdlc/application';
 import { parseTaskManifest } from '@ai-sdlc/application';
 
 export { parsePlanReviewFindings } from '@ai-sdlc/application/plan-review/parse-plan-review-findings';
-export type { PlanReviewFinding, PlanReviewStepOptions, EvidenceResolver };
+export type { PlanReviewFinding, PlanReviewStepOptions, PlanReviewSnapshot, EvidenceResolver };
 
 export const PLAN_REVIEW_FINDINGS_ARTIFACT = 'plan-review-findings.md';
 export const PLAN_FIX_RESULT_ARTIFACT = 'plan-fix-result.json';
@@ -216,21 +217,65 @@ export function buildPlanReviewReviewPrompt(
 
 /**
  * Render the SCOPE + DISPOSITION GUIDANCE block for the plan-review
- * reviewer's iteration >= 2 prompt (#716). This block is APPENDED to the
- * base prompt rendered from `prompts/plan-review/plan-review.md`; it is
- * NEVER a replacement for the base prompt. The base prompt already
- * includes `plan.md`/`design.md`/`task-manifest.json` artifact references
- * and the WORKSPACE_CONSTRAINTS block — substituting it would discard
- * those and break the reviewer's ability to evaluate the plan itself.
+ * reviewer (#716, #723). This block is APPENDED to the base prompt
+ * rendered from `prompts/plan-review/plan-review.md`; it is NEVER a
+ * replacement for the base prompt. The base prompt already includes
+ * `plan.md`/`design.md`/`task-manifest.json` artifact references and
+ * the WORKSPACE_CONSTRAINTS block — substituting it would discard those
+ * and break the reviewer's ability to evaluate the plan itself.
+ *
+ * Mode-specific behavior (#723):
+ *   - `initial_full`: no scope block (first discovery pass)
+ *   - `intermediate_delta`: scoped to frozen findings + recent-fix citations
+ *   - `final_full`: full review against snapshot; no recent-fix citation filter
  */
 export function buildPlanReviewReviewScopeBlock(opts?: PlanReviewStepOptions): string {
   if (opts === undefined) return '';
+
+  // final_full mode: render a full-review scope block with snapshot context.
+  if (opts.mode === 'final_full') {
+    const sections: string[] = [];
+    sections.push(
+      '## REVIEW MODE: FINAL FULL',
+      '',
+      'This is a final full review after delta convergence. Inspect the complete',
+      'plan scope without any delta-scoped restrictions.',
+      '',
+    );
+    if (opts.snapshot) {
+      sections.push(
+        '### ARTIFACT SNAPSHOT',
+        `plan.md digest: ${opts.snapshot.planMdDigest}`,
+        `manifest digest: ${opts.snapshot.manifestDigest ?? '(none)'}`,
+        `design digest: ${opts.snapshot.designDigest ?? '(none)'}`,
+        `captured at: ${opts.snapshot.capturedAt}`,
+        '',
+      );
+    }
+    sections.push(
+      '## SCOPE',
+      'Full plan review: all findings are eligible, regardless of prior frozen set',
+      'or recent-fix citations. The reviewer should re-check the complete plan',
+      'and verify manifest synchronization.',
+      '',
+    );
+    return sections.join('\n');
+  }
+
+  // initial_full mode: no scope block needed.
+  if (opts.mode === 'initial_full') {
+    return '';
+  }
+
+  // intermediate_delta mode: render delta-scoped block.
   const prevFindings = opts.prevFindings ?? [];
   const recentFixCitations = opts.recentFixCitations ?? [];
   const sections: string[] = [];
   const hasNoThreadedInputs = prevFindings.length === 0 && recentFixCitations.length === 0;
 
   sections.push(
+    '## REVIEW MODE: INTERMEDIATE DELTA',
+    '',
     '## SCOPE',
     'You are reviewing changes within an automated plan-review/fix loop.',
     'Your review is scoped to:',

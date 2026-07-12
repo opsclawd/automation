@@ -10,6 +10,7 @@ import {
   parseSeverity,
   CommentStateError,
 } from '../pr-review.js';
+import type { PrReviewCommentAttempt } from '../pr-review.js';
 
 const base = () =>
   createPrReviewComment({
@@ -248,5 +249,67 @@ describe('PrReviewComment state machine', () => {
     // by a failed markProcessed call.
     expect(replied.state).toBe('replied');
     expect(replied.buildVerified).toBe(false);
+  });
+});
+
+describe('PrReviewCommentAttempt', () => {
+  const runId = RunId('11111111-1111-1111-1111-111111111111');
+
+  it('can be constructed with all required fields', () => {
+    const attempt: PrReviewCommentAttempt = {
+      attemptId: 'attempt-1',
+      runId,
+      commentId: 100,
+      retryNumber: 0,
+      startHead: 'abc123',
+      reviewMode: 'post-fix',
+      promptPath: '/prompts/review-100.md',
+      resultArtifactPath: '/artifacts/result-100.md',
+      action: 'review',
+      createdAt: new Date('2026-07-12T00:00:00Z'),
+    };
+    expect(attempt.attemptId).toBe('attempt-1');
+    expect(attempt.runId).toBe(runId);
+    expect(attempt.retryNumber).toBe(0);
+    expect(attempt.startHead).toBe('abc123');
+    expect(attempt.disposition).toBeUndefined();
+  });
+
+  it('can be constructed with optional fields', () => {
+    const attempt: PrReviewCommentAttempt = {
+      attemptId: 'attempt-2',
+      runId,
+      commentId: 100,
+      retryNumber: 1,
+      startHead: 'abc123',
+      completedHead: 'def456',
+      reviewMode: 'post-fix',
+      promptPath: '/prompts/review-100.md',
+      resultArtifactPath: '/artifacts/result-100.md',
+      action: 'verify',
+      verifierFeedback: 'commit verified',
+      buildFeedback: 'build passed',
+      disposition: 'success',
+      createdAt: new Date('2026-07-12T00:01:00Z'),
+    };
+    expect(attempt.completedHead).toBe('def456');
+    expect(attempt.verifierFeedback).toBe('commit verified');
+    expect(attempt.buildFeedback).toBe('build passed');
+    expect(attempt.disposition).toBe('success');
+  });
+
+  it('attempts field on PrReviewComment is a number (lifecycle summary), not an audit log', () => {
+    const c = createPrReviewComment({
+      runId,
+      prNumber: 42,
+      commentId: 9001,
+      path: 'src/a.ts',
+      line: 10,
+      reviewer: 'octocat',
+      body: 'please fix',
+      now: new Date('2026-06-04T00:00:00Z'),
+    });
+    expect(typeof c.attempts).toBe('number');
+    expect(c.attempts).toBe(0);
   });
 });

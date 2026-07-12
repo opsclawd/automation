@@ -5,6 +5,14 @@ import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { FindingEvidenceInspectorPort } from '../ports/finding-evidence-inspector-port.js';
 import type { ArtifactStore } from '../ports.js';
 import type { GitPort } from '../ports/git-port.js';
+import type {
+  ReviewMode,
+  ReviewSnapshot,
+  ReviewFindingRecord,
+  DispositionHistoryEntry,
+  ReviewStateRepositoryPort,
+} from '../review-state/types.js';
+import type { ArbiterResult } from '../results/schemas/arbiter.js';
 
 export interface StepContext {
   loopId: string;
@@ -13,6 +21,7 @@ export interface StepContext {
   repoId: string;
   cwd: string;
   iterationIndex: number; // 1-based
+  metadata?: Record<string, unknown>;
 }
 
 export interface ReviewStepResult {
@@ -33,6 +42,9 @@ export interface ReviewStepResult {
    * Undefined on iteration 1 (the reviewer sees the whole feature diff).
    */
   reviewedCommitSha?: string;
+  snapshot?: ReviewSnapshot;
+  metadata?: Record<string, unknown>;
+  mode?: ReviewMode;
 }
 
 export interface FixStepResult {
@@ -47,6 +59,7 @@ export interface FixStepResult {
    * when the rebuttal is accepted.
    */
   rebuttal?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RevalidationResult {
@@ -148,6 +161,12 @@ export interface ReviewFixLoopDeps {
    * optional so test doubles can omit it.
    */
   git?: GitPort;
+  reviewStateRepository?: ReviewStateRepositoryPort;
+  runArbiter?: (
+    ctx: StepContext,
+    reviewResult: ReviewStepResult,
+    fixResult: FixStepResult,
+  ) => Promise<ArbiterResult>;
 }
 
 export type ReviewLoopHistoryAudience = 'reviewer' | 'fixer';
@@ -194,6 +213,9 @@ export interface ReviewStepOptions {
    * `git diff <prevReviewedCommitSha>..HEAD`. Undefined on iteration 1.
    */
   prevReviewedCommitSha?: string;
+  mode?: ReviewMode;
+  unresolvedRecords?: ReviewFindingRecord[];
+  dispositionHistory?: DispositionHistoryEntry[];
 }
 
 export interface ReviewFixLoopInput {

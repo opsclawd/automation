@@ -1,4 +1,10 @@
-import { type ArchitectPlan, WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
+import {
+  type ArchitectPlan,
+  WORKSPACE_CONSTRAINTS,
+  type ReviewMode,
+  type ReviewFindingRecord,
+  type DispositionHistoryEntry,
+} from '@ai-sdlc/application';
 
 export interface BuildReviewPromptInput {
   cwd: string;
@@ -13,6 +19,10 @@ export interface BuildReviewPromptInput {
    * settled code (#627).
    */
   prevReviewedCommitSha?: string | undefined;
+  mode?: ReviewMode | undefined;
+  unresolvedRecords?: ReviewFindingRecord[] | undefined;
+  dispositionHistory?: DispositionHistoryEntry[] | undefined;
+  deterministicDiagnostics?: string | undefined;
 }
 
 export interface BuildFixPromptInput {
@@ -23,6 +33,7 @@ export interface BuildFixPromptInput {
   useFallback: boolean;
   extraPromptSections?: string[] | undefined;
   deterministicDiagnostic?: string | undefined;
+  reconciliationContext?: string | undefined;
 }
 
 export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): string {
@@ -63,7 +74,8 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
     '',
   ];
 
-  if (input.gateFailureOutput) {
+  const diag = input.gateFailureOutput || input.deterministicDiagnostics;
+  if (diag) {
     sections.push(
       '## BUILD/LINT FAILURE',
       'The orchestrator detected mechanical errors in the fixer commit before this review.',
@@ -71,12 +83,47 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
       '',
       'Errors:',
       '```',
-      input.gateFailureOutput,
+      diag,
       '```',
       '',
       'Surface these errors as HIGH severity findings and do NOT pass this review.',
       '',
     );
+  }
+
+  if (input.mode === 'integration_full' || input.mode === 'intermediate_delta') {
+    sections.push(
+      '## INTEGRATION MODE',
+      `Review Mode: ${input.mode}`,
+      '',
+      'You are performing a whole-PR integration review. Prioritize integration concerns:',
+      '- Cross-task wiring issues',
+      '- Composition-root omissions',
+      '- Incompatible abstractions',
+      '- State-machine paths spanning components',
+      '- Migrations and compatibility',
+      '- Conflicting task commits',
+      '- Issue acceptance criteria',
+      '',
+      'Do NOT re-raise settled local task findings unless you name new integration evidence and the relevant snapshot/delta.',
+      '',
+    );
+    if (input.unresolvedRecords && input.unresolvedRecords.length > 0) {
+      sections.push('### UNRESOLVED INTEGRATION FINDINGS');
+      for (const rec of input.unresolvedRecords) {
+        sections.push(`- [${rec.severity}] ${rec.summary} (Fingerprint: ${rec.fingerprint})`);
+      }
+      sections.push('');
+    }
+    if (input.dispositionHistory && input.dispositionHistory.length > 0) {
+      sections.push('### COMPACT FINDING DISPOSITIONS');
+      for (const disp of input.dispositionHistory) {
+        sections.push(
+          `- Fingerprint: ${disp.fingerprint} -> Disposition: ${disp.disposition} (Changed: ${disp.changedAt})`,
+        );
+      }
+      sections.push('');
+    }
   }
 
   if (input.historyContext) {
@@ -148,6 +195,17 @@ export function buildReviewFixFixPrompt(input: BuildFixPromptInput): string {
     );
   }
 
+  if (input.reconciliationContext) {
+    sections.push(
+      '## RECONCILIATION CONTEXT',
+      'The orchestrator escalated a review/fix contradiction to an arbiter, which ruled:',
+      '```',
+      input.reconciliationContext,
+      '```',
+      '',
+    );
+  }
+
   sections.push(
     '## TASK',
     'Read the code review findings.',
@@ -214,6 +272,102 @@ export function buildReviewFixFixPrompt(input: BuildFixPromptInput): string {
   if (input.extraPromptSections && input.extraPromptSections.length > 0) {
     sections.push(...input.extraPromptSections);
   }
+
+  return sections.join('\n');
+}
+
+export interface BuildWholePrArbiterPromptInput {
+  cwd: string;
+  repoId: string;
+  disputedFindings: Array<{
+    fingerprint: string;
+    severity: string;
+    summary: string;
+  }>;
+  dispositionHistory: Array<{
+    fingerprint: string;
+    disposition: string;
+    changedAt: string;
+    reason?: string;
+  }>;
+  relevantExcerpts: string[];
+  fixDelta: string;
+  fixRebuttal: string;
+  deterministicDiagnostics?: string;
+}
+
+export function buildWholePrArbiterPrompt(input: BuildWholePrArbiterPromptInput): string {
+  const sections: string[] = [
+    'You are arbitrating a contradiction in a whole-PR integration review.',
+    '',
+    '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
+    `Working directory: ${input.cwd}`,
+    `Repository: ${input.repoId}`,
+    '',
+    '## DISPUTED INTEGRATION FINDINGS',
+  ];
+
+  for (const f of input.disputedFindings) {
+    sections.push(`- [${f.severity}] ${f.summary} (Fingerprint: ${f.fingerprint})`);
+  }
+  sections.push('', '## DISPOSITION HISTORY');
+
+  if (input.dispositionHistory.length > 0) {
+    for (const h of input.dispositionHistory) {
+      sections.push(`- Disposition: ${h.disposition} (Changed: ${h.changedAt})`);
+      if (h.reason) {
+        sections.push(`  Reason: ${h.reason}`);
+      }
+    }
+  } else {
+    sections.push('No prior disposition history.');
+  }
+
+  sections.push(
+    '',
+    '## FIXER REBUTTAL',
+    '```',
+    input.fixRebuttal || '(empty rebuttal)',
+    '```',
+    '',
+    '## RELEVANT EXCERPTS',
+  );
+
+  if (input.relevantExcerpts.length > 0) {
+    for (const exc of input.relevantExcerpts) {
+      sections.push('```', exc, '```');
+    }
+  } else {
+    sections.push('No relevant excerpts.');
+  }
+
+  sections.push('', '## FIX DELTA', '```diff', input.fixDelta || '(no delta)', '```');
+
+  if (input.deterministicDiagnostics) {
+    sections.push('', '## DETERMINISTIC DIAGNOSTICS', '```', input.deterministicDiagnostics, '```');
+  }
+
+  sections.push(
+    '',
+    '## TASK',
+    'Determine if the disputed integration findings are valid or invalid based on the evidence.',
+    'You must return one of:',
+    '- finding_valid: at least one finding is correct and the fixer must address it',
+    '- finding_invalid: all findings are incorrect or the fixer is right to rebut them',
+    '- ambiguous: the issues are unclear from the evidence',
+    '- insufficient_evidence: you lack the evidence to decide',
+    '',
+    'After arbitrating, write a result.json file with:',
+    '{ "outcome": "finding_valid" | "finding_invalid" | "ambiguous" | "insufficient_evidence", "evidence": "your detailed observations", "rationale": "your detailed reasoning" }',
+    '',
+    '## CRITICAL RULES',
+    '- Do NOT ask questions.',
+    '- Do NOT switch branches. All work must stay on the current branch.',
+    '- Write result.json.',
+  );
 
   return sections.join('\n');
 }

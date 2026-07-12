@@ -44,7 +44,10 @@ export class FakeGitPort implements GitPort {
     this.headByCwd.set(cwd, commitSha);
   }
 
+  diffCalls: Array<{ cwd: string; base: string; head?: string | undefined }> = [];
+
   async diff(cwd: string, base: string, head?: string): Promise<string> {
+    this.diffCalls.push({ cwd, base, head });
     return `diff for ${cwd} ${base}..${head ?? 'HEAD'}`;
   }
 

@@ -86,6 +86,18 @@ describe('review-fix prompts builders', () => {
       expect(result).toContain('## WORKSPACE CONSTRAINTS');
       expect(result).toContain('The previous fix attempt failed.');
     });
+
+    it('contains ## RECONCILIATION CONTEXT and the arbiter rationale when reconciliationContext is provided', () => {
+      const result = buildReviewFixFixPrompt({
+        cwd: '/test/cwd',
+        repoId: 'test-repo',
+        useFallback: false,
+        reconciliationContext: 'Finding is valid because the API requires composition-root wiring',
+      });
+
+      expect(result).toContain('## RECONCILIATION CONTEXT');
+      expect(result).toContain('Finding is valid because the API requires composition-root wiring');
+    });
   });
 });
 
@@ -127,5 +139,64 @@ describe('buildReviewFixReviewPrompt — SCOPE block (#627)', () => {
     const prompt = buildReviewFixReviewPrompt({ ...baseInput });
     expect(prompt).not.toContain('## SCOPE');
     expect(prompt).not.toContain('## DISPOSITION GUIDANCE');
+  });
+
+  it('renders INTEGRATION MODE and unresolved records / dispositions when mode is integration_full', () => {
+    const prompt = buildReviewFixReviewPrompt({
+      ...baseInput,
+      mode: 'integration_full',
+      unresolvedRecords: [
+        {
+          reviewerKind: 'integration',
+          severity: 'critical',
+          summary: 'Wiring mismatch',
+          fingerprint: 'fp-1',
+        },
+      ],
+      dispositionHistory: [{ fingerprint: 'fp-1', disposition: 'open', changedAt: '2026-07-12' }],
+    });
+
+    expect(prompt).toContain('## INTEGRATION MODE');
+    expect(prompt).toContain('Review Mode: integration_full');
+    expect(prompt).toContain('Wiring mismatch');
+    expect(prompt).toContain('fp-1');
+  });
+});
+
+describe('buildWholePrArbiterPrompt', () => {
+  it('renders disputed findings, disposition history, and delta info', async () => {
+    const { buildWholePrArbiterPrompt } = await import('../review-fix-prompts.js');
+    const prompt = buildWholePrArbiterPrompt({
+      cwd: '/wt',
+      repoId: 'owner/repo',
+      disputedFindings: [
+        {
+          fingerprint: 'fp-1',
+          severity: 'critical',
+          summary: 'Wiring mismatch',
+        },
+      ],
+      dispositionHistory: [
+        {
+          fingerprint: 'fp-1',
+          disposition: 'open',
+          changedAt: '2026-07-12',
+          reason: 'Initial failure',
+        },
+      ],
+      relevantExcerpts: ['Line 10: bad wiring'],
+      fixDelta: '--- a/file.ts\n+++ b/file.ts',
+      fixRebuttal: 'It is correct.',
+    });
+
+    expect(prompt).toContain('## DISPUTED INTEGRATION FINDINGS');
+    expect(prompt).toContain('Wiring mismatch');
+    expect(prompt).toContain('## DISPOSITION HISTORY');
+    expect(prompt).toContain('Initial failure');
+    expect(prompt).toContain('## FIXER REBUTTAL');
+    expect(prompt).toContain('It is correct.');
+    expect(prompt).toContain('## RELEVANT EXCERPTS');
+    expect(prompt).toContain('Line 10: bad wiring');
+    expect(prompt).toContain('## FIX DELTA');
   });
 });
