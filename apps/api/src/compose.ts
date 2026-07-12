@@ -1368,6 +1368,122 @@ function applyCliOverrides(
   return next as OrchestratorConfig;
 }
 
+export interface ValidateTerminalFixDependencies {
+  artifacts: { read: (runId: string, path: string) => Promise<string> };
+  terminalSnapshots: Map<string, { planMdDigest: string; manifestDigest: string }>;
+  parseTaskManifest: typeof parseTaskManifest;
+  validatePlanTaskList: typeof validatePlanTaskList;
+  parsePlanReviewFindings: typeof parsePlanReviewFindings;
+}
+
+export async function validateTerminalFix(
+  ctx: import('@ai-sdlc/application').PlanReviewContext,
+  deps: ValidateTerminalFixDependencies,
+): Promise<import('@ai-sdlc/application').TerminalValidationResult> {
+  const artifacts = deps.artifacts;
+  const terminalSnapshots = deps.terminalSnapshots;
+  const diagnostics: string[] = [];
+  const changedArtifacts: Record<string, { priorDigest: string; postDigest: string }> = {};
+
+  try {
+    let postPlanMd = '';
+    let planMdReadable = false;
+    try {
+      postPlanMd = await artifacts.read(String(ctx.runId), 'plan.md');
+      planMdReadable = true;
+    } catch {
+      diagnostics.push('plan.md is not readable');
+    }
+
+    let postManifest = '';
+    let manifestExists = false;
+    try {
+      postManifest = await artifacts.read(String(ctx.runId), 'task-manifest.json');
+      manifestExists = true;
+    } catch {}
+
+    let postFindings = '';
+    let findingsExists = false;
+    try {
+      postFindings = await artifacts.read(String(ctx.runId), 'plan-review-findings.md');
+      findingsExists = true;
+    } catch {}
+
+    const crypto = await import('node:crypto');
+    const getDigest = (content: string) =>
+      crypto.createHash('sha256').update(content).digest('hex');
+    const postPlanDigest = getDigest(postPlanMd);
+    const postManifestDigest = getDigest(postManifest);
+
+    const pre = terminalSnapshots.get(String(ctx.runId)) ?? {
+      planMdDigest: '',
+      manifestDigest: '',
+    };
+    const planChanged = postPlanDigest !== pre.planMdDigest;
+    const manifestChanged = postManifestDigest !== pre.manifestDigest;
+
+    if (planChanged) {
+      changedArtifacts['plan.md'] = { priorDigest: pre.planMdDigest, postDigest: postPlanDigest };
+    }
+    if (manifestChanged) {
+      changedArtifacts['task-manifest.json'] = {
+        priorDigest: pre.manifestDigest,
+        postDigest: postManifestDigest,
+      };
+    }
+
+    const anyChanged = planChanged || manifestChanged;
+    if (!anyChanged) {
+      diagnostics.push('Neither plan.md nor task-manifest.json was changed');
+    }
+
+    if (planMdReadable) {
+      const balanced = (postPlanMd.match(/```/g) || []).length % 2 === 0;
+      if (!balanced) {
+        diagnostics.push('plan.md has unbalanced code fences');
+      }
+    }
+
+    if (manifestExists) {
+      const res = deps.parseTaskManifest(postManifest);
+      if (!res.success) {
+        diagnostics.push(`task-manifest.json parse failure: ${res.error}`);
+      }
+    }
+
+    if (planMdReadable) {
+      const res = deps.validatePlanTaskList(postPlanMd, manifestExists ? postManifest : undefined);
+      if (!res.success) {
+        diagnostics.push(`validatePlanTaskList failure: ${res.error}`);
+      }
+    }
+
+    if (findingsExists) {
+      try {
+        deps.parsePlanReviewFindings(postFindings);
+      } catch (e: unknown) {
+        diagnostics.push(
+          `plan-review-findings.md parse failure: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
+    const passed = planMdReadable && anyChanged && diagnostics.length === 0;
+    const summary = passed
+      ? 'Terminal fix accepted structurally'
+      : `Terminal fix rejected: ${diagnostics.join('; ')}`;
+
+    return {
+      passed,
+      diagnostics,
+      changedArtifacts,
+      summary,
+    };
+  } finally {
+    terminalSnapshots.delete(String(ctx.runId));
+  }
+}
+
 export function composeRoot(opts: ComposeOptions): Container {
   if (process.env.VITEST && !existsSync(join(opts.repoRoot, '.ai-orchestrator.json'))) {
     try {
@@ -4051,6 +4167,10 @@ export function composeRoot(opts: ComposeOptions): Container {
       const planFixProfileName = config.phases.planReview?.enabled
         ? resolveProfileForPhaseBound!('plan-fix')
         : undefined;
+      const planReviewTerminalFixProfileName = config.phases.planReview?.enabled
+        ? config.agent.phaseProfiles?.['terminal-fix']?.profile
+        : undefined;
+      const terminalSnapshots = new Map<string, { planMdDigest: string; manifestDigest: string }>();
       const planReviewDeltaScopedReReview = config.phases.planReview?.deltaScopedReReview ?? true;
       const planReviewArbiterProfileName = resolveArbiterProfileName(
         config.agent.phaseProfiles ?? {},
@@ -4273,7 +4393,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         ctx: import('@ai-sdlc/application').PlanReviewContext,
         opts: import('@ai-sdlc/application').PlanFixOptions,
       ): Promise<import('@ai-sdlc/application').PlanFixResult> => {
-        const profile = planFixProfileName;
+        const profile = opts.isTerminalFix
+          ? (planReviewTerminalFixProfileName ?? planFixProfileName)
+          : planFixProfileName;
         if (!profile) {
           return { invocationId: '', agentOutcome: 'failed' };
         }
@@ -4296,6 +4418,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         const finalPrompt = buildPlanReviewFixPrompt(promptBody, {
           deterministicDiagnostic: opts.manifestMismatch,
+          ...(opts.isTerminalFix !== undefined ? { isTerminalFix: opts.isTerminalFix } : {}),
+          ...(opts.historyContext !== undefined ? { historyContext: opts.historyContext } : {}),
         });
         writeFileSync(promptPath, finalPrompt, 'utf-8');
 
@@ -4310,6 +4434,27 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         })();
 
+        if (opts.isTerminalFix) {
+          const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
+          let prePlanMd = '';
+          try {
+            prePlanMd = await artifacts.read(String(ctx.runId), 'plan.md');
+          } catch {}
+          let preManifest = '';
+          try {
+            preManifest = await artifacts.read(String(ctx.runId), 'task-manifest.json');
+          } catch {}
+
+          const crypto = await import('node:crypto');
+          const getDigest = (content: string) =>
+            crypto.createHash('sha256').update(content).digest('hex');
+
+          terminalSnapshots.set(String(ctx.runId), {
+            planMdDigest: getDigest(prePlanMd),
+            manifestDigest: getDigest(preManifest),
+          });
+        }
+
         const isDeterministic = !!opts.manifestMismatch;
         const isSemanticRetry = ctx.iterationIndex > 1 && !isDeterministic;
         let invokeResult;
@@ -4317,7 +4462,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           invokeResult = await artifactAgent.invoke({
             profile: AgentProfileName(profile),
             promptPath,
-            expectedArtifacts: [PLAN_FIX_RESULT_ARTIFACT, 'plan.md'],
+            expectedArtifacts: opts.isTerminalFix
+              ? ['plan.md']
+              : [PLAN_FIX_RESULT_ARTIFACT, 'plan.md'],
             cwd: ctx.cwd,
             runId: String(ctx.runId),
             repoId: ctx.repoId,
@@ -4325,13 +4472,15 @@ export function composeRoot(opts: ComposeOptions): Container {
             startCommitSha,
             metadata: {
               iteration: ctx.iterationIndex,
-              invocation_type: isDeterministic
-                ? 'deterministic_fix'
-                : isSemanticRetry
-                  ? 'semantic_retry'
-                  : 'initial',
+              invocation_type: opts.isTerminalFix
+                ? 'terminal_fix'
+                : isDeterministic
+                  ? 'deterministic_fix'
+                  : isSemanticRetry
+                    ? 'semantic_retry'
+                    : 'initial',
             },
-            ...(isSemanticRetry
+            ...(isSemanticRetry && !opts.isTerminalFix
               ? {
                   retryIntent: {
                     normalizedPhase: 'plan-fix',
@@ -4351,6 +4500,35 @@ export function composeRoot(opts: ComposeOptions): Container {
             agentOutcome: invokeResult.outcome,
           };
         }
+
+        if (opts.isTerminalFix) {
+          let data: {
+            verdict: import('@ai-sdlc/application').PlanFixResult['verdict'];
+            summary: string;
+            rebuttal?: string;
+          } = { verdict: 'done_with_fixes', summary: 'Terminal fix executed' };
+          const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+          const resultJsonPath = inv?.resultJsonPath || PLAN_FIX_RESULT_ARTIFACT;
+          const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
+          try {
+            const raw = await artifacts.read(String(ctx.runId), resultJsonPath);
+            const parsed = planFixResultSchema.safeParse(JSON.parse(raw));
+            if (parsed.success) {
+              data = parsed.data;
+            }
+          } catch {
+            // optional observability data, ignore errors
+          }
+          return {
+            invocationId,
+            agentOutcome: 'success',
+            headBeforeFix: startCommitSha,
+            summary: data.summary,
+            ...(data.verdict ? { verdict: data.verdict } : {}),
+            ...('rebuttal' in data && data.rebuttal ? { rebuttal: data.rebuttal } : {}),
+          };
+        }
+
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) {
           return { invocationId, agentOutcome: 'failed' };
@@ -4400,13 +4578,8 @@ export function composeRoot(opts: ComposeOptions): Container {
                 `plan-review-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
               );
               const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
-              const {
-                planExcerpt,
-                findingsExcerpt,
-                fixExcerpt,
-                manifestExcerpt,
-                designExcerpt,
-              } = await readPlanReviewExcerpts(artifacts, String(ctx.runId));
+              const { planExcerpt, findingsExcerpt, fixExcerpt, manifestExcerpt, designExcerpt } =
+                await readPlanReviewExcerpts(artifacts, String(ctx.runId));
               const arbiterPrompt = buildPlanReviewArbiterPrompt(
                 { cwd: ctx.cwd, runId: String(ctx.runId) },
                 {
@@ -4585,6 +4758,18 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         : undefined;
 
+      const planReviewValidateTerminalFix = async (
+        ctx: import('@ai-sdlc/application').PlanReviewContext,
+      ): Promise<import('@ai-sdlc/application').TerminalValidationResult> => {
+        return validateTerminalFix(ctx, {
+          artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
+          terminalSnapshots,
+          parseTaskManifest,
+          validatePlanTaskList,
+          parsePlanReviewFindings,
+        });
+      };
+
       const planReviewLoop = new PlanReviewLoop({
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
@@ -4601,6 +4786,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         now: () => new Date(),
         idFactory: () => randomUUID(),
         reviewStateRepository,
+        terminalFixProfile: planReviewTerminalFixProfileName,
+        validateTerminalFix: planReviewValidateTerminalFix,
         options: {
           // (#716) Composition-root seam: thread the operator-configured
           // `deltaScopedReReview` flag into the loop. When false, the loop

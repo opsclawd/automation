@@ -56,11 +56,55 @@ function buildPlanReviewAttempt(params: {
   return result;
 }
 
+interface HistoryItem {
+  type: 'review' | 'fix' | 'arbiter' | 'manifest_mismatch';
+  iterationIndex: number;
+  data: Record<string, unknown>;
+}
+
+function formatHistory(history: HistoryItem[]): string {
+  let lines: string[] = ['### Plan Review Loop History\n'];
+  for (const item of history) {
+    lines.push(`#### Iteration ${item.iterationIndex}: ${item.type.toUpperCase()}`);
+    if (item.type === 'review') {
+      lines.push(`- Mode: ${item.data.mode}`);
+      const findings = item.data.findings as PlanReviewFinding[];
+      if (!findings || findings.length === 0) {
+        lines.push('- No findings.');
+      } else {
+        lines.push('- Findings:');
+        for (const f of findings) {
+          lines.push(
+            `  * [${f.severity}] ${f.citation}: ${f.failureScenario} (evidence: ${f.evidence}, disposition: ${f.disposition})`,
+          );
+        }
+      }
+    } else if (item.type === 'fix') {
+      if (item.data.isDeterministicFix) {
+        lines.push(`- Deterministic Manifest Fix`);
+      }
+      lines.push(`- Verdict: ${item.data.verdict}`);
+      if (item.data.summary) lines.push(`- Summary: ${item.data.summary}`);
+      if (item.data.rebuttal) lines.push(`- Rebuttal: ${item.data.rebuttal}`);
+    } else if (item.type === 'arbiter') {
+      lines.push(`- Review Type: ${item.data.reviewType}`);
+      lines.push(`- Outcome: ${item.data.outcome}`);
+      if (item.data.evidence) lines.push(`- Evidence: ${item.data.evidence}`);
+      if (item.data.rationale) lines.push(`- Rationale: ${item.data.rationale}`);
+    } else if (item.type === 'manifest_mismatch') {
+      lines.push(`- Manifest Mismatch: ${item.data.mismatch}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
 export class PlanReviewLoop {
   constructor(private readonly deps: PlanReviewLoopDeps) {}
 
   async execute(input: PlanReviewLoopInput): Promise<PlanReviewLoopResult> {
     const { deps } = this;
+    const history: HistoryItem[] = [];
     const reviewerMaxRetries = deps.reviewerMaxRetries ?? DEFAULT_REVIEWER_MAX_RETRIES;
     const options = { ...(deps.options ?? {}), ...(input.options ?? {}) };
     let bonusIterationUsed = false;
@@ -192,11 +236,28 @@ export class PlanReviewLoop {
           { index: iterationIndex },
         );
 
+        history.push({
+          type: 'manifest_mismatch',
+          iterationIndex,
+          data: { mismatch: manifestError },
+        });
+
         const fix = await deps.runFix(localCtx, {
           manifestMismatch: manifestError,
           metadata: {
             iteration: iterationIndex,
             invocation_type: 'deterministic_fix',
+          },
+        });
+
+        history.push({
+          type: 'fix',
+          iterationIndex,
+          data: {
+            verdict: fix.verdict,
+            summary: fix.summary,
+            rebuttal: fix.rebuttal,
+            isDeterministicFix: true,
           },
         });
 
@@ -386,6 +447,21 @@ export class PlanReviewLoop {
         );
         return { outcome: 'failed', loop, proceedWithConcerns: false };
       }
+
+      history.push({
+        type: 'review',
+        iterationIndex,
+        data: {
+          mode: reviewMode,
+          findings: (review.findings ?? []).map((f) => ({
+            severity: f.severity,
+            citation: f.citation,
+            failureScenario: f.failureScenario,
+            evidence: f.evidence,
+            disposition: frozenDispositions.get(f.citation) ?? 'still_open',
+          })),
+        },
+      });
 
       deps.reviewStateRepository?.appendAttempt(
         buildPlanReviewAttempt({
@@ -742,6 +818,16 @@ export class PlanReviewLoop {
       });
       pendingReconciliationContext = undefined;
 
+      history.push({
+        type: 'fix',
+        iterationIndex,
+        data: {
+          verdict: fix.verdict,
+          summary: fix.summary,
+          rebuttal: fix.rebuttal,
+        },
+      });
+
       // Refresh the loop-internal `recentFixCitations` from the fix's
       // `headBeforeFix` SHA (#716, design §2.5 / §7.1). The composition-root
       // adapter supplies `computeLastFixDiffCitations`, which uses
@@ -831,6 +917,16 @@ export class PlanReviewLoop {
               invocation_type: 'initial',
             },
           });
+          history.push({
+            type: 'arbiter',
+            iterationIndex,
+            data: {
+              reviewType: 'regular',
+              outcome: arbiterResult.outcome,
+              evidence: arbiterResult.evidence,
+              rationale: arbiterResult.rationale,
+            },
+          });
           if (arbiterResult.outcome === 'insufficient_evidence' && isGateManufactured) {
             this.emit(
               input,
@@ -892,6 +988,28 @@ export class PlanReviewLoop {
             });
             deps.loops.update(loop);
             continue;
+          }
+          if (
+            (arbiterResult.outcome === 'ambiguous' ||
+              arbiterResult.outcome === 'insufficient_evidence') &&
+            arbiterResult.evidence &&
+            arbiterResult.evidence.trim().length > 0
+          ) {
+            this.emit(
+              input,
+              'plan-review.needs_human_review',
+              'warn',
+              `arbiter could not resolve contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
+              { ruling: arbiterResult.outcome, evidence: arbiterResult.evidence, iterationIndex },
+            );
+            loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+            deps.loops.update(loop);
+            return this.escalateToTerminalFix(
+              input,
+              loop,
+              'arbiter_' + arbiterResult.outcome,
+              history,
+            );
           }
           this.emit(
             input,
@@ -964,7 +1082,7 @@ export class PlanReviewLoop {
         if (!syncResult.success) {
           loop = exhaust(loop, deps.now());
           deps.loops.update(loop);
-          return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          return this.escalateToTerminalFix(input, loop, 'loop_exhausted', history);
         }
         const finalIterationIndex = loop.iterations.length + 1;
         const finalCtx: PlanReviewContext = { ...baseCtx, iterationIndex: finalIterationIndex };
@@ -1050,6 +1168,21 @@ export class PlanReviewLoop {
           return { outcome: 'failed', loop, proceedWithConcerns: false };
         }
 
+        history.push({
+          type: 'review',
+          iterationIndex: finalIterationIndex,
+          data: {
+            mode: 'final_full',
+            findings: (finalReview.findings ?? []).map((f) => ({
+              severity: f.severity,
+              citation: f.citation,
+              failureScenario: f.failureScenario,
+              evidence: f.evidence,
+              disposition: frozenDispositions.get(f.citation) ?? 'still_open',
+            })),
+          },
+        });
+
         deps.reviewStateRepository?.appendAttempt(
           buildPlanReviewAttempt({
             attemptId: finalReview.invocationId,
@@ -1065,8 +1198,13 @@ export class PlanReviewLoop {
         let eligibleFinalFindings: ReadonlyArray<PlanReviewFinding> = [];
         let finalIsGateManufactured = false;
         if (deltaScopedReReview) {
-          eligibleFinalFindings = (finalReview.findings ?? []).filter((f) => f.evidence === 'grounded');
-          const adjustedFinalVerdict = this.computeVerdict(finalReview.verdict!, eligibleFinalFindings);
+          eligibleFinalFindings = (finalReview.findings ?? []).filter(
+            (f) => f.evidence === 'grounded',
+          );
+          const adjustedFinalVerdict = this.computeVerdict(
+            finalReview.verdict!,
+            eligibleFinalFindings,
+          );
           if (adjustedFinalVerdict !== finalReview.verdict) {
             this.emit(
               input,
@@ -1080,7 +1218,8 @@ export class PlanReviewLoop {
               },
             );
           }
-          finalIsGateManufactured = finalReview.verdict === 'pass' && adjustedFinalVerdict === 'p1_found';
+          finalIsGateManufactured =
+            finalReview.verdict === 'pass' && adjustedFinalVerdict === 'p1_found';
           finalReview = { ...finalReview, verdict: adjustedFinalVerdict };
         }
 
@@ -1218,7 +1357,9 @@ export class PlanReviewLoop {
               outcome: 'success',
               loop,
               proceedWithConcerns: false,
-              ...(finalReview.knownLimitations ? { knownLimitations: finalReview.knownLimitations } : {}),
+              ...(finalReview.knownLimitations
+                ? { knownLimitations: finalReview.knownLimitations }
+                : {}),
             };
           }
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
@@ -1499,6 +1640,32 @@ export class PlanReviewLoop {
                 iterationIndex: finalIterationIndex,
               },
             );
+            if (
+              (arbiterResult.outcome === 'ambiguous' ||
+                arbiterResult.outcome === 'insufficient_evidence') &&
+              arbiterResult.evidence &&
+              arbiterResult.evidence.trim().length > 0
+            ) {
+              const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+                index: finalIterationIndex,
+                reviewInvocationId: finalReview.invocationId,
+                startedAt: deps.now(),
+                completedAt: deps.now(),
+                outcome: 'unresolved',
+              };
+              loop = {
+                ...loop,
+                iterations: [...loop.iterations, finalIteration],
+              };
+              loop = exhaust(loop, deps.now());
+              deps.loops.update(loop);
+              return this.escalateToTerminalFix(
+                input,
+                loop,
+                'arbiter_' + arbiterResult.outcome,
+                history,
+              );
+            }
           }
         }
 
@@ -1533,6 +1700,84 @@ export class PlanReviewLoop {
       `plan-review loop exhausted after ${loop.iterations.length} iterations`,
       { iterations: loop.iterations.length, maxIterations: loop.maxIterations },
     );
+    return this.escalateToTerminalFix(input, loop, 'loop_exhausted', history);
+  }
+
+  private async escalateToTerminalFix(
+    input: PlanReviewLoopInput,
+    loop: Loop,
+    triggerReason: string,
+    history: HistoryItem[],
+  ): Promise<PlanReviewLoopResult> {
+    const { deps } = this;
+    if (!deps.terminalFixProfile) {
+      return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+    }
+
+    const priorIterations = loop.iterations.length;
+    this.emit(
+      input,
+      'plan-review.terminal_fix.started',
+      'info',
+      `Terminal fix started using profile: ${deps.terminalFixProfile}`,
+      {
+        profile: deps.terminalFixProfile,
+        priorIterations,
+        triggerReason,
+      },
+    );
+
+    const formattedHistory = formatHistory(history);
+
+    const fixCtx: PlanReviewContext = {
+      loopId: loop.id,
+      runId: input.runId,
+      phaseId: input.phaseId,
+      repoId: input.repoId,
+      cwd: input.cwd,
+      iterationIndex: priorIterations + 1,
+    };
+
+    await deps.runFix(fixCtx, {
+      isTerminalFix: true,
+      triggerReason,
+      historyContext: formattedHistory,
+      metadata: {
+        invocation_type: 'terminal_fix',
+      },
+    });
+
+    if (deps.validateTerminalFix) {
+      const valResult = await deps.validateTerminalFix(fixCtx);
+      if (valResult.passed) {
+        this.emit(
+          input,
+          'plan-review.terminal_fix.accepted',
+          'info',
+          `Terminal fix accepted: ${valResult.summary}`,
+          {
+            diagnostics: valResult.diagnostics,
+            changedArtifacts: valResult.changedArtifacts,
+            summary: valResult.summary,
+          },
+        );
+        return { outcome: 'success', loop, proceedWithConcerns: false };
+      } else {
+        this.emit(
+          input,
+          'plan-review.terminal_fix.rejected',
+          'warn',
+          `Terminal fix rejected: ${valResult.summary}`,
+          {
+            diagnostics: valResult.diagnostics,
+            changedArtifacts: valResult.changedArtifacts,
+            summary: valResult.summary,
+          },
+        );
+        return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+      }
+    }
+
     return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
   }
 

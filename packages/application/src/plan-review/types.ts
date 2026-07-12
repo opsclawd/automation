@@ -179,6 +179,8 @@ export interface PlanFixOptions {
   reconciliationContext?: string;
   manifestMismatch?: string;
   metadata?: Record<string, unknown>;
+  isTerminalFix?: boolean;
+  triggerReason?: string;
 }
 
 export interface PlanReviewLoopOptions {
@@ -265,6 +267,15 @@ export interface PlanReviewLoopDeps {
    * in broad mode when no prior snapshot exists.
    */
   reviewStateRepository?: ReviewStateRepositoryPort;
+  terminalFixProfile?: string | undefined;
+  validateTerminalFix?: ((ctx: PlanReviewContext) => Promise<TerminalValidationResult>) | undefined;
+}
+
+export interface TerminalValidationResult {
+  passed: boolean;
+  diagnostics: string[];
+  changedArtifacts: Record<string, { priorDigest: string; postDigest: string }>;
+  summary: string;
 }
 
 export interface PlanReviewLoopInput {
