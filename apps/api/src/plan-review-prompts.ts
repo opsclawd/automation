@@ -18,20 +18,48 @@ export const PLAN_REVIEW_ARBITER_RESULT_ARTIFACT = 'plan-review-arbiter-result.j
 
 export function buildPlanReviewFixPrompt(
   basePrompt: string,
-  opts?: { deterministicDiagnostic?: string | undefined },
+  opts?: {
+    deterministicDiagnostic?: string | undefined;
+    isTerminalFix?: boolean;
+    historyContext?: string;
+  },
 ): string {
-  if (!opts?.deterministicDiagnostic) return basePrompt;
-  return [
-    basePrompt,
-    '',
-    '## DETERMINISTIC DIAGNOSTIC',
-    'A deterministic failure or manifest mismatch was detected:',
-    '```',
-    opts.deterministicDiagnostic.slice(0, 8192),
-    '```',
-    '',
-    'You MUST resolve this deterministic failure before performing other work.',
-  ].join('\n');
+  let prompt = basePrompt;
+
+  if (opts?.deterministicDiagnostic) {
+    prompt = [
+      prompt,
+      '',
+      '## DETERMINISTIC DIAGNOSTIC',
+      'A deterministic failure or manifest mismatch was detected:',
+      '```',
+      opts.deterministicDiagnostic.slice(0, 8192),
+      '```',
+      '',
+      'You MUST resolve this deterministic failure before performing other work.',
+    ].join('\n');
+  }
+
+  if (opts?.isTerminalFix) {
+    const parts = [
+      prompt,
+      '',
+      '## TERMINAL ATTEMPT — FINAL PLAN REPAIR',
+      '',
+      'There will be no further semantic review/fix round. Address every open',
+      'finding coherently, re-derive affected plan sections instead of',
+      'point-patching them, keep plan.md and task-manifest.json synchronized,',
+      'and leave the plan structurally valid.',
+    ];
+
+    if (opts.historyContext) {
+      parts.push('', '## PLAN REVIEW HISTORY', '', opts.historyContext);
+    }
+
+    prompt = parts.join('\n');
+  }
+
+  return prompt;
 }
 
 async function readExcerpt(

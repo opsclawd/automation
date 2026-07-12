@@ -11,6 +11,7 @@ import type {
   PlanReviewContext,
   PlanFixOptions,
   PlanReviewStepOptions,
+  PlanReviewFinding,
 } from '../types.js';
 import type { ArbiterResult } from '../../implement-step/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
@@ -1382,5 +1383,260 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
     expect(attempts).toHaveLength(2);
     expect(attempts[0]?.reviewMode).toBe('initial_full');
     expect(attempts[1]?.reviewMode).toBe('final_full');
+  });
+
+  describe('terminal escalation', () => {
+    it('attempts exactly one terminal repair after an exhausted plan-review Loop and accepts it if valid', async () => {
+      let runFixOpts: PlanFixOptions | undefined;
+      let validateCalls = 0;
+      const { deps } = makeDeps({
+        terminalFixProfile: 'terminal-fix-profile',
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success',
+          verdict: 'p1_found',
+          findings: groundedP1Findings(),
+        }),
+        runFix: async (_ctx, opts) => {
+          runFixOpts = opts;
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+          };
+        },
+        validateTerminalFix: async () => {
+          validateCalls++;
+          return {
+            passed: true,
+            diagnostics: [],
+            changedArtifacts: { 'plan.md': { priorDigest: 'd1', postDigest: 'd2' } },
+            summary: 'Valid change',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('success');
+      expect(runFixOpts).toBeDefined();
+      expect(runFixOpts?.isTerminalFix).toBe(true);
+      expect(runFixOpts?.triggerReason).toBe('loop_exhausted');
+      expect(validateCalls).toBe(1);
+    });
+
+    it('rejects a terminal repair with unchanged artifacts or structural validation failures', async () => {
+      let validateCalls = 0;
+      const { deps } = makeDeps({
+        terminalFixProfile: 'terminal-fix-profile',
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success',
+          verdict: 'p1_found',
+          findings: groundedP1Findings(),
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+        }),
+        validateTerminalFix: async () => {
+          validateCalls++;
+          return {
+            passed: false,
+            diagnostics: ['fence mismatch'],
+            changedArtifacts: {},
+            summary: 'Invalid structural check',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('needs_human_review');
+      expect(validateCalls).toBe(1);
+    });
+
+    it('returns outcome failed if deps.runFix outcome is failed during terminal escalation', async () => {
+      let validateCalls = 0;
+      const { deps } = makeDeps({
+        terminalFixProfile: 'terminal-fix-profile',
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success',
+          verdict: 'p1_found',
+          findings: groundedP1Findings(),
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'failed',
+        }),
+        validateTerminalFix: async () => {
+          validateCalls++;
+          return {
+            passed: true,
+            diagnostics: [],
+            changedArtifacts: { 'plan.md': { priorDigest: 'd1', postDigest: 'd2' } },
+            summary: 'Valid change',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('failed');
+      expect(validateCalls).toBe(0);
+    });
+
+    it('routes regular arbiter ambiguous and insufficient_evidence to terminal repair', async () => {
+      let runFixOpts: PlanFixOptions | undefined;
+      const { deps } = makeDeps({
+        terminalFixProfile: 'terminal-fix-profile',
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success',
+          verdict: 'p1_found',
+          findings: groundedP1Findings(),
+        }),
+        runFix: async (_ctx, opts) => {
+          if (opts.isTerminalFix) {
+            runFixOpts = opts;
+            return {
+              invocationId: 'fix-term',
+              agentOutcome: 'success',
+              verdict: 'done_with_fixes',
+            };
+          }
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_no_fixes_needed',
+          };
+        },
+        runArbiter: async () => ({
+          outcome: 'ambiguous',
+          evidence: 'Some evidence',
+          rationale: 'Not clear',
+        }),
+        validateTerminalFix: async () => ({
+          passed: true,
+          diagnostics: [],
+          changedArtifacts: { 'plan.md': { priorDigest: 'd1', postDigest: 'd2' } },
+          summary: 'Valid change',
+        }),
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.outcome).toBe('success');
+      expect(runFixOpts?.triggerReason).toBe('arbiter_ambiguous');
+    });
+
+    it('routes final-review arbiter ambiguous and insufficient_evidence to terminal repair', async () => {
+      let runFixOpts: PlanFixOptions | undefined;
+      let reviewCalls = 0;
+      const { deps } = makeDeps({
+        terminalFixProfile: 'terminal-fix-profile',
+        runReview: async () => {
+          reviewCalls++;
+          if (reviewCalls === 1) {
+            return {
+              invocationId: 'rev-1',
+              agentOutcome: 'success',
+              verdict: 'p1_found',
+              findings: groundedP1Findings(),
+            };
+          }
+          // iterationIndex = 2 is final_full review because maxIterations=1
+          return {
+            invocationId: 'rev-2',
+            agentOutcome: 'success',
+            verdict: 'p1_found',
+            findings: groundedP1Findings(),
+          };
+        },
+        runFix: async (_ctx, opts) => {
+          if (opts.isTerminalFix) {
+            runFixOpts = opts;
+            return {
+              invocationId: 'fix-term',
+              agentOutcome: 'success',
+              verdict: 'done_with_fixes',
+            };
+          }
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+          };
+        },
+        runFinalReviewArbiter: async () => ({
+          outcome: 'insufficient_evidence',
+          evidence: 'Some final evidence',
+          rationale: 'Not clear final',
+        }),
+        validateTerminalFix: async () => ({
+          passed: true,
+          diagnostics: [],
+          changedArtifacts: { 'plan.md': { priorDigest: 'd1', postDigest: 'd2' } },
+          summary: 'Valid change',
+        }),
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('success');
+      expect(runFixOpts?.triggerReason).toBe('arbiter_insufficient_evidence');
+    });
+
+    it('preserves existing plan-review terminal exits without a terminal profile', async () => {
+      let runFixCalls = 0;
+      const { deps } = makeDeps({
+        terminalFixProfile: undefined,
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success',
+          verdict: 'p1_found',
+          findings: groundedP1Findings(),
+        }),
+        runFix: async () => {
+          runFixCalls++;
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('needs_human_review');
+      expect(runFixCalls).toBe(1); // Only the regular fix at iter 1 ran, no terminal fix.
+    });
+
+    it('keeps gate-manufactured insufficient-evidence recovery out of terminal repair', async () => {
+      let runFixCalls = 0;
+      const { deps } = makeDeps({
+        terminalFixProfile: 'terminal-fix-profile',
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success',
+          verdict: 'pass', // adjusted to p1_found by gate (isGateManufactured)
+          findings: groundedP1Findings(),
+        }),
+        runFix: async (_ctx, _opts) => {
+          runFixCalls++;
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_no_fixes_needed',
+          };
+        },
+        runArbiter: async () => ({
+          outcome: 'insufficient_evidence',
+          evidence: 'Some evidence',
+          rationale: 'Gate manufactured',
+        }),
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.outcome).toBe('success'); // Gated recovery handles it, it does not call terminal fix.
+      expect(runFixCalls).toBe(1); // only the regular fix ran
+    });
   });
 });

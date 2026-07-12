@@ -263,6 +263,18 @@ Body 2.
       expect(result.success).toBe(true);
     });
 
+    it('fails when plan has unclosed backtick fences', () => {
+      const plan = `
+## Task 1: T1
+Body 1 with unclosed code fence:
+\`\`\`typescript
+const x = 1;
+`;
+      const result = validatePlanTaskList(plan);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('code fence');
+    });
+
     it('valid manifest and matching plan with H3 headings', () => {
       const plan = `
 ### Task 1: T1

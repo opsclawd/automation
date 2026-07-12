@@ -14,6 +14,7 @@ import {
   readPlanReviewFinalExcerpts,
   PLAN_REVIEW_FINDINGS_ARTIFACT,
   PLAN_FIX_RESULT_ARTIFACT,
+  buildPlanReviewFixPrompt,
 } from '../plan-review-prompts.js';
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -528,5 +529,34 @@ describe('getRecentFixCitations (#716)', () => {
       if (prev) execSpy.mockImplementation(prev);
       else execSpy.mockReset();
     }
+  });
+});
+
+describe('buildPlanReviewFixPrompt terminal attempt', () => {
+  it('appends complete terminal plan-review history to the normal plan-fix prompt', () => {
+    const basePrompt = '# BASE PLAN-FIX PROMPT\nHere is plan.md and task-manifest.json.';
+    const historyContext = [
+      '### Iteration 1',
+      '- Reviewer finding: [P1] plan.md:10 | Missing parameter validation | disposition: rebutted',
+      '- Fixer rebuttal: We validate this in the controller',
+      '- Arbiter ruling: outcome: finding_invalid | rationale: validated at controller level',
+    ].join('\n');
+
+    const result = buildPlanReviewFixPrompt(basePrompt, {
+      isTerminalFix: true,
+      historyContext,
+    });
+
+    // Assert that the base prompt is intact
+    expect(result.startsWith(basePrompt)).toBe(true);
+
+    // Assert that terminal heading and framing are present
+    expect(result).toContain('## TERMINAL ATTEMPT — FINAL PLAN REPAIR');
+    expect(result).toContain('There will be no further semantic review/fix round.');
+
+    // Assert that history context is present
+    expect(result).toContain('### Iteration 1');
+    expect(result).toContain('disposition: rebutted');
+    expect(result).toContain('outcome: finding_invalid');
   });
 });

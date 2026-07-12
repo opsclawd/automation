@@ -1588,4 +1588,33 @@ exit 1
     expect(composeSource).not.toContain('Read any review findings in the working directory');
     expect(composeSource).toContain('## WHAT THE REVIEWERS FOUND (verbatim)');
   });
+
+  it('planReviewRunFix routes isTerminalFix to terminal profile, prompt builder, and skips required plan-fix-result.json', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixMatch = composeSrc.match(
+      /const planReviewRunFix[\s\S]*?(?=type PlanReviewArbiterResult)/,
+    );
+    expect(fixMatch).toBeTruthy();
+    const src = fixMatch![0];
+
+    // Selected terminal profile is not replaced by the normal plan-fix or arbiter profile
+    expect(src).toContain('opts.isTerminalFix');
+    expect(src).toMatch(
+      /opts\.isTerminalFix\s*\?\s*\(planReviewTerminalFixProfileName\s*\?\?\s*planFixProfileName\)\s*:\s*planFixProfileName/,
+    );
+
+    // Option threading reaches buildPlanReviewFixPrompt
+    expect(src).toContain('isTerminalFix: opts.isTerminalFix');
+    expect(src).toContain('historyContext: opts.historyContext');
+
+    // Terminal expected artifacts do not make plan-fix-result.json load-bearing
+    expect(src).toMatch(
+      /expectedArtifacts:\s*opts\.isTerminalFix\s*\?\s*\[\s*'plan\.md'\s*\]\s*:\s*\[\s*PLAN_FIX_RESULT_ARTIFACT,\s*'plan\.md'\s*\]/,
+    );
+    expect(src).toContain('if (opts.isTerminalFix) {');
+    expect(src).toContain("verdict: 'done_with_fixes'");
+  });
 });

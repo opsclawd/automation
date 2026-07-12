@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveArbiterProfileName } from '../arbiter-profile.js';
 import { PHASE_RESULT_REGISTRY, PHASE_NAME_MIGRATION_MAP } from '@ai-sdlc/application';
+import { validateTerminalFix } from '../compose.js';
 
 describe('plan-review compose wiring', () => {
   it('resolveArbiterProfileName returns the dedicated arbiter profile', () => {
@@ -91,5 +92,91 @@ describe('plan-review compose wiring', () => {
     expect(fixFnMatch![0]).toContain('manifestMismatch: opts.manifestMismatch');
     expect(fixFnMatch![0]).toContain('deterministicDiagnostic: opts.manifestMismatch');
     expect(fixFnMatch![0]).toContain('deterministic_fix');
+  });
+
+  it('validateTerminalFix executes validation checks and cleans up snapshots Map', async () => {
+    const ctx = {
+      runId: 'test-run-123',
+      cwd: '/dummy',
+    } as unknown as import('@ai-sdlc/application').PlanReviewContext;
+
+    const mockArtifacts = {
+      read: async (runId: string, filePath: string) => {
+        expect(runId).toBe('test-run-123');
+        if (filePath === 'plan.md') return 'some plan markdown';
+        if (filePath === 'task-manifest.json') return '{"version": 1}';
+        throw new Error('not found');
+      },
+    };
+
+    const terminalSnapshots = new Map<string, { planMdDigest: string; manifestDigest: string }>();
+    terminalSnapshots.set('test-run-123', {
+      planMdDigest: 'old-plan-digest',
+      manifestDigest: 'old-manifest-digest',
+    });
+
+    const parseTaskManifestMock = ((content: string) => {
+      expect(content).toBe('{"version": 1}');
+      return { success: false, error: 'fake manifest error' };
+    }) as unknown as typeof parseTaskManifest;
+
+    const validatePlanTaskListMock = ((plan: string, manifest?: string) => {
+      expect(plan).toBe('some plan markdown');
+      expect(manifest).toBe('{"version": 1}');
+      return { success: false, error: 'fake validation error' };
+    }) as unknown as typeof validatePlanTaskList;
+
+    const parsePlanReviewFindingsMock = (() => {
+      return {} as unknown as ReturnType<typeof parsePlanReviewFindings>;
+    }) as unknown as typeof parsePlanReviewFindings;
+
+    const result = await validateTerminalFix(ctx, {
+      artifacts: mockArtifacts,
+      terminalSnapshots,
+      parseTaskManifest: parseTaskManifestMock,
+      validatePlanTaskList: validatePlanTaskListMock,
+      parsePlanReviewFindings: parsePlanReviewFindingsMock,
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.diagnostics).toContain('task-manifest.json parse failure: fake manifest error');
+    expect(result.diagnostics).toContain('validatePlanTaskList failure: fake validation error');
+    // Verify terminalSnapshots got cleaned up
+    expect(terminalSnapshots.has('test-run-123')).toBe(false);
+  });
+
+  it('validateTerminalFix cleans up snapshots Map even when an error occurs', async () => {
+    const ctx = {
+      runId: 'test-run-456',
+      cwd: '/dummy',
+    } as unknown as import('@ai-sdlc/application').PlanReviewContext;
+
+    const mockArtifacts = {
+      read: async () => {
+        throw new Error('Unreadable error');
+      },
+    };
+
+    const terminalSnapshots = new Map<string, { planMdDigest: string; manifestDigest: string }>();
+    terminalSnapshots.set('test-run-456', {
+      planMdDigest: 'old-plan-digest',
+      manifestDigest: 'old-manifest-digest',
+    });
+
+    await validateTerminalFix(ctx, {
+      artifacts: mockArtifacts,
+      terminalSnapshots,
+      parseTaskManifest: (() => {
+        throw new Error('Not reached');
+      }) as unknown as typeof parseTaskManifest,
+      validatePlanTaskList: (() => {
+        throw new Error('Not reached');
+      }) as unknown as typeof validatePlanTaskList,
+      parsePlanReviewFindings: (() => {
+        throw new Error('Not reached');
+      }) as unknown as typeof parsePlanReviewFindings,
+    });
+
+    expect(terminalSnapshots.has('test-run-456')).toBe(false);
   });
 });

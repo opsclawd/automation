@@ -61,6 +61,7 @@ export type {
   PlanReviewStepOptions,
   PlanReviewSnapshot,
   EvidenceResolver,
+  TerminalValidationResult,
 } from './plan-review/types.js';
 export * from './plan-review/plan-review-loop.js';
 export {
