@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { PhaseName, RunId, AgentProfileName, AgentInvocationId } from '@ai-sdlc/domain';
 import type { AgentInvocation } from '@ai-sdlc/domain';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { FakeArtifactStore } from '../../test-doubles/fake-artifact-store.js';
 import { FakeAgentPort } from '../../test-doubles/fake-agent-port.js';
+import { FakeStructuredResultRepair } from '../../test-doubles/fake-structured-result-repair.js';
 import { readReviewVerdict, readFixVerdict } from '../read-verdicts.js';
 
 function invocation(phase: string, resultJsonPath?: string): AgentInvocation {
@@ -84,6 +88,49 @@ describe('readFixVerdict', () => {
       verdict: 'done_no_fixes_needed',
       rebuttal: 'the cited code does not exist in this tree',
     });
+  });
+
+  it('forwards cwd and repairExpectedHead from readFixVerdict to extractResult', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'read-verdicts-test-'));
+    const stdoutPath = join(tempDir, 'stdout.log');
+    writeFileSync(stdoutPath, 'evidence');
+
+    try {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'run-1',
+        relativePath: 'result.json',
+        contents: 'malformed json',
+      });
+
+      const repair = new FakeStructuredResultRepair();
+      repair.response = async () => {
+        await artifacts.write({
+          runId: 'run-1',
+          relativePath: 'result.json',
+          contents: JSON.stringify({ result: 'done_with_fixes' }),
+        });
+        return { outcome: 'repaired', repairInvocationId: AgentInvocationId('rep-123') };
+      };
+
+      const agent = new FakeAgentPort();
+      const inv = invocation('fix-review', 'result.json');
+      inv.stdoutPath = stdoutPath;
+      inv.endCommitSha = 'end-sha-abc';
+
+      const v = await readFixVerdict(
+        inv,
+        { artifacts, repair, agent },
+        { cwd: '/some/cwd', repairExpectedHead: 'custom-repair-head' },
+      );
+
+      expect(v).toEqual({ ok: true, verdict: 'done_with_fixes' });
+      expect(repair.calls).toHaveLength(1);
+      expect(repair.calls[0]?.cwd).toBe('/some/cwd');
+      expect(repair.calls[0]?.expectedHead).toBe('custom-repair-head');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

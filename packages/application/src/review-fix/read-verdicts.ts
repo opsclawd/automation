@@ -108,9 +108,14 @@ export async function readReviewVerdict(
 export async function readFixVerdict(
   invocation: AgentInvocation,
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
-  opts?: { cwd?: string },
+  opts?: { cwd?: string; repairExpectedHead?: string },
 ): Promise<VerdictOutcome<FixReviewResult['result']>> {
-  const r = await extractResult({ invocation, ports, cwd: opts?.cwd });
+  const r = await extractResult({
+    invocation,
+    ports,
+    cwd: opts?.cwd,
+    repairExpectedHead: opts?.repairExpectedHead,
+  });
   if (!r.ok) return { ok: false, detail: r.detail };
   const fixResult = r.result as FixReviewResult;
   return {
