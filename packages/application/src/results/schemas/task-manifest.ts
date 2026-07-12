@@ -42,6 +42,15 @@ export const taskManifestEntryV2Schema = z
     validation_commands: z.array(z.string()).nullish(),
     migration_constraints: z.array(z.string()).nullish(),
     out_of_scope: z.array(z.string()).nullish(),
+    invariants: z
+      .array(
+        z.object({
+          name: z.string().min(1),
+          description: z.string().min(1),
+          test_case_name: z.string().min(1),
+        }),
+      )
+      .nullish(),
     // Maintain some compatibility with V1 fields if needed, but the goal is structural
     files: z.array(z.string()).nullish(),
     validation: z.array(z.string()).nullish(),

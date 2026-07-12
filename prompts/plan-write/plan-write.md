@@ -22,6 +22,7 @@ The plan MUST include:
 - non-goals
 - affected files (full paths from repo root)
 - ordered implementation tasks (numbered, clear description per task) — each task MUST be an H2 heading starting at column 0, e.g. `## Task 1: Title` (never H3 `###` or deeper). Task numbers are always plain integers matching `tasks[].n` — NEVER use letter suffixes like `## Task 4a` or `## Task 4b`. If splitting a task, assign each part its own sequential integer (e.g., Task 4 and Task 5).
+- behavioral invariants: state-machine, loop, or stateful tasks MUST enumerate their behavioral invariants (e.g., "when input is X and state is Y, transition to Z"). These become named test cases the implementer writes FIRST.
 - tests to add or update
 - validation commands (exact commands to verify correctness)
 - risk areas
@@ -38,14 +39,21 @@ Write `task-manifest.json` as a JSON file with this exact structure:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "task_count": N,
   "tasks": [
     {
       "n": 1,
       "title": "Short task title",
-      "files": ["path/to/file1", "path/to/file2"],
-      "validation": ["command to verify"]
+      "expected_files": ["path/to/file1", "path/to/file2"],
+      "validation_commands": ["command to verify"],
+      "invariants": [
+        {
+          "name": "invariant name",
+          "description": "behavioral description",
+          "test_case_name": "exact name of the test case to write"
+        }
+      ]
     }
   ]
 }
@@ -53,12 +61,13 @@ Write `task-manifest.json` as a JSON file with this exact structure:
 
 Fields:
 
-- `version`: always `1`
+- `version`: always `2`
 - `task_count`: must equal `tasks.length`
 - `tasks[].n`: sequential 1-indexed task number
 - `tasks[].title`: one-line summary matching the prose task header
-- `tasks[].files`: files the task touches (optional but encouraged)
-- `tasks[].validation`: commands to verify task completion (optional but encouraged)
+- `tasks[].expected_files`: files the task touches (optional but encouraged)
+- `tasks[].validation_commands`: commands to verify task completion (optional but encouraged)
+- `tasks[].invariants`: behavioral invariants to be implemented as tests first (REQUIRED for stateful/logic-heavy tasks)
 
 The manifest is the machine-readable source of truth for task boundaries. `plan.md` remains the human-readable document with full prose.
 

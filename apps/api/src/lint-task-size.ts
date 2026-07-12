@@ -22,7 +22,11 @@ export function buildLintTaskSize(
     const oversized: OversizedTask[] = [];
 
     for (const task of manifest.tasks) {
-      const files = task.files ?? [];
+      // V2 manifests declare targets as expected_files; V1 uses files. The
+      // plan-write prompt emits V2 by default now — reading only `files`
+      // would silently disable this lint for every V2 run.
+      const files =
+        (task as { expected_files?: string[] | null }).expected_files ?? task.files ?? [];
       for (const relPath of files) {
         if (!TEST_FILE_RE.test(relPath)) continue;
         const absPath = join(cwd, relPath);
