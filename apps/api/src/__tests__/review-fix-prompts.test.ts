@@ -128,4 +128,61 @@ describe('buildReviewFixReviewPrompt — SCOPE block (#627)', () => {
     expect(prompt).not.toContain('## SCOPE');
     expect(prompt).not.toContain('## DISPOSITION GUIDANCE');
   });
+
+  it('renders INTEGRATION MODE and unresolved records / dispositions when mode is integration_full', () => {
+    const prompt = buildReviewFixReviewPrompt({
+      ...baseInput,
+      mode: 'integration_full',
+      unresolvedRecords: [
+        {
+          reviewerKind: 'integration',
+          severity: 'critical',
+          summary: 'Wiring mismatch',
+          fingerprint: 'fp-1',
+        },
+      ],
+      dispositionHistory: [{ fingerprint: 'fp-1', disposition: 'open', changedAt: '2026-07-12' }],
+    });
+
+    expect(prompt).toContain('## INTEGRATION MODE');
+    expect(prompt).toContain('Review Mode: integration_full');
+    expect(prompt).toContain('Wiring mismatch');
+    expect(prompt).toContain('fp-1');
+  });
+});
+
+describe('buildWholePrArbiterPrompt', () => {
+  it('renders disputed findings, disposition history, and delta info', async () => {
+    const { buildWholePrArbiterPrompt } = await import('../review-fix-prompts.js');
+    const prompt = buildWholePrArbiterPrompt({
+      cwd: '/wt',
+      repoId: 'owner/repo',
+      disputedFinding: {
+        fingerprint: 'fp-1',
+        severity: 'critical',
+        summary: 'Wiring mismatch',
+      },
+      dispositionHistory: [
+        {
+          fingerprint: 'fp-1',
+          disposition: 'open',
+          changedAt: '2026-07-12',
+          reason: 'Initial failure',
+        },
+      ],
+      relevantExcerpts: ['Line 10: bad wiring'],
+      fixDelta: '--- a/file.ts\n+++ b/file.ts',
+      fixRebuttal: 'It is correct.',
+    });
+
+    expect(prompt).toContain('## DISPUTED INTEGRATION FINDING');
+    expect(prompt).toContain('Wiring mismatch');
+    expect(prompt).toContain('## DISPOSITION HISTORY');
+    expect(prompt).toContain('Initial failure');
+    expect(prompt).toContain('## FIXER REBUTTAL');
+    expect(prompt).toContain('It is correct.');
+    expect(prompt).toContain('## RELEVANT EXCERPTS');
+    expect(prompt).toContain('Line 10: bad wiring');
+    expect(prompt).toContain('## FIX DELTA');
+  });
 });

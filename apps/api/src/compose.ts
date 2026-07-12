@@ -123,6 +123,7 @@ import {
   type StepLoopContext,
   type ImplementFixStepOptions,
   type ImplementStepOptions,
+  type ArbiterResult,
   type TypecheckResult,
   type TypescriptError,
   type ResolveRefShaFn,
@@ -204,7 +205,11 @@ import {
   readImplementStepFinalReviewExcerpts,
 } from './arbiter-excerpts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
-import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
+import {
+  buildReviewFixReviewPrompt,
+  buildReviewFixFixPrompt,
+  buildWholePrArbiterPrompt,
+} from './review-fix-prompts.js';
 import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
 import { createImplementStepHistoryFilePort } from './implement-step-history-file-port.js';
 import {
@@ -1854,6 +1859,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let runStep: Container['runStep'] | undefined;
   let runExecutor: RunExecutor | undefined;
   let buildRunContext: ((run: Run) => PhaseHandlerContext) | undefined;
+  const reviewStateRepository = new ReviewStateRepository(db);
   try {
     const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
     let layered = layeredConfigCache.get(cacheKey);
@@ -1979,6 +1985,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier';
       const fixFallbackProfileName: string | undefined =
         config.agent.phaseProfiles['fix-review']?.fallbackProfile;
+      const arbiterProfileName: string | undefined = resolveArbiterProfileName(
+        config.agent.phaseProfiles,
+      );
 
       const newestInvocationId = (runUuid: string): string => {
         const list = agentInvocationRepository.listByRun(RunId(runUuid));
@@ -1997,6 +2006,11 @@ export function composeRoot(opts: ComposeOptions): Container {
           opts_ && 'historyContext' in opts_ ? opts_.historyContext : undefined;
         const prevReviewedCommitSha: string | undefined =
           opts_ && 'prevReviewedCommitSha' in opts_ ? opts_.prevReviewedCommitSha : undefined;
+        const mode = opts_ && 'mode' in opts_ ? opts_.mode : undefined;
+        const unresolvedRecords =
+          opts_ && 'unresolvedRecords' in opts_ ? opts_.unresolvedRecords : undefined;
+        const dispositionHistory =
+          opts_ && 'dispositionHistory' in opts_ ? opts_.dispositionHistory : undefined;
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -2009,6 +2023,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           gateFailureOutput: gateResult?.outcome === 'fail' ? gateResult.output : undefined,
           historyContext,
           ...(prevReviewedCommitSha ? { prevReviewedCommitSha } : {}),
+          mode,
+          unresolvedRecords,
+          dispositionHistory,
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -2029,6 +2046,11 @@ export function composeRoot(opts: ComposeOptions): Container {
           metadata: {
             iteration: ctx.iterationIndex,
             invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
+            reviewMode: mode,
+            review_snapshot_kind: 'git',
+            review_snapshot_identity: startCommitSha,
+            review_dimensions: ['integration'],
+            review_scope_source: 'review-fix',
           },
           ...(isSemanticRetry
             ? {
@@ -2393,6 +2415,159 @@ export function composeRoot(opts: ComposeOptions): Container {
         return { outcome: 'fail', output: trimmed };
       };
 
+      const runWholePrArbiter = async (
+        ctx: StepContext,
+        reviewResult: ReviewStepResult,
+        fixResult: FixStepResult,
+      ): Promise<ArbiterResult> => {
+        const store = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+        const newestInvocationId = (runUuid: string): string => {
+          const list = agentInvocationRepository.listByRun(RunId(runUuid));
+          const last = list[list.length - 1];
+          return last ? String(last.id) : '';
+        };
+
+        const promptDir = join(baseTmpDir, 'review-fix-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(
+          promptDir,
+          `whole-pr-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
+        );
+
+        const findingToUse = reviewResult.offendingFindings?.[0];
+        if (!findingToUse) {
+          return {
+            outcome: 'insufficient_evidence',
+            evidence: '',
+            rationale: 'no offending findings in review result',
+          };
+        }
+
+        const fp = (findingToUse.summary ?? '').trim().toLowerCase();
+        const disputedFinding = {
+          fingerprint: fp,
+          severity: findingToUse.severity,
+          summary: findingToUse.summary,
+        };
+
+        const persistedDimensionStates = reviewStateRepository.listDimensionStates(
+          String(ctx.runId),
+          String(ctx.phaseId),
+          String(ctx.phaseId),
+        );
+        const matchingDimensionState = persistedDimensionStates.find(
+          (ds) => ds.dimension === 'integration',
+        );
+        const dispositionHistory =
+          matchingDimensionState?.dispositionHistory.filter((h) => h.fingerprint === fp) ?? [];
+
+        const relevantExcerpts: string[] = [];
+        if (reviewResult.excerpt) {
+          relevantExcerpts.push(reviewResult.excerpt);
+        }
+        try {
+          const codeReviewMd = await store.read(String(ctx.runId), 'code-review.md');
+          const fpIdx = codeReviewMd.toLowerCase().indexOf(fp);
+          if (fpIdx !== -1) {
+            const lines = codeReviewMd.split('\n');
+            const linesBefore = codeReviewMd.slice(0, fpIdx).split('\n');
+            const idx = linesBefore.length - 1;
+            const start = Math.max(0, idx - 5);
+            const end = Math.min(lines.length, idx + 15);
+            relevantExcerpts.push(lines.slice(start, end).join('\n'));
+          }
+        } catch {}
+
+        let fixDelta = '';
+        if (fixResult.headBeforeFix) {
+          try {
+            fixDelta = execFileSync('git', ['diff', `${fixResult.headBeforeFix}..HEAD`], {
+              cwd: ctx.cwd,
+            }).toString();
+            if (fixDelta.length > 3000) {
+              const trimmed = fixDelta.slice(0, 3000);
+              const lastNewline = trimmed.lastIndexOf('\n');
+              fixDelta =
+                (lastNewline > 0 ? trimmed.slice(0, lastNewline) : trimmed) +
+                '\n[... diff truncated due to size limit ...]';
+            }
+          } catch {}
+        }
+
+        const arbiterPrompt = buildWholePrArbiterPrompt({
+          cwd: ctx.cwd,
+          repoId: ctx.repoId,
+          disputedFinding,
+          dispositionHistory,
+          relevantExcerpts,
+          fixDelta,
+          fixRebuttal: fixResult.rebuttal ?? '',
+        });
+
+        writeFileSync(promptPath, arbiterPrompt, 'utf-8');
+
+        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ctx.cwd })
+          .toString()
+          .trim();
+        const profile = arbiterProfileName || 'opencode-frontier';
+
+        await artifactAgent.invoke({
+          profile: AgentProfileName(profile),
+          promptPath,
+          expectedArtifacts: ['result.json'],
+          cwd: ctx.cwd,
+          runId: String(ctx.runId),
+          repoId: ctx.repoId,
+          phaseId: 'arbiter',
+          startCommitSha,
+          metadata: {
+            iteration: ctx.iterationIndex,
+            invocation_type: 'initial',
+            reviewMode: 'integration_full',
+          },
+        });
+
+        const invocationId = newestInvocationId(String(ctx.runId));
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        const patchedInv = inv?.resultJsonPath
+          ? inv
+          : inv
+            ? { ...inv, resultJsonPath: 'result.json' }
+            : inv;
+
+        if (!patchedInv) {
+          return {
+            outcome: 'insufficient_evidence',
+            evidence: '',
+            rationale: 'no arbiter invocation row',
+          };
+        }
+
+        const verdict = await extractResult({
+          invocation: patchedInv,
+          ports: { artifacts: store, agent: artifactAgent, repair: structuredResultRepair },
+        });
+
+        if (!verdict.ok) {
+          return {
+            outcome: 'insufficient_evidence',
+            evidence: '',
+            rationale: `arbiter result.json unparseable: ${verdict.detail}`,
+          };
+        }
+
+        const parsed = arbiterResultSchema.safeParse(verdict.result);
+        if (!parsed.success) {
+          return {
+            outcome: 'insufficient_evidence',
+            evidence: '',
+            rationale: `Zod parse error: ${parsed.error.message}`,
+          };
+        }
+
+        return parsed.data as ArbiterResult;
+      };
+
       // Non-optional local so the ReviewFixHandler closure below can reference it
       // without a guard (the outer `let` stays `| undefined` for other consumers).
       const reviewFixLoopInstance = new ReviewFixLoop({
@@ -2407,6 +2582,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         loopHistory,
         findingEvidenceInspector: createFindingEvidenceInspector(),
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
+        reviewStateRepository,
+        runArbiter: runWholePrArbiter,
         options: {
           endOnReview: config.phases.reviewFix.endOnReview,
           deltaScopedReReview: config.phases.reviewFix.deltaScopedReReview,
@@ -2543,9 +2720,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier';
       const implFixFallbackProfileName: string | undefined =
         config.agent.phaseProfiles['fix-review']?.fallbackProfile;
-      const arbiterProfileName: string | undefined = resolveArbiterProfileName(
-        config.agent.phaseProfiles,
-      );
 
       const makeArtifactStore = (runUuid: string, cwd: string): ArtifactStore =>
         artifactStoreForRun(runUuid, cwd);
@@ -3672,8 +3846,6 @@ export function composeRoot(opts: ComposeOptions): Container {
             return parsed.data as ImplementStepFinalReviewArbiterResult;
           }
         : undefined;
-
-      const reviewStateRepository = new ReviewStateRepository(db);
 
       implementStepLoop = new ImplementStepLoop({
         runImplement,
