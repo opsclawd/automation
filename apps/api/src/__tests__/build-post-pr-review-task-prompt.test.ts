@@ -11,6 +11,7 @@ describe('buildPostPrReviewTaskPrompt', () => {
       body: 'Fix this logic error',
     },
     diff: 'diff --git a/apps/api/src/compose.ts b/apps/api/src/compose.ts\n...',
+    mode: 'initial_full' as const,
   };
 
   it('renders the base prompt correctly and asserts no-push instructions', () => {

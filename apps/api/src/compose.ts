@@ -1150,16 +1150,19 @@ export interface BuildPostPrReviewTaskPromptInput {
     body: string;
   };
   diff: string;
+  mode: 'initial_full' | 'intermediate_delta';
   previousBuildError?: string;
   previousCodeVerifyReason?: string;
 }
 
 export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptInput): string {
-  const { cwd, comment, diff, previousBuildError, previousCodeVerifyReason } = input;
-  const sections = [
+  const { cwd, comment, diff, mode, previousBuildError, previousCodeVerifyReason } = input;
+  const sections: string[] = [
     '# PR Review Comment Task',
     '',
     WORKSPACE_CONSTRAINTS,
+    '',
+    `## Attempt Mode: ${mode === 'initial_full' ? 'INITIAL FULL' : 'INTERMEDIATE DELTA'}`,
     '',
     'Address the following PR review comment:',
     '',
@@ -5045,6 +5048,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         comment,
         diff,
         branch: _branch,
+        mode,
         previousBuildError,
         previousCodeVerifyReason,
       }) => {
@@ -5055,6 +5059,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           cwd,
           comment,
           diff,
+          mode,
           ...(previousBuildError !== undefined ? { previousBuildError } : {}),
           ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
         });

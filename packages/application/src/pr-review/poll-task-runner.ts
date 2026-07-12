@@ -1,4 +1,4 @@
-import type { PrReviewComment } from '@ai-sdlc/domain';
+import type { PrReviewComment, PrReviewCommentAttempt } from '@ai-sdlc/domain';
 import { markProcessed, blockComment, markReplied } from '@ai-sdlc/domain';
 import type { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
 import type { GitHubPort } from '../ports/github-port.js';
@@ -22,6 +22,7 @@ export interface PollTaskRunnerDeps {
     branch: string;
     previousBuildError?: string;
     previousCodeVerifyReason?: string;
+    mode: PostPrReviewAttemptMode;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -45,6 +46,8 @@ export interface PollTaskRunnerDeps {
   now: () => Date;
 }
 
+export type PostPrReviewAttemptMode = 'initial_full' | 'intermediate_delta';
+
 export interface PollTaskInput {
   runId: RunId;
   repoId: RepositoryId;
@@ -61,6 +64,8 @@ export interface PollTaskInput {
   unresolvedCommentCount: number;
   previousBuildError?: string;
   previousCodeVerifyReason?: string;
+  reviewMode: PostPrReviewAttemptMode;
+  retryNumber: number;
 }
 
 export interface PollTaskOutput {
@@ -70,6 +75,7 @@ export interface PollTaskOutput {
   blocked: boolean;
   buildError?: string;
   codeVerifyReason?: string;
+  attemptId?: string;
 }
 
 export class PollTaskRunner {
@@ -78,6 +84,23 @@ export class PollTaskRunner {
   async execute(input: PollTaskInput): Promise<PollTaskOutput> {
     const d = this.deps;
     const { comment } = input;
+    const attemptId = d.idFactory();
+    const currentHeadBeforeReset = await d.git.headCommitSha(input.cwd);
+
+    const attempt: PrReviewCommentAttempt = {
+      attemptId,
+      runId: input.runId,
+      commentId: comment.commentId,
+      retryNumber: input.retryNumber,
+      startHead: input.startCommitSha,
+      completedHead: currentHeadBeforeReset,
+      reviewMode: input.reviewMode,
+      promptPath: '',
+      resultArtifactPath: '',
+      action: 'review',
+      createdAt: d.now(),
+    };
+    d.prReviewRepo.appendCommentAttempt(attempt);
 
     await d.git.resetHard(input.cwd, input.startCommitSha);
     await d.git.cleanUntracked(input.cwd);
@@ -88,12 +111,20 @@ export class PollTaskRunner {
       comment: input.comment,
       diff: input.diff,
       branch: input.branch,
+      mode: input.reviewMode,
       ...(input.previousBuildError !== undefined
         ? { previousBuildError: input.previousBuildError }
         : {}),
       ...(input.previousCodeVerifyReason !== undefined
         ? { previousCodeVerifyReason: input.previousCodeVerifyReason }
         : {}),
+    });
+
+    const completedHeadAfterPrompt = await d.git.headCommitSha(input.cwd);
+    d.prReviewRepo.updateCommentAttempt({
+      ...attempt,
+      promptPath,
+      completedHead: completedHeadAfterPrompt,
     });
 
     // 2. Invoke agent
@@ -111,16 +142,31 @@ export class PollTaskRunner {
       timeoutMs,
       metadata: {
         pr_review_comment_id: comment.commentId,
-        invocation_type: input.previousBuildError || input.previousCodeVerifyReason ? 'retry' : 'initial',
+        invocation_type:
+          input.previousBuildError || input.previousCodeVerifyReason ? 'retry' : 'initial',
       },
     });
 
+    const resultArtifactPath = invocation.resultJsonPath ?? '';
+    d.prReviewRepo.updateCommentAttempt({
+      ...attempt,
+      resultArtifactPath,
+    });
+
     if (invocation.outcome !== 'success') {
+      const currentHead = await d.git.headCommitSha(input.cwd);
+      d.prReviewRepo.updateCommentAttempt({
+        ...attempt,
+        completedHead: currentHead,
+        disposition: 'failure',
+        action: 'review',
+      });
       return {
         commentId: comment.commentId,
         action: 'failed',
         processed: false,
         blocked: false,
+        attemptId,
       };
     }
 
@@ -132,22 +178,38 @@ export class PollTaskRunner {
     );
 
     if (!extracted.ok) {
+      const currentHead = await d.git.headCommitSha(input.cwd);
+      d.prReviewRepo.updateCommentAttempt({
+        ...attempt,
+        completedHead: currentHead,
+        disposition: 'failure',
+        action: 'review',
+      });
       return {
         commentId: comment.commentId,
         action: 'failed',
         processed: false,
         blocked: false,
+        attemptId,
       };
     }
 
     const result = extracted.result;
 
     if (result.commentId !== comment.commentId) {
+      const currentHead = await d.git.headCommitSha(input.cwd);
+      d.prReviewRepo.updateCommentAttempt({
+        ...attempt,
+        completedHead: currentHead,
+        disposition: 'failure',
+        action: 'review',
+      });
       return {
         commentId: comment.commentId,
         action: 'failed',
         processed: false,
         blocked: false,
+        attemptId,
       };
     }
 
@@ -163,11 +225,20 @@ export class PollTaskRunner {
         verified: true,
       });
       d.prReviewRepo.upsertComment(blockComment(comment, result.blockedReason ?? 'agent blocked'));
+      const currentHead = await d.git.headCommitSha(input.cwd);
+      d.prReviewRepo.updateCommentAttempt({
+        ...attempt,
+        completedHead: currentHead,
+        disposition: 'failure',
+        action: 'remediate',
+        ...(result.blockedReason !== undefined ? { verifierFeedback: result.blockedReason } : {}),
+      });
       return {
         commentId: comment.commentId,
         action: 'blocked',
         processed: false,
         blocked: true,
+        attemptId,
       };
     }
 
@@ -210,25 +281,50 @@ export class PollTaskRunner {
           }),
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
+        const currentHead = await d.git.headCommitSha(input.cwd);
+        d.prReviewRepo.updateCommentAttempt({
+          ...attempt,
+          completedHead: currentHead,
+          disposition: 'success',
+          action: 'remediate',
+        });
         return {
           commentId: comment.commentId,
           action: 'no_fix',
           processed: true,
           blocked: false,
+          attemptId,
         };
       }
 
+      const currentHeadNoFix = await d.git.headCommitSha(input.cwd);
+      d.prReviewRepo.updateCommentAttempt({
+        ...attempt,
+        completedHead: currentHeadNoFix,
+        disposition: 'failure',
+        action: 'verify',
+        verifierFeedback: 'reply verification failed',
+      });
       return {
         commentId: comment.commentId,
         action: 'no_fix',
         processed: false,
         blocked: false,
+        attemptId,
       };
     }
 
     if (result.action === 'fixed') {
       const fixCommitSha = await d.git.headCommitSha(input.cwd);
       if (fixCommitSha === input.startCommitSha) {
+        const currentHead = await d.git.headCommitSha(input.cwd);
+        d.prReviewRepo.updateCommentAttempt({
+          ...attempt,
+          completedHead: currentHead,
+          disposition: 'failure',
+          action: 'remediate',
+          buildFeedback: 'agent did not produce a new commit (commitSha unchanged)',
+        });
         await this.resetToStart(input);
         return {
           commentId: comment.commentId,
@@ -236,6 +332,7 @@ export class PollTaskRunner {
           processed: false,
           blocked: false,
           buildError: 'agent did not produce a new commit (commitSha unchanged)',
+          attemptId,
         };
       }
 
@@ -244,6 +341,14 @@ export class PollTaskRunner {
         runId: String(input.runId),
       });
       if (!buildResult.passed) {
+        const currentHead = await d.git.headCommitSha(input.cwd);
+        d.prReviewRepo.updateCommentAttempt({
+          ...attempt,
+          completedHead: currentHead,
+          disposition: 'failure',
+          action: 'remediate',
+          ...(buildResult.error !== undefined ? { buildFeedback: buildResult.error } : {}),
+        });
         await this.resetToStart(input);
         return {
           commentId: comment.commentId,
@@ -251,6 +356,7 @@ export class PollTaskRunner {
           processed: false,
           blocked: false,
           ...(buildResult.error !== undefined ? { buildError: buildResult.error } : {}),
+          attemptId,
         };
       }
 
@@ -266,6 +372,14 @@ export class PollTaskRunner {
           repoId: String(input.repoId),
         });
         if (!codeResult.pass) {
+          const currentHead = await d.git.headCommitSha(input.cwd);
+          d.prReviewRepo.updateCommentAttempt({
+            ...attempt,
+            completedHead: currentHead,
+            disposition: 'failure',
+            action: 'verify',
+            verifierFeedback: codeResult.reason,
+          });
           await this.resetToStart(input);
           return {
             commentId: comment.commentId,
@@ -273,6 +387,7 @@ export class PollTaskRunner {
             processed: false,
             blocked: false,
             codeVerifyReason: codeResult.reason,
+            attemptId,
           };
         }
       }
@@ -318,14 +433,31 @@ export class PollTaskRunner {
           }),
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
+        const currentHead = await d.git.headCommitSha(input.cwd);
+        d.prReviewRepo.updateCommentAttempt({
+          ...attempt,
+          completedHead: currentHead,
+          disposition: 'success',
+          action: 'remediate',
+        });
         return {
           commentId: comment.commentId,
           action: 'fixed',
           processed: true,
           blocked: false,
+          attemptId,
         };
       }
 
+      const currentHeadFixed = await d.git.headCommitSha(input.cwd);
+      d.prReviewRepo.updateCommentAttempt({
+        ...attempt,
+        completedHead: currentHeadFixed,
+        disposition: 'failure',
+        action: 'verify',
+        verifierFeedback:
+          verification.buildError ?? verification.codeVerifyReason ?? 'verification failed',
+      });
       return {
         commentId: comment.commentId,
         action: 'fixed',
@@ -335,14 +467,23 @@ export class PollTaskRunner {
         ...(verification.codeVerifyReason !== undefined
           ? { codeVerifyReason: verification.codeVerifyReason }
           : {}),
+        attemptId,
       };
     }
 
+    const fallbackHead = await d.git.headCommitSha(input.cwd);
+    d.prReviewRepo.updateCommentAttempt({
+      ...attempt,
+      completedHead: fallbackHead,
+      disposition: 'failure',
+      action: 'review',
+    });
     return {
       commentId: comment.commentId,
       action: 'failed',
       processed: false,
       blocked: false,
+      attemptId,
     };
   }
 

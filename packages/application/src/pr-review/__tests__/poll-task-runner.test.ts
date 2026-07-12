@@ -145,6 +145,7 @@ describe('PollTaskRunner — happy path', () => {
       action: 'fixed',
       processed: true,
       blocked: false,
+      attemptId: expect.any(String),
     });
     expect(git.pushes).toHaveLength(1);
     expect(git.pushes[0]).toEqual({ cwd: '/work/tree', branch: 'feat-x' });
@@ -354,6 +355,7 @@ describe('PollTaskRunner — failure isolation', () => {
       action: 'failed',
       processed: false,
       blocked: false,
+      attemptId: expect.any(String),
     });
     expect(github.repliesPosted).toHaveLength(0);
   });

@@ -10,6 +10,7 @@ import {
   type PrReviewComment,
   type PollAttempt,
 } from '@ai-sdlc/domain';
+import type { PostPrReviewAttemptMode } from './poll-task-runner.js';
 import { verifyComment } from './verify-comment.js';
 import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import type { FixDiffInspectorPort } from '../ports/fix-diff-inspector-port.js';
@@ -32,6 +33,7 @@ export interface ProcessPrReviewDeps {
     comment: PrReviewComment;
     diff: string;
     branch: string;
+    mode: PostPrReviewAttemptMode;
     previousBuildError?: string;
     previousCodeVerifyReason?: string;
   }) => Promise<string>;
@@ -192,6 +194,9 @@ export class ProcessPrReviewComments {
         if (currentComment.state !== 'pending' && currentComment.state !== 'replied') break;
 
         const currentDiff = attempt === 1 ? diff : await d.git.diff(input.cwd, 'origin/HEAD');
+        const reviewMode: PostPrReviewAttemptMode =
+          attempt === 1 ? 'initial_full' : 'intermediate_delta';
+        const retryNumber = attempt;
         try {
           lastOutput = await taskRunner.execute({
             ...input,
@@ -201,6 +206,8 @@ export class ProcessPrReviewComments {
             startCommitSha: runningStartSha,
             originalStartCommitSha: originalStartCommitSha,
             unresolvedCommentCount: unresolved.length,
+            reviewMode,
+            retryNumber,
             ...(previousBuildError !== undefined ? { previousBuildError } : {}),
             ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
           });
