@@ -310,9 +310,11 @@ describe('PlanReviewLoop', () => {
     });
     // The trailing final review is a fresh full-plan review, NOT a
     // delta-scoped re-review (#716, design §4 Assumption 9) — its job is
-    // to catch anything missed by the iterative loop. So `runReview` is
-    // called with `undefined` opts, NOT `buildReviewStepOptions()`.
-    expect(reviewOptions[2]).toBeUndefined();
+    // to catch anything missed by the iterative loop. We check that it runs
+    // with mode final_full without prevFindings or recentFixCitations constraints.
+    expect(reviewOptions[2]).toEqual({
+      mode: 'final_full',
+    });
   });
 
   it('refreshes recentFixCitations from computeLastFixDiffCitations even when headBeforeFix is undefined', async () => {

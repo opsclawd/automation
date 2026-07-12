@@ -15,7 +15,9 @@ import type {
   PlanReviewLoopResult,
   PlanReviewStepOptions,
   PlanReviewResult,
+  PlanReviewSnapshot,
 } from './types.js';
+import type { ReviewMode } from '../review-state/types.js';
 
 export const DEFAULT_REVIEWER_MAX_RETRIES = 2;
 
@@ -61,6 +63,9 @@ export class PlanReviewLoop {
       string,
       'addressed' | 'rebutted' | 'still_open' | 'never_seen_again'
     >();
+
+    let iter1Snapshot: PlanReviewSnapshot | undefined;
+    let finalFullPhase = false;
 
     let lastDeterministicMismatch: string | null = null;
     let lastDeterministicWasUnresolvedWithNoChanges = false;
@@ -171,26 +176,28 @@ export class PlanReviewLoop {
       }
     };
 
-    const buildReviewStepOptions = (iterationIndex: number): PlanReviewStepOptions | undefined => {
+    const buildReviewStepOptions = (
+      iterationIndex: number,
+      mode: ReviewMode,
+      isConfirmation: boolean = false,
+    ): PlanReviewStepOptions | undefined => {
       if (!deltaScopedReReview) return undefined;
-      // Iteration 1 is a fresh full review — no scope block needed.
-      // Iteration 2+ is the delta-scoped re-review; even if both
-      // `prevFindings` and `recentFixCitations` are empty (e.g., iter-1
-      // returned no grounded findings AND no fix citations to scope
-      // against), the composition root still needs to know this is a
-      // delta-scoped invocation so it can decide whether to append the
-      // SCOPE / DISPOSITION GUIDANCE block (#716, fix to reviewer
-      // finding: returning `undefined` here causes the SCOPE block to
-      // be silently dropped on iter 2+ when there's nothing to thread).
-      if (iterationIndex < 2) return undefined;
+      if (iterationIndex < 2 && mode !== 'final_full') return undefined;
+      if (mode === 'final_full' && !isConfirmation) {
+        return {
+          mode,
+          ...(iter1Snapshot ? { snapshot: iter1Snapshot } : {}),
+        };
+      }
       const stepOptions: PlanReviewStepOptions = {
         prevFindings: [],
         recentFixCitations: [],
+        mode,
       };
+      if (mode === 'intermediate_delta' && iter1Snapshot) {
+        stepOptions.snapshot = iter1Snapshot;
+      }
       if (frozenPrevFindings !== undefined && frozenPrevFindings.length > 0) {
-        // Stamp each frozen finding with its current disposition from the
-        // tracker (#716, design §3.3). The reviewer uses these dispositions
-        // to decide whether to re-flag, address, or rebut each prior finding.
         stepOptions.prevFindings = frozenPrevFindings.map((f) => ({
           ...f,
           disposition: frozenDispositions.get(f.citation) ?? 'still_open',
@@ -198,6 +205,9 @@ export class PlanReviewLoop {
       }
       if (recentFixCitations.length > 0) {
         stepOptions.recentFixCitations = recentFixCitations;
+      }
+      if (mode === 'final_full' && isConfirmation && iter1Snapshot) {
+        stepOptions.snapshot = iter1Snapshot;
       }
       return stepOptions;
     };
@@ -223,6 +233,12 @@ export class PlanReviewLoop {
       const iterationIndex = loop.iterations.length + 1;
       const ctx: PlanReviewContext = { ...baseCtx, iterationIndex };
 
+      const reviewMode: ReviewMode = finalFullPhase
+        ? 'final_full'
+        : iterationIndex === 1
+          ? 'initial_full'
+          : 'intermediate_delta';
+
       this.emit(
         input,
         'plan-review.loop.iteration.started',
@@ -230,6 +246,7 @@ export class PlanReviewLoop {
         `iteration ${iterationIndex} started`,
         {
           index: iterationIndex,
+          reviewMode,
         },
       );
 
@@ -244,9 +261,10 @@ export class PlanReviewLoop {
             metadata: {
               iteration: iterationIndex,
               invocation_type: reviewAttempts === 1 ? 'initial' : 'retry',
+              reviewMode,
             },
           },
-          buildReviewStepOptions(iterationIndex),
+          buildReviewStepOptions(iterationIndex, reviewMode),
         );
         if (review.agentOutcome === 'success' && review.verdict !== undefined) break;
         if (reviewAttempts <= reviewerMaxRetries) {
@@ -291,6 +309,17 @@ export class PlanReviewLoop {
       }
 
       loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
+
+      if (iterationIndex === 1 && review.snapshot) {
+        iter1Snapshot = review.snapshot;
+        this.emit(
+          input,
+          'plan-review.snapshot.captured',
+          'info',
+          `captured iteration-1 snapshot for delta-scoped passes`,
+          { snapshot: iter1Snapshot },
+        );
+      }
 
       // --- EVIDENCE-BOUND GATE + OUT-OF-SCOPE DROP (#716) ---
       // When `deltaScopedReReview` is true, the loop applies the
@@ -356,6 +385,18 @@ export class PlanReviewLoop {
 
       // --- RESOLUTION ON PASS / P2-ONLY ---
       if (review.verdict === 'pass' || review.verdict === 'p2_only') {
+        if (finalFullPhase) {
+          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'plan-review.loop.iteration.completed',
+            'info',
+            `iteration ${iterationIndex} completed: resolved (final_full pass)`,
+            { index: iterationIndex, outcome: 'resolved' },
+          );
+          return { outcome: 'success', loop, proceedWithConcerns: false };
+        }
         loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
         deps.loops.update(loop);
         this.emit(
@@ -370,21 +411,101 @@ export class PlanReviewLoop {
 
       // --- PROCEED_WITH_CONCERNS — AC #3 ---
       if (review.verdict === 'proceed_with_concerns') {
-        loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+        if (finalFullPhase) {
+          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'plan-review.loop.iteration.completed',
+            'info',
+            `iteration ${iterationIndex} completed: resolved (proceed with concerns — final_full)`,
+            { index: iterationIndex, outcome: 'resolved', knownLimitations: true },
+          );
+          return {
+            outcome: 'success',
+            loop,
+            proceedWithConcerns: true,
+            ...(review.knownLimitations ? { knownLimitations: review.knownLimitations } : {}),
+          };
+        }
+        if (!deltaScopedReReview) {
+          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'plan-review.loop.iteration.completed',
+            'info',
+            `iteration ${iterationIndex} completed: resolved (proceed with concerns)`,
+            { index: iterationIndex, outcome: 'resolved', knownLimitations: true },
+          );
+          return {
+            outcome: 'success',
+            loop,
+            proceedWithConcerns: true,
+            ...(review.knownLimitations ? { knownLimitations: review.knownLimitations } : {}),
+          };
+        }
+        const open = loop.iterations[loop.iterations.length - 1]!;
+        const convergedIteration: import('@ai-sdlc/domain').LoopIteration = {
+          ...open,
+          reviewInvocationId: review.invocationId,
+          completedAt: deps.now(),
+          outcome: 'resolved',
+        };
+        loop = {
+          ...loop,
+          iterations: [...loop.iterations.slice(0, -1), convergedIteration],
+          status: 'running',
+        };
         deps.loops.update(loop);
         this.emit(
           input,
           'plan-review.loop.iteration.completed',
           'info',
-          `iteration ${iterationIndex} completed: resolved (proceed with concerns)`,
-          { index: iterationIndex, outcome: 'resolved', knownLimitations: true },
+          `iteration ${iterationIndex} completed: resolved (delta converged with concerns)`,
+          { index: iterationIndex, outcome: 'resolved' },
         );
-        return {
-          outcome: 'success',
-          loop,
-          proceedWithConcerns: true,
-          ...(review.knownLimitations ? { knownLimitations: review.knownLimitations } : {}),
-        };
+        const finalSyncResult = await checkAndFixManifest({
+          ...baseCtx,
+          iterationIndex: loop.iterations.length + 1,
+        });
+        loop = finalSyncResult.loop;
+        if (!finalSyncResult.success) {
+          loop = exhaust(loop, deps.now());
+          deps.loops.update(loop);
+          return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+        }
+        finalFullPhase = true;
+        this.emit(
+          input,
+          'plan-review.loop.final_review.started',
+          'info',
+          `delta converged with concerns; entering final_full review phase`,
+          { iteration: iterationIndex },
+        );
+        continue;
+      }
+
+      if (finalFullPhase && review.verdict === 'p1_found') {
+        this.emit(
+          input,
+          'plan-review.loop.final_review.finding_reopens_cycle',
+          'warn',
+          `final_full review found P1; reopening delta cycle`,
+          { iteration: iterationIndex },
+        );
+        loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+        deps.loops.update(loop);
+        this.emit(
+          input,
+          'plan-review.loop.iteration.completed',
+          'info',
+          `iteration ${iterationIndex} completed: unresolved (final_full P1 found — cycle reopened)`,
+          { index: iterationIndex, outcome: 'unresolved' },
+        );
+        finalFullPhase = false;
+        iter1Snapshot = undefined;
+        continue;
       }
 
       // --- FIX ---
@@ -609,12 +730,13 @@ export class PlanReviewLoop {
         }
         const finalIterationIndex = loop.iterations.length + 1;
         const finalCtx: PlanReviewContext = { ...baseCtx, iterationIndex: finalIterationIndex };
+        finalFullPhase = true;
 
         this.emit(
           input,
           'plan-review.loop.final_review',
           'info',
-          'Running final review after last fixer pass',
+          'Running final_full review after last fixer pass',
           { iteration: finalIterationIndex },
         );
 
@@ -623,20 +745,16 @@ export class PlanReviewLoop {
         let finalReviewAttempts = 0;
         while (finalReviewAttempts <= reviewerMaxRetries) {
           finalReviewAttempts += 1;
-          // The trailing final review is a fresh full-plan review, NOT a delta-scoped
-          // re-review (#716, design §4 Assumption 9). Its job is to catch
-          // anything the iterative review/fix loop missed; threading
-          // `prevFindings` here would scope it back to the iter-1 finding
-          // set and defeat the purpose.
           finalReview = await deps.runReview(
             {
               ...finalCtx,
               metadata: {
                 iteration: finalIterationIndex,
                 invocation_type: 'initial',
+                reviewMode: 'final_full',
               },
             },
-            undefined,
+            buildReviewStepOptions(finalIterationIndex, 'final_full'),
           );
           if (finalReview.agentOutcome === 'success' && finalReview.verdict !== undefined) break;
           if (finalReviewAttempts <= reviewerMaxRetries) {
@@ -947,7 +1065,7 @@ export class PlanReviewLoop {
                       invocation_type: confirmAttempts === 1 ? 'initial' : 'retry',
                     },
                   },
-                  buildReviewStepOptions(confirmIterationIndex),
+                  buildReviewStepOptions(confirmIterationIndex, 'final_full', true),
                 );
                 if (confirmReview.agentOutcome === 'success' && confirmReview.verdict !== undefined)
                   break;
@@ -1172,7 +1290,10 @@ export class PlanReviewLoop {
     const hasP1 = eligible.some((f) => f.severity === 'P1');
     if (hasP0) return 'p1_found';
     if (hasP1) {
-      return reviewerVerdict === 'proceed_with_concerns' ? 'proceed_with_concerns' : 'p1_found';
+      if (reviewerVerdict === 'proceed_with_concerns') {
+        return 'p1_found';
+      }
+      return reviewerVerdict;
     }
 
     if (reviewerVerdict === 'p1_found' || reviewerVerdict === 'proceed_with_concerns') {

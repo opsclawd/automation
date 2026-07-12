@@ -3,6 +3,8 @@ import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { ArbiterResult } from '../implement-step/types.js';
+import type { ReviewMode } from '../review-state/types.js';
+import type { ReviewStateRepositoryPort } from '../ports/review-state-repository-port.js';
 
 export interface PlanReviewContext {
   loopId: string;
@@ -29,6 +31,22 @@ export interface PlanReviewResult {
    * as having no eligible findings.
    */
   findings?: ReadonlyArray<PlanReviewFinding>;
+  /**
+   * Artifact snapshot captured at review time (#723). Used by the composition
+   * root to detect artifact drift between intermediate_delta and final_full
+   * review passes. Undefined when the reviewer agent failed.
+   */
+  snapshot?: PlanReviewSnapshot;
+  /**
+   * The review mode used for this pass (#723). Controls prompt scope block
+   * rendering and verdict semantics:
+   *   - `initial_full`: first discovery pass; no scope block, no restrictions
+   *   - `intermediate_delta`: subsequent delta-scoped pass; new findings must
+   *     cite recent-fix text, unresolved findings carry dispositions
+   *   - `final_full`: post-convergence full review against fresh snapshot;
+   *     no recent-fix citation filter, runs manifest sync check
+   */
+  mode?: ReviewMode;
 }
 
 /**
@@ -54,6 +72,21 @@ export interface PlanReviewFinding {
    * from a prior iteration.
    */
   disposition?: 'addressed' | 'rebutted' | 'still_open' | 'never_seen_again';
+}
+
+/**
+ * Immutable snapshot of plan artifacts captured at review time (#723).
+ * Captures digests of plan.md, task-manifest.json, and design.md so that
+ * a final_full review can detect if artifacts changed during the loop.
+ */
+export interface PlanReviewSnapshot {
+  planMdDigest: string;
+  manifestDigest?: string;
+  designDigest?: string;
+  planMdPath: string;
+  manifestPath?: string;
+  designPath?: string;
+  capturedAt: string;
 }
 
 /**
@@ -95,6 +128,24 @@ export interface PlanReviewStepOptions {
    * design §2.5 / §7.1).
    */
   recentFixCitations?: ReadonlyArray<string>;
+  /**
+   * The artifact snapshot from the iteration-1 review (#723). Used by
+   * `buildPlanReviewReviewScopeBlock` to render the mode/snapshot scope
+   * block and by the loop to detect artifact drift between passes.
+   * Present on iteration >= 2 when a snapshot was captured in iter 1.
+   */
+  snapshot?: PlanReviewSnapshot;
+  /**
+   * The review mode for this pass (#723):
+   *   - `intermediate_delta`: delta-scoped re-review; new findings must cite
+   *     recent-fix text, dispositions threaded from frozen findings
+   *   - `final_full`: full review against a fresh snapshot; no recent-fix
+   *     citation filter
+   *
+   * When omitted (undefined), the caller is a first-pass initial_full review
+   * and no scope block is needed.
+   */
+  mode?: ReviewMode;
 }
 
 export interface PlanFixResult {
@@ -207,6 +258,13 @@ export interface PlanReviewLoopDeps {
   idFactory: () => string;
   /** Convergence options. See `PlanReviewLoopOptions`. */
   options?: PlanReviewLoopOptions;
+  /**
+   * Port for persisting plan review attempts and dimension states (#723).
+   * The loop appends an `ReviewAttempt` after every review invocation
+   * (initial, intermediate, final) so that historical runs can be resumed
+   * in broad mode when no prior snapshot exists.
+   */
+  reviewStateRepository?: ReviewStateRepositoryPort;
 }
 
 export interface PlanReviewLoopInput {

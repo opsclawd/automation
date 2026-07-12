@@ -5,8 +5,8 @@ import type {
   ReviewSnapshot,
   ReviewFindingRecord,
   DispositionHistoryEntry,
-} from '@ai-sdlc/application/review-state';
-import type { ReviewStateRepositoryPort } from '@ai-sdlc/application/ports';
+  ReviewStateRepositoryPort,
+} from '@ai-sdlc/application/ports';
 
 interface AttemptRow {
   id: string;

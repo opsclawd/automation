@@ -34,7 +34,11 @@ function makeFakeGitPort(opts: {
     currentBranch: async () => 'main',
     headCommitSha: async () => {
       if (opts.headShaThrows) throw new Error('rev-parse failed');
-      return headShas[headShaIndex++ % headShas.length];
+      const val = headShas[headShaIndex];
+      if (headShaIndex < headShas.length - 1) {
+        headShaIndex++;
+      }
+      return val;
     },
     resetHard: async () => undefined,
     diff: async () => '',

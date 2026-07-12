@@ -84,7 +84,7 @@ export function buildArbiterPrompt(
     '',
   );
 
-  if (inputs.dispositionHistory.length > 0) {
+  if (inputs.dispositionHistory && inputs.dispositionHistory.length > 0) {
     sections.push(
       '### DISPOSITION HISTORY',
       '```json',
