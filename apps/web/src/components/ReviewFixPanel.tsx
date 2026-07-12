@@ -19,7 +19,13 @@ function Pill({ color, children }: { color: PillColor; children: React.ReactNode
   );
 }
 
-export function ReviewFixPanel({ runUuid }: { runUuid: string }) {
+export function ReviewFixPanel({
+  repositoryId,
+  runUuid,
+}: {
+  repositoryId: string;
+  runUuid: string;
+}) {
   const [loops, setLoops] = useState<LoopDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,7 +34,7 @@ export function ReviewFixPanel({ runUuid }: { runUuid: string }) {
 
     async function fetchData() {
       try {
-        const d = await listReviewFix(runUuid);
+        const d = await listReviewFix(repositoryId, runUuid);
         if (!live) return;
         setLoops(d);
         setError(null);
@@ -44,7 +50,7 @@ export function ReviewFixPanel({ runUuid }: { runUuid: string }) {
       live = false;
       clearInterval(intervalId);
     };
-  }, [runUuid]);
+  }, [repositoryId, runUuid]);
 
   if (error) {
     return <div className="text-sm text-red-600">Failed to load review/fix: {error}</div>;
@@ -77,12 +83,24 @@ export function ReviewFixPanel({ runUuid }: { runUuid: string }) {
                     <li key={it.index} className="flex flex-wrap items-center gap-2 text-sm">
                       <span className="w-24 text-slate-500 text-xs">Iteration {it.index}</span>
                       <Pill color={chip.color}>{chip.label}</Pill>
-                      <ArtifactViewer runId={runUuid} fileName={it.reviewArtifactPath} />
+                      <ArtifactViewer
+                        repositoryId={repositoryId}
+                        runId={runUuid}
+                        fileName={it.reviewArtifactPath}
+                      />
                       {it.fixArtifactPath && (
-                        <ArtifactViewer runId={runUuid} fileName={it.fixArtifactPath} />
+                        <ArtifactViewer
+                          repositoryId={repositoryId}
+                          runId={runUuid}
+                          fileName={it.fixArtifactPath}
+                        />
                       )}
                       {it.revalidateArtifactPath && (
-                        <ArtifactViewer runId={runUuid} fileName={it.revalidateArtifactPath} />
+                        <ArtifactViewer
+                          repositoryId={repositoryId}
+                          runId={runUuid}
+                          fileName={it.revalidateArtifactPath}
+                        />
                       )}
                     </li>
                   );

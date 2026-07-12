@@ -23,6 +23,7 @@ describe('run actions API client', () => {
     uuid: 'uuid-123',
     displayId: 'R-1',
     issueNumber: 1,
+    repoId: 'repo-123',
     status: 'failed',
     currentPhase: 'create-pr',
     completedPhases: [],
@@ -57,7 +58,7 @@ describe('run actions API client', () => {
         json: () => Promise.resolve(cancelSuccess),
       });
 
-      const res = await cancelRunAction('uuid-123', 'some reason');
+      const res = await cancelRunAction('repo-123', 'uuid-123', 'some reason');
       expect(res).toEqual(cancelSuccess);
       expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringContaining('/api/runs/uuid-123/cancel'),
@@ -74,7 +75,9 @@ describe('run actions API client', () => {
         status: 500,
       });
 
-      await expect(cancelRunAction('uuid-123')).rejects.toThrow('failed to cancel run action: 500');
+      await expect(cancelRunAction('repo-123', 'uuid-123')).rejects.toThrow(
+        'failed to cancel run action: 500',
+      );
     });
   });
 
@@ -85,7 +88,7 @@ describe('run actions API client', () => {
         json: () => Promise.resolve(successPayload),
       });
 
-      const res = await retryRunAction('uuid-123', true);
+      const res = await retryRunAction('repo-123', 'uuid-123', true);
       expect(res).toEqual(successPayload);
       expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringContaining('/api/runs/uuid-123/retry'),
@@ -104,7 +107,7 @@ describe('run actions API client', () => {
       });
 
       try {
-        await retryRunAction('uuid-123');
+        await retryRunAction('repo-123', 'uuid-123');
         expect.fail('Should have thrown RunActionConfirmationRequiredError');
       } catch (err) {
         expect(err).toBeInstanceOf(RunActionConfirmationRequiredError);
@@ -124,7 +127,9 @@ describe('run actions API client', () => {
         json: () => Promise.resolve({ error: 'something_else' }),
       });
 
-      await expect(retryRunAction('uuid-123')).rejects.toThrow('failed to retry run action: 409');
+      await expect(retryRunAction('repo-123', 'uuid-123')).rejects.toThrow(
+        'failed to retry run action: 409',
+      );
     });
 
     it('handles invalid response on 409 (malformed JSON)', async () => {
@@ -134,7 +139,9 @@ describe('run actions API client', () => {
         json: () => Promise.reject(new Error('SyntaxError')),
       });
 
-      await expect(retryRunAction('uuid-123')).rejects.toThrow('failed to retry run action: 409');
+      await expect(retryRunAction('repo-123', 'uuid-123')).rejects.toThrow(
+        'failed to retry run action: 409',
+      );
     });
   });
 
@@ -146,7 +153,10 @@ describe('run actions API client', () => {
         json: () => Promise.resolve(resumeSuccess),
       });
 
-      const res = await resumeRunAction('uuid-123', { fromPhase: 'create-pr', confirm: true });
+      const res = await resumeRunAction('repo-123', 'uuid-123', {
+        fromPhase: 'create-pr',
+        confirm: true,
+      });
       expect(res).toEqual(resumeSuccess);
       expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringContaining('/api/runs/uuid-123/resume'),
@@ -166,7 +176,7 @@ describe('run actions API client', () => {
       });
 
       try {
-        await resumeRunAction('uuid-123');
+        await resumeRunAction('repo-123', 'uuid-123');
         expect.fail('Should have thrown RunActionConfirmationRequiredError');
       } catch (err) {
         expect(err).toBeInstanceOf(RunActionConfirmationRequiredError);
@@ -181,7 +191,9 @@ describe('run actions API client', () => {
         json: () => Promise.reject(new Error('SyntaxError')),
       });
 
-      await expect(resumeRunAction('uuid-123')).rejects.toThrow('failed to resume run action: 409');
+      await expect(resumeRunAction('repo-123', 'uuid-123')).rejects.toThrow(
+        'failed to resume run action: 409',
+      );
     });
   });
 });

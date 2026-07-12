@@ -1,11 +1,13 @@
 import { test, expect } from '@playwright/test';
 
+const HEALTHY_1_ID = 'f18c6375af9525d8fd93f40691bdd554d74c6ad67630ecd87cdac6fb08d7b45b';
+
 test('PR Review tab shows comment cards and poll status panel', async ({ page }) => {
   const runId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
 
-  // Mock the PR Review API response so the client-side PrReviewPanel fetch
-  // returns deterministic data without modifying the DB seed.
-  await page.route(`**/api/runs/${runId}/pr-review`, async (route) => {
+  await page.route(`**/api/runs/${runId}/pr-review*`, async (route) => {
+    const url = new URL(route.request().url());
+    expect(url.searchParams.get('repositoryId')).toBe(HEALTHY_1_ID);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -67,13 +69,39 @@ test('PR Review tab shows comment cards and poll status panel', async ({ page })
     });
   });
 
-  await page.goto(`/runs/${runId}`);
+  await page.route(`**/api/runs/${runId}*`, async (route) => {
+    const url = new URL(route.request().url());
+    expect(url.searchParams.get('repositoryId')).toBe(HEALTHY_1_ID);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        run: {
+          uuid: runId,
+          displayId: 'R-001',
+          issueNumber: 1,
+          status: 'running',
+          currentPhase: 'implement',
+          completedPhases: [],
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          durationMs: 5000,
+          exitCode: null,
+          failureReason: null,
+          repoId: HEALTHY_1_ID,
+        },
+        failure: null,
+      }),
+    });
+  });
+
+  await page.goto(`/repositories/${HEALTHY_1_ID}/runs/${runId}`);
   await page.getByRole('tab', { name: 'PR Review' }).click();
 
   // Poll status panel
   await expect(page.getByText('Polls run:')).toBeVisible();
   await expect(page.getByText('Terminal:')).toBeVisible();
-  await expect(page.getByText('blocked')).toBeVisible();
+  await expect(page.getByText('Terminal: blocked')).toBeVisible();
 
   // Comment cards — unresolved-first means 'blocked' (9002) appears before 'replied' (9001)
   const cards = page.locator('li', { has: page.locator('code') });

@@ -25,10 +25,11 @@ const CANONICAL_PHASE_ORDER = [
 ];
 
 interface RunActionsProps {
+  repositoryId: string;
   run: RunDto;
 }
 
-export function RunActions({ run }: RunActionsProps) {
+export function RunActions({ repositoryId, run }: RunActionsProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [selectedPhase, setSelectedPhase] = useState<string>('');
@@ -48,7 +49,7 @@ export function RunActions({ run }: RunActionsProps) {
     setIsLoading(true);
     setError(null);
     try {
-      await cancelRunAction(run.uuid);
+      await cancelRunAction(repositoryId, run.uuid);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -65,7 +66,7 @@ export function RunActions({ run }: RunActionsProps) {
       if (selectedPhase) {
         input.fromPhase = selectedPhase;
       }
-      await resumeRunAction(run.uuid, input);
+      await resumeRunAction(repositoryId, run.uuid, input);
       router.refresh();
     } catch (err) {
       if (err instanceof RunActionConfirmationRequiredError) {
@@ -83,7 +84,7 @@ export function RunActions({ run }: RunActionsProps) {
     setIsLoading(true);
     setError(null);
     try {
-      await retryRunAction(run.uuid);
+      await retryRunAction(repositoryId, run.uuid);
       router.refresh();
     } catch (err) {
       if (err instanceof RunActionConfirmationRequiredError) {
@@ -108,13 +109,13 @@ export function RunActions({ run }: RunActionsProps) {
     setShowDialog(false);
     try {
       if (dialogPayload.action === 'retry') {
-        await retryRunAction(run.uuid, true);
+        await retryRunAction(repositoryId, run.uuid, true);
       } else if (dialogPayload.action === 'resume') {
         const input: { fromPhase?: string; confirm?: boolean } = { confirm: true };
         if (dialogPayload.targetPhase) {
           input.fromPhase = dialogPayload.targetPhase;
         }
-        await resumeRunAction(run.uuid, input);
+        await resumeRunAction(repositoryId, run.uuid, input);
       }
       router.refresh();
     } catch (err) {

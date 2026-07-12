@@ -6,12 +6,18 @@ const POLL_INTERVAL_MS = 2000;
 const TERMINAL_STATUSES = new Set(['passed', 'failed', 'cancelled']);
 
 interface LiveLogViewerProps {
+  repositoryId: string;
   runId: string;
   runStatus: string;
   initialContent: string;
 }
 
-export function LiveLogViewer({ runId, runStatus, initialContent }: LiveLogViewerProps) {
+export function LiveLogViewer({
+  repositoryId,
+  runId,
+  runStatus,
+  initialContent,
+}: LiveLogViewerProps) {
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState(runStatus);
   const preRef = useRef<HTMLPreElement>(null);
@@ -25,9 +31,12 @@ export function LiveLogViewer({ runId, runStatus, initialContent }: LiveLogViewe
 
     async function poll() {
       try {
-        const logRes = await fetch(`/api/runs/${runId}/artifacts/combined.log`, {
-          signal: controller.signal,
-        });
+        const logRes = await fetch(
+          `/api/runs/${runId}/artifacts/combined.log?repositoryId=${encodeURIComponent(repositoryId)}`,
+          {
+            signal: controller.signal,
+          },
+        );
         if (logRes.ok && !controller.signal.aborted) {
           setContent(await logRes.text());
         } else if (logRes.status === 404 && !controller.signal.aborted) {
@@ -40,9 +49,12 @@ export function LiveLogViewer({ runId, runStatus, initialContent }: LiveLogViewe
       if (controller.signal.aborted) return;
 
       try {
-        const runRes = await fetch(`/api/runs/${runId}`, {
-          signal: controller.signal,
-        });
+        const runRes = await fetch(
+          `/api/runs/${runId}?repositoryId=${encodeURIComponent(repositoryId)}`,
+          {
+            signal: controller.signal,
+          },
+        );
         if (runRes.ok && !controller.signal.aborted) {
           const { run } = (await runRes.json()) as { run: { status: string } };
           setStatus(run.status);
@@ -65,7 +77,7 @@ export function LiveLogViewer({ runId, runStatus, initialContent }: LiveLogViewe
       controller.abort();
       clearTimeout(timeoutId);
     };
-  }, [runId, status]);
+  }, [repositoryId, runId, status]);
 
   useEffect(() => {
     if (isUserScrollingRef.current) return;

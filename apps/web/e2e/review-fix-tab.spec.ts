@@ -1,11 +1,16 @@
 import { test, expect } from '@playwright/test';
 
+const HEALTHY_1_ID = 'f18c6375af9525d8fd93f40691bdd554d74c6ad67630ecd87cdac6fb08d7b45b';
+const HEALTHY_2_ID = '34feb66c2f259a456d6b5134d520cd73d4935462a91636811e8fa1c6de07d345';
+
 test('Review/Fix tab renders converged and exhausted loop badges with iteration rows', async ({
   page,
 }) => {
   const runId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
 
-  await page.route(`**/api/runs/${runId}/review-fix`, async (route) => {
+  await page.route(`**/api/runs/${runId}/review-fix*`, async (route) => {
+    const url = new URL(route.request().url());
+    expect(url.searchParams.get('repositoryId')).toBe(HEALTHY_1_ID);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -25,6 +30,7 @@ test('Review/Fix tab renders converged and exhausted loop badges with iteration 
                 outcome: 'resolved',
                 reviewInvocationId: 'ra1',
                 qualityReviewInvocationId: null,
+                lockInvocationId: null,
                 fixInvocationId: 'fa1',
                 revalidationId: 'rv1',
                 reviewArtifactPath:
@@ -51,6 +57,7 @@ test('Review/Fix tab renders converged and exhausted loop badges with iteration 
                 outcome: 'unresolved',
                 reviewInvocationId: 'rb1',
                 qualityReviewInvocationId: null,
+                lockInvocationId: null,
                 fixInvocationId: 'fb1',
                 revalidationId: null,
                 reviewArtifactPath: 'review-fix/loop-b/review/code-review/iter-1/code-review.md',
@@ -64,6 +71,7 @@ test('Review/Fix tab renders converged and exhausted loop badges with iteration 
                 outcome: 'unresolved',
                 reviewInvocationId: 'rb2',
                 qualityReviewInvocationId: null,
+                lockInvocationId: null,
                 fixInvocationId: 'fb2',
                 revalidationId: 'rv2',
                 reviewArtifactPath: 'review-fix/loop-b/review/code-review/iter-2/code-review.md',
@@ -80,7 +88,33 @@ test('Review/Fix tab renders converged and exhausted loop badges with iteration 
     });
   });
 
-  await page.goto(`/runs/${runId}`);
+  await page.route(`**/api/runs/${runId}*`, async (route) => {
+    const url = new URL(route.request().url());
+    expect(url.searchParams.get('repositoryId')).toBe(HEALTHY_1_ID);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        run: {
+          uuid: runId,
+          displayId: 'R-001',
+          issueNumber: 1,
+          status: 'running',
+          currentPhase: 'implement',
+          completedPhases: [],
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          durationMs: 5000,
+          exitCode: null,
+          failureReason: null,
+          repoId: HEALTHY_1_ID,
+        },
+        failure: null,
+      }),
+    });
+  });
+
+  await page.goto(`/repositories/${HEALTHY_1_ID}/runs/${runId}`);
   await page.getByRole('tab', { name: 'Review/Fix' }).click();
 
   await expect(page.getByText('Converged')).toBeVisible();
@@ -94,7 +128,9 @@ test('Review/Fix tab renders converged and exhausted loop badges with iteration 
 test('Review/Fix tab shows empty state for a run with no loops', async ({ page }) => {
   const emptyRunId = 'b2c3d4e5-f6a7-8901-bcde-f12345678901';
 
-  await page.route(`**/api/runs/${emptyRunId}/review-fix`, async (route) => {
+  await page.route(`**/api/runs/${emptyRunId}/review-fix*`, async (route) => {
+    const url = new URL(route.request().url());
+    expect(url.searchParams.get('repositoryId')).toBe(HEALTHY_2_ID);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -102,7 +138,33 @@ test('Review/Fix tab shows empty state for a run with no loops', async ({ page }
     });
   });
 
-  await page.goto(`/runs/${emptyRunId}`);
+  await page.route(`**/api/runs/${emptyRunId}*`, async (route) => {
+    const url = new URL(route.request().url());
+    expect(url.searchParams.get('repositoryId')).toBe(HEALTHY_2_ID);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        run: {
+          uuid: emptyRunId,
+          displayId: 'R-002',
+          issueNumber: 1,
+          status: 'running',
+          currentPhase: null,
+          completedPhases: ['implement'],
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          durationMs: 10000,
+          exitCode: null,
+          failureReason: null,
+          repoId: HEALTHY_2_ID,
+        },
+        failure: null,
+      }),
+    });
+  });
+
+  await page.goto(`/repositories/${HEALTHY_2_ID}/runs/${emptyRunId}`);
   await page.getByRole('tab', { name: 'Review/Fix' }).click();
 
   await expect(page.getByText('No review/fix activity for this run.')).toBeVisible();
