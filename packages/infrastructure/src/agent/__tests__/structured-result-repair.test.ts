@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentInvocationId, AgentProfileName } from '@ai-sdlc/domain';
@@ -31,7 +31,6 @@ function makeWorkspace(): string {
   const dir = mkdtempSync(join(tmpdir(), 'structured-repair-'));
   mkdirSync(join(dir, 'src'), { recursive: true });
   writeFileSync(join(dir, 'src', 'app.ts'), 'export const app = 1;\n');
-  writeFileSync(join(dir, 'result.json'), '{\n  "status": "seed"\n}\n');
   return dir;
 }
 
@@ -57,13 +56,19 @@ function makeInput(
   };
 }
 
-function primaryChanges(cwd: string): { sourceBefore: string; destBefore: string } {
+function primaryChanges(
+  cwd: string,
+  includeDestination = true,
+): { sourceBefore: string; destBefore?: string } {
   const sourcePath = join(cwd, 'src', 'app.ts');
   const destPath = join(cwd, 'result.json');
   writeFileSync(sourcePath, 'export const app = 2;\n');
-  writeFileSync(destPath, '{\n  "status": "broken-primary"\n}\n');
   const sourceBefore = readFileSync(sourcePath, 'utf-8');
-  const destBefore = readFileSync(destPath, 'utf-8');
+  let destBefore: string | undefined;
+  if (includeDestination) {
+    writeFileSync(destPath, '{\n  "status": "broken-primary"\n}\n');
+    destBefore = readFileSync(destPath, 'utf-8');
+  }
   return { sourceBefore, destBefore };
 }
 
@@ -74,13 +79,20 @@ function setup(
     stdoutText?: string;
     promptBuilder?: typeof buildStructuredResultRepairPrompt;
     input?: Partial<Parameters<StructuredResultRepair['repairStructuredResult']>[0]>;
+    seedDestination?: boolean;
+    status?: string;
+    head?: string;
   } = {},
 ) {
   const cwd = makeWorkspace();
-  const { sourceBefore, destBefore } = primaryChanges(cwd);
+  const { sourceBefore, destBefore } = primaryChanges(cwd, overrides.seedDestination !== false);
   const git = new FakeGitPort();
-  git.headByCwd.set(cwd, 'abc123');
-  git.statusByCwd.set(cwd, ' M src/app.ts\n M result.json\n');
+  git.headByCwd.set(cwd, overrides.head ?? 'abc123');
+  git.statusByCwd.set(
+    cwd,
+    overrides.status ??
+      (overrides.seedDestination === false ? ' M src/app.ts\n' : ' M src/app.ts\n M result.json\n'),
+  );
   const stdoutPath = join(cwd, 'primary.stdout');
   writeFileSync(
     stdoutPath,
@@ -175,12 +187,33 @@ describe('StructuredResultRepair', () => {
     expect(capturedPrompt).not.toContain('HEAD SHA');
   });
 
-  it('returns not_attempted when the destination is missing', async () => {
-    const env = setup({ input: { destination: 'missing-result.json' } });
+  it('repairs a missing destination when transcript evidence and the expected HEAD are present', async () => {
+    const env = setup({
+      seedDestination: false,
+      input: {
+        destination: 'result.json',
+        cappedRawArtifact: '',
+        transcriptEvidence: 'repair transcript evidence',
+      },
+      stdoutText:
+        'primary summary start\nPRIMARY_BOUNDED_MARKER\n' +
+        'x'.repeat(9000) +
+        '\nprimary summary end\n',
+      writer: (cwd) => async (req) => {
+        writeFileSync(join(cwd, req.expectedArtifacts[0]!), '{"status":"repaired"}\n');
+        return SUCCESS_RESULT;
+      },
+    });
     dirs.push(env.cwd);
     const result = await env.repair.repairStructuredResult(env.input);
-    expect(result.outcome).toBe('not_attempted');
-    expect(env.agent.invocations).toHaveLength(0);
+    expect(result.outcome).toBe('repaired');
+    expect(env.agent.invocations).toHaveLength(1);
+
+    const req = env.agent.invocations[0]!;
+    expect(req.fallbackOfInvocationId).toBe(PRIMARY_ID);
+    expect(req.startCommitSha).toBe(env.input.expectedHead);
+    expect(req.fallbackReason).toBe('serialization_repair');
+    expect(readFileSync(join(env.cwd, 'result.json'), 'utf-8')).toBe('{"status":"repaired"}\n');
   });
 
   it('returns not_attempted when the destination path escapes the worktree', async () => {
@@ -208,7 +241,36 @@ describe('StructuredResultRepair', () => {
     expect(readFileSync(join(env.cwd, 'result.json'), 'utf-8')).toBe('{"status":"repaired"}\n');
   });
 
-  it('returns failed and restores source-file mutations when the writer changes another file', async () => {
+  it('rejects repair when the live HEAD differs from the supplied end-commit baseline', async () => {
+    const env = setup({
+      head: 'def456',
+    });
+    dirs.push(env.cwd);
+    const result = await env.repair.repairStructuredResult(env.input);
+    expect(result.outcome).toBe('not_attempted');
+    expect(env.agent.invocations).toHaveLength(0);
+  });
+
+  it('removes a destination created by a failed repair when it did not exist before repair', async () => {
+    const env = setup({
+      seedDestination: false,
+      input: {
+        cappedRawArtifact: '',
+        transcriptEvidence: 'repair transcript evidence',
+      },
+      writer: (cwd) => async () => {
+        writeFileSync(join(cwd, 'result.json'), '{"status":"repaired"}\n');
+        return { ...SUCCESS_RESULT, exitCode: 1, outcome: 'failed' };
+      },
+    });
+    dirs.push(env.cwd);
+    const result = await env.repair.repairStructuredResult(env.input);
+    expect(result.outcome).toBe('failed');
+    expect(existsSync(join(env.cwd, 'result.json'))).toBe(false);
+    expect(readFileSync(join(env.cwd, 'src', 'app.ts'), 'utf-8')).toBe(env.sourceBefore);
+  });
+
+  it('restores malformed destination content and source edits when a repair writes outside the destination', async () => {
     const env = setup({
       writer: (cwd) => async () => {
         writeFileSync(join(cwd, 'src', 'app.ts'), 'export const app = 3;\n');

@@ -77,6 +77,11 @@ interface FileSnapshot {
   contents: string;
 }
 
+interface DestinationSnapshot {
+  existed: boolean;
+  contents: string;
+}
+
 export class StructuredResultRepair implements StructuredResultRepairPort {
   private readonly git: GitPort;
   private readonly agent: AgentPort;
@@ -106,11 +111,12 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
       return { outcome: 'not_attempted' };
     }
 
-    if (!existsSync(destinationAbs)) {
-      return { outcome: 'not_attempted' };
-    }
-
-    if (!this.matchesRawArtifact(destinationAbs, input.cappedRawArtifact)) {
+    const destinationSnapshot = this.snapshotDestination(destinationAbs);
+    if (destinationSnapshot.existed) {
+      if (!this.matchesRawArtifact(destinationAbs, input.cappedRawArtifact)) {
+        return { outcome: 'not_attempted' };
+      }
+    } else if (input.cappedRawArtifact.length > 0) {
       return { outcome: 'not_attempted' };
     }
 
@@ -159,7 +165,7 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
     try {
       result = await this.agent.invoke(request);
     } catch {
-      await this.cleanupFailedRepair(input, destinationAbs, preSnapshot);
+      await this.cleanupFailedRepair(input, destinationAbs, preSnapshot, destinationSnapshot);
       return {
         outcome: 'failed',
         repairInvocationId,
@@ -169,7 +175,7 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
     }
 
     if (result.outcome !== 'success' || result.exitCode !== 0) {
-      await this.cleanupFailedRepair(input, destinationAbs, preSnapshot);
+      await this.cleanupFailedRepair(input, destinationAbs, preSnapshot, destinationSnapshot);
       return {
         outcome: 'failed',
         repairInvocationId,
@@ -177,7 +183,7 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
     }
 
     if (this.matchesRawArtifact(destinationAbs, input.cappedRawArtifact)) {
-      await this.cleanupFailedRepair(input, destinationAbs, preSnapshot);
+      await this.cleanupFailedRepair(input, destinationAbs, preSnapshot, destinationSnapshot);
       return {
         outcome: 'failed',
         repairInvocationId,
@@ -186,7 +192,7 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
 
     const postStatus = await this.safeStatusPaths(input.cwd);
     if (!(await this.onlyDestinationChanged(input.cwd, destinationAbs, preSnapshot, postStatus))) {
-      await this.cleanupFailedRepair(input, destinationAbs, preSnapshot);
+      await this.cleanupFailedRepair(input, destinationAbs, preSnapshot, destinationSnapshot);
       return {
         outcome: 'failed',
         repairInvocationId,
@@ -194,7 +200,7 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
     }
 
     if (!existsSync(destinationAbs)) {
-      await this.cleanupFailedRepair(input, destinationAbs, preSnapshot);
+      await this.cleanupFailedRepair(input, destinationAbs, preSnapshot, destinationSnapshot);
       return {
         outcome: 'failed',
         repairInvocationId,
@@ -211,9 +217,14 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
     input: StructuredResultRepairInput,
     destinationAbs: string,
     preSnapshot: Map<string, FileSnapshot>,
+    destinationSnapshot: DestinationSnapshot,
   ): Promise<void> {
     try {
-      writeFileSync(destinationAbs, input.cappedRawArtifact);
+      if (destinationSnapshot.existed) {
+        writeFileSync(destinationAbs, destinationSnapshot.contents);
+      } else {
+        rmSync(destinationAbs, { force: true });
+      }
     } catch {
       // Best-effort cleanup; the other snapshot restores still matter.
     }
@@ -294,6 +305,17 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
       }
     }
     return snapshot;
+  }
+
+  private snapshotDestination(destinationAbs: string): DestinationSnapshot {
+    if (!existsSync(destinationAbs)) {
+      return { existed: false, contents: '' };
+    }
+    try {
+      return { existed: true, contents: readFileSync(destinationAbs, 'utf-8') };
+    } catch {
+      return { existed: true, contents: '' };
+    }
   }
 
   private async safeStatusPaths(cwd: string): Promise<Set<string>> {
