@@ -1357,6 +1357,60 @@ exit 1
     expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?holisticFindings/);
   });
 
+  it('implRunFix passes the worktree cwd and persisted end commit to fix-result repair', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
+    expect(fixMatch).toBeTruthy();
+    const code = fixMatch![0];
+    expect(code).toMatch(/readFixVerdict\([\s\S]*?cwd:\s*ctx\.cwd/);
+    expect(code).toMatch(
+      /readFixVerdict\([\s\S]*?repairExpectedHead:\s*(?:patched\.endCommitSha\s*\?\?\s*startCommitSha|repairExpectedHead)/,
+    );
+  });
+
+  it('implRunFix archives fix-result.json only after a successful original or repaired verdict', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
+    expect(fixMatch).toBeTruthy();
+    const code = fixMatch![0];
+    const readIndex = code.indexOf('readFixVerdict');
+    const archiveIndex = code.indexOf('archiveStepResultDurably');
+    expect(readIndex).toBeLessThan(archiveIndex);
+    expect(code).toMatch(/if\s*\(\s*fixVerdict\.ok\s*\)\s*\{\s*archiveStepResultDurably/);
+  });
+
+  it('implRunFix returns a repaired done_with_fixes verdict as a successful FixResult', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
+    expect(fixMatch).toBeTruthy();
+    const code = fixMatch![0];
+    expect(code).toMatch(/agentOutcome:\s*fixVerdict\.ok/);
+    expect(code).toMatch(/verdict:\s*fixVerdict\.verdict/);
+  });
+
+  it('a failed repair remains contract_violation and does not archive a nonexistent artifact', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
+    expect(fixMatch).toBeTruthy();
+    const code = fixMatch![0];
+    expect(code).toMatch(
+      /agentOutcome:\s*fixVerdict\.ok\s*\?\s*\(?\s*'success'\s*(?:as\s+const)?\s*\)?\s*:\s*\(?\s*'contract_violation'\s*(?:as\s+const)?\s*\)?/,
+    );
+    expect(code).toMatch(/if\s*\(\s*fixVerdict\.ok\s*\)\s*\{\s*archiveStepResultDurably/);
+  });
+
   describe('worktreeSetup behavior', () => {
     const fakeAgentConfig = {
       validation: { commands: ['echo ok'], timeout: 60 },

@@ -3710,12 +3710,25 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: invokeResult.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
-        archiveStepResultDurably(ctx, patched.resultJsonPath ?? 'result.json', FIX_RESULT_ARTIFACT);
-        const fixVerdict = await readFixVerdict(patched, {
-          artifacts,
-          agent: artifactAgent,
-          repair: structuredResultRepair,
-        });
+        const fixVerdict = await readFixVerdict(
+          patched,
+          {
+            artifacts,
+            agent: artifactAgent,
+            repair: structuredResultRepair,
+          },
+          {
+            cwd: ctx.cwd,
+            repairExpectedHead: patched.endCommitSha ?? startCommitSha,
+          },
+        );
+        if (fixVerdict.ok) {
+          archiveStepResultDurably(
+            ctx,
+            patched.resultJsonPath ?? 'result.json',
+            FIX_RESULT_ARTIFACT,
+          );
+        }
         return {
           invocationId,
           agentOutcome: fixVerdict.ok ? ('success' as const) : ('contract_violation' as const),
