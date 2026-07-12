@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { RunId, createPrReviewComment, markReplied, type PollAttempt } from '@ai-sdlc/domain';
+import {
+  RunId,
+  createPrReviewComment,
+  markReplied,
+  type PollAttempt,
+  type PrReviewCommentAttempt,
+} from '@ai-sdlc/domain';
 import { openDatabase, applyMigrations } from '../../index.js';
 import { PrReviewRepository } from '../pr-review-repository.js';
 
@@ -141,5 +147,278 @@ describe('PrReviewRepository', () => {
   it('latestPollAttempt returns undefined when no polls exist', () => {
     const repo = new PrReviewRepository(db);
     expect(repo.latestPollAttempt(runId)).toBeUndefined();
+  });
+
+  it('appendCommentAttempt and listCommentAttempts round-trips', () => {
+    const repo = new PrReviewRepository(db);
+    repo.upsertComment(
+      createPrReviewComment({
+        runId,
+        prNumber: 7,
+        commentId: 100,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r',
+        body: 'fix',
+        now: new Date(),
+      }),
+    );
+    const attempt: PrReviewCommentAttempt = {
+      attemptId: 'a1',
+      runId,
+      commentId: 100,
+      retryNumber: 0,
+      startHead: 'abc123',
+      reviewMode: 'post-fix',
+      promptPath: '/prompts/review.md',
+      resultArtifactPath: '/artifacts/result.md',
+      action: 'review',
+      createdAt: new Date('2026-07-12T00:00:00Z'),
+    };
+    repo.appendCommentAttempt(attempt);
+    const listed = repo.listCommentAttempts(runId, 100);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].attemptId).toBe('a1');
+    expect(listed[0].startHead).toBe('abc123');
+    expect(listed[0].reviewMode).toBe('post-fix');
+  });
+
+  it('appendCommentAttempt with optional fields round-trips', () => {
+    const repo = new PrReviewRepository(db);
+    repo.upsertComment(
+      createPrReviewComment({
+        runId,
+        prNumber: 7,
+        commentId: 100,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r',
+        body: 'fix',
+        now: new Date(),
+      }),
+    );
+    const attempt: PrReviewCommentAttempt = {
+      attemptId: 'a2',
+      runId,
+      commentId: 100,
+      retryNumber: 0,
+      startHead: 'abc123',
+      completedHead: 'def456',
+      reviewMode: 'post-fix',
+      promptPath: '/prompts/review.md',
+      resultArtifactPath: '/artifacts/result.md',
+      action: 'verify',
+      verifierFeedback: 'commit verified',
+      buildFeedback: 'build passed',
+      disposition: 'success',
+      createdAt: new Date('2026-07-12T00:00:00Z'),
+    };
+    repo.appendCommentAttempt(attempt);
+    const listed = repo.listCommentAttempts(runId, 100);
+    expect(listed[0].completedHead).toBe('def456');
+    expect(listed[0].verifierFeedback).toBe('commit verified');
+    expect(listed[0].buildFeedback).toBe('build passed');
+    expect(listed[0].disposition).toBe('success');
+  });
+
+  it('appendCommentAttempt rejects duplicate retry number', () => {
+    const repo = new PrReviewRepository(db);
+    repo.upsertComment(
+      createPrReviewComment({
+        runId,
+        prNumber: 7,
+        commentId: 100,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r',
+        body: 'fix',
+        now: new Date(),
+      }),
+    );
+    const attempt: PrReviewCommentAttempt = {
+      attemptId: 'a1',
+      runId,
+      commentId: 100,
+      retryNumber: 0,
+      startHead: 'abc123',
+      reviewMode: 'post-fix',
+      promptPath: '/prompts/review.md',
+      resultArtifactPath: '/artifacts/result.md',
+      action: 'review',
+      createdAt: new Date('2026-07-12T00:00:00Z'),
+    };
+    repo.appendCommentAttempt(attempt);
+    expect(() => repo.appendCommentAttempt({ ...attempt, attemptId: 'a2' })).toThrow();
+  });
+
+  it('listCommentAttempts returns attempts for specific comment', () => {
+    const repo = new PrReviewRepository(db);
+    repo.upsertComment(
+      createPrReviewComment({
+        runId,
+        prNumber: 7,
+        commentId: 100,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r',
+        body: 'fix',
+        now: new Date(),
+      }),
+    );
+    repo.upsertComment(
+      createPrReviewComment({
+        runId,
+        prNumber: 7,
+        commentId: 200,
+        path: 'b.ts',
+        line: 2,
+        reviewer: 'r',
+        body: 'fix',
+        now: new Date(),
+      }),
+    );
+    repo.appendCommentAttempt({
+      attemptId: 'a1',
+      runId,
+      commentId: 100,
+      retryNumber: 0,
+      startHead: 'abc',
+      reviewMode: 'post-fix',
+      promptPath: '/p.md',
+      resultArtifactPath: '/r.md',
+      action: 'review',
+      createdAt: new Date('2026-07-12T00:00:00Z'),
+    });
+    repo.appendCommentAttempt({
+      attemptId: 'a2',
+      runId,
+      commentId: 200,
+      retryNumber: 0,
+      startHead: 'def',
+      reviewMode: 'post-fix',
+      promptPath: '/p2.md',
+      resultArtifactPath: '/r2.md',
+      action: 'review',
+      createdAt: new Date('2026-07-12T00:00:00Z'),
+    });
+    expect(repo.listCommentAttempts(runId, 100)).toHaveLength(1);
+    expect(repo.listCommentAttempts(runId, 200)).toHaveLength(1);
+    expect(repo.listCommentAttempts(runId, 999)).toHaveLength(0);
+  });
+
+  it('listCommentAttempts is empty for legacy comment with no attempts', () => {
+    const repo = new PrReviewRepository(db);
+    repo.upsertComment(
+      createPrReviewComment({
+        runId,
+        prNumber: 7,
+        commentId: 100,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r',
+        body: 'fix',
+        now: new Date(),
+      }),
+    );
+    expect(repo.listCommentAttempts(runId, 100)).toHaveLength(0);
+  });
+
+  it('updateCommentAttempt persists optional fields and they are retrievable via listCommentAttempts', () => {
+    const repo = new PrReviewRepository(db);
+    repo.upsertComment(
+      createPrReviewComment({
+        runId,
+        prNumber: 7,
+        commentId: 100,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r',
+        body: 'fix',
+        now: new Date(),
+      }),
+    );
+    const attempt: PrReviewCommentAttempt = {
+      attemptId: 'a1',
+      runId,
+      commentId: 100,
+      retryNumber: 0,
+      startHead: 'abc123',
+      reviewMode: 'post-fix',
+      promptPath: '/prompts/review.md',
+      resultArtifactPath: '/artifacts/result.md',
+      action: 'review',
+      createdAt: new Date('2026-07-12T00:00:00Z'),
+    };
+    repo.appendCommentAttempt(attempt);
+    repo.updateCommentAttempt({
+      ...attempt,
+      completedHead: 'def456',
+      verifierFeedback: 'commit verified',
+      buildFeedback: 'build passed',
+      disposition: 'success',
+    });
+    const listed = repo.listCommentAttempts(runId, 100);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].completedHead).toBe('def456');
+    expect(listed[0].verifierFeedback).toBe('commit verified');
+    expect(listed[0].buildFeedback).toBe('build passed');
+    expect(listed[0].disposition).toBe('success');
+  });
+
+  it('listCommentAttempts orders by retry number and creation time', () => {
+    const repo = new PrReviewRepository(db);
+    repo.upsertComment(
+      createPrReviewComment({
+        runId,
+        prNumber: 7,
+        commentId: 100,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r',
+        body: 'fix',
+        now: new Date(),
+      }),
+    );
+    repo.appendCommentAttempt({
+      attemptId: 'a1',
+      runId,
+      commentId: 100,
+      retryNumber: 2,
+      startHead: 'abc',
+      reviewMode: 'post-fix',
+      promptPath: '/p.md',
+      resultArtifactPath: '/r.md',
+      action: 'review',
+      createdAt: new Date('2026-07-12T00:02:00Z'),
+    });
+    repo.appendCommentAttempt({
+      attemptId: 'a2',
+      runId,
+      commentId: 100,
+      retryNumber: 0,
+      startHead: 'def',
+      reviewMode: 'post-fix',
+      promptPath: '/p2.md',
+      resultArtifactPath: '/r2.md',
+      action: 'review',
+      createdAt: new Date('2026-07-12T00:01:00Z'),
+    });
+    repo.appendCommentAttempt({
+      attemptId: 'a3',
+      runId,
+      commentId: 100,
+      retryNumber: 1,
+      startHead: 'ghi',
+      reviewMode: 'post-fix',
+      promptPath: '/p3.md',
+      resultArtifactPath: '/r3.md',
+      action: 'review',
+      createdAt: new Date('2026-07-12T00:03:00Z'),
+    });
+    const listed = repo.listCommentAttempts(runId, 100);
+    expect(listed).toHaveLength(3);
+    expect(listed[0].attemptId).toBe('a2');
+    expect(listed[1].attemptId).toBe('a3');
+    expect(listed[2].attemptId).toBe('a1');
   });
 });

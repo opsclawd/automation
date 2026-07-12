@@ -205,3 +205,23 @@ export interface PrReviewReply {
   postedAt: Date;
   verified: boolean;
 }
+
+export type AttemptDisposition = 'success' | 'failure' | 'skipped';
+export type AttemptAction = 'review' | 'verify' | 'remediate';
+
+export interface PrReviewCommentAttempt {
+  attemptId: string;
+  runId: RunId;
+  commentId: number;
+  retryNumber: number;
+  startHead: string;
+  completedHead?: string;
+  reviewMode: string;
+  promptPath: string;
+  resultArtifactPath: string;
+  action: AttemptAction;
+  verifierFeedback?: string;
+  buildFeedback?: string;
+  disposition?: AttemptDisposition;
+  createdAt: Date;
+}

@@ -141,4 +141,11 @@ describe('compose runArbiter wiring', () => {
     expect(src).toContain('arbiter invocation threw:');
     expect(src).toContain('arbiter result.json unparseable:');
   });
+
+  it('wires runArbiter into the ReviewFixLoop constructor', () => {
+    const src = readFileSync(path.join(import.meta.dirname ?? __dirname, '../compose.ts'), 'utf-8');
+    expect(src).toContain('const reviewFixLoopInstance = new ReviewFixLoop({');
+    expect(src).toContain('runArbiter: runWholePrArbiter,');
+    expect(src).toContain('buildWholePrArbiterPrompt');
+  });
 });

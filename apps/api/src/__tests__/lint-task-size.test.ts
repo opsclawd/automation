@@ -94,6 +94,36 @@ describe('buildLintTaskSize', () => {
     expect(result.oversized[0]?.testCaseCount).toBe(9);
   });
 
+  it('reads expected_files on V2 manifests so the lint is not silently disabled (#765)', async () => {
+    const cases = Array.from({ length: 6 })
+      .map((_, i) => `it('case ${i}', () => {});`)
+      .join('\n');
+    const { dir, relPath } = createTempTestFile('big.test.ts', cases);
+
+    const linter = buildLintTaskSize({
+      maxTestFileLines: 100,
+      maxTestCases: 5,
+      blockOversizedTasks: true,
+    });
+
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'V2 task',
+          expected_files: [relPath],
+        },
+      ],
+    } as unknown as TaskManifest;
+
+    const result = await linter(dir, manifest);
+    expect(result.ok).toBe(false);
+    expect(result.oversized).toHaveLength(1);
+    expect(result.oversized[0]?.file).toBe(relPath);
+  });
+
   it('matches single-dot test files (e.g. test.ts)', async () => {
     const { dir, relPath } = createTempTestFile(
       'test.ts',

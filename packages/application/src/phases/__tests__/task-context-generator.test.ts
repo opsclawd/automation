@@ -26,6 +26,13 @@ describe('TaskContextGenerator', () => {
         validation_commands: ['npm test'],
         migration_constraints: ['No breaking changes'],
         out_of_scope: ['UI changes'],
+        invariants: [
+          {
+            name: 'Invariant 1',
+            description: 'Desc 1',
+            test_case_name: 'test_inv_1',
+          },
+        ],
       } as TaskManifestEntry,
     ],
   };
@@ -82,6 +89,8 @@ Something else.
       '## Migration & Compatibility Constraints\n\n- No breaking changes',
     );
     expect(result.content).toContain('## Explicitly Out-of-Scope\n\n- UI changes');
+    expect(result.content).toContain('## Behavioral Invariants');
+    expect(result.content).toContain('- **Invariant 1**: Desc 1 (Test: `test_inv_1`)');
     expect(result.diagnostics.truncated).toHaveLength(0);
     expect(result.diagnostics.unresolvedReferences).toHaveLength(0);
   });
@@ -122,5 +131,41 @@ Something else.
     const result = generator.generate(input);
     expect(result.content.length).toBeLessThanOrEqual(30500); // Allow some buffer for headers
     expect(result.diagnostics.truncated).toContain('context_overflow');
+  });
+
+  it('renders nothing for invariants when absent in V2 manifest', () => {
+    const input = {
+      task: {
+        n: 1,
+        title: 'No Invariants Task',
+      } as TaskManifestEntry,
+      manifest: { version: 2, task_count: 1, tasks: [] } as unknown as TaskManifest,
+      planMd: '## Task 1: No Invariants Task\nBody',
+      workspaceConstraints: '',
+      cwd: '/app',
+      repoId: 'repo',
+      branchName: 'branch',
+    };
+
+    const result = generator.generate(input);
+    expect(result.content).not.toContain('## Behavioral Invariants');
+  });
+
+  it('renders nothing for invariants in V1 manifest', () => {
+    const input = {
+      task: {
+        n: 1,
+        title: 'V1 Task',
+      } as TaskManifestEntry,
+      manifest: { version: 1, task_count: 1, tasks: [] } as unknown as TaskManifest,
+      planMd: '## Task 1: V1 Task\nBody',
+      workspaceConstraints: '',
+      cwd: '/app',
+      repoId: 'repo',
+      branchName: 'branch',
+    };
+
+    const result = generator.generate(input);
+    expect(result.content).not.toContain('## Behavioral Invariants');
   });
 });

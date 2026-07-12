@@ -1,6 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { open as fsOpen, stat as fsStat, access as fsAccess } from 'node:fs/promises';
+import {
+  open as fsOpen,
+  stat as fsStat,
+  access as fsAccess,
+  readFile as fsReadFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import {
   existsSync,
@@ -45,6 +50,7 @@ import {
   createFindingEvidenceInspector,
   listProcesses,
   killProcess,
+  ReviewStateRepository,
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
@@ -117,6 +123,7 @@ import {
   type StepLoopContext,
   type ImplementFixStepOptions,
   type ImplementStepOptions,
+  type ArbiterResult,
   type TypecheckResult,
   type TypescriptError,
   type ResolveRefShaFn,
@@ -150,6 +157,7 @@ import {
   type RepositoryRegistryPort,
   TaskContextGenerator,
   type HolisticFile,
+  fingerprintFinding,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -199,7 +207,11 @@ import {
   readImplementStepFinalReviewExcerpts,
 } from './arbiter-excerpts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
-import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
+import {
+  buildReviewFixReviewPrompt,
+  buildReviewFixFixPrompt,
+  buildWholePrArbiterPrompt,
+} from './review-fix-prompts.js';
 import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
 import { createImplementStepHistoryFilePort } from './implement-step-history-file-port.js';
 import {
@@ -390,6 +402,8 @@ export function buildImplementPrompt(
     `   is authoritative for this task's scope.`,
     `2. Implement exactly what Task ${taskN} specifies — nothing more.`,
     `3. Write tests following TDD where applicable, scoped to Task ${taskN}.`,
+    '   IF the Task Context above includes a "Behavioral Invariants" section,',
+    '   you MUST write the named tests listed there BEFORE implementation.',
     `4. Verify Task ${taskN}'s implementation works.`,
     '5. Commit your work:',
     '   a. Record HEAD before: PRE_HEAD=$(git rev-parse HEAD)',
@@ -630,36 +644,117 @@ class SingleRepoAdapter implements RepositoryPort {
   }
 }
 
-export function buildSpecReviewPrompt(
-  ctx: { stepIndex: number; stepTitle: string; cwd: string },
-  typecheckSection: string,
-  implReport = '',
-): string {
+export interface BuildSpecReviewPromptOptions {
+  ctx: { stepIndex: number; stepTitle: string; cwd: string };
+  typecheckSection: string;
+  implReport?: string;
+  scope: {
+    mode: 'initial_full' | 'intermediate_delta' | 'final_full';
+    dimensions?: Array<'spec' | 'quality'>;
+    baseIdentity?: string;
+    snapshotIdentity?: string;
+    unresolvedFindings?: Array<{
+      fingerprint: string;
+      severity: string;
+      summary: string;
+      file?: string;
+      suggested_fix?: string;
+    }>;
+    dispositions?: Array<{
+      fingerprint: string;
+      disposition: string;
+      reason?: string;
+    }>;
+  };
+}
+
+export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): string {
+  const { ctx, typecheckSection, implReport = '', scope } = options;
+  const { mode, baseIdentity, snapshotIdentity, unresolvedFindings, dispositions } = scope;
   const reportExcerpt = implReport.split('\n').slice(0, 50).join('\n');
-  return [
-    '# TASK',
-    `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`,
-    '',
-    'Check that the implementation matches plan.md task requirements exactly.',
-    '',
-    '## HARD CONSTRAINT — READ-ONLY REVIEW',
-    'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
-    'filesystem or executes application/test code. Read-only shell commands for',
-    'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
-    'git show) — if your runtime has no dedicated file-read tool, use these instead',
-    'of declining to review. Review by reading files only:',
-    'plan.md, implementation-log.md, git diff output, and changed source files.',
-    'If the task was verification-only (no files changed), check the implementer report',
-    'below to confirm all required verifications passed, then write result.json with',
-    '"pass". Do not re-run the verifications yourself.',
-    '',
-    '## CRITICAL: Do Not Trust the Report Alone',
-    'The implementer report below is what the agent claims it built. You MUST read the',
-    "actual committed code and verify line by line. Do not take the implementer's word.",
-    '',
-    '## What the Implementer Claims',
-    reportExcerpt,
-    '',
+
+  const sections: string[] = [];
+
+  sections.push('# TASK', `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`, '');
+
+  if (mode === 'intermediate_delta') {
+    sections.push(
+      '## REVIEW MODE: DELTA (intermediate)',
+      '',
+      'This is an intermediate delta review. Focus on changes since the last review.',
+      '',
+    );
+
+    if (baseIdentity && snapshotIdentity) {
+      sections.push(
+        `## EXACT DIFF COMMAND`,
+        `Run: git diff ${baseIdentity}..${snapshotIdentity}`,
+        '',
+      );
+    }
+
+    sections.push(
+      '## HARD CONSTRAINT — READ-ONLY REVIEW',
+      'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
+      'filesystem or executes application/test code. Read-only shell commands for',
+      'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
+      'git show) — if your runtime has no dedicated file-read tool, use these instead',
+      'of declining to review. Review by reading files only.',
+      '',
+    );
+
+    if (unresolvedFindings && unresolvedFindings.length > 0) {
+      sections.push(
+        '## UNRESOLVED FINDINGS (from prior review)',
+        'These findings were marked as unresolved. Verify whether they are still present:',
+        '',
+        ...unresolvedFindings.map(
+          (f) => `- [${f.severity}] ${f.summary}${f.file ? ` (${f.file})` : ''}`,
+        ),
+        '',
+        '## SETTLED FINDINGS REQUIRE NEW DELTA EVIDENCE',
+        'If a finding was previously marked as addressed/rebutted/settled, you MUST see',
+        'new evidence in the delta to re-flag it. A finding is only valid if it can be',
+        'directly attributed to a change in the delta.',
+        '',
+      );
+    }
+
+    if (dispositions && dispositions.length > 0) {
+      sections.push(
+        '## PRIOR DISPOSITIONS',
+        ...dispositions.map((d) => `- ${d.fingerprint}: ${d.disposition}`),
+        '',
+      );
+    }
+  } else {
+    sections.push(
+      `## REVIEW MODE: ${mode === 'initial_full' ? 'INITIAL FULL' : 'FINAL FULL'}`,
+      '',
+      'This is a full review. Inspect the complete implementation scope.',
+      '',
+      '## HARD CONSTRAINT — READ-ONLY REVIEW',
+      'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
+      'filesystem or executes application/test code. Read-only shell commands for',
+      'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
+      'git show) — if your runtime has no dedicated file-read tool, use these instead',
+      'of declining to review. Review by reading files only:',
+      'plan.md, implementation-log.md, git diff output, and changed source files.',
+      'If the task was verification-only (no files changed), check the implementer report',
+      'below to confirm all required verifications passed, then write result.json with',
+      '"pass". Do not re-run the verifications yourself.',
+      '',
+      '## CRITICAL: Do Not Trust the Report Alone',
+      'The implementer report below is what the agent claims it built. You MUST read the',
+      "actual committed code and verify line by line. Do not take the implementer's word.",
+      '',
+      '## What the Implementer Claims',
+      reportExcerpt,
+      '',
+    );
+  }
+
+  sections.push(
     '## CONTEXT',
     '',
     WORKSPACE_CONSTRAINTS,
@@ -702,28 +797,116 @@ export function buildSpecReviewPrompt(
     '- Start the review over',
     '- Do anything at all',
     'Any action after writing result.json is a contract violation.',
-  ].join('\n');
+  );
+
+  return sections.join('\n');
 }
 
-export function buildQualityReviewPrompt(
-  ctx: { stepIndex: number; stepTitle: string; cwd: string },
-  typecheckSection: string,
-): string {
-  return [
+export interface BuildQualityReviewPromptOptions {
+  ctx: { stepIndex: number; stepTitle: string; cwd: string };
+  typecheckSection: string;
+  scope: {
+    mode: 'initial_full' | 'intermediate_delta' | 'final_full';
+    dimensions?: Array<'spec' | 'quality'>;
+    baseIdentity?: string;
+    snapshotIdentity?: string;
+    unresolvedFindings?: Array<{
+      fingerprint: string;
+      severity: string;
+      summary: string;
+      file?: string;
+      suggested_fix?: string;
+    }>;
+    dispositions?: Array<{
+      fingerprint: string;
+      disposition: string;
+      reason?: string;
+    }>;
+  };
+}
+
+export function buildQualityReviewPrompt(options: BuildQualityReviewPromptOptions): string {
+  const { ctx, typecheckSection, scope } = options;
+  const { mode, baseIdentity, snapshotIdentity, unresolvedFindings, dispositions } = scope;
+
+  const sections: string[] = [];
+
+  sections.push(
     '# TASK',
     `Review implementation quality for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
     '',
     'Check for code quality: maintainability, performance, security, test coverage.',
     '',
-    '## HARD CONSTRAINT — READ-ONLY REVIEW',
-    'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
-    'filesystem or executes application/test code. Read-only shell commands for',
-    'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
-    'git show) — if your runtime has no dedicated file-read tool, use these instead',
-    'of declining to review. If the task was verification-only (no files changed),',
-    'write result.json with "pass" — quality review does not apply to',
-    'verification-only steps.',
-    '',
+  );
+
+  if (mode === 'intermediate_delta') {
+    sections.push(
+      '## REVIEW MODE: DELTA (intermediate)',
+      '',
+      'This is an intermediate delta review. Focus on quality issues in changes since the last review.',
+      '',
+    );
+
+    if (baseIdentity && snapshotIdentity) {
+      sections.push(
+        '## EXACT DIFF COMMAND',
+        `Run: git diff ${baseIdentity}..${snapshotIdentity}`,
+        '',
+      );
+    }
+
+    sections.push(
+      '## HARD CONSTRAINT — READ-ONLY REVIEW',
+      'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
+      'filesystem or executes application/test code. Read-only shell commands for',
+      'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
+      'git show) — if your runtime has no dedicated file-read tool, use these instead',
+      'of declining to review.',
+      '',
+    );
+
+    if (unresolvedFindings && unresolvedFindings.length > 0) {
+      sections.push(
+        '## UNRESOLVED FINDINGS (from prior review)',
+        'These findings were marked as unresolved. Verify whether they are still present:',
+        '',
+        ...unresolvedFindings.map(
+          (f) => `- [${f.severity}] ${f.summary}${f.file ? ` (${f.file})` : ''}`,
+        ),
+        '',
+        '## SETTLED FINDINGS REQUIRE NEW DELTA EVIDENCE',
+        'If a finding was previously marked as addressed/rebutted/settled, you MUST see',
+        'new evidence in the delta to re-flag it.',
+        '',
+      );
+    }
+
+    if (dispositions && dispositions.length > 0) {
+      sections.push(
+        '## PRIOR DISPOSITIONS',
+        ...dispositions.map((d) => `- ${d.fingerprint}: ${d.disposition}`),
+        '',
+      );
+    }
+  } else {
+    sections.push(
+      `## REVIEW MODE: ${mode === 'initial_full' ? 'INITIAL FULL' : 'FINAL FULL'}`,
+      '',
+      'This is a full review. Inspect the complete implementation scope.',
+      '',
+      '## HARD CONSTRAINT — READ-ONLY REVIEW',
+      'You MUST NOT run tests, run builds, or invoke any tool that modifies the',
+      'filesystem or executes application/test code. Read-only shell commands for',
+      'inspection are fine and often necessary (e.g. cat, ls, grep, git diff, git log,',
+      'git show) — if your runtime has no dedicated file-read tool, use these instead',
+      'of declining to review. If the task was verification-only (no files changed),',
+      'write result.json with "pass" — quality review does not apply to',
+      'verification-only steps.',
+      '',
+    );
+  }
+
+  sections.push(
     '## CONTEXT',
     '',
     WORKSPACE_CONSTRAINTS,
@@ -765,7 +948,9 @@ export function buildQualityReviewPrompt(
     'JSON string, use the raw character (`) — do NOT escape it with a backslash.',
     'Only escape double quotes ("), backslashes (\\), and control characters as',
     'required by the JSON spec.',
-  ].join('\n');
+  );
+
+  return sections.join('\n');
 }
 
 export interface BuildImplementStepFixPromptInput {
@@ -1023,16 +1208,25 @@ export interface BuildPostPrReviewTaskPromptInput {
     body: string;
   };
   diff: string;
+  mode: 'initial_full' | 'intermediate_delta';
   previousBuildError?: string;
   previousCodeVerifyReason?: string;
+  dispositions?: Array<{
+    fingerprint: string;
+    disposition: string;
+    reason?: string;
+  }>;
 }
 
 export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptInput): string {
-  const { cwd, comment, diff, previousBuildError, previousCodeVerifyReason } = input;
-  const sections = [
+  const { cwd, comment, diff, mode, previousBuildError, previousCodeVerifyReason, dispositions } =
+    input;
+  const sections: string[] = [
     '# PR Review Comment Task',
     '',
     WORKSPACE_CONSTRAINTS,
+    '',
+    `## Attempt Mode: ${mode === 'initial_full' ? 'INITIAL FULL' : 'INTERMEDIATE DELTA'}`,
     '',
     'Address the following PR review comment:',
     '',
@@ -1074,6 +1268,15 @@ export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptIn
       `> ${previousCodeVerifyReason}`,
       '',
       'Please revisit your fix with this feedback in mind before trying again.',
+      '',
+    );
+  }
+
+  if (mode === 'intermediate_delta' && dispositions && dispositions.length > 0) {
+    sections.push(
+      '## Prior Attempt Dispositions',
+      '',
+      ...dispositions.map((d) => `- ${d.disposition}: ${d.reason ?? 'no reason'}`),
       '',
     );
   }
@@ -1266,6 +1469,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
+
+  let artifactStoreForRun: (runUuid: string, worktreeRoot: string) => ArtifactStore;
 
   interface RepositoryRow {
     id: string;
@@ -1709,6 +1914,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let runStep: Container['runStep'] | undefined;
   let runExecutor: RunExecutor | undefined;
   let buildRunContext: ((run: Run) => PhaseHandlerContext) | undefined;
+  const reviewStateRepository = new ReviewStateRepository(db);
   try {
     const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
     let layered = layeredConfigCache.get(cacheKey);
@@ -1789,6 +1995,14 @@ export function composeRoot(opts: ComposeOptions): Container {
           definition.outputs,
         ]),
       );
+      artifactStoreForRun = (runUuid: string, worktreeRoot: string): ArtifactStore => {
+        const runRecord = runRepository.findByUuid(runUuid);
+        const durableRunId = runRecord?.displayId ?? runUuid;
+        return createFilesystemArtifactStore({
+          durableRoot: join(runsDir, durableRunId, 'phase-artifacts'),
+          worktreeRoot,
+        });
+      };
       const optionalOrchestratorArtifacts = [
         'task-manifest.json',
         'validation.result',
@@ -1801,14 +2015,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         'pr-summary.md',
         'pr-url.txt',
       ];
-      const artifactStoreForRun = (runUuid: string, worktreeRoot: string): ArtifactStore => {
-        const runRecord = runRepository.findByUuid(runUuid);
-        const durableRunId = runRecord?.displayId ?? runUuid;
-        return createFilesystemArtifactStore({
-          durableRoot: join(runsDir, durableRunId, 'phase-artifacts'),
-          worktreeRoot,
-        });
-      };
       capturingAgent = createArtifactCapturingAgent({
         agent: router,
         artifactStoreForRequest: (request) => artifactStoreForRun(request.runId, request.cwd),
@@ -1834,6 +2040,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier';
       const fixFallbackProfileName: string | undefined =
         config.agent.phaseProfiles['fix-review']?.fallbackProfile;
+      const arbiterProfileName: string | undefined = resolveArbiterProfileName(
+        config.agent.phaseProfiles,
+      );
 
       const newestInvocationId = (runUuid: string): string => {
         const list = agentInvocationRepository.listByRun(RunId(runUuid));
@@ -1852,6 +2061,11 @@ export function composeRoot(opts: ComposeOptions): Container {
           opts_ && 'historyContext' in opts_ ? opts_.historyContext : undefined;
         const prevReviewedCommitSha: string | undefined =
           opts_ && 'prevReviewedCommitSha' in opts_ ? opts_.prevReviewedCommitSha : undefined;
+        const mode = opts_ && 'mode' in opts_ ? opts_.mode : undefined;
+        const unresolvedRecords =
+          opts_ && 'unresolvedRecords' in opts_ ? opts_.unresolvedRecords : undefined;
+        const dispositionHistory =
+          opts_ && 'dispositionHistory' in opts_ ? opts_.dispositionHistory : undefined;
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -1864,6 +2078,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           gateFailureOutput: gateResult?.outcome === 'fail' ? gateResult.output : undefined,
           historyContext,
           ...(prevReviewedCommitSha ? { prevReviewedCommitSha } : {}),
+          mode,
+          unresolvedRecords,
+          dispositionHistory,
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -1884,6 +2101,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           metadata: {
             iteration: ctx.iterationIndex,
             invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
+            review_mode: mode,
+            ...(prevReviewedCommitSha ? { review_base_identity: prevReviewedCommitSha } : {}),
+            review_snapshot_kind: 'git',
+            review_snapshot_identity: startCommitSha,
+            review_dimensions: ['integration'],
+            review_scope_source: 'review-fix',
           },
           ...(isSemanticRetry
             ? {
@@ -1975,6 +2198,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           historyContext?: string;
           deterministicDiagnostic?: string;
           attemptKind?: 'standard' | 'deterministic';
+          reconciliationContext?: string;
         },
       ): Promise<FixStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
@@ -1992,6 +2216,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           useFallback: opts.useFallback,
           extraPromptSections: opts.extraPromptSections,
           deterministicDiagnostic: opts.deterministicDiagnostic,
+          reconciliationContext: opts.reconciliationContext,
         });
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -2248,6 +2473,178 @@ export function composeRoot(opts: ComposeOptions): Container {
         return { outcome: 'fail', output: trimmed };
       };
 
+      const runWholePrArbiter = async (
+        ctx: StepContext,
+        reviewResult: ReviewStepResult,
+        fixResult: FixStepResult,
+      ): Promise<ArbiterResult> => {
+        const store = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+        const newestInvocationId = (runUuid: string): string => {
+          const list = agentInvocationRepository.listByRun(RunId(runUuid));
+          const last = list[list.length - 1];
+          return last ? String(last.id) : '';
+        };
+
+        const promptDir = join(baseTmpDir, 'review-fix-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(
+          promptDir,
+          `whole-pr-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
+        );
+
+        const offendingFindings = reviewResult.offendingFindings ?? [];
+        if (offendingFindings.length === 0) {
+          return {
+            outcome: 'insufficient_evidence',
+            evidence: '',
+            rationale: 'no offending findings in review result',
+          };
+        }
+
+        const disputedFindings = await Promise.all(
+          offendingFindings.map(async (f) => ({
+            fingerprint: await fingerprintFinding('integration', f.severity, f.summary),
+            severity: f.severity,
+            summary: f.summary,
+          })),
+        );
+        const fingerprints = disputedFindings.map((df) => df.fingerprint);
+
+        const persistedDimensionStates = reviewStateRepository.listDimensionStates(
+          String(ctx.runId),
+          String(ctx.phaseId),
+          String(ctx.phaseId),
+        );
+        const matchingDimensionState = persistedDimensionStates.find(
+          (ds) => ds.dimension === 'integration',
+        );
+        const dispositionHistory =
+          matchingDimensionState?.dispositionHistory.filter((h) =>
+            fingerprints.includes(h.fingerprint),
+          ) ?? [];
+
+        const relevantExcerpts: string[] = [];
+        if (reviewResult.excerpt) {
+          relevantExcerpts.push(reviewResult.excerpt);
+        }
+        try {
+          const codeReviewMd = await store.read(String(ctx.runId), 'code-review.md');
+          for (const df of disputedFindings) {
+            const searchStr = (df.summary ?? '').trim().toLowerCase();
+            const fpIdx = codeReviewMd.toLowerCase().indexOf(searchStr);
+            if (fpIdx !== -1) {
+              const lines = codeReviewMd.split('\n');
+              const linesBefore = codeReviewMd.slice(0, fpIdx).split('\n');
+              const idx = linesBefore.length - 1;
+              const start = Math.max(0, idx - 5);
+              const end = Math.min(lines.length, idx + 15);
+              relevantExcerpts.push(lines.slice(start, end).join('\n'));
+            }
+          }
+        } catch (err) {
+          console.warn(`[runWholePrArbiter] failed to read code-review.md:`, err);
+          relevantExcerpts.push(
+            `(Failed to read code-review.md: ${err instanceof Error ? err.message : String(err)})`,
+          );
+        }
+
+        let fixDelta = '';
+        if (fixResult.headBeforeFix) {
+          try {
+            fixDelta = execFileSync('git', ['diff', `${fixResult.headBeforeFix}..HEAD`], {
+              cwd: ctx.cwd,
+            }).toString();
+            if (fixDelta.length > 3000) {
+              const trimmed = fixDelta.slice(0, 3000);
+              const lastNewline = trimmed.lastIndexOf('\n');
+              fixDelta =
+                (lastNewline > 0 ? trimmed.slice(0, lastNewline) : trimmed) +
+                '\n[... diff truncated due to size limit ...]';
+            }
+          } catch (err) {
+            console.warn(`[runWholePrArbiter] failed to execute git diff:`, err);
+            fixDelta = `(Failed to execute git diff: ${err instanceof Error ? err.message : String(err)})`;
+          }
+        }
+
+        const arbiterPrompt = buildWholePrArbiterPrompt({
+          cwd: ctx.cwd,
+          repoId: ctx.repoId,
+          disputedFindings,
+          dispositionHistory,
+          relevantExcerpts,
+          fixDelta,
+          fixRebuttal: fixResult.rebuttal ?? '',
+        });
+
+        writeFileSync(promptPath, arbiterPrompt, 'utf-8');
+
+        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ctx.cwd })
+          .toString()
+          .trim();
+        const profile = arbiterProfileName || 'opencode-frontier';
+
+        await artifactAgent.invoke({
+          profile: AgentProfileName(profile),
+          promptPath,
+          expectedArtifacts: ['result.json'],
+          cwd: ctx.cwd,
+          runId: String(ctx.runId),
+          repoId: ctx.repoId,
+          phaseId: 'arbiter',
+          startCommitSha,
+          metadata: {
+            iteration: ctx.iterationIndex,
+            invocation_type: 'initial',
+            review_mode: 'integration_full',
+            review_snapshot_kind: 'git',
+            review_snapshot_identity: startCommitSha,
+            review_dimensions: ['integration'],
+            review_scope_source: 'review-fix',
+          },
+        });
+
+        const invocationId = newestInvocationId(String(ctx.runId));
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        const patchedInv = inv?.resultJsonPath
+          ? inv
+          : inv
+            ? { ...inv, resultJsonPath: 'result.json' }
+            : inv;
+
+        if (!patchedInv) {
+          return {
+            outcome: 'insufficient_evidence',
+            evidence: '',
+            rationale: 'no arbiter invocation row',
+          };
+        }
+
+        const verdict = await extractResult({
+          invocation: patchedInv,
+          ports: { artifacts: store, agent: artifactAgent, repair: structuredResultRepair },
+        });
+
+        if (!verdict.ok) {
+          return {
+            outcome: 'insufficient_evidence',
+            evidence: '',
+            rationale: `arbiter result.json unparseable: ${verdict.detail}`,
+          };
+        }
+
+        const parsed = arbiterResultSchema.safeParse(verdict.result);
+        if (!parsed.success) {
+          return {
+            outcome: 'insufficient_evidence',
+            evidence: '',
+            rationale: `Zod parse error: ${parsed.error.message}`,
+          };
+        }
+
+        return parsed.data as ArbiterResult;
+      };
+
       // Non-optional local so the ReviewFixHandler closure below can reference it
       // without a guard (the outer `let` stays `| undefined` for other consumers).
       const reviewFixLoopInstance = new ReviewFixLoop({
@@ -2262,6 +2659,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         loopHistory,
         findingEvidenceInspector: createFindingEvidenceInspector(),
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
+        reviewStateRepository,
+        runArbiter: runWholePrArbiter,
         options: {
           endOnReview: config.phases.reviewFix.endOnReview,
           deltaScopedReReview: config.phases.reviewFix.deltaScopedReReview,
@@ -2398,9 +2797,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier';
       const implFixFallbackProfileName: string | undefined =
         config.agent.phaseProfiles['fix-review']?.fallbackProfile;
-      const arbiterProfileName: string | undefined = resolveArbiterProfileName(
-        config.agent.phaseProfiles,
-      );
+      // arbiterProfileName is declared earlier (the mode-aware arbiter rework
+      // needs it before this block); reference it rather than re-declaring.
       const terminalFixProfileName: string | undefined =
         config.agent.phaseProfiles['terminal-fix']?.profile ?? arbiterProfileName;
 
@@ -2819,6 +3217,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         ctx: StepLoopContext,
         resultJsonPath: string,
         artifactName: string,
+        scope?: { mode: string; startCommitSha: string },
       ): void => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const destination = join(runsDir, runDir, 'phase-artifacts', artifactName);
@@ -2835,9 +3234,41 @@ export function composeRoot(opts: ComposeOptions): Container {
             metadata: { source: join(ctx.cwd, resultJsonPath), destination },
           });
         }
+        if (scope) {
+          const modeSpecificName = `${artifactName.replace('.json', '')}.${scope.mode}.${scope.startCommitSha}.json`;
+          const modeSpecificDestination = join(
+            runsDir,
+            runDir,
+            'phase-artifacts',
+            modeSpecificName,
+          );
+          try {
+            mkdirSync(dirname(modeSpecificDestination), { recursive: true });
+            copyFileSync(join(ctx.cwd, resultJsonPath), modeSpecificDestination);
+          } catch (err) {
+            persistingEventBusForLoop.publish(String(ctx.runId), {
+              runId: String(ctx.runId),
+              level: 'warn',
+              type: 'artifact.copy_failed',
+              message: `Failed to copy artifact (mode-specific): ${err instanceof Error ? err.message : String(err)}`,
+              timestamp: new Date().toISOString(),
+              metadata: {
+                source: join(ctx.cwd, resultJsonPath),
+                destination: modeSpecificDestination,
+              },
+            });
+          }
+        }
       };
 
-      const runSpecReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
+      const runSpecReview = async (
+        ctx: StepLoopContext,
+        tcResult: TypecheckResult,
+        scope: {
+          mode: 'initial_full' | 'intermediate_delta' | 'final_full';
+          dimensions?: Array<'spec' | 'quality'>;
+        },
+      ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(
@@ -2856,7 +3287,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         } catch (err) {
           if (!(err instanceof ArtifactNotFoundError)) throw err;
         }
-        const reviewPrompt = buildSpecReviewPrompt(ctx, typecheckSection, implReport);
+        const reviewPrompt = buildSpecReviewPrompt({
+          ctx: { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
+          typecheckSection,
+          implReport,
+          scope,
+        });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         const isSemanticRetry = ctx.iterationIndex > 1;
@@ -2875,6 +3311,12 @@ export function composeRoot(opts: ComposeOptions): Container {
               implementation_task_number: ctx.stepIndex,
               iteration: ctx.iterationIndex,
               invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
+              review_mode: scope.mode,
+              review_dimensions: scope.dimensions ?? ['spec'],
+              review_scope_source: 'implement-step',
+              review_snapshot_kind: 'git',
+              review_snapshot_identity: startCommitSha,
+              review_base_identity: undefined,
             },
             ...(isSemanticRetry
               ? {
@@ -2897,6 +3339,26 @@ export function composeRoot(opts: ComposeOptions): Container {
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
+        const postInvokeHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+          encoding: 'utf-8',
+        }).trim();
+        if (postInvokeHead !== startCommitSha) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'warn',
+            type: 'review.stale_head',
+            message: `HEAD changed during spec-review invocation (${startCommitSha} -> ${postInvokeHead})`,
+            timestamp: new Date().toISOString(),
+            metadata: {
+              phaseId: 'spec-review',
+              stepIndex: ctx.stepIndex,
+              startCommitSha,
+              postInvokeHead,
+            },
+          });
+          return { invocationId: '', agentOutcome: 'failed' as const };
+        }
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
@@ -2905,6 +3367,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           ctx,
           patched.resultJsonPath ?? 'result.json',
           SPEC_REVIEW_RESULT_ARTIFACT,
+          { mode: scope.mode, startCommitSha },
         );
         const verdict = await readReviewVerdict(
           patched,
@@ -2922,7 +3385,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
-      const runQualityReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
+      const runQualityReview = async (
+        ctx: StepLoopContext,
+        tcResult: TypecheckResult,
+        scope: {
+          mode: 'initial_full' | 'intermediate_delta' | 'final_full';
+          dimensions?: Array<'spec' | 'quality'>;
+        },
+      ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(
@@ -2934,7 +3404,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return QUALITY_FAIL for it."
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to quality checks until the type error is resolved.`;
 
-        const reviewPrompt = buildQualityReviewPrompt(ctx, typecheckSection);
+        const reviewPrompt = buildQualityReviewPrompt({
+          ctx: { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
+          typecheckSection,
+          scope,
+        });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         const isSemanticRetry = ctx.iterationIndex > 1;
@@ -2953,6 +3427,12 @@ export function composeRoot(opts: ComposeOptions): Container {
               implementation_task_number: ctx.stepIndex,
               iteration: ctx.iterationIndex,
               invocation_type: isSemanticRetry ? 'semantic_retry' : 'initial',
+              review_mode: scope.mode,
+              review_dimensions: scope.dimensions ?? ['quality'],
+              review_scope_source: 'implement-step',
+              review_snapshot_kind: 'git',
+              review_snapshot_identity: startCommitSha,
+              review_base_identity: undefined,
             },
             ...(isSemanticRetry
               ? {
@@ -2975,6 +3455,26 @@ export function composeRoot(opts: ComposeOptions): Container {
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
+        const postInvokeHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+          encoding: 'utf-8',
+        }).trim();
+        if (postInvokeHead !== startCommitSha) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'warn',
+            type: 'review.stale_head',
+            message: `HEAD changed during quality-review invocation (${startCommitSha} -> ${postInvokeHead})`,
+            timestamp: new Date().toISOString(),
+            metadata: {
+              phaseId: 'quality-review',
+              stepIndex: ctx.stepIndex,
+              startCommitSha,
+              postInvokeHead,
+            },
+          });
+          return { invocationId: '', agentOutcome: 'failed' as const };
+        }
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
@@ -2983,6 +3483,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           ctx,
           patched.resultJsonPath ?? 'result.json',
           QUALITY_REVIEW_RESULT_ARTIFACT,
+          { mode: scope.mode, startCommitSha },
         );
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const verdict = await readReviewVerdict(
@@ -3120,7 +3621,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             );
             const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
 
-            const { specExcerpt, qualityExcerpt, fixExcerpt } = await readArbiterExcerpts(
+            const { specExcerpt, qualityExcerpt } = await readArbiterExcerpts(
               artifacts,
               String(ctx.runId),
             );
@@ -3142,16 +3643,102 @@ export function composeRoot(opts: ComposeOptions): Container {
               taskBody = '';
             }
 
+            let fixDelta = '';
+            try {
+              if (fixResult.headBeforeFix) {
+                fixDelta = execFileSync(
+                  'git',
+                  ['diff', '--unified=3', `${fixResult.headBeforeFix}..HEAD`],
+                  { cwd: ctx.cwd, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
+                );
+              }
+            } catch {
+              fixDelta = '';
+            }
+
+            let disputedFinding: {
+              fingerprint: string;
+              severity: string;
+              summary: string;
+              file?: string;
+              suggested_fix?: string;
+            } = { fingerprint: 'unknown', severity: 'P1', summary: 'Review finding' };
+            let dispositionHistory: Array<{
+              fingerprint: string;
+              disposition: 'open' | 'addressed' | 'rebutted' | 'settled' | 'recurred';
+              reason?: string;
+            }> = [];
+            const parseExcerptForFinding = (excerpt: string) => {
+              if (!excerpt) return null;
+              try {
+                const parsed = JSON.parse(excerpt);
+                if (parsed.findings && parsed.findings.length > 0) {
+                  return parsed.findings[0];
+                }
+              } catch {
+                return null;
+              }
+              return null;
+            };
+            const specFinding = parseExcerptForFinding(specExcerpt);
+            const qualityFinding = parseExcerptForFinding(qualityExcerpt);
+            const findingToUse = specFinding ?? qualityFinding;
+            if (!findingToUse) {
+              return {
+                outcome: 'insufficient_evidence' as const,
+                evidence: '',
+                rationale:
+                  'arbiter could not locate a disputed finding in spec-review or quality-review result artifacts',
+              };
+            }
+            const persistedDimensionStates = reviewStateRepository.listDimensionStates(
+              String(ctx.runId),
+              'implement',
+              String(ctx.stepIndex),
+            );
+            const matchingDimensionState = persistedDimensionStates.find((ds) =>
+              ds.unresolvedRecords.some(
+                (r) => r.summary === findingToUse.summary && r.severity === findingToUse.severity,
+              ),
+            );
+            const matchingRecord = matchingDimensionState?.unresolvedRecords.find(
+              (r) => r.summary === findingToUse.summary && r.severity === findingToUse.severity,
+            );
+            disputedFinding = {
+              fingerprint: matchingRecord?.fingerprint ?? `fp-${Date.now()}`,
+              severity: findingToUse.severity || 'P1',
+              summary: findingToUse.summary || 'Unknown finding',
+              ...(findingToUse.file ? { file: findingToUse.file } : {}),
+              ...(findingToUse.suggested_fix ? { suggested_fix: findingToUse.suggested_fix } : {}),
+            };
+            dispositionHistory =
+              matchingDimensionState?.dispositionHistory.filter(
+                (dh) => dh.fingerprint === disputedFinding.fingerprint,
+              ) ?? [];
+
+            const arbiterInputs: {
+              tcResult: typeof tcResult;
+              disputedFinding: typeof disputedFinding;
+              dispositionHistory: typeof dispositionHistory;
+              fixRebuttal: string;
+              taskBody: string;
+              deterministicDiagnostics?: string;
+              fixDelta: string;
+            } = {
+              tcResult,
+              disputedFinding,
+              dispositionHistory,
+              fixRebuttal: fixResult.rebuttal ?? '',
+              taskBody,
+              fixDelta,
+            };
+            if (tcResult.outcome === 'fail' && tcResult.output) {
+              arbiterInputs.deterministicDiagnostics = tcResult.output;
+            }
+
             const arbiterPrompt = buildArbiterPrompt(
               { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
-              {
-                tcResult,
-                specExcerpt,
-                qualityExcerpt,
-                fixExcerpt,
-                fixRebuttal: fixResult.rebuttal ?? '',
-                taskBody,
-              },
+              arbiterInputs,
             );
             writeFileSync(promptPath, arbiterPrompt, 'utf-8');
 
@@ -3447,6 +4034,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         git: gitAdapter,
         now: () => new Date(),
         idFactory: () => randomUUID(),
+        reviewStateRepository,
+        options: {
+          deltaScopedReReview: config.phases.implement.deltaScopedReReview,
+        },
       });
 
       // --- Plan-review loop (#666) ---
@@ -3490,6 +4081,45 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
         const result = validatePlanTaskList(planMd, manifestJson);
         return result.success ? null : result.error;
+      };
+
+      const computeSnapshot = async (
+        cwd: string,
+        _mode: import('@ai-sdlc/application').ReviewMode | undefined,
+      ): Promise<import('@ai-sdlc/application').PlanReviewSnapshot | undefined> => {
+        const planMdPath = join(cwd, 'plan.md');
+        const manifestPath = join(cwd, 'task-manifest.json');
+        const designPath = join(cwd, 'design.md');
+        let planMdDigest: string;
+        try {
+          planMdDigest = createHash('sha256')
+            .update(await fsReadFile(planMdPath, 'utf-8'), 'utf-8')
+            .digest('hex');
+        } catch {
+          return undefined;
+        }
+        const snapshot: import('@ai-sdlc/application').PlanReviewSnapshot = {
+          planMdDigest,
+          planMdPath,
+          capturedAt: new Date().toISOString(),
+        };
+        try {
+          snapshot.manifestDigest = createHash('sha256')
+            .update(await fsReadFile(manifestPath, 'utf-8'), 'utf-8')
+            .digest('hex');
+          snapshot.manifestPath = manifestPath;
+        } catch {
+          // optional
+        }
+        try {
+          snapshot.designDigest = createHash('sha256')
+            .update(await fsReadFile(designPath, 'utf-8'), 'utf-8')
+            .digest('hex');
+          snapshot.designPath = designPath;
+        } catch {
+          // optional
+        }
+        return snapshot;
       };
 
       const planReviewRunReview = async (
@@ -3603,6 +4233,22 @@ export function composeRoot(opts: ComposeOptions): Container {
           } else {
             parsedFindings = await parsePlanReviewFindings(findings);
           }
+          const mode = reviewOpts?.mode;
+          const snapshot = await computeSnapshot(ctx.cwd, mode);
+          if (snapshot) {
+            agentInvocationRepository.update(AgentInvocationId(invocationId), {
+              metadata: {
+                review_scope_source: 'plan-review',
+                review_mode: mode,
+                review_snapshot_kind: 'plan_artifact',
+                review_dimensions: ['plan'],
+                review_snapshot_identity: snapshot.planMdDigest,
+                ...(snapshot.manifestDigest
+                  ? { review_base_identity: snapshot.manifestDigest }
+                  : {}),
+              },
+            });
+          }
           return {
             invocationId,
             agentOutcome: 'success',
@@ -3615,6 +4261,8 @@ export function composeRoot(opts: ComposeOptions): Container {
                 }
               : {}),
             findings: parsedFindings.findings as ReadonlyArray<PlanReviewFinding>,
+            ...(snapshot ? { snapshot } : {}),
+            ...(mode ? { mode } : {}),
           };
         } catch {
           return { invocationId, agentOutcome: 'failed' };
@@ -3949,6 +4597,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         reviewerMaxRetries: 2,
         now: () => new Date(),
         idFactory: () => randomUUID(),
+        reviewStateRepository,
         options: {
           // (#716) Composition-root seam: thread the operator-configured
           // `deltaScopedReReview` flag into the loop. When false, the loop
@@ -4742,8 +5391,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         comment,
         diff,
         branch: _branch,
+        mode,
         previousBuildError,
         previousCodeVerifyReason,
+        dispositions,
       }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
@@ -4752,8 +5403,10 @@ export function composeRoot(opts: ComposeOptions): Container {
           cwd,
           comment,
           diff,
+          mode,
           ...(previousBuildError !== undefined ? { previousBuildError } : {}),
           ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
+          ...(dispositions !== undefined ? { dispositions } : {}),
         });
         writeFileSync(promptPath, content, 'utf-8');
         return promptPath;
@@ -4830,6 +5483,32 @@ export function composeRoot(opts: ComposeOptions): Container {
       resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
       idFactory: () => randomUUID(),
       now: () => new Date(),
+      artifactStore: {
+        read: async (runId, relativePath) => {
+          const run = runRepository.findByUuid(runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          return artifactStoreForRun(runId, cwd).read(runId, relativePath);
+        },
+        write: async (input) => {
+          const run = runRepository.findByUuid(input.runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${input.runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          return artifactStoreForRun(input.runId, cwd).write(input);
+        },
+        list: async (runId) => {
+          const run = runRepository.findByUuid(runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          return artifactStoreForRun(runId, cwd).list(runId);
+        },
+      },
       baseBranch: opts.baseBranch ?? resolvedDefaultBranch,
       repoRoot: opts.repoRoot,
       onWarning: (message, metadata, runId) => {

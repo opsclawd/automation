@@ -22,3 +22,4 @@ export * from './fake-fix-diff-inspector.js';
 export * from './fake-finding-evidence-inspector.js';
 export * from './fake-synthesize-from-transcript.js';
 export * from './fake-structured-result-repair.js';
+export * from './fake-review-state-repository.js';

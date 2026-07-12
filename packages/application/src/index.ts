@@ -59,6 +59,7 @@ export type {
   PlanReviewLoopResult,
   PlanReviewFinding,
   PlanReviewStepOptions,
+  PlanReviewSnapshot,
   EvidenceResolver,
 } from './plan-review/types.js';
 export * from './plan-review/plan-review-loop.js';
@@ -78,6 +79,8 @@ export type {
 } from './implement-step/types.js';
 export * from './artifacts/index.js';
 export * from './run-recovery-actions.js';
+export * from './review-state/types.js';
+export * from './review-state/fingerprint.js';
 export * from './use-cases/register-repository.js';
 export * from './use-cases/list-repositories.js';
 export * from './use-cases/inspect-repository.js';

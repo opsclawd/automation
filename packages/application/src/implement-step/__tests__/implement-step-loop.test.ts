@@ -21,18 +21,24 @@ import type { EventBusPort } from '../../ports/event-bus-port.js';
 import type { GitPort } from '../../ports/git-port.js';
 
 function makeFakeGitPort(opts: {
-  headSha: string;
+  headSha: string | string[];
   statusOutput?: string;
   headShaThrows?: boolean;
   statusThrows?: boolean;
 }): GitPort {
+  let headShaIndex = 0;
+  const headShas = Array.isArray(opts.headSha) ? opts.headSha : [opts.headSha];
   return {
     createWorktree: async () => undefined,
     removeWorktree: async () => undefined,
     currentBranch: async () => 'main',
     headCommitSha: async () => {
       if (opts.headShaThrows) throw new Error('rev-parse failed');
-      return opts.headSha;
+      const val = headShas[headShaIndex];
+      if (headShaIndex < headShas.length - 1) {
+        headShaIndex++;
+      }
+      return val;
     },
     resetHard: async () => undefined,
     diff: async () => '',
@@ -883,8 +889,10 @@ describe('ImplementStepLoop', () => {
       expect(out.outcome).toBe('failed');
       // typecheck was called at least twice (pre-loop + iteration 2 re-run).
       expect(tcCalls).toBeGreaterThanOrEqual(2);
-      // spec + quality must NOT be skipped by the typecheck hard-fail of yore.
-      expect(specCalls).toBe(3);
+      // spec passes in iteration 1, marked clean, then skipped in subsequent
+      // iterations (dirty dimension tracking #723). quality stays dirty and
+      // runs every iteration since it keeps failing.
+      expect(specCalls).toBe(1);
       expect(qualCalls).toBe(3);
     });
 
@@ -3127,6 +3135,229 @@ describe('ImplementStepLoop auto-commit fallback', () => {
   });
 });
 
+describe('dirty dimension tracking (#723)', () => {
+  it('only runs spec-review when spec is dirty and quality is clean', async () => {
+    let specCalls = 0;
+    let qualityCalls = 0;
+    const deps = makeDeps({
+      runSpecReview: async () => {
+        specCalls += 1;
+        return {
+          invocationId: `sr-${specCalls}`,
+          agentOutcome: 'success',
+          verdict: specCalls === 1 ? 'fail' : 'pass',
+        };
+      },
+      runQualityReview: async () => {
+        qualityCalls += 1;
+        return { invocationId: `qr-${qualityCalls}`, agentOutcome: 'success', verdict: 'pass' };
+      },
+      runFix: async () => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+      }),
+    });
+    const result = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(result.outcome).toBe('success');
+    expect(specCalls).toBe(2);
+    expect(qualityCalls).toBe(1);
+  });
+
+  it('only runs quality-review when quality is dirty and spec is clean', async () => {
+    let specCalls = 0;
+    let qualityCalls = 0;
+    const deps = makeDeps({
+      runSpecReview: async () => {
+        specCalls += 1;
+        return { invocationId: `sr-${specCalls}`, agentOutcome: 'success', verdict: 'pass' };
+      },
+      runQualityReview: async () => {
+        qualityCalls += 1;
+        return { invocationId: `qr-${qualityCalls}`, agentOutcome: 'success', verdict: 'pass' };
+      },
+    });
+    const result = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(result.outcome).toBe('success');
+    expect(specCalls).toBe(1);
+    expect(qualityCalls).toBe(1);
+  });
+
+  it('reopens dimension when final pair review fails', async () => {
+    let specCalls = 0;
+    let qualityCalls = 0;
+    const deps = makeDeps({
+      runSpecReview: async () => {
+        specCalls += 1;
+        return { invocationId: `sr-${specCalls}`, agentOutcome: 'success', verdict: 'pass' };
+      },
+      runQualityReview: async () => {
+        qualityCalls += 1;
+        return {
+          invocationId: `qr-${qualityCalls}`,
+          agentOutcome: 'success',
+          verdict: qualityCalls === 1 ? 'fail' : 'pass',
+        };
+      },
+      runFix: async () => ({
+        invocationId: `fix-${qualityCalls}`,
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+      }),
+    });
+    const result = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(result.outcome).toBe('success');
+    expect(qualityCalls).toBeGreaterThan(1);
+  });
+
+  it('transitions dirty dimension to recurred when it fails again after initial fail', async () => {
+    let specCalls = 0;
+    const deps = makeDeps({
+      runSpecReview: async () => {
+        specCalls += 1;
+        return {
+          invocationId: `sr-${specCalls}`,
+          agentOutcome: 'success',
+          verdict: specCalls === 1 ? 'fail' : 'pass',
+        };
+      },
+      runQualityReview: async () => ({
+        invocationId: 'qr-1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+      }),
+      runFix: async () => ({
+        invocationId: `fix-${specCalls}`,
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+      }),
+    });
+    const result = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(result.outcome).toBe('success');
+    expect(specCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it('both dirty dimensions are invoked when both fail on initial pass', async () => {
+    let specCalls = 0;
+    let qualityCalls = 0;
+    const deps = makeDeps({
+      runSpecReview: async () => {
+        specCalls += 1;
+        return {
+          invocationId: `sr-${specCalls}`,
+          agentOutcome: 'success',
+          verdict: specCalls < 4 ? 'fail' : 'pass',
+        };
+      },
+      runQualityReview: async () => {
+        qualityCalls += 1;
+        return {
+          invocationId: `qr-${qualityCalls}`,
+          agentOutcome: 'success',
+          verdict: qualityCalls < 2 ? 'fail' : 'pass',
+        };
+      },
+      runFix: async () => ({
+        invocationId: `fix-${specCalls + qualityCalls}`,
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+      }),
+    });
+    const result = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
+    expect(result.outcome).toBe('success');
+    expect(specCalls).toBeGreaterThan(1);
+    expect(qualityCalls).toBeGreaterThan(1);
+  });
+
+  it('reviewScopeOptions reflects dirty dimension state', async () => {
+    let capturedSpecScope: import('../types.js').ReviewScopeOptions | undefined;
+    let capturedQualityScope: import('../types.js').ReviewScopeOptions | undefined;
+    const deps = makeDeps({
+      runSpecReview: async (_ctx, _tc, scope) => {
+        capturedSpecScope = scope;
+        return { invocationId: 'sr-1', agentOutcome: 'success', verdict: 'pass' };
+      },
+      runQualityReview: async (_ctx, _tc, scope) => {
+        capturedQualityScope = scope;
+        return { invocationId: 'qr-1', agentOutcome: 'success', verdict: 'pass' };
+      },
+    });
+    await new ImplementStepLoop(deps).execute(baseInput());
+    expect(capturedSpecScope?.mode).toBe('initial_full');
+    expect(capturedQualityScope?.mode).toBe('initial_full');
+  });
+
+  it('mismatched final pair snapshots cause continue rather than immediate return', async () => {
+    const git = makeFakeGitPort({ headSha: 'sha-stable' });
+    let iteration = 0;
+    const deps = makeDeps({
+      git,
+      runSpecReview: async () => ({
+        invocationId: `sr-${++iteration}`,
+        agentOutcome: 'success',
+        verdict: 'pass',
+        snapshot: { snapshot: `spec-snapshot-${iteration}` },
+      }),
+      runQualityReview: async () => ({
+        invocationId: `qr-${iteration}`,
+        agentOutcome: 'success',
+        verdict: 'pass',
+        snapshot: { snapshot: `quality-snapshot-${iteration}` },
+      }),
+    });
+    const result = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
+    expect(result.loop.iterations.length).toBeGreaterThan(1);
+  });
+});
+
+describe('final pair tracking (#723)', () => {
+  it('enters final pair when both dimensions pass and no dirty dimensions remain', async () => {
+    const git = makeFakeGitPort({ headSha: 'sha-stable' });
+    const deps = makeDeps({
+      git,
+      runSpecReview: async () => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+        snapshot: { snapshot: 'spec-snapshot-1' },
+      }),
+      runQualityReview: async () => ({
+        invocationId: 'qr-1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+        snapshot: { snapshot: 'quality-snapshot-1' },
+      }),
+    });
+    const result = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(result.outcome).toBe('success');
+    expect(result.loop.iterations.length).toBe(2);
+  });
+
+  it('exits final pair when HEAD changes before second review', async () => {
+    const git = makeFakeGitPort({
+      headSha: ['sha-stable', 'sha-changed'],
+    });
+    const deps = makeDeps({
+      git,
+      runSpecReview: async () => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+        snapshot: { snapshot: 'spec-snapshot-1' },
+      }),
+      runQualityReview: async () => ({
+        invocationId: 'qr-1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+        snapshot: { snapshot: 'quality-snapshot-1' },
+      }),
+    });
+    const result = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 10 });
+    expect(result.outcome).toBe('success');
+    expect(result.loop.iterations.length).toBeGreaterThan(1);
+  });
+});
+
 describe('ImplementStepLoop terminal fix escalation', () => {
   it('AC #1 — triggers successful terminal fix when budget exhausts', async () => {
     const { bus, events } = collectEvents();
@@ -3360,7 +3591,11 @@ describe('ImplementStepLoop terminal fix escalation', () => {
       },
       runFix: async (_ctx, opts) => {
         fixOptsCapture.push(opts);
-        return { invocationId: `fix-${fixOptsCapture.length}`, agentOutcome: 'success', verdict: 'done_with_fixes' };
+        return {
+          invocationId: `fix-${fixOptsCapture.length}`,
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+        };
       },
       terminalFixProfile: AgentProfileName('terminator'),
       runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
@@ -3384,7 +3619,9 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     // So there are 3 findings in history.
     expect(terminalFixOpts?.holisticFindings![0]?.findings).toHaveLength(3);
 
-    const holisticEvent = events.find((e) => e.type === 'fix.holistic_rederivation' && e.metadata.isTerminalFix === true);
+    const holisticEvent = events.find(
+      (e) => e.type === 'fix.holistic_rederivation' && e.metadata.isTerminalFix === true,
+    );
     expect(holisticEvent).toBeDefined();
     expect(holisticEvent?.metadata.file).toBe('src/bad.ts');
   });

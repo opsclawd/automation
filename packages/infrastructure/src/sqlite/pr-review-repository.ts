@@ -8,6 +8,9 @@ import {
   type CommentOutcome,
   type CommentSeverity,
   type PollStatus,
+  type PrReviewCommentAttempt,
+  type AttemptDisposition,
+  type AttemptAction,
 } from '@ai-sdlc/domain';
 import type { PrReviewRepositoryPort } from '@ai-sdlc/application/ports';
 
@@ -94,6 +97,51 @@ function rowToPoll(r: PollRow): PollAttempt {
     Object.assign(base, { terminalState: r.terminal_state as PollAttempt['terminalState'] });
   }
   return base as PollAttempt;
+}
+
+interface AttemptRow {
+  attempt_id: string;
+  run_uuid: string;
+  comment_id: number;
+  retry_number: number;
+  start_head: string;
+  completed_head: string | null;
+  review_mode: string;
+  prompt_path: string;
+  result_artifact_path: string;
+  action: string;
+  verifier_feedback: string | null;
+  build_feedback: string | null;
+  disposition: string | null;
+  created_at: string;
+}
+
+function rowToAttempt(r: AttemptRow): PrReviewCommentAttempt {
+  const base: PrReviewCommentAttempt = {
+    attemptId: r.attempt_id,
+    runId: RunId(r.run_uuid),
+    commentId: r.comment_id,
+    retryNumber: r.retry_number,
+    startHead: r.start_head,
+    reviewMode: r.review_mode,
+    promptPath: r.prompt_path,
+    resultArtifactPath: r.result_artifact_path,
+    action: r.action as AttemptAction,
+    createdAt: new Date(r.created_at),
+  };
+  if (r.completed_head !== null) {
+    Object.assign(base, { completedHead: r.completed_head });
+  }
+  if (r.verifier_feedback !== null) {
+    Object.assign(base, { verifierFeedback: r.verifier_feedback });
+  }
+  if (r.build_feedback !== null) {
+    Object.assign(base, { buildFeedback: r.build_feedback });
+  }
+  if (r.disposition !== null) {
+    Object.assign(base, { disposition: r.disposition as AttemptDisposition });
+  }
+  return base;
 }
 
 export class PrReviewRepository implements PrReviewRepositoryPort {
@@ -249,5 +297,61 @@ export class PrReviewRepository implements PrReviewRepositoryPort {
       .prepare('SELECT * FROM poll_attempts WHERE run_uuid = ? ORDER BY rowid DESC LIMIT 1')
       .get(runId) as PollRow | undefined;
     return row ? rowToPoll(row) : undefined;
+  }
+
+  appendCommentAttempt(a: PrReviewCommentAttempt): void {
+    this.db
+      .prepare(
+        `INSERT INTO pr_review_comment_attempts
+          (attempt_id, run_uuid, comment_id, retry_number, start_head, completed_head,
+           review_mode, prompt_path, result_artifact_path, action, verifier_feedback,
+           build_feedback, disposition, created_at)
+         VALUES
+          (@attemptId, @runUuid, @commentId, @retryNumber, @startHead, @completedHead,
+           @reviewMode, @promptPath, @resultArtifactPath, @action, @verifierFeedback,
+           @buildFeedback, @disposition, @createdAt)`,
+      )
+      .run({
+        attemptId: a.attemptId,
+        runUuid: a.runId,
+        commentId: a.commentId,
+        retryNumber: a.retryNumber,
+        startHead: a.startHead,
+        completedHead: a.completedHead ?? null,
+        reviewMode: a.reviewMode,
+        promptPath: a.promptPath,
+        resultArtifactPath: a.resultArtifactPath,
+        action: a.action,
+        verifierFeedback: a.verifierFeedback ?? null,
+        buildFeedback: a.buildFeedback ?? null,
+        disposition: a.disposition ?? null,
+        createdAt: a.createdAt.toISOString(),
+      });
+  }
+
+  updateCommentAttempt(a: PrReviewCommentAttempt): void {
+    this.db
+      .prepare(
+        `UPDATE pr_review_comment_attempts SET
+           completed_head=@completedHead, verifier_feedback=@verifierFeedback,
+           build_feedback=@buildFeedback, disposition=@disposition
+         WHERE attempt_id=@attemptId`,
+      )
+      .run({
+        attemptId: a.attemptId,
+        completedHead: a.completedHead ?? null,
+        verifierFeedback: a.verifierFeedback ?? null,
+        buildFeedback: a.buildFeedback ?? null,
+        disposition: a.disposition ?? null,
+      });
+  }
+
+  listCommentAttempts(runId: RunId, commentId: number): PrReviewCommentAttempt[] {
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM pr_review_comment_attempts WHERE run_uuid = ? AND comment_id = ? ORDER BY retry_number, created_at',
+      )
+      .all(runId, commentId) as AttemptRow[];
+    return rows.map(rowToAttempt);
   }
 }

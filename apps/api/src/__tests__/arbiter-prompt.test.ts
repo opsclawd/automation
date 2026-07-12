@@ -14,10 +14,11 @@ describe('buildArbiterPrompt', () => {
   it('includes Task heading, CONTEXT, INPUTS, DECISION FRAMEWORK, OUTPUT sections', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: 'TS2304: foo not found' },
-      specExcerpt: '{"result":"fail","findings":[]}',
-      qualityExcerpt: '{"result":"fail","findings":[]}',
-      fixExcerpt: '{"result":"done_no_fixes_needed","rebuttal":"spec misread"}',
+      disputedFinding: { fingerprint: 'fp1', severity: 'P1', summary: 'Missing error handling' },
+      dispositionHistory: [],
       fixRebuttal: 'spec misread the plan letter',
+      deterministicDiagnostics: 'TS2304: foo not found',
+      fixDelta: 'diff --git a/foo.ts b/foo.ts',
       taskBody: '## Task 4: Add the foo() helper\n\nImplement foo() in src/foo.ts.',
     });
     expect(prompt).toContain('# TASK');
@@ -32,9 +33,8 @@ describe('buildArbiterPrompt', () => {
     const taskBody = '## Task 4: Add the foo() helper\n\nImplement foo() in src/foo.ts.';
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'pass', output: '' },
-      specExcerpt: '',
-      qualityExcerpt: '',
-      fixExcerpt: '',
+      disputedFinding: { fingerprint: 'fp1', severity: 'P0', summary: 'Test finding' },
+      dispositionHistory: [],
       fixRebuttal: '',
       taskBody,
     });
@@ -44,9 +44,8 @@ describe('buildArbiterPrompt', () => {
   it('marks the phase READ-ONLY and forbids code edits', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'pass', output: '' },
-      specExcerpt: '',
-      qualityExcerpt: '',
-      fixExcerpt: '',
+      disputedFinding: { fingerprint: 'fp1', severity: 'P2', summary: 'Test' },
+      dispositionHistory: [],
       fixRebuttal: '',
       taskBody: 'stub',
     });
@@ -57,9 +56,8 @@ describe('buildArbiterPrompt', () => {
   it('lists the four outcome enum values in DECISION FRAMEWORK', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: 'TS2304' },
-      specExcerpt: '',
-      qualityExcerpt: '',
-      fixExcerpt: '',
+      disputedFinding: { fingerprint: 'fp1', severity: 'P1', summary: 'Test' },
+      dispositionHistory: [],
       fixRebuttal: '',
       taskBody: 'stub',
     });
@@ -72,9 +70,8 @@ describe('buildArbiterPrompt', () => {
   it('lists the JSON shape in the OUTPUT section', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: 'TS2304' },
-      specExcerpt: '',
-      qualityExcerpt: '',
-      fixExcerpt: '',
+      disputedFinding: { fingerprint: 'fp1', severity: 'P1', summary: 'Test' },
+      dispositionHistory: [],
       fixRebuttal: '',
       taskBody: 'stub',
     });
@@ -83,47 +80,78 @@ describe('buildArbiterPrompt', () => {
     expect(prompt).toContain('"rationale"');
   });
 
-  it('embeds the spec/quality/fix excerpts when provided', () => {
-    const specExcerpt = '{"result":"fail","findings":[{"severity":"P0","summary":"x"}]}';
-    const qualityExcerpt = '{"result":"fail","findings":[{"severity":"P2","summary":"q"}]}';
-    const fixExcerpt = '{"result":"done_no_fixes_needed","rebuttal":"y"}';
+  it('embeds disputed finding when provided', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: '' },
-      specExcerpt,
-      qualityExcerpt,
-      fixExcerpt,
+      disputedFinding: { fingerprint: 'fp1', severity: 'P0', summary: 'Critical bug' },
+      dispositionHistory: [],
       fixRebuttal: '',
       taskBody: 'stub',
     });
-    expect(prompt).toContain(specExcerpt);
-    expect(prompt).toContain(qualityExcerpt);
-    expect(prompt).toContain(fixExcerpt);
+    expect(prompt).toContain('## DISPUTED FINDING');
+    expect(prompt).toContain('Critical bug');
   });
 
-  it('embeds findings in the spec excerpt verbatim in the rendered prompt', () => {
-    const findingSummary = 'Missing fix-prompt findings inlining';
-    const specExcerpt = JSON.stringify({
-      result: 'fail',
-      findings: [{ severity: 'P1', summary: findingSummary, file: 'src/x.ts' }],
-    });
+  it('embeds disposition history when provided', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'pass', output: '' },
-      specExcerpt,
-      qualityExcerpt: '',
-      fixExcerpt: '',
+      disputedFinding: { fingerprint: 'fp1', severity: 'P1', summary: 'Test' },
+      dispositionHistory: [
+        { fingerprint: 'fp1', disposition: 'open' },
+        { fingerprint: 'fp1', disposition: 'addressed', reason: 'Fixed in commit abc' },
+      ],
       fixRebuttal: '',
       taskBody: 'stub',
     });
-    expect(prompt).toContain(findingSummary);
-    expect(prompt).toContain('src/x.ts');
+    expect(prompt).toContain('## DISPOSITION HISTORY');
+    expect(prompt).toContain('fp1');
+    expect(prompt).toContain('addressed');
+  });
+
+  it('embeds deterministic diagnostics when provided', () => {
+    const prompt = buildArbiterPrompt(ctx, {
+      tcResult: { outcome: 'fail', output: 'TS2304: foo not found' },
+      disputedFinding: { fingerprint: 'fp1', severity: 'P1', summary: 'Test' },
+      dispositionHistory: [],
+      fixRebuttal: '',
+      deterministicDiagnostics: 'TS2304: cannot find name foo',
+      taskBody: 'stub',
+    });
+    expect(prompt).toContain('## DETERMINISTIC DIAGNOSTICS');
+    expect(prompt).toContain('TS2304: cannot find name foo');
+  });
+
+  it('embeds fix delta when provided', () => {
+    const prompt = buildArbiterPrompt(ctx, {
+      tcResult: { outcome: 'pass', output: '' },
+      disputedFinding: { fingerprint: 'fp1', severity: 'P1', summary: 'Test' },
+      dispositionHistory: [],
+      fixRebuttal: '',
+      fixDelta: '+ added line\n- removed line',
+      taskBody: 'stub',
+    });
+    expect(prompt).toContain('## EXACT FIX DELTA');
+    expect(prompt).toContain('+ added line');
+    expect(prompt).toContain('- removed line');
+  });
+
+  it('shows message when fix delta is not available', () => {
+    const prompt = buildArbiterPrompt(ctx, {
+      tcResult: { outcome: 'pass', output: '' },
+      disputedFinding: { fingerprint: 'fp1', severity: 'P1', summary: 'Test' },
+      dispositionHistory: [],
+      fixRebuttal: '',
+      taskBody: 'stub',
+    });
+    expect(prompt).toContain('## EXACT FIX DELTA');
+    expect(prompt).toContain('not available');
   });
 
   it('expands the typecheck section with the failure output when typecheck failed', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: 'TS2304: cannot find name foo' },
-      specExcerpt: '',
-      qualityExcerpt: '',
-      fixExcerpt: '',
+      disputedFinding: { fingerprint: 'fp1', severity: 'P1', summary: 'Test' },
+      dispositionHistory: [],
       fixRebuttal: '',
       taskBody: 'stub',
     });
@@ -135,9 +163,8 @@ describe('buildArbiterPrompt', () => {
   it('marks typecheck as PASS when typecheck succeeded', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'pass', output: '' },
-      specExcerpt: '',
-      qualityExcerpt: '',
-      fixExcerpt: '',
+      disputedFinding: { fingerprint: 'fp1', severity: 'P1', summary: 'Test' },
+      dispositionHistory: [],
       fixRebuttal: '',
       taskBody: 'stub',
     });

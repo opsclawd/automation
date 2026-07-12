@@ -171,6 +171,16 @@ export class TaskContextGenerator {
       }
     }
 
+    // 10. Behavioral Invariants
+    if (input.manifest.version === 2) {
+      const t2 = task as TaskManifestEntryV2;
+      if (t2.invariants && t2.invariants.length > 0) {
+        const invContent = `## Behavioral Invariants\n\nYou MUST implement the following behavioral invariants as named tests first (TDD):\n\n${t2.invariants.map((inv) => `- **${inv.name}**: ${inv.description} (Test: \`${inv.test_case_name}\`)`).join('\n')}\n\n`;
+        sections.push(invContent);
+        diagnostics.componentSizes['invariants'] = invContent.length;
+      }
+    }
+
     // Apply Budgeting (Simple truncation for now, prioritizing earlier sections)
     let totalSize = 0;
     const finalSections: string[] = [];

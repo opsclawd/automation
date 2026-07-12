@@ -10,6 +10,7 @@ import {
   type PrReviewComment,
   type PollAttempt,
 } from '@ai-sdlc/domain';
+import type { PostPrReviewAttemptMode } from './poll-task-runner.js';
 import { verifyComment } from './verify-comment.js';
 import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import type { FixDiffInspectorPort } from '../ports/fix-diff-inspector-port.js';
@@ -21,6 +22,7 @@ import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.
 import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
 import { PollTaskRunner } from './poll-task-runner.js';
 import type { PollTaskOutput } from './poll-task-runner.js';
+import type { ArtifactStore } from '../ports/artifact-store.js';
 
 export interface ProcessPrReviewDeps {
   github: GitHubPort;
@@ -32,8 +34,14 @@ export interface ProcessPrReviewDeps {
     comment: PrReviewComment;
     diff: string;
     branch: string;
+    mode: PostPrReviewAttemptMode;
     previousBuildError?: string;
     previousCodeVerifyReason?: string;
+    dispositions?: Array<{
+      fingerprint: string;
+      disposition: string;
+      reason?: string;
+    }>;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -56,6 +64,7 @@ export interface ProcessPrReviewDeps {
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
+  artifactStore: ArtifactStore;
   baseBranch?: string;
   repoRoot?: string | undefined;
   onWarning?: (message: string, metadata: Record<string, unknown>, runId: string) => void;
@@ -156,7 +165,6 @@ export class ProcessPrReviewComments {
       };
     }
 
-    const diff = await d.git.diff(input.cwd, 'origin/HEAD');
     const startCommitSha = await d.git.headCommitSha(input.cwd);
     const originalStartCommitSha = startCommitSha;
     const originalStart = originalStartCommitSha;
@@ -191,7 +199,47 @@ export class ProcessPrReviewComments {
         if (!currentComment) break;
         if (currentComment.state !== 'pending' && currentComment.state !== 'replied') break;
 
-        const currentDiff = attempt === 1 ? diff : await d.git.diff(input.cwd, 'origin/HEAD');
+        const previousAttempts = d.prReviewRepo.listCommentAttempts(input.runId, task.commentId);
+        let currentDiff: string;
+        try {
+          if (attempt === 1) {
+            currentDiff = await d.git.diff(input.cwd, 'origin/HEAD', runningStartSha);
+          } else {
+            const previousAttempt = previousAttempts[previousAttempts.length - 1];
+            if (!previousAttempt || !previousAttempt.completedHead) {
+              throw new Error(`Missing completedHead snapshot for retry attempt ${attempt}`);
+            }
+            currentDiff = await d.git.diff(
+              input.cwd,
+              previousAttempt.completedHead,
+              runningStartSha,
+            );
+          }
+        } catch (error: unknown) {
+          const reason = `Diff generation failed: ${error instanceof Error ? error.message : String(error)}`;
+          d.prReviewRepo.upsertComment(blockComment(currentComment, reason));
+          lastOutput = {
+            commentId: task.commentId,
+            action: 'failed',
+            processed: false,
+            blocked: true,
+          };
+          break;
+        }
+        const dispositions = previousAttempts.map((a) => {
+          const item: { fingerprint: string; disposition: string; reason?: string } = {
+            fingerprint: a.attemptId,
+            disposition: a.disposition ?? 'failure',
+          };
+          const r = a.verifierFeedback ?? a.buildFeedback;
+          if (r !== undefined) {
+            item.reason = r;
+          }
+          return item;
+        });
+        const reviewMode: PostPrReviewAttemptMode =
+          attempt === 1 ? 'initial_full' : 'intermediate_delta';
+        const retryNumber = attempt;
         try {
           lastOutput = await taskRunner.execute({
             ...input,
@@ -201,6 +249,9 @@ export class ProcessPrReviewComments {
             startCommitSha: runningStartSha,
             originalStartCommitSha: originalStartCommitSha,
             unresolvedCommentCount: unresolved.length,
+            reviewMode,
+            retryNumber,
+            dispositions,
             ...(previousBuildError !== undefined ? { previousBuildError } : {}),
             ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
           });
@@ -282,6 +333,18 @@ export class ProcessPrReviewComments {
           !lastOutput.processed &&
           !lastOutput.blocked
         ) {
+          // Prefer the last attempt's concrete verification failure over the
+          // generic reason — pre-push verify failures never reach 'replied'
+          // state, so the final verifyComment pass above is skipped and this
+          // branch is where their outcome must be surfaced (#629).
+          let fallbackReason = `task failed after ${ESCALATION_BUDGET} attempts`;
+          if (lastOutput.codeVerifyReason !== undefined) {
+            fallbackReason = `verified incorrect: ${lastOutput.codeVerifyReason}`;
+          } else if (lastOutput.buildError !== undefined) {
+            fallbackReason = `build failed: ${lastOutput.buildError}`;
+          }
+          d.prReviewRepo.upsertComment(blockComment(currentComment!, fallbackReason));
+
           // No verifier produced a result (e.g. agent crashed, no commit to
           // anchor against). Keep the original generic-fallback behavior.
           const rollbackOk = await d.rollbackFix?.(
@@ -299,17 +362,6 @@ export class ProcessPrReviewComments {
               String(input.runId),
             );
           }
-          // Prefer the last attempt's concrete verification failure over the
-          // generic reason — pre-push verify failures never reach 'replied'
-          // state, so the final verifyComment pass above is skipped and this
-          // branch is where their outcome must be surfaced (#629).
-          let fallbackReason = `task failed after ${ESCALATION_BUDGET} attempts`;
-          if (lastOutput.codeVerifyReason !== undefined) {
-            fallbackReason = `verified incorrect: ${lastOutput.codeVerifyReason}`;
-          } else if (lastOutput.buildError !== undefined) {
-            fallbackReason = `build failed: ${lastOutput.buildError}`;
-          }
-          d.prReviewRepo.upsertComment(blockComment(currentComment!, fallbackReason));
           lastOutput = {
             commentId: task.commentId,
             action: 'failed',
