@@ -178,6 +178,8 @@ import {
   RunId,
   RepositoryId,
 } from '@ai-sdlc/domain';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- forward reference for Task 5 runtime factory
+import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
