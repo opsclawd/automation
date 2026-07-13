@@ -72,4 +72,64 @@ describe('FakeWorkerRegistryPort', () => {
     const port = new FakeWorkerRegistryPort();
     expect(() => port.markStopping(WorkerId('unknown'), repoId)).toThrow('unknown worker');
   });
+
+  it('worker registration and heartbeat retain the assigned repository id', () => {
+    const port = new FakeWorkerRegistryPort();
+    const otherRepoId = RepositoryId('other-repo');
+    port.register(worker('w1'));
+    expect(() => port.heartbeat(WorkerId('w1'), otherRepoId, now)).toThrow(
+      `worker w1 is not registered for repo ${otherRepoId}`,
+    );
+    const later = new Date(now.getTime() + 60_000);
+    port.heartbeat(WorkerId('w1'), repoId, later);
+    expect(port.findById(WorkerId('w1'), repoId)?.heartbeatAt).toEqual(later);
+  });
+
+  it('heartbeat throws when worker is registered for a different repo', () => {
+    const port = new FakeWorkerRegistryPort();
+    port.register(worker('w1'));
+    expect(() => port.heartbeat(WorkerId('w1'), RepositoryId('wrong'), now)).toThrow(
+      'worker w1 is not registered for repo',
+    );
+  });
+
+  it('markBusy throws when worker is registered for a different repo', () => {
+    const port = new FakeWorkerRegistryPort();
+    port.register(worker('w1'));
+    expect(() => port.markBusy(WorkerId('w1'), RepositoryId('wrong'))).toThrow(
+      'worker w1 is not registered for repo',
+    );
+  });
+
+  it('markIdle throws when worker is registered for a different repo', () => {
+    const port = new FakeWorkerRegistryPort();
+    port.register(worker('w1'));
+    port.markBusy(WorkerId('w1'), repoId);
+    expect(() => port.markIdle(WorkerId('w1'), RepositoryId('wrong'))).toThrow(
+      'worker w1 is not registered for repo',
+    );
+  });
+
+  it('markStopping throws when worker is registered for a different repo', () => {
+    const port = new FakeWorkerRegistryPort();
+    port.register(worker('w1'));
+    expect(() => port.markStopping(WorkerId('w1'), RepositoryId('wrong'))).toThrow(
+      'worker w1 is not registered for repo',
+    );
+  });
+
+  it('markUnhealthy throws when worker is registered for a different repo', () => {
+    const port = new FakeWorkerRegistryPort();
+    port.register(worker('w1'));
+    expect(() => port.markUnhealthy(WorkerId('w1'), RepositoryId('wrong'))).toThrow(
+      'worker w1 is not registered for repo',
+    );
+  });
+
+  it('findById returns undefined when worker is registered for a different repo', () => {
+    const port = new FakeWorkerRegistryPort();
+    port.register(worker('w1'));
+    expect(port.findById(WorkerId('w1'), RepositoryId('wrong'))).toBeUndefined();
+    expect(port.findById(WorkerId('w1'), repoId)?.hostname).toBe('h');
+  });
 });

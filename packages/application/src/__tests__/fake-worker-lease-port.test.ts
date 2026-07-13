@@ -238,7 +238,7 @@ describe('FakeWorkerLeasePort', () => {
       createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
     );
     leases.acquire({
-      repoId: RepositoryId('r'),
+      repoId: repoId,
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
       now: now0,
