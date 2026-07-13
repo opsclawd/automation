@@ -272,6 +272,91 @@ describe('RepositoryRuntimeFactory', () => {
     });
   });
 
+  describe('behavioral invariant: stale_historical_runtime_reap_resilience', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('force-evicts a historical fingerprint runtime after max stale age even while repo is busy', async () => {
+      let currentTimeMs = new Date('2026-01-01T00:00:00.000Z').getTime();
+      const { factory, workerLeasePort } = makeFactory({
+        now: () => new Date(currentTimeMs),
+      });
+      const repoA = makeRepository('acme/api');
+
+      const oldRuntime = factory.getRuntime(repoA, TEST_FINGERPRINT_A);
+      const closeSpy = vi.spyOn(oldRuntime, 'close');
+
+      // Repository picks up a new config fingerprint while a lease is
+      // continuously active, marking the old runtime stale.
+      workerLeasePort.acquire({
+        repoId: repoA.id,
+        workerId: WorkerId('worker-1'),
+        runId: RunId('run-1'),
+        now: new Date(currentTimeMs),
+        ttlMs: 24 * 60 * 60 * 1000,
+      });
+      factory.getRuntime(repoA, TEST_FINGERPRINT_A_V2);
+
+      // Reap keeps retrying (repo is still busy) but must not evict yet:
+      // not past the max stale age.
+      await vi.runOnlyPendingTimersAsync();
+      expect(closeSpy).not.toHaveBeenCalled();
+
+      currentTimeMs += 11 * 60 * 1000;
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(closeSpy).toHaveBeenCalled();
+
+      factory.close();
+    });
+
+    it('keeps retrying instead of evicting or stranding a historical runtime when checkActiveLease throws', async () => {
+      const { factory, workerLeasePort } = makeFactory();
+      const repoA = makeRepository('acme/api');
+      const now = new Date();
+
+      const oldRuntime = factory.getRuntime(repoA, TEST_FINGERPRINT_A);
+      const closeSpy = vi.spyOn(oldRuntime, 'close');
+
+      // Repo stays busy under a new fingerprint, so the old one becomes a
+      // historical (non-active) stale entry.
+      workerLeasePort.acquire({
+        repoId: repoA.id,
+        workerId: WorkerId('worker-1'),
+        runId: RunId('run-1'),
+        now,
+        ttlMs: 60000,
+      });
+      factory.getRuntime(repoA, TEST_FINGERPRINT_A_V2);
+
+      workerLeasePort.checkActiveLease.mockImplementationOnce(() => {
+        throw new Error('boom');
+      });
+
+      // First scheduled reap tick throws; the entry must not be evicted, and
+      // a retry must still be scheduled rather than stranding it forever.
+      await vi.runOnlyPendingTimersAsync();
+      expect(closeSpy).not.toHaveBeenCalled();
+
+      // Release the lease so the next tick sees no active lease at all.
+      workerLeasePort.release({
+        repoId: repoA.id,
+        workerId: WorkerId('worker-1'),
+        runId: RunId('run-1'),
+      });
+
+      await vi.runOnlyPendingTimersAsync();
+      expect(closeSpy).toHaveBeenCalled();
+
+      factory.close();
+    });
+  });
+
   describe('cache invalidation on fingerprint change', () => {
     it('returns different runtime when config fingerprint changes', () => {
       const { factory } = makeFactory();

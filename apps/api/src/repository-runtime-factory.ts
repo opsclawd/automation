@@ -41,6 +41,8 @@ export interface RepositoryRuntimeFactoryOptions {
 }
 
 export class RepositoryRuntimeFactory {
+  private static readonly MAX_STALE_AGE_MS = 10 * 60 * 1000;
+
   private readonly cache = new Map<string, CacheEntry>();
   private readonly staleRuntimes = new Set<string>();
   private readonly activeFingerprint = new Map<string, string>();
@@ -84,6 +86,7 @@ export class RepositoryRuntimeFactory {
   private reapStaleRuntimes(): void {
     this.reapScheduled = false;
     const now = this.opts.now?.() ?? new Date();
+    let needsRetry = false;
 
     for (const key of this.staleRuntimes) {
       const entry = this.cache.get(key);
@@ -94,21 +97,35 @@ export class RepositoryRuntimeFactory {
 
       const repoIdStr = String(entry.runtime.repository.id);
       const activeFp = this.activeFingerprint.get(repoIdStr);
-      let hasActiveLease = false;
+      const isActiveFingerprint = entry.fingerprint === activeFp;
+      const staleAgeMs = entry.markedStaleAt ? now.getTime() - entry.markedStaleAt.getTime() : 0;
+      const exceededMaxAge = staleAgeMs >= RepositoryRuntimeFactory.MAX_STALE_AGE_MS;
+
+      let hasActiveLease: boolean;
       try {
         hasActiveLease = this.opts.workerLeasePort.checkActiveLease(
           entry.runtime.repository.id,
           now,
         );
       } catch {
+        // Lease state is unknown: assume active so we don't evict a runtime
+        // that's actually in use, but always retry so the entry can't get
+        // permanently stranded by a persistently-throwing lease port.
         hasActiveLease = true;
-        this.scheduleReap();
+        needsRetry = true;
       }
 
-      if (hasActiveLease) {
-        if (entry.fingerprint === activeFp) {
-          this.unmarkStale(key);
-        }
+      if (hasActiveLease && isActiveFingerprint) {
+        this.unmarkStale(key);
+        continue;
+      }
+
+      if (hasActiveLease && !exceededMaxAge) {
+        // Historical (non-active-fingerprint) runtime: the repository is
+        // still busy under a different fingerprint. Keep it cached for now
+        // rather than evict, but keep retrying so it isn't stuck here
+        // forever if the repository never goes idle.
+        needsRetry = true;
         continue;
       }
 
@@ -123,6 +140,10 @@ export class RepositoryRuntimeFactory {
       if (this.activeFingerprint.get(repoIdStr) === entry.fingerprint) {
         this.activeFingerprint.delete(repoIdStr);
       }
+    }
+
+    if (needsRetry) {
+      this.scheduleReap();
     }
   }
 
@@ -222,7 +243,12 @@ export class RepositoryRuntimeFactory {
     const activeEntry = this.cache.get(activeKey);
     if (!activeEntry) return;
 
-    const hasActiveLease = this.opts.workerLeasePort.checkActiveLease(repoId, now);
+    let hasActiveLease: boolean;
+    try {
+      hasActiveLease = this.opts.workerLeasePort.checkActiveLease(repoId, now);
+    } catch {
+      hasActiveLease = true;
+    }
 
     if (hasActiveLease) {
       this.unmarkStale(activeKey);
