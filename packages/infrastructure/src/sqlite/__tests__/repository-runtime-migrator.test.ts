@@ -117,7 +117,7 @@ describe('RepositoryRuntimeMigrator', () => {
       });
 
       const state = migrator.detectLegacyState();
-      expect(state.hasLegacyArtifacts).toBe(true);
+      expect(state.legacyArtifactRoot).toBe(legacyArtifactRoot);
     });
   });
 });

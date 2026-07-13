@@ -2,9 +2,7 @@ import type { Db } from './database.js';
 import type { RepositoryId } from '@ai-sdlc/domain';
 
 export interface LegacyOperationalState {
-  hasLegacyRuns: boolean;
   hasLegacyEvents: boolean;
-  hasLegacyArtifacts: boolean;
   legacyArtifactRoot?: string;
 }
 
@@ -22,12 +20,6 @@ export class RepositoryRuntimeMigrator {
   detectLegacyState(): LegacyOperationalState {
     const { controlPlaneDb, legacyArtifactRoot } = this.deps;
 
-    const runsWithoutRepoId = (
-      controlPlaneDb
-        .prepare(`SELECT COUNT(*) as c FROM runs WHERE repo_id IS NULL OR repo_id = 'unknown'`)
-        .get() as { c: number }
-    ).c;
-
     const eventsWithoutRepoId = (
       controlPlaneDb.prepare(`SELECT COUNT(*) as c FROM events WHERE repo_id IS NULL`).get() as {
         c: number;
@@ -35,9 +27,7 @@ export class RepositoryRuntimeMigrator {
     ).c;
 
     return {
-      hasLegacyRuns: runsWithoutRepoId > 0,
       hasLegacyEvents: eventsWithoutRepoId > 0,
-      hasLegacyArtifacts: legacyArtifactRoot !== undefined,
       ...(legacyArtifactRoot !== undefined ? { legacyArtifactRoot } : {}),
     };
   }
@@ -88,12 +78,14 @@ export class RepositoryRuntimeMigrator {
       type: string;
       message: string;
       metadata: unknown;
-      timestamp: number;
+      timestamp: string;
     }>;
 
     if (unownedEvents.length === 0) {
       return;
     }
+
+    const eventIds = unownedEvents.map((e) => e.id);
 
     const migrateTx = operationalDb.transaction(() => {
       for (const event of unownedEvents) {
@@ -116,6 +108,10 @@ export class RepositoryRuntimeMigrator {
     });
 
     migrateTx();
+
+    controlPlaneDb
+      .prepare(`DELETE FROM events WHERE id IN (${eventIds.map(() => '?').join(',')})`)
+      .run(...eventIds);
   }
 }
 
