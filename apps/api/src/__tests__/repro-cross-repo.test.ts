@@ -17,7 +17,12 @@ vi.mock('node:child_process', async (importOriginal) => {
 // and our mock might break it. But RepositoryMetadataResolver uses existsSync and statSync.
 // Instead of mocking fs, we'll let it use the real temp directories we created.
 
-describe('Cross-repo metadata resolution reproduction', () => {
+describe('Cross-repo metadata resolution regression', () => {
+  // This is a narrow regression test that proves there is no fallback from
+  // a selected registry Repository to the composition process's target root.
+  // It verifies that when an explicit target repo is provided, its metadata
+  // (default branch, repo identity) is used directly rather than falling back
+  // to ambient GITHUB_REPOSITORY or other composition-level values.
   let repoRoot: string;
   let targetRepoRoot: string;
   const originalEnv = { ...process.env };
@@ -44,10 +49,10 @@ describe('Cross-repo metadata resolution reproduction', () => {
     execFileSyncMock.mockImplementation((cmd, args, opts) => {
       if (cmd === 'git') {
         if (args?.includes('--show-toplevel')) {
-           return 'target-root-resolved';
+          return 'target-root-resolved';
         }
         if (args?.includes('get-url')) {
-           return 'https://github.com/owner/target.git';
+          return 'https://github.com/owner/target.git';
         }
       }
       if (cmd === 'gh' && args?.includes('defaultBranchRef')) {
@@ -81,10 +86,10 @@ describe('Cross-repo metadata resolution reproduction', () => {
     execFileSyncMock.mockImplementation((cmd, args, opts) => {
       if (cmd === 'git') {
         if (args?.includes('--show-toplevel')) {
-           return 'target-root-resolved';
+          return 'target-root-resolved';
         }
         if (args?.includes('get-url')) {
-           return 'https://github.com/owner/target.git';
+          return 'https://github.com/owner/target.git';
         }
       }
       if (cmd === 'gh' && args?.includes('nameWithOwner')) {

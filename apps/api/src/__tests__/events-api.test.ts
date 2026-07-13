@@ -57,7 +57,7 @@ describe('GET /api/runs/:runId/events', () => {
     expect(r.status).toBe(404);
   });
 
-  it('returns events for a run in ascending order', async () => {
+  it('returns events in ascending order', async () => {
     const { baseUrl, container } = await bootServer();
     const result = await container.startIssueRun.execute({
       issueNumber: 99,
@@ -118,6 +118,27 @@ describe('GET /api/runs/:runId/events', () => {
     });
     const r = await fetch(`${baseUrl}/api/runs/${result.uuid}/events?since=garbage`);
     expect(r.status).toBe(400);
+  });
+
+  it('serializes repoId in event response', async () => {
+    const { baseUrl, container } = await bootServer();
+    const repoId = RepositoryId('owner/repo');
+    const result = await container.startIssueRun.execute({
+      issueNumber: 96,
+      repoId,
+    });
+    container.eventRepository.insert({
+      runUuid: result.uuid,
+      level: 'info',
+      type: 'run.started',
+      message: 'begin',
+      timestamp: new Date('2026-05-16T12:00:00.000Z'),
+    });
+    const r = await fetch(`${baseUrl}/api/runs/${result.uuid}/events`);
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { events: Array<{ type: string; repoId: string }> };
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0]!.repoId).toBe(repoId);
   });
 });
 

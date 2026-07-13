@@ -26,6 +26,7 @@ export function serializeEvent(e: EventItem, displayId: string) {
   return {
     id: e.id,
     runId: displayId,
+    repoId: e.repoId,
     phase: e.phase ?? null,
     level: e.level,
     type: e.type,
