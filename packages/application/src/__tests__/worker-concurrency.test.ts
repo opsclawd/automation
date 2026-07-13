@@ -73,7 +73,7 @@ describe('worker concurrency simulation', () => {
         createdAt: new Date(now.getTime() + 1000),
       }),
     });
-    const j1 = queue.claimNext({ workerId: WorkerId('w1') })!;
+    const j1 = queue.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })!;
     leases.acquire({
       repoId: j1.repoId,
       workerId: WorkerId('w1'),
@@ -81,7 +81,7 @@ describe('worker concurrency simulation', () => {
       now,
       ttlMs: 60_000,
     });
-    const j2 = queue.claimNext({ workerId: WorkerId('w2') })!;
+    const j2 = queue.claimNext({ workerId: WorkerId('w2'), repoId: RepositoryId('r1') })!;
     expect(() =>
       leases.acquire({
         repoId: j2.repoId,
@@ -113,8 +113,8 @@ describe('worker concurrency simulation', () => {
         createdAt: now,
       }),
     });
-    const j1 = queue.claimNext({ workerId: WorkerId('w1') })!;
-    const j2 = queue.claimNext({ workerId: WorkerId('w2') })!;
+    const j1 = queue.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })!;
+    const j2 = queue.claimNext({ workerId: WorkerId('w2'), repoId: RepositoryId('r2') })!;
     leases.acquire({
       repoId: j1.repoId,
       workerId: WorkerId('w1'),

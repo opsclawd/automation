@@ -116,7 +116,10 @@ describe('JobQueueRepository', () => {
     const repos = mockRepos({ 'repo-1': true });
     const repo = new JobQueueRepository(db, repos);
 
-    const claimed = repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    const claimed = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+    });
     expect(claimed).toBeUndefined();
     db.close();
   });
@@ -155,19 +158,31 @@ describe('JobQueueRepository', () => {
     // Priority 5 vs 0: Job 3, 4, 2 are priority 5.
     // Earliest createdAt for priority 5 is 2026-01-01 (Job 3, 4).
     // Lowest ID alphabetically between 3 and 4 is job-c.
-    const first = repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    const first = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+    });
     expect(first?.id).toBe('job-c');
     expect(first?.status).toBe('claimed');
     expect(first?.claimedBy).toBe('worker-1');
     expect(first?.attempts).toBe(1);
 
-    const second = repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    const second = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+    });
     expect(second?.id).toBe('job-d');
 
-    const third = repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    const third = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+    });
     expect(third?.id).toBe('job-b');
 
-    const fourth = repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    const fourth = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+    });
     expect(fourth?.id).toBe('job-a');
 
     db.close();
@@ -186,6 +201,7 @@ describe('JobQueueRepository', () => {
 
     const claimed = repo.claimNext({
       workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
       skipJobIds: new Set([mkJobId('job-a')]),
     });
     expect(claimed?.id).toBe('job-b');
@@ -201,7 +217,10 @@ describe('JobQueueRepository', () => {
     repo.enqueue({ job });
 
     // Claim the job
-    const claimed = repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    const claimed = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+    });
     expect(claimed).toBeDefined();
 
     // releaseClaim: claimed -> queued
@@ -212,7 +231,10 @@ describe('JobQueueRepository', () => {
     expect(updated?.claimedAt).toBeUndefined();
 
     // Claim again
-    const claimedAgain = repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    const claimedAgain = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+    });
     expect(claimedAgain?.attempts).toBe(2);
 
     // markRunning: claimed -> running
@@ -231,7 +253,7 @@ describe('JobQueueRepository', () => {
     expect(updated?.startedAt).toBeUndefined();
 
     // Claim and mark running again
-    repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    repo.claimNext({ workerId: mkWorkerId('worker-1'), repoId: mkRepositoryId('repo-1') });
     repo.markRunning(job.id, runTime);
 
     // markSucceeded: running -> succeeded
@@ -294,6 +316,7 @@ describe('JobQueueRepository', () => {
 
     const claimed = repo.claimNext({
       workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
       ttlMs: 5_000,
     });
     expect(claimed).toBeDefined();
@@ -312,7 +335,10 @@ describe('JobQueueRepository', () => {
 
     repo.enqueue({ job: defaultJob() });
 
-    const claimed = repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    const claimed = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+    });
     expect(claimed?.claimExpiresAt).toBeUndefined();
 
     const reloaded = repo.findById(defaultJob().id);
@@ -329,6 +355,7 @@ describe('JobQueueRepository', () => {
     repo.enqueue({ job: defaultJob({ id: mkJobId('stale') }) });
     const stale = repo.claimNext({
       workerId: mkWorkerId('w-stale'),
+      repoId: mkRepositoryId('repo-1'),
       ttlMs: 1_000,
     });
     expect(stale).toBeDefined();
@@ -337,6 +364,7 @@ describe('JobQueueRepository', () => {
     repo.enqueue({ job: defaultJob({ id: mkJobId('fresh') }) });
     const fresh = repo.claimNext({
       workerId: mkWorkerId('w-fresh'),
+      repoId: mkRepositoryId('repo-1'),
       ttlMs: 60_000,
     });
     expect(fresh).toBeDefined();
@@ -354,7 +382,7 @@ describe('JobQueueRepository', () => {
 
     repo.enqueue({ job: defaultJob() });
     // Claim without ttlMs => no claim_expires_at
-    repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    repo.claimNext({ workerId: mkWorkerId('worker-1'), repoId: mkRepositoryId('repo-1') });
 
     const expired = repo.findExpiredClaims(new Date(Date.now() + 1_000_000));
     expect(expired).toEqual([]);
@@ -367,7 +395,11 @@ describe('JobQueueRepository', () => {
     const repo = new JobQueueRepository(db, repos);
 
     repo.enqueue({ job: defaultJob() });
-    repo.claimNext({ workerId: mkWorkerId('worker-1'), ttlMs: 1_000 });
+    repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+      ttlMs: 1_000,
+    });
     // Move to running — should no longer match
     repo.markRunning(defaultJob().id, new Date());
 
@@ -385,9 +417,9 @@ describe('JobQueueRepository', () => {
     repo.enqueue({ job: defaultJob({ id: mkJobId('expired-2') }) });
     repo.enqueue({ job: defaultJob({ id: mkJobId('fresh') }) });
 
-    repo.claimNext({ workerId: mkWorkerId('w1'), ttlMs: 1_000 });
-    repo.claimNext({ workerId: mkWorkerId('w2'), ttlMs: 1_000 });
-    repo.claimNext({ workerId: mkWorkerId('w3'), ttlMs: 60_000 });
+    repo.claimNext({ workerId: mkWorkerId('w1'), repoId: mkRepositoryId('repo-1'), ttlMs: 1_000 });
+    repo.claimNext({ workerId: mkWorkerId('w2'), repoId: mkRepositoryId('repo-1'), ttlMs: 1_000 });
+    repo.claimNext({ workerId: mkWorkerId('w3'), repoId: mkRepositoryId('repo-1'), ttlMs: 60_000 });
 
     const cutoff = new Date(Date.now() + 10_000);
     const count = repo.reclaimStaleClaims(cutoff);
@@ -415,10 +447,97 @@ describe('JobQueueRepository', () => {
     const repo = new JobQueueRepository(db, repos);
 
     repo.enqueue({ job: defaultJob() });
-    repo.claimNext({ workerId: mkWorkerId('w1'), ttlMs: 60_000 });
+    repo.claimNext({ workerId: mkWorkerId('w1'), ttlMs: 60_000, repoId: mkRepositoryId('repo-1') });
 
     const count = repo.reclaimStaleClaims(new Date(Date.now() - 60_000));
     expect(count).toBe(0);
     db.close();
+  });
+
+  describe('repository-scoped claimNext', () => {
+    it('claim_is_repository_scoped: claimNext only returns queued jobs from the requested repository', () => {
+      const db = freshDb();
+      const repos = mockRepos({ 'repo-1': true, 'repo-2': true });
+      const repo = new JobQueueRepository(db, repos);
+
+      repo.enqueue({ job: defaultJob({ id: mkJobId('job-a'), repoId: mkRepositoryId('repo-1') }) });
+      repo.enqueue({ job: defaultJob({ id: mkJobId('job-b'), repoId: mkRepositoryId('repo-2') }) });
+
+      const claimed = repo.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      expect(claimed?.id).toBe('job-a');
+      expect(claimed?.repoId).toBe('repo-1');
+      db.close();
+    });
+
+    it('claim_order_is_local_to_repository: claimNext preserves priority created-at and id order within the requested repository', () => {
+      const db = freshDb();
+      const repos = mockRepos({ 'repo-1': true, 'repo-2': true });
+      const repo = new JobQueueRepository(db, repos);
+
+      repo.enqueue({
+        job: defaultJob({
+          id: mkJobId('job-a'),
+          repoId: mkRepositoryId('repo-1'),
+          priority: 0,
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+        }),
+      });
+      repo.enqueue({
+        job: defaultJob({
+          id: mkJobId('job-b'),
+          repoId: mkRepositoryId('repo-1'),
+          priority: 5,
+          createdAt: new Date('2026-01-02T00:00:00Z'),
+        }),
+      });
+      repo.enqueue({
+        job: defaultJob({
+          id: mkJobId('job-c'),
+          repoId: mkRepositoryId('repo-1'),
+          priority: 5,
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+        }),
+      });
+      repo.enqueue({
+        job: defaultJob({
+          id: mkJobId('job-x'),
+          repoId: mkRepositoryId('repo-2'),
+          priority: 10,
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+        }),
+      });
+
+      const claimed = repo.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      expect(claimed?.id).toBe('job-c');
+      db.close();
+    });
+
+    it('concurrent repository-scoped claims cannot cross repository ids', () => {
+      const db = freshDb();
+      const repos = mockRepos({ 'repo-1': true, 'repo-2': true });
+      const repo = new JobQueueRepository(db, repos);
+
+      repo.enqueue({ job: defaultJob({ id: mkJobId('job-a'), repoId: mkRepositoryId('repo-1') }) });
+      repo.enqueue({ job: defaultJob({ id: mkJobId('job-b'), repoId: mkRepositoryId('repo-2') }) });
+
+      const claimedR1 = repo.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      expect(claimedR1?.repoId).toBe('repo-1');
+      const claimedR2 = repo.claimNext({
+        workerId: mkWorkerId('worker-2'),
+        repoId: mkRepositoryId('repo-2'),
+      });
+      expect(claimedR2?.repoId).toBe('repo-2');
+      expect(claimedR1?.id).not.toBe(claimedR2?.id);
+      db.close();
+    });
   });
 });

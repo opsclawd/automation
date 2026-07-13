@@ -76,6 +76,7 @@ function toJob(row: JobRow): Job {
 export class JobQueueRepository implements JobQueuePort {
   private readonly claimTx: (
     workerId: WorkerId,
+    repoId: RepositoryId,
     skipJobIds: Set<JobId> | undefined,
     ttlMs: number | undefined,
   ) => Job | undefined;
@@ -87,22 +88,26 @@ export class JobQueueRepository implements JobQueuePort {
     this.claimTx = this.db.transaction(
       (
         workerId: WorkerId,
+        repoId: RepositoryId,
         skipJobIds: Set<JobId> | undefined,
         ttlMs: number | undefined,
       ): Job | undefined => {
-        const rows = this.db
-          .prepare(
-            `SELECT * FROM jobs WHERE status = 'queued' ORDER BY priority DESC, created_at ASC, id ASC`,
-          )
-          .all() as JobRow[];
+        const selectRows = (): JobRow[] => {
+          return this.db
+            .prepare(
+              `SELECT * FROM jobs WHERE status = 'queued' AND repo_id = @repo_id ORDER BY priority DESC, created_at ASC, id ASC`,
+            )
+            .all({ repo_id: repoId }) as JobRow[];
+        };
 
+        const rows = selectRows();
         const nextRow = rows.find((r) => !skipJobIds?.has(mkJobId(r.id)));
         if (!nextRow) return undefined;
 
         const job = toJob(nextRow);
         const claimedJob = claimJob(job, workerId, new Date(), ttlMs);
 
-        this.db
+        const result = this.db
           .prepare(
             `UPDATE jobs
          SET status = @status,
@@ -110,7 +115,7 @@ export class JobQueueRepository implements JobQueuePort {
              claimed_at = @claimed_at,
              claim_expires_at = @claim_expires_at,
              attempts = @attempts
-         WHERE id = @id`,
+         WHERE id = @id AND repo_id = @repo_id`,
           )
           .run({
             status: claimedJob.status,
@@ -119,7 +124,36 @@ export class JobQueueRepository implements JobQueuePort {
             claim_expires_at: claimedJob.claimExpiresAt?.toISOString() ?? null,
             attempts: claimedJob.attempts,
             id: claimedJob.id,
+            repo_id: repoId,
           });
+
+        if (result.changes === 0) {
+          const retryRows = selectRows();
+          const retryRow = retryRows.find((r) => !skipJobIds?.has(mkJobId(r.id)));
+          if (!retryRow) return undefined;
+          const retryJob = toJob(retryRow);
+          const retryClaimedJob = claimJob(retryJob, workerId, new Date(), ttlMs);
+          this.db
+            .prepare(
+              `UPDATE jobs
+           SET status = @status,
+               claimed_by = @claimed_by,
+               claimed_at = @claimed_at,
+               claim_expires_at = @claim_expires_at,
+               attempts = @attempts
+           WHERE id = @id AND repo_id = @repo_id`,
+            )
+            .run({
+              status: retryClaimedJob.status,
+              claimed_by: retryClaimedJob.claimedBy ?? null,
+              claimed_at: retryClaimedJob.claimedAt?.toISOString() ?? null,
+              claim_expires_at: retryClaimedJob.claimExpiresAt?.toISOString() ?? null,
+              attempts: retryClaimedJob.attempts,
+              id: retryClaimedJob.id,
+              repo_id: repoId,
+            });
+          return retryClaimedJob;
+        }
 
         return claimedJob;
       },
@@ -160,7 +194,7 @@ export class JobQueueRepository implements JobQueuePort {
   }
 
   claimNext(input: ClaimNextInput): Job | undefined {
-    return this.claimTx(input.workerId, input.skipJobIds, input.ttlMs);
+    return this.claimTx(input.workerId, input.repoId, input.skipJobIds, input.ttlMs);
   }
 
   releaseClaim(jobId: JobId): void {
