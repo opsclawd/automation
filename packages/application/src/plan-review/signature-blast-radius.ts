@@ -66,7 +66,7 @@ function isFileOwnedByChangingOrLaterTask(
   const normalizedFile = normalizeFile(file);
 
   for (const task of manifest.tasks) {
-    if (task.n < changingTaskN) {
+    if (task.n < changingTaskN || task.n > manifest.task_count) {
       continue;
     }
 
