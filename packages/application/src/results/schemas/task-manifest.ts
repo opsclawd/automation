@@ -87,7 +87,7 @@ export const taskManifestV2Schema = z
   .superRefine((manifest, ctx) => {
     for (const [taskIndex, task] of manifest.tasks.entries()) {
       const ownedFiles = new Set(
-        (task.expected_files ?? task.files ?? []).map((f) => f.replace(/\\/g, '/')),
+        [...(task.expected_files ?? []), ...(task.files ?? [])].map((f) => f.replace(/\\/g, '/')),
       );
       if (task.signature_changes) {
         for (const [scIndex, sc] of task.signature_changes.entries()) {

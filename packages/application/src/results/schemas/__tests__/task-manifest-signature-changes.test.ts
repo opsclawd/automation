@@ -254,7 +254,7 @@ describe('signature_changes in task-manifest V2', () => {
       expect(parsed.tasks[0].signature_changes).toHaveLength(1);
     });
 
-    it('rejects when declaration_file is in files but not expected_files', () => {
+    it('accepts declaration_file when it is in files (merged with expected_files)', () => {
       const manifest = {
         version: 2,
         task_count: 1,
@@ -270,7 +270,8 @@ describe('signature_changes in task-manifest V2', () => {
           },
         ],
       };
-      expect(() => taskManifestSchema.parse(manifest)).toThrow();
+      const parsed = taskManifestSchema.parse(manifest);
+      expect(parsed.tasks[0].signature_changes).toHaveLength(1);
     });
 
     it('accepts declaration_file in expected_files even when files is also present', () => {
