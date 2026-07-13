@@ -66,7 +66,7 @@ export interface RevalidationResult {
   validationRunId: string;
   passed: boolean;
   category?: string; // 'build' | 'lint' | 'typecheck' | 'test' | 'other'
-  failureDetail?: string;
+  failureDetail?: string | undefined;
 }
 
 export interface ArchitectPlanTask {

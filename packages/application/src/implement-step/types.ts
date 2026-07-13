@@ -182,7 +182,7 @@ export interface HolisticFile {
 
 export interface ImplementFixStepOptions extends FixStepOptions {
   typecheckErrors?: string | TypescriptError[];
-  terminalDeterministicFailures?: string;
+  terminalDeterministicFailures?: string | undefined;
   isTerminalFix?: boolean;
   holisticFindings?: HolisticFile[];
   fallbackReason?: string;

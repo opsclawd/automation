@@ -4092,7 +4092,7 @@ describe('ImplementStepLoop terminal fix escalation', () => {
       terminalFixProfile: AgentProfileName('fixer'),
       git: {
         ...makeFakeGitPort({ headSha: 'sha-1' }),
-        headCommitSha: async () => (typecheckCalls >= 4 ? 'sha-2' : 'sha-1'),
+        headCommitSha: async () => (typecheckCalls >= 3 ? 'sha-2' : 'sha-1'),
       },
     });
 

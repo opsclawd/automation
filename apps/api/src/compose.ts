@@ -992,7 +992,7 @@ export interface BuildImplementStepFixPromptInput {
    * Optional deterministic failures captured before the terminal fix pass.
    * Rendered as a mandatory fix section.
    */
-  terminalDeterministicFailures?: string;
+  terminalDeterministicFailures?: string | undefined;
 }
 
 export async function buildImplementStepFixPrompt(
