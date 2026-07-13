@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -27,7 +27,7 @@ function freshOperationalDb() {
 
 describe('RepositoryRuntimeMigrator', () => {
   describe('legacy_migration_fails_closed', () => {
-    it('refuses ambiguous legacy operational rows without opening a repository runtime', () => {
+    it('refuses ambiguous legacy operational rows without opening a repository runtime', async () => {
       const { db: legacyDb } = freshLegacyDb();
       const { db: operationalDb } = freshOperationalDb();
       const runs = new RunRepository(legacyDb);
@@ -51,11 +51,11 @@ describe('RepositoryRuntimeMigrator', () => {
         ],
       });
 
-      expect(() => migrator.migrateLegacyState(repoIdA)).toThrow(MigrationError);
-      expect(() => migrator.migrateLegacyState(repoIdA)).toThrow(/ambiguous/i);
+      await expect(migrator.migrateLegacyState(repoIdA)).rejects.toThrow(MigrationError);
+      await expect(migrator.migrateLegacyState(repoIdA)).rejects.toThrow(/ambiguous/i);
     });
 
-    it('migrates legacy operational rows only when one eligible repository exists', () => {
+    it('migrates legacy operational rows only when one eligible repository exists', async () => {
       const { db: legacyDb } = freshLegacyDb();
       const { db: operationalDb } = freshOperationalDb();
       const legacyRuns = new RunRepository(legacyDb);
@@ -96,28 +96,103 @@ describe('RepositoryRuntimeMigrator', () => {
         listEnabledRepositories: () => [{ id: repoIdA, fullName: 'owner/repo-a' }],
       });
 
-      expect(() => migrator.migrateLegacyState(repoIdA)).not.toThrow();
+      await migrator.migrateLegacyState(repoIdA);
     });
   });
 
   describe('artifact migration', () => {
-    it('artifact_migration_is_idempotent: resumes after partial failure without duplicate artifacts', async () => {
+    it('migrates artifacts from legacy root to operational root using artifactMover', async () => {
       const { db: legacyDb } = freshLegacyDb();
       const { db: operationalDb } = freshOperationalDb();
       const legacyArtifactRoot = mkdtempSync(join(tmpdir(), 'ai-orch-artifact-'));
+      const operationalArtifactRoot = mkdtempSync(join(tmpdir(), 'ai-orch-op-artifact-'));
 
+      writeFileSync(join(legacyArtifactRoot, 'artifact-1.txt'), 'artifact content 1');
+      writeFileSync(join(legacyArtifactRoot, 'artifact-2.txt'), 'artifact content 2');
+
+      const movedArtifacts: Array<{ src: string; dest: string }> = [];
       const migrator = new RepositoryRuntimeMigrator({
         controlPlaneDb: legacyDb,
         operationalDb: operationalDb,
         legacyArtifactRoot,
+        operationalArtifactRoot,
         listEnabledRepositories: () => [{ id: repoIdA, fullName: 'owner/repo-a' }],
-        artifactMover: async (_src: string, _dest: string) => {
-          throw new Error('simulated failure');
+        artifactMover: async (src: string, dest: string) => {
+          movedArtifacts.push({ src, dest });
+          writeFileSync(dest, 'moved');
         },
       });
 
-      const state = migrator.detectLegacyState();
-      expect(state.legacyArtifactRoot).toBe(legacyArtifactRoot);
+      await migrator.migrateLegacyState(repoIdA);
+
+      expect(movedArtifacts).toHaveLength(2);
+      expect(movedArtifacts.some((m) => m.src.includes('artifact-1.txt'))).toBe(true);
+      expect(movedArtifacts.some((m) => m.src.includes('artifact-2.txt'))).toBe(true);
+      expect(existsSync(join(operationalArtifactRoot, 'artifact-1.txt'))).toBe(true);
+      expect(existsSync(join(operationalArtifactRoot, 'artifact-2.txt'))).toBe(true);
+    });
+
+    it('artifact_migration_is_idempotent: skips already-migrated artifacts via sentinel', async () => {
+      const { db: legacyDb } = freshLegacyDb();
+      const { db: operationalDb } = freshOperationalDb();
+      const legacyArtifactRoot = mkdtempSync(join(tmpdir(), 'ai-orch-artifact-'));
+      const operationalArtifactRoot = mkdtempSync(join(tmpdir(), 'ai-orch-op-artifact-'));
+
+      writeFileSync(join(legacyArtifactRoot, 'artifact-1.txt'), 'artifact content 1');
+
+      const movedArtifacts: Array<{ src: string; dest: string }> = [];
+      const migrator = new RepositoryRuntimeMigrator({
+        controlPlaneDb: legacyDb,
+        operationalDb: operationalDb,
+        legacyArtifactRoot,
+        operationalArtifactRoot,
+        listEnabledRepositories: () => [{ id: repoIdA, fullName: 'owner/repo-a' }],
+        artifactMover: async (src: string, dest: string) => {
+          movedArtifacts.push({ src, dest });
+          writeFileSync(dest, 'moved');
+        },
+      });
+
+      await migrator.migrateLegacyState(repoIdA);
+      expect(movedArtifacts).toHaveLength(1);
+
+      movedArtifacts.length = 0;
+      await migrator.migrateLegacyState(repoIdA);
+      expect(movedArtifacts).toHaveLength(0);
+    });
+
+    it('resumes after partial failure without duplicate artifacts', async () => {
+      const { db: legacyDb } = freshLegacyDb();
+      const { db: operationalDb } = freshOperationalDb();
+      const legacyArtifactRoot = mkdtempSync(join(tmpdir(), 'ai-orch-artifact-'));
+      const operationalArtifactRoot = mkdtempSync(join(tmpdir(), 'ai-orch-op-artifact-'));
+
+      writeFileSync(join(legacyArtifactRoot, 'artifact-1.txt'), 'artifact content 1');
+      writeFileSync(join(legacyArtifactRoot, 'artifact-2.txt'), 'artifact content 2');
+
+      let shouldFail = true;
+      const migrator = new RepositoryRuntimeMigrator({
+        controlPlaneDb: legacyDb,
+        operationalDb: operationalDb,
+        legacyArtifactRoot,
+        operationalArtifactRoot,
+        listEnabledRepositories: () => [{ id: repoIdA, fullName: 'owner/repo-a' }],
+        artifactMover: async (src: string, dest: string) => {
+          if (shouldFail && src.includes('artifact-2.txt')) {
+            throw new Error('simulated failure');
+          }
+          writeFileSync(dest, 'moved');
+        },
+      });
+
+      await expect(migrator.migrateLegacyState(repoIdA)).rejects.toThrow(MigrationError);
+      expect(existsSync(join(operationalArtifactRoot, 'artifact-1.txt'))).toBe(true);
+      expect(existsSync(join(operationalArtifactRoot, 'artifact-2.txt'))).toBe(false);
+
+      shouldFail = false;
+      await migrator.migrateLegacyState(repoIdA);
+      expect(existsSync(join(operationalArtifactRoot, 'artifact-1.txt'))).toBe(true);
+      expect(existsSync(join(operationalArtifactRoot, 'artifact-2.txt'))).toBe(true);
     });
   });
 });
