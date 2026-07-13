@@ -17,7 +17,7 @@ import {
   writeFileSync,
   copyFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, basename } from 'node:path';
 import {
   openDatabase,
   applyMigrations,
@@ -988,6 +988,11 @@ export interface BuildImplementStepFixPromptInput {
    * to satisfy all listed constraints.
    */
   holisticFindings?: HolisticFile[];
+  /**
+   * Optional deterministic failures captured before the terminal fix pass.
+   * Rendered as a mandatory fix section.
+   */
+  terminalDeterministicFailures?: string;
 }
 
 export async function buildImplementStepFixPrompt(
@@ -1095,6 +1100,19 @@ export async function buildImplementStepFixPrompt(
           'how the previous rounds kept introducing adjacent regressions.',
           'Your work is accepted on deterministic verification (typecheck, validation',
           'commands, tests) — make sure they pass before committing.',
+          '',
+        ]
+      : []),
+    ...(input.terminalDeterministicFailures !== undefined
+      ? [
+          '## DETERMINISTIC VERIFICATION FAILURES — MUST BE FIXED',
+          '',
+          'The following deterministic verification failures (typecheck/validation/tests) were detected in the current tree.',
+          'You MUST fix these failures before reporting DONE.',
+          '',
+          '```',
+          input.terminalDeterministicFailures,
+          '```',
           '',
         ]
       : []),
@@ -2474,6 +2492,16 @@ export function composeRoot(opts: ComposeOptions): Container {
           timeoutSeconds: config.validation.timeout,
         });
         const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
+        let failureDetail: string | undefined;
+        if (failedCommand) {
+          const stdoutAbs = join(revalidateLogDir, basename(failedCommand.stdoutPath));
+          const stderrAbs = join(revalidateLogDir, basename(failedCommand.stderrPath));
+          const [stdoutTail, stderrTail] = await Promise.all([
+            readTail(stdoutAbs),
+            readTail(stderrAbs),
+          ]);
+          failureDetail = `Command: ${failedCommand.command}\nOutcome: ${failedCommand.outcome}\n\nStdout:\n${stdoutTail}\n\nStderr:\n${stderrTail}`;
+        }
         await artifactStoreForRun(String(ctx.runId), ctx.cwd).write({
           runId: String(ctx.runId),
           phaseId: 'validate',
@@ -2484,6 +2512,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           validationRunId: vr.validationRun.id,
           passed: vr.passed,
           ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
+          failureDetail,
         };
       };
 
@@ -3644,6 +3673,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             : {}),
           ...(opts.historyContext !== undefined ? { historyContext: opts.historyContext } : {}),
           ...(opts.typecheckErrors !== undefined ? { typecheckErrors: opts.typecheckErrors } : {}),
+          ...(opts.terminalDeterministicFailures !== undefined
+            ? { terminalDeterministicFailures: opts.terminalDeterministicFailures }
+            : {}),
           ...(opts.isTerminalFix ? { isTerminalFix: true } : {}),
           ...(opts.holisticFindings !== undefined
             ? { holisticFindings: opts.holisticFindings }
@@ -4119,6 +4151,16 @@ export function composeRoot(opts: ComposeOptions): Container {
             timeoutSeconds: config.validation.timeout,
           });
           const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
+          let failureDetail: string | undefined;
+          if (failedCommand) {
+            const stdoutAbs = join(revalidateLogDir, basename(failedCommand.stdoutPath));
+            const stderrAbs = join(revalidateLogDir, basename(failedCommand.stderrPath));
+            const [stdoutTail, stderrTail] = await Promise.all([
+              readTail(stdoutAbs),
+              readTail(stderrAbs),
+            ]);
+            failureDetail = `Command: ${failedCommand.command}\nOutcome: ${failedCommand.outcome}\n\nStdout:\n${stdoutTail}\n\nStderr:\n${stderrTail}`;
+          }
           await artifacts.write({
             runId: String(ctx.runId),
             phaseId: 'validate',
@@ -4129,6 +4171,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             validationRunId: vr.validationRun.id,
             passed: vr.passed,
             ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
+            failureDetail,
           };
         },
         ...(runArbiter ? { runArbiter } : {}),
