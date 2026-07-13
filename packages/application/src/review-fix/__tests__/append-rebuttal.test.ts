@@ -7,6 +7,7 @@ describe('appendRebuttalToCodeReview', () => {
     const store = new FakeArtifactStore();
     const result = await appendRebuttalToCodeReview(store, {
       runId: 'run-1',
+      phaseId: 'review-fix',
       iterationIndex: 3,
       rebuttal: 'The reviewer cited execAsync, but the file uses execa.',
       unfoundedFindings: [
@@ -38,6 +39,7 @@ describe('appendRebuttalToCodeReview', () => {
     });
     const result = await appendRebuttalToCodeReview(store, {
       runId: 'run-1',
+      phaseId: 'review-fix',
       iterationIndex: 2,
       rebuttal: 'finding 1 is fabricated',
       unfoundedFindings: [{ severity: 'high', summary: 'finding 1', evidence: { path: 'a.ts' } }],
@@ -59,6 +61,7 @@ describe('appendRebuttalToCodeReview', () => {
     };
     const result = await appendRebuttalToCodeReview(store, {
       runId: 'run-1',
+      phaseId: 'review-fix',
       iterationIndex: 1,
       rebuttal: 'x',
       unfoundedFindings: [],
@@ -73,6 +76,7 @@ describe('appendRebuttalToCodeReview', () => {
     const store = new FakeArtifactStore();
     await appendRebuttalToCodeReview(store, {
       runId: 'run-1',
+      phaseId: 'review-fix',
       iterationIndex: 4,
       rebuttal: 'all three are fabricated',
       unfoundedFindings: [

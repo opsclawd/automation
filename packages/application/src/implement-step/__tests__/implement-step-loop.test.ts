@@ -83,6 +83,12 @@ function baseInput() {
     stepIndex: 1,
     stepTitle: 'Add login page',
     maxIterations: 3,
+    manifest: {
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'Task 1' }],
+    } as any,
+    planMd: '',
   };
 }
 

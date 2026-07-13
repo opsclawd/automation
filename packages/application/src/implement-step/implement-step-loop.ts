@@ -511,6 +511,11 @@ export class ImplementStepLoop {
 
     while (tcResult.outcome === 'fail' && typecheckRetryCount < maxTypeCheckRetries) {
       const iterationIndex = typecheckRetryCount + 2;
+      const widenedScopeFiles = this.computeWidenedScopeFiles(
+        input.manifest,
+        input.stepIndex,
+        tcResult,
+      );
       const currFingerprint = this.fingerprintTypecheck(tcResult);
       const stallHistorySize = deps.stallHistorySize ?? DEFAULT_STALL_HISTORY_SIZE;
       const stalled =
@@ -580,6 +585,7 @@ export class ImplementStepLoop {
           ...(pickTypecheckPayload(tcResult) !== undefined
             ? { typecheckErrors: pickTypecheckPayload(tcResult) as string | TypescriptError[] }
             : {}),
+          ...(widenedScopeFiles ? { widenedScopeFiles } : {}),
         },
       );
 
@@ -649,6 +655,11 @@ export class ImplementStepLoop {
       if (iterationIndex > 1) {
         tcResult = await deps.runTypecheck(baseCtx);
         if (tcResult.outcome === 'fail') {
+          const widenedScopeFiles = this.computeWidenedScopeFiles(
+            input.manifest,
+            input.stepIndex,
+            tcResult,
+          );
           // Try to revert the build-breaking fix if a previous fix exists with
           // a known-passing headBeforeFix captured.
           // On the trailing re-review pass, never invoke revertFix — it
@@ -678,6 +689,10 @@ export class ImplementStepLoop {
                 | string
                 | TypescriptError[]
                 | undefined;
+              ctx.metadata = {
+                ...ctx.metadata,
+                widenedScopeFiles,
+              };
               // Count fix as a failure even when agent reported `done_with_fixes`.
               consecutiveFixFailures += 1;
               loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
@@ -1483,6 +1498,9 @@ export class ImplementStepLoop {
           ...(pendingTypecheckErrors !== undefined
             ? { typecheckErrors: pendingTypecheckErrors }
             : {}),
+          ...(ctx.metadata?.widenedScopeFiles !== undefined
+            ? { widenedScopeFiles: ctx.metadata.widenedScopeFiles as string[] }
+            : {}),
           ...(useFallback && lastFixInvocationId !== undefined
             ? { previousInvocationId: lastFixInvocationId }
             : {}),
@@ -2232,6 +2250,31 @@ export class ImplementStepLoop {
       triggerOwner: 'use_case',
       ...extraMetadata,
     });
+  }
+
+  private computeWidenedScopeFiles(
+    manifest: import('../results/schemas/task-manifest.js').TaskManifest,
+    stepIndex: number,
+    tcResult: TypecheckResult,
+  ): string[] | undefined {
+    if (!tcResult.structuredErrors || tcResult.structuredErrors.length === 0) return undefined;
+
+    const task = manifest.tasks.find((t) => t.n === stepIndex);
+    if (!task) return undefined;
+
+    const currentTaskFiles = new Set([
+      ...(task.files ?? []),
+      ...(task.expected_files ?? []),
+    ]);
+
+    const outOfScope = new Set<string>();
+    for (const err of tcResult.structuredErrors) {
+      if (!currentTaskFiles.has(err.file)) {
+        outOfScope.add(err.file);
+      }
+    }
+
+    return outOfScope.size > 0 ? Array.from(outOfScope).sort() : undefined;
   }
 
   private fingerprintTypecheck(tcResult: TypecheckResult): string {

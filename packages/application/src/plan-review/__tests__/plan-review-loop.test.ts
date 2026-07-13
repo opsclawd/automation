@@ -52,13 +52,13 @@ function groundedP1Findings(citation = 'plan.md:42'): ReadonlyArray<PlanReviewFi
   ];
 }
 
-function makeDeps(over: Partial<PlanReviewLoopDeps>): {
+function makeDeps(over: any): {
   deps: PlanReviewLoopDeps;
   events: ReturnType<typeof collectEvents>['events'];
 } {
   let n = 0;
   const { bus, events } = collectEvents();
-  const deps: PlanReviewLoopDeps = {
+  const deps: any = {
     runReview: async (_ctx: PlanReviewContext): Promise<PlanReviewResult> => ({
       invocationId: `rev-${++n}`,
       agentOutcome: 'success' as const,
@@ -70,15 +70,15 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       verdict: 'done_with_fixes' as const,
     }),
     checkManifestSync: async (_ctx: PlanReviewContext): Promise<string | null> => null,
-    computeLastFixDiffCitations: (_cwd: string, _headBeforeFix: string | undefined) => [],
-    runArbiter: undefined,
+    checkBlastRadius: async (_ctx: PlanReviewContext): Promise<string | null> => null,
+    computeLastFixDiffCitations: (cwd: string, headBeforeFix: string | undefined) => [],
     loops: new FakeLoopRepository(),
     events: bus,
     now: () => new Date('2026-07-08T00:00:00.000Z'),
     idFactory: () => 'loop-1',
-    ...over,
   };
-  return { deps, events };
+  Object.assign(deps, over);
+  return { deps: deps as PlanReviewLoopDeps, events };
 }
 
 describe('PlanReviewLoop', () => {
@@ -201,7 +201,6 @@ describe('PlanReviewLoop', () => {
 
   it('AC #5.5 — exhaustion → needs_human_review', async () => {
     const { deps } = makeDeps({
-      maxIterations: 2,
       runReview: async (): Promise<PlanReviewResult> => ({
         invocationId: 'rev-x',
         agentOutcome: 'success' as const,
@@ -982,8 +981,6 @@ describe('PlanReviewLoop', () => {
       runArbiter: async (): Promise<ArbiterResult> => {
         arbiterCalls += 1;
         return {
-          invocationId: 'arb-1',
-          agentOutcome: 'success' as const,
           outcome: 'finding_invalid' as const,
           evidence: 'ruling evidence',
           rationale: 'some rationale',
@@ -1079,7 +1076,7 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
   ) {
     const calls: Array<{
       ctx: import('../types.js').PlanReviewContext;
-      opts?: import('../types.js').PlanReviewStepOptions;
+      opts: import('../types.js').PlanReviewStepOptions | undefined;
     }> = [];
     let i = 0;
     const runReview = async (
@@ -1274,7 +1271,6 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
   it('artifact digest drift in final_full review escalates to human review even when verdict is pass', async () => {
     let reviewCalls = 0;
     const { deps } = makeDeps({
-      maxIterations: 1,
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
         if (reviewCalls === 1) {
@@ -1354,7 +1350,6 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
     const fakeRepo = new FakeReviewStateRepository();
     const { deps } = makeDeps({
       reviewStateRepository: fakeRepo,
-      maxIterations: 1,
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
         return {

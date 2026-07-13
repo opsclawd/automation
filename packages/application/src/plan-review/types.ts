@@ -236,6 +236,11 @@ export interface PlanReviewLoopDeps {
    * manifest to reconcile against).
    */
   checkManifestSync: (ctx: PlanReviewContext) => Promise<string | null>;
+  /**
+   * Deterministic check that signature changes for relevant_symbols in the
+   * task manifest (V2) do not have out-of-scope call sites.
+   */
+  checkBlastRadius: (ctx: PlanReviewContext) => Promise<string | null>;
   runArbiter?: (ctx: PlanReviewContext, fixResult: PlanFixResult) => Promise<ArbiterResult>;
   /**
    * Distinct from `runArbiter`: invoked only for the trailing final-review-fail

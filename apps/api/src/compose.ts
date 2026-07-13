@@ -335,6 +335,7 @@ export function buildImplementPrompt(
   taskContext: string,
   branchName: string,
   typecheckErrors?: TypescriptError[] | string,
+  widenedScopeFiles?: string[],
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
@@ -360,6 +361,16 @@ export function buildImplementPrompt(
     '## SCOPE RESTRICTION',
     `You are implementing ONLY Task ${taskN}: ${taskTitle}.`,
     '',
+    ...(widenedScopeFiles !== undefined && widenedScopeFiles.length > 0
+      ? [
+          '### WIDENED SCOPE',
+          'The following files outside your original scope have broken the build due to',
+          'your changes (e.g. signature changes). You MUST modify these files to fix the',
+          'typecheck errors:',
+          ...widenedScopeFiles.map((f) => `- ${f}`),
+          '',
+        ]
+      : []),
     `Tasks numbered higher than ${taskN} in plan.md are EXPLICITLY OUT OF SCOPE`,
     'for this run. They will be implemented by separate later runs of this',
     'orchestrator. You must NOT:',
@@ -957,6 +968,7 @@ export interface BuildImplementStepFixPromptInput {
   cwd: string;
   stepIndex: number;
   stepTitle: string;
+  widenedScopeFiles?: string[];
   /**
    * Optional arbiter rationale from a prior `finding_valid` ruling.
    * Rendered as a labeled, instruction-bearing section so the fixer
@@ -1100,6 +1112,16 @@ export async function buildImplementStepFixPrompt(
       : []),
     '## WHAT THE REVIEWERS FOUND (verbatim)',
     '',
+    ...(input.widenedScopeFiles !== undefined && input.widenedScopeFiles.length > 0
+      ? [
+          '### WIDENED SCOPE (Build Breaking)',
+          'The following files outside your original scope have broken the build due to',
+          'your changes (e.g. signature changes). You MUST modify these files to fix the',
+          'typecheck errors:',
+          ...input.widenedScopeFiles.map((f) => `- ${f}`),
+          '',
+        ]
+      : []),
     'The most-recent spec-review result.json findings:',
     '```json',
     JSON.stringify({ findings: specFindings }, null, 2),
@@ -3031,6 +3053,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           taskContext,
           branchName,
           opts?.typecheckErrors,
+          opts?.widenedScopeFiles,
         );
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -3639,6 +3662,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           cwd: ctx.cwd,
           stepIndex: ctx.stepIndex,
           stepTitle: ctx.stepTitle,
+          ...(opts.widenedScopeFiles !== undefined
+            ? { widenedScopeFiles: opts.widenedScopeFiles }
+            : {}),
           ...(opts.reconciliationContext !== undefined
             ? { reconciliationContext: opts.reconciliationContext }
             : {}),
@@ -4216,6 +4242,100 @@ export function composeRoot(opts: ComposeOptions): Container {
         return result.success ? null : result.error;
       };
 
+      const planReviewCheckBlastRadius = async (
+        ctx: import('@ai-sdlc/application').PlanReviewContext,
+      ): Promise<string | null> => {
+        const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
+        let manifestJson: string;
+        try {
+          manifestJson = await artifacts.read(String(ctx.runId), 'task-manifest.json');
+        } catch {
+          return null;
+        }
+
+        const parsed = parseTaskManifest(manifestJson);
+        if (!parsed.success || parsed.manifest.version !== 2) {
+          return null;
+        }
+
+        const manifest = parsed.manifest;
+        const violations: string[] = [];
+
+        for (const task of manifest.tasks) {
+          const symbols = task.relevant_symbols ?? [];
+          if (symbols.length === 0) continue;
+
+          // allowedFiles = files or expected_files in this or ANY LATER task
+          const allowedFiles = new Set<string>();
+          for (const other of manifest.tasks) {
+            if (other.n >= task.n) {
+              const files = [
+                ...(other.files ?? []),
+                ...(other.expected_files ?? []),
+                'task-manifest.json',
+                'plan.md',
+                'design.md',
+              ];
+              for (const f of files) allowedFiles.add(f);
+            }
+          }
+
+          for (const symbol of symbols) {
+            try {
+              // -l: files with matches
+              // -w: word regexp
+              // -g: glob patterns for exclusions
+              const output = execFileSync(
+                'rg',
+                [
+                  '-l',
+                  '-w',
+                  symbol,
+                  '--glob',
+                  '!.git/*',
+                  '--glob',
+                  '!.ai-runs/*',
+                  '--glob',
+                  '!.ai-worktrees/*',
+                  '--glob',
+                  '!node_modules/*',
+                  '--glob',
+                  '!dist/*',
+                ],
+                { cwd: ctx.cwd, encoding: 'utf-8' },
+              );
+
+              const foundFiles = output
+                .split('\n')
+                .map((f) => f.trim())
+                .filter((f) => f.length > 0);
+
+              for (const file of foundFiles) {
+                if (!allowedFiles.has(file)) {
+                  violations.push(
+                    `Task ${task.n} ("${task.title}") changes symbol "${symbol}" which has an out-of-scope call site in "${file}". ` +
+                      `Add "${file}" to Task ${task.n}'s expected_files or a later task's expected_files to expand the fixable scope.`,
+                  );
+                }
+              }
+            } catch (err: unknown) {
+              // rg exits with 1 if no matches are found - this is not an error for us.
+              if (
+                err instanceof Error &&
+                'status' in (err as { status?: number }) &&
+                (err as { status: number }).status === 1
+              ) {
+                continue;
+              }
+              // Other errors (like rg not found) should be logged but maybe not block.
+              console.warn(`[planReviewCheckBlastRadius] rg failed for symbol "${symbol}":`, err);
+            }
+          }
+        }
+
+        return violations.length > 0 ? violations.join('\n') : null;
+      };
+
       const computeSnapshot = async (
         cwd: string,
         _mode: import('@ai-sdlc/application').ReviewMode | undefined,
@@ -4769,6 +4889,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
         checkManifestSync: planReviewCheckManifestSync,
+        checkBlastRadius: planReviewCheckBlastRadius,
         computeLastFixDiffCitations: (cwd, headBeforeFix) =>
           getRecentFixCitations(cwd, headBeforeFix),
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),

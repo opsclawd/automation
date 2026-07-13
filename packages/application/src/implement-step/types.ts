@@ -29,6 +29,7 @@ export interface ImplementResult {
 
 export interface ImplementStepOptions {
   typecheckErrors?: TypescriptError[] | string;
+  widenedScopeFiles?: string[];
   useFallback?: boolean;
   previousInvocationId?: string;
 }
@@ -182,6 +183,7 @@ export interface HolisticFile {
 
 export interface ImplementFixStepOptions extends FixStepOptions {
   typecheckErrors?: string | TypescriptError[];
+  widenedScopeFiles?: string[];
   isTerminalFix?: boolean;
   holisticFindings?: HolisticFile[];
   fallbackReason?: string;

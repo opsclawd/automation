@@ -194,26 +194,29 @@ export class PlanReviewLoop {
       let localCtx = { ...currentCtx };
       while (true) {
         const manifestError = await deps.checkManifestSync(localCtx);
-        if (!manifestError) {
+        const blastRadiusError = manifestError ? null : await deps.checkBlastRadius(localCtx);
+        const deterministicError = manifestError ?? blastRadiusError;
+
+        if (!deterministicError) {
           return { success: true, loop };
         }
 
         if (
-          lastDeterministicMismatch === manifestError &&
+          lastDeterministicMismatch === deterministicError &&
           lastDeterministicWasUnresolvedWithNoChanges
         ) {
           this.emit(
             input,
             'plan-review.manifest_mismatch.suppressed',
             'warn',
-            `suppressing duplicate manifest fix attempt: mismatch and state unchanged (${manifestError})`,
-            { manifestError },
+            `suppressing duplicate manifest fix attempt: mismatch and state unchanged (${deterministicError})`,
+            { deterministicError },
           );
           return { success: false, loop };
         }
 
-        this.emit(input, 'deterministic_fix', 'warn', `manifest mismatch: ${manifestError}`, {
-          diagnostic: manifestError,
+        this.emit(input, 'deterministic_fix', 'warn', `manifest mismatch: ${deterministicError}`, {
+          diagnostic: deterministicError,
         });
 
         if (!canIterate(loop)) {
@@ -239,11 +242,11 @@ export class PlanReviewLoop {
         history.push({
           type: 'manifest_mismatch',
           iterationIndex,
-          data: { mismatch: manifestError },
+          data: { mismatch: deterministicError },
         });
 
         const fix = await deps.runFix(localCtx, {
-          manifestMismatch: manifestError,
+          manifestMismatch: deterministicError,
           metadata: {
             iteration: iterationIndex,
             invocation_type: 'deterministic_fix',
@@ -261,7 +264,7 @@ export class PlanReviewLoop {
           },
         });
 
-        lastDeterministicMismatch = manifestError;
+        lastDeterministicMismatch = deterministicError;
         lastDeterministicWasUnresolvedWithNoChanges =
           fix.agentOutcome !== 'success' ||
           fix.verdict === undefined ||
