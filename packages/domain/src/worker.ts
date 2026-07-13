@@ -1,7 +1,8 @@
-import type { WorkerId } from './ids.js';
+import type { RepositoryId, WorkerId } from './ids.js';
 export type WorkerStatus = 'idle' | 'busy' | 'stopping' | 'unhealthy';
 export interface Worker {
   id: WorkerId;
+  repoId: RepositoryId;
   hostname: string;
   processId: number;
   status: WorkerStatus;
@@ -9,6 +10,7 @@ export interface Worker {
 }
 export interface CreateWorkerInput {
   id: WorkerId;
+  repoId: RepositoryId;
   hostname: string;
   processId: number;
   now: Date;
@@ -16,6 +18,7 @@ export interface CreateWorkerInput {
 export function createWorker(input: CreateWorkerInput): Worker {
   return {
     id: input.id,
+    repoId: input.repoId,
     hostname: input.hostname,
     processId: input.processId,
     status: 'idle',

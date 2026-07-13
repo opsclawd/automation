@@ -20,6 +20,8 @@ import { workerLoop } from '../worker-loop.js';
 
 let currentQueue: FakeJobQueuePort | undefined;
 
+const REPO_ID = RepositoryId('r1');
+
 function setup() {
   const repos = new FakeRepositoryPort([
     {
@@ -52,8 +54,12 @@ function setup() {
   const registry = new FakeWorkerRegistryPort();
   const leases = new FakeWorkerLeasePort(registry);
   const now = new Date();
-  registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now }));
-  registry.register(createWorker({ id: WorkerId('w2'), hostname: 'h', processId: 2, now }));
+  registry.register(
+    createWorker({ id: WorkerId('w1'), repoId: REPO_ID, hostname: 'h', processId: 1, now }),
+  );
+  registry.register(
+    createWorker({ id: WorkerId('w2'), repoId: REPO_ID, hostname: 'h', processId: 2, now }),
+  );
   return { repos, queue, registry, leases, now };
 }
 

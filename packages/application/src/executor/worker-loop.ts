@@ -12,7 +12,7 @@ export interface WorkerLoopDeps {
   queue: JobQueuePort;
   leases: WorkerLeasePort;
   repos: RepositoryPort;
-  repoId?: RepositoryId;
+  repoId: RepositoryId;
   executeRun: (input: {
     run: Run;
     workerId: WorkerId;
@@ -50,7 +50,11 @@ function isRunnable(status: string): boolean {
 export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Promise<void> {
   const { registry, queue, leases } = deps;
 
-  if (registry.findById(workerId)?.status !== 'idle') {
+  if (deps.repos.listEnabled().every((r) => r.id !== deps.repoId)) {
+    return;
+  }
+
+  if (registry.findById(workerId, deps.repoId)?.status !== 'idle') {
     return;
   }
 
@@ -61,6 +65,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
     resetWorktree: deps.resetWorktree,
     reclaimedByWorkerId: workerId,
     onReclaimed: (info) => {
+      if (info.repoId !== deps.repoId) return;
       const jobs = queue.listForRun(info.previousRunId);
       for (const job of jobs) {
         if (job.status === 'claimed' || job.status === 'running') {
@@ -73,57 +78,31 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
 
   const skippedJobIds = new Set<JobId>();
 
-  let repoIndex = 0;
-
-  if (deps.repoId) {
-    if (deps.repos.listEnabled().every((r) => r.id !== deps.repoId)) {
-      return;
-    }
-  } else {
-    if (deps.repos.listEnabled().length === 0) {
-      return;
-    }
-  }
-
   while (true) {
     deps.onProgress?.();
 
-    const reposToTry = deps.repoId
-      ? deps.repos.listEnabled().some((r) => r.id === deps.repoId)
-        ? [deps.repoId]
-        : []
-      : deps.repos.listEnabled().map((r) => r.id);
-
-    if (reposToTry.length === 0) {
-      return;
-    }
-
-    let job = null;
-    const startIdx = repoIndex % reposToTry.length;
-    for (let i = 0; i < reposToTry.length; i++) {
-      const idx = (startIdx + i) % reposToTry.length;
-      const repoId = reposToTry[idx];
-      job = queue.claimNext({
-        workerId,
-        repoId: repoId!,
-        skipJobIds: skippedJobIds,
-        ttlMs: deps.ttlMs,
-      });
-      if (job) {
-        repoIndex = idx + 1;
-        break;
-      }
-    }
+    const job = queue.claimNext({
+      workerId,
+      repoId: deps.repoId,
+      skipJobIds: skippedJobIds,
+      ttlMs: deps.ttlMs,
+    });
 
     if (!job) {
       return;
+    }
+
+    if (job.repoId !== deps.repoId) {
+      queue.releaseClaim(job.id);
+      skippedJobIds.add(job.id);
+      continue;
     }
 
     let started = false;
     let acquired = false;
 
     try {
-      registry.markBusy(workerId);
+      registry.markBusy(workerId, deps.repoId);
 
       leases.acquire({
         repoId: job.repoId,
@@ -140,9 +119,13 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         () => {
           try {
             const now = deps.now();
-            leases.heartbeat(job.repoId, workerId, now, new Date(now.getTime() + deps.ttlMs));
-            // Signal progress to the scheduler's watchdog on every successful lease heartbeat.
-            // As long as the worker can heartbeat its lease, the run is making progress.
+            leases.heartbeat({
+              repoId: job.repoId,
+              workerId,
+              runId: job.runId,
+              now,
+              newExpiresAt: new Date(now.getTime() + deps.ttlMs),
+            });
             deps.onProgress?.();
           } catch {
             clearInterval(heartbeatInterval);
@@ -245,9 +228,9 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
       if (err instanceof WorkerLeaseConflictError) {
         queue.releaseClaim(job.id);
         skippedJobIds.add(job.id);
-        const afterConflict = registry.findById(workerId);
+        const afterConflict = registry.findById(workerId, deps.repoId);
         if (afterConflict && isRunnable(afterConflict.status)) {
-          registry.markIdle(workerId);
+          registry.markIdle(workerId, deps.repoId);
           continue;
         }
         return;
@@ -267,18 +250,12 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
       }
       return;
     } finally {
-      // Only release a lease this tick actually acquired. If acquire() threw a
-      // WorkerLeaseConflictError for a lease already held by this same workerId
-      // (e.g. a worker process restarted and re-registered before its prior
-      // unexpired lease was reclaimed), releasing it here would drop a lease we
-      // never owned this tick — bypassing the reclaim safety path and leaving
-      // the repo unprotected with the prior run still active.
       if (acquired) {
-        leases.release(job.repoId, workerId);
+        leases.release({ repoId: job.repoId, workerId, runId: job.runId });
       }
-      const afterRelease = registry.findById(workerId);
+      const afterRelease = registry.findById(workerId, deps.repoId);
       if (afterRelease && isRunnable(afterRelease.status)) {
-        registry.markIdle(workerId);
+        registry.markIdle(workerId, deps.repoId);
       }
     }
   }

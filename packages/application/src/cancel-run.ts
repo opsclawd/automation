@@ -91,7 +91,7 @@ export class CancelRun implements CancelRunUseCase {
               `CancelRun: lease runId mismatch for repo ${repoId}: expected ${input.runId}, got ${lease.runId}`,
             );
           } else {
-            leases.release(repoId, lease.workerId);
+            leases.release({ repoId, workerId: lease.workerId, runId: lease.runId });
           }
         }
       } catch (err) {

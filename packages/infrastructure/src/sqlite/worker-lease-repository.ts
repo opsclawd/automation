@@ -1,6 +1,5 @@
 import {
   type RepositoryId,
-  type WorkerId,
   type WorkerLease,
   WorkerLeaseConflictError,
   RepositoryId as mkRepositoryId,
@@ -10,6 +9,8 @@ import {
 import type {
   WorkerLeasePort,
   AcquireLeaseInput,
+  HeartbeatLeaseInput,
+  ReleaseLeaseInput,
   ReclaimExpiredInput,
 } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
@@ -74,25 +75,28 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
     };
   }
 
-  heartbeat(repoId: RepositoryId, workerId: WorkerId, now: Date, newExpiresAt: Date): void {
+  heartbeat(input: HeartbeatLeaseInput): void {
     this.db
       .prepare(
         `UPDATE worker_leases
          SET heartbeat_at = @heartbeat_at, expires_at = @expires_at
-         WHERE repo_id = @repo_id AND worker_id = @worker_id`,
+         WHERE repo_id = @repo_id AND worker_id = @worker_id AND run_id = @run_id`,
       )
       .run({
-        heartbeat_at: now.toISOString(),
-        expires_at: newExpiresAt.toISOString(),
-        repo_id: repoId,
-        worker_id: workerId,
+        heartbeat_at: input.now.toISOString(),
+        expires_at: input.newExpiresAt.toISOString(),
+        repo_id: input.repoId,
+        worker_id: input.workerId,
+        run_id: input.runId,
       });
   }
 
-  release(repoId: RepositoryId, workerId: WorkerId): void {
+  release(input: ReleaseLeaseInput): void {
     this.db
-      .prepare(`DELETE FROM worker_leases WHERE repo_id = @repo_id AND worker_id = @worker_id`)
-      .run({ repo_id: repoId, worker_id: workerId });
+      .prepare(
+        `DELETE FROM worker_leases WHERE repo_id = @repo_id AND worker_id = @worker_id AND run_id = @run_id`,
+      )
+      .run({ repo_id: input.repoId, worker_id: input.workerId, run_id: input.runId });
   }
 
   current(repoId: RepositoryId): WorkerLease | undefined {
@@ -129,8 +133,10 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
           reason: 'expired + worker stale + run recoverable',
         });
         this.db
-          .prepare(`DELETE FROM worker_leases WHERE repo_id = @repo_id AND worker_id = @worker_id`)
-          .run({ repo_id: lease.repoId, worker_id: lease.workerId });
+          .prepare(
+            `DELETE FROM worker_leases WHERE repo_id = @repo_id AND worker_id = @worker_id AND run_id = @run_id`,
+          )
+          .run({ repo_id: lease.repoId, worker_id: lease.workerId, run_id: lease.runId });
         reclaimed.push(lease);
       } catch (err) {
         errors.push(err);

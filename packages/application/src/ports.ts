@@ -137,6 +137,8 @@ export type { WorkerRegistryPort } from './ports/worker-registry-port.js';
 export type {
   WorkerLeasePort,
   AcquireLeaseInput,
+  HeartbeatLeaseInput,
+  ReleaseLeaseInput,
   ReclaimExpiredInput,
 } from './ports/worker-lease-port.js';
 

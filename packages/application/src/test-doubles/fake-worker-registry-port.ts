@@ -1,4 +1,5 @@
 import {
+  type RepositoryId,
   type Worker,
   type WorkerId,
   heartbeatWorker,
@@ -16,23 +17,23 @@ export class FakeWorkerRegistryPort implements WorkerRegistryPort {
     this.workers.set(w.id, w);
   }
 
-  heartbeat(id: WorkerId, now: Date): void {
+  heartbeat(id: WorkerId, _repoId: RepositoryId, now: Date): void {
     this.update(id, (w) => heartbeatWorker(w, now));
   }
 
-  markStopping(id: WorkerId): void {
+  markStopping(id: WorkerId, _repoId: RepositoryId): void {
     this.update(id, markWorkerStopping);
   }
 
-  markUnhealthy(id: WorkerId): void {
+  markUnhealthy(id: WorkerId, _repoId: RepositoryId): void {
     this.update(id, markWorkerUnhealthy);
   }
 
-  markBusy(id: WorkerId): void {
+  markBusy(id: WorkerId, _repoId: RepositoryId): void {
     this.update(id, markWorkerBusy);
   }
 
-  markIdle(id: WorkerId): void {
+  markIdle(id: WorkerId, _repoId: RepositoryId): void {
     this.update(id, markWorkerIdle);
   }
 
@@ -40,7 +41,7 @@ export class FakeWorkerRegistryPort implements WorkerRegistryPort {
     return [...this.workers.values()];
   }
 
-  findById(id: WorkerId): Worker | undefined {
+  findById(id: WorkerId, _repoId: RepositoryId): Worker | undefined {
     return this.workers.get(id);
   }
 

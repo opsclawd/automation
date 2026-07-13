@@ -1,12 +1,9 @@
-import {
-  type RepositoryId,
-  type WorkerId,
-  type WorkerLease,
-  WorkerLeaseConflictError,
-} from '@ai-sdlc/domain';
+import { type RepositoryId, type WorkerLease, WorkerLeaseConflictError } from '@ai-sdlc/domain';
 import type {
   WorkerLeasePort,
   AcquireLeaseInput,
+  HeartbeatLeaseInput,
+  ReleaseLeaseInput,
   ReclaimExpiredInput,
 } from '../ports/worker-lease-port.js';
 import type { WorkerRegistryPort } from '../ports/worker-registry-port.js';
@@ -29,7 +26,11 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
 
   acquire(input: AcquireLeaseInput): WorkerLease {
     const existing = this.leases.get(input.repoId);
-    if (existing && existing.expiresAt > input.now && (existing.workerId !== input.workerId || existing.runId !== input.runId)) {
+    if (
+      existing &&
+      existing.expiresAt > input.now &&
+      (existing.workerId !== input.workerId || existing.runId !== input.runId)
+    ) {
       throw new WorkerLeaseConflictError(input.repoId, existing.workerId);
     }
     const lease: WorkerLease = {
@@ -44,16 +45,16 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
     return lease;
   }
 
-  heartbeat(repoId: RepositoryId, workerId: WorkerId, now: Date, newExpiresAt: Date): void {
-    const l = this.leases.get(repoId);
-    if (!l || l.workerId !== workerId) return;
-    this.leases.set(repoId, { ...l, heartbeatAt: now, expiresAt: newExpiresAt });
+  heartbeat(input: HeartbeatLeaseInput): void {
+    const l = this.leases.get(input.repoId);
+    if (!l || l.workerId !== input.workerId || l.runId !== input.runId) return;
+    this.leases.set(input.repoId, { ...l, heartbeatAt: input.now, expiresAt: input.newExpiresAt });
   }
 
-  release(repoId: RepositoryId, workerId: WorkerId): void {
-    const l = this.leases.get(repoId);
-    if (!l || l.workerId !== workerId) return;
-    this.leases.delete(repoId);
+  release(input: ReleaseLeaseInput): void {
+    const l = this.leases.get(input.repoId);
+    if (!l || l.workerId !== input.workerId || l.runId !== input.runId) return;
+    this.leases.delete(input.repoId);
   }
 
   current(repoId: RepositoryId): WorkerLease | undefined {
@@ -69,7 +70,7 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
     const reclaimed: WorkerLease[] = [];
     for (const lease of [...this.leases.values()]) {
       if (input.now <= lease.expiresAt) continue;
-      const worker = this.registry.findById(lease.workerId);
+      const worker = this.registry.findById(lease.workerId, lease.repoId);
       const workerStale =
         !input.isWorkerAlive(lease.workerId) ||
         worker?.status === 'stopping' ||

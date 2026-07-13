@@ -168,7 +168,11 @@ export class OrphanedRunsSweeper {
       } finally {
         if (leaseAcquired) {
           try {
-            this.deps.leases.release(run.repoId, 'orphan-sweeper' as unknown as WorkerId);
+            this.deps.leases.release({
+              repoId: run.repoId,
+              workerId: 'orphan-sweeper' as unknown as WorkerId,
+              runId: run.uuid as RunId,
+            });
           } catch (relErr) {
             this.deps.logger.error(
               `OrphanedRunsSweeper: Failed to release lease on completion for ${run.uuid}:`,

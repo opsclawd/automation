@@ -27,6 +27,7 @@ import * as addInvocationMetadata from './migrations/0024-add-invocation-metadat
 import * as addReviewState from './migrations/0025-add-review-state.js';
 import * as addCommentAttempts from './migrations/0026-add-pr-review-comment-attempts.js';
 import * as repoScopedQueue from './migrations/0027-repository-scoped-queue.js';
+import * as workerRepoBinding from './migrations/0028-worker-repository-binding.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -56,6 +57,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: addReviewState.version, sql: addReviewState.sql },
   { version: addCommentAttempts.version, sql: addCommentAttempts.sql },
   { version: repoScopedQueue.version, sql: repoScopedQueue.sql },
+  { version: workerRepoBinding.version, sql: workerRepoBinding.sql },
 ];
 
 export function registerCustomFunctions(db: Db): void {
