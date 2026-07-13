@@ -12,6 +12,7 @@ export interface WorkerLoopDeps {
   queue: JobQueuePort;
   leases: WorkerLeasePort;
   repos: RepositoryPort;
+  repoId?: RepositoryId;
   executeRun: (input: {
     run: Run;
     workerId: WorkerId;
@@ -72,10 +73,20 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
 
   const skippedJobIds = new Set<JobId>();
 
+  const claimRepoId = deps.repoId ?? deps.repos.listEnabled()[0]?.id;
+  if (!claimRepoId) {
+    return;
+  }
+
   while (true) {
     // Reset the scheduler's watchdog timer at the start of each job claim cycle.
     deps.onProgress?.();
-    const job = queue.claimNext({ workerId, skipJobIds: skippedJobIds, ttlMs: deps.ttlMs });
+    const job = queue.claimNext({
+      workerId,
+      repoId: claimRepoId,
+      skipJobIds: skippedJobIds,
+      ttlMs: deps.ttlMs,
+    });
     if (!job) {
       return;
     }
