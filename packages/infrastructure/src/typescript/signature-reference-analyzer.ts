@@ -5,6 +5,8 @@ import type {
   SignatureReferenceKind,
   SignatureReferenceLocation,
 } from '@ai-sdlc/application/ports';
+import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import * as ts from 'typescript';
 
 const EXCLUDED_DIRS = new Set([
@@ -90,8 +92,6 @@ function discoverSourceFiles(root: string): string[] {
 
 function getPathMappings(root: string): Record<string, string[]> {
   const paths: Record<string, string[]> = {};
-  const { readdirSync, statSync, readFileSync } = require('node:fs');
-  const { join } = require('node:path');
 
   function scan(dir: string) {
     if (isExcludedPath(dir)) return;
@@ -291,12 +291,6 @@ function findSymbol(
     if (result) return result;
   }
 
-  const fs = require('node:fs');
-  fs.writeFileSync(
-    '/tmp/debug.txt',
-    `findSymbol exhausted: ${symbolName} in file with ${sourceFile.statements.length} statements\n`,
-    { flag: 'a' },
-  );
   return undefined;
 }
 
@@ -474,7 +468,6 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
 
       let root: string;
       try {
-        const { statSync } = require('node:fs');
         statSync(worktreeRoot);
         root = worktreeRoot;
       } catch {
@@ -552,12 +545,6 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
 
         const symbolInfo = findSymbol(program, sourceFile, change.symbol);
         if (!symbolInfo) {
-          const fs = require('node:fs');
-          fs.writeFileSync(
-            '/tmp/debug.txt',
-            `Could not resolve symbol: ${change.symbol} in: ${change.declarationFile}\n`,
-            { flag: 'a' },
-          );
           results.push({
             change,
             references: [],
@@ -567,17 +554,7 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
         }
 
         const { symbol, pos } = symbolInfo;
-        const declarations = symbol.getDeclarations();
-        const fs = require('node:fs');
-        fs.writeFileSync(
-          '/tmp/debug.txt',
-          `Found symbol with ${declarations?.length} declarations\n`,
-          { flag: 'a' },
-        );
         const declaration = getDeclarationLocation(symbol);
-        fs.writeFileSync('/tmp/debug.txt', `declaration: ${JSON.stringify(declaration)}\n`, {
-          flag: 'a',
-        });
         const references = collectReferences(
           languageService,
           program,
