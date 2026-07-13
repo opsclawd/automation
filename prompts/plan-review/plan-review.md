@@ -11,12 +11,15 @@ You MUST NOT modify `plan.md` or any other file. Your sole output is a single
 {{var:WORKSPACE_CONSTRAINTS}}
 
 ## INPUTS
+
 - `{{artifact:plan.md}}` — the plan to review
 - `{{artifact:design.md}}` — the design the plan must satisfy
 - `{{artifact:task-manifest.json}}` — the task manifest
 
 ## FOCUS
+
 Look for these defect classes (the legacy bash loop enumerated the same):
+
 1. **State machines** — every transition has an explicit handler; every
    state is reachable and re-entrant where appropriate.
 2. **Retry / recovery paths** — failed operations have a recovery path;
@@ -27,8 +30,20 @@ Look for these defect classes (the legacy bash loop enumerated the same):
    MUST declare their invariants in the `invariants` manifest field. A
    task touching stateful control flow with no declared invariants is
    a P1 finding.
+5. **Signature changes** — when a task changes an exported API surface (parameter-list,
+   return-type, overload-set, required-generic parameter, or required-member-shape),
+   the task's `signature_changes` field must declare the change. An undeclared breaking change
+   is a P1 finding.
+6. **Later-task safety** — the reviewer must flag tasks that unsafely defer breaking changes
+   to later tasks, creating a green-boundary violation where a later task's implementation
+   assumes a signature that earlier tasks did not declare. An unsafe deferral is a P1 finding.
+7. **Deterministic analyzer scope** — when a deterministic analyzer (e.g., TypeScript
+   compiler, type checker) provides scope evidence for a diagnostic, that evidence is
+   authoritative and cannot be rebutted. The reviewer should treat such evidence as
+   conclusive.
 
 ## OUTPUT
+
 Write a single file named `plan-review-findings.md` at the working-directory
 root with this exact shape:
 
@@ -36,12 +51,15 @@ root with this exact shape:
 # Plan Review Findings
 
 ## verdict
+
 <one of: pass | p1_found | p2_only | proceed_with_concerns>
 
 ## known_limitations
+
 <optional: list of carried-forward P1 concerns, only when verdict is proceed_with_concerns>
 
 ## findings
+
 - [P0] `<citation>` | "<failure scenario>" | grounded
 - [P1] `<citation>` | "<failure scenario>" | grounded | still_open
 - [P2] `<citation>` | "<failure scenario>" | ungrounded

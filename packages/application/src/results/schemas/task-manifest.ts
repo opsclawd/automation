@@ -1,5 +1,30 @@
 import { z } from 'zod';
 
+const repositoryRelativePathSchema = z
+  .string()
+  .min(1, { message: 'declaration_file must be a non-empty repository-relative path' })
+  .refine(
+    (path) => !path.startsWith('/'), // reject absolute POSIX paths
+    { message: 'declaration_file must be a repository-relative path, not absolute' },
+  )
+  .refine(
+    (path) => !path.startsWith('\\'), // reject absolute Windows paths
+    { message: 'declaration_file must be a repository-relative path, not absolute' },
+  )
+  .refine(
+    (path) => !path.includes('..'), // reject dot-segment traversal
+    { message: 'declaration_file must not contain ".." path segments' },
+  )
+  .refine(
+    (path) => !path.includes('\\'), // reject backslash traversal
+    { message: 'declaration_file must use forward slashes, not backslashes' },
+  );
+
+export const signatureChangeSchema = z.object({
+  declaration_file: repositoryRelativePathSchema,
+  symbol: z.string().trim().min(1, { message: 'symbol must be a non-empty string' }),
+});
+
 export const taskManifestEntryV1Schema = z
   .object({
     n: z.number().int().min(1, {
@@ -46,7 +71,7 @@ export const taskManifestEntryV2Schema = z
         }),
       )
       .nullish(),
-    // Maintain some compatibility with V1 fields if needed, but the goal is structural
+    signature_changes: z.array(signatureChangeSchema).nullish(),
     files: z.array(z.string()).nullish(),
     validation: z.array(z.string()).nullish(),
   })
@@ -58,7 +83,26 @@ export const taskManifestV2Schema = z
     task_count: z.number().int().min(0),
     tasks: z.array(taskManifestEntryV2Schema),
   })
-  .passthrough();
+  .passthrough()
+  .refine(
+    (manifest) => {
+      for (const task of manifest.tasks) {
+        const ownedFiles = new Set([...(task.expected_files ?? []), ...(task.files ?? [])]);
+        if (task.signature_changes) {
+          for (const sc of task.signature_changes) {
+            if (!ownedFiles.has(sc.declaration_file)) {
+              return false;
+            }
+          }
+        }
+      }
+      return true;
+    },
+    {
+      message:
+        "each signature_changes declaration_file must be in the task's expected_files or files",
+    },
+  );
 
 export const taskManifestSchema = z.union([taskManifestV1Schema, taskManifestV2Schema]);
 

@@ -11,6 +11,7 @@ output is a single `plan-fix-result.json` file describing the fix outcome.
 {{var:WORKSPACE_CONSTRAINTS}}
 
 ## INPUTS
+
 - `{{artifact:plan.md}}` — the plan to fix
 - `{{artifact:plan-review-findings.md}}` — the reviewer's findings
 - `{{artifact:design.md}}` — the design the plan must satisfy
@@ -19,8 +20,25 @@ output is a single `plan-fix-result.json` file describing the fix outcome.
 - `{{var:manifestMismatch}}` — structural inconsistency detected between
   `plan.md` and `task-manifest.json` (empty when none); fix this in addition
   to (or instead of) any reviewer findings above
+- `{{var:deterministicDiagnostic}}` — a general deterministic diagnostic label
+  (e.g., "deterministic scope evidence") produced by the analyzer for a specific
+  finding class; use this when the diagnostic is the subject of a signature-change
+  or analyzer-evidence finding.
+
+## SIGNATURE-CHANGE AND ANALYZER FINDINGS
+
+When addressing signature-change findings or findings backed by deterministic analyzer
+scope evidence:
+
+- You may edit both `plan.md` and `task-manifest.json` simultaneously to synchronize
+  the prose and manifest representations of the fix.
+- Request edits to both artifacts when a finding requires adding or correcting a
+  `signature_changes` entry alongside prose changes in `plan.md`.
+- The deterministic diagnostic `{{var:deterministicDiagnostic}}` is authoritative — do not
+  argue against it; instead, update the plan and manifest to address the issue.
 
 ## OUTPUT
+
 Write a single file named `plan-fix-result.json` at the working-directory
 root with this exact shape:
 
@@ -33,6 +51,7 @@ root with this exact shape:
 ```
 
 Verdict semantics:
+
 - `done_with_fixes` — you addressed every P0/P1 finding.
 - `done_no_fixes_needed` — every finding is incorrect or out of scope.
 - `cannot_fix` — the plan is unfixable as written.
