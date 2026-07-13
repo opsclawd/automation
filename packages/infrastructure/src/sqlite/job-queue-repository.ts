@@ -107,7 +107,7 @@ export class JobQueueRepository implements JobQueuePort {
         const job = toJob(nextRow);
         const claimedJob = claimJob(job, workerId, new Date(), ttlMs);
 
-        const result = this.db
+        const _result = this.db
           .prepare(
             `UPDATE jobs
          SET status = @status,
@@ -126,34 +126,6 @@ export class JobQueueRepository implements JobQueuePort {
             id: claimedJob.id,
             repo_id: repoId,
           });
-
-        if (result.changes === 0) {
-          const retryRows = selectRows();
-          const retryRow = retryRows.find((r) => !skipJobIds?.has(mkJobId(r.id)));
-          if (!retryRow) return undefined;
-          const retryJob = toJob(retryRow);
-          const retryClaimedJob = claimJob(retryJob, workerId, new Date(), ttlMs);
-          this.db
-            .prepare(
-              `UPDATE jobs
-           SET status = @status,
-               claimed_by = @claimed_by,
-               claimed_at = @claimed_at,
-               claim_expires_at = @claim_expires_at,
-               attempts = @attempts
-           WHERE id = @id AND repo_id = @repo_id`,
-            )
-            .run({
-              status: retryClaimedJob.status,
-              claimed_by: retryClaimedJob.claimedBy ?? null,
-              claimed_at: retryClaimedJob.claimedAt?.toISOString() ?? null,
-              claim_expires_at: retryClaimedJob.claimExpiresAt?.toISOString() ?? null,
-              attempts: retryClaimedJob.attempts,
-              id: retryClaimedJob.id,
-              repo_id: repoId,
-            });
-          return retryClaimedJob;
-        }
 
         return claimedJob;
       },

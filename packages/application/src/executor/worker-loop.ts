@@ -88,7 +88,11 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
   while (true) {
     deps.onProgress?.();
 
-    const reposToTry = deps.repoId ? [deps.repoId] : deps.repos.listEnabled().map((r) => r.id);
+    const reposToTry = deps.repoId
+      ? deps.repos.listEnabled().some((r) => r.id === deps.repoId)
+        ? [deps.repoId]
+        : []
+      : deps.repos.listEnabled().map((r) => r.id);
 
     if (reposToTry.length === 0) {
       return;
@@ -106,7 +110,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         ttlMs: deps.ttlMs,
       });
       if (job) {
-        repoIndex = idx;
+        repoIndex = idx + 1;
         break;
       }
     }
