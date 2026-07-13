@@ -192,6 +192,7 @@ import {
   SynthesizeFromTranscript,
   RepositoryRegistryRepository,
   StructuredResultRepair,
+  createSignatureReferenceAnalyzer,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import {
@@ -210,6 +211,7 @@ import {
   readImplementStepFinalReviewExcerpts,
 } from './arbiter-excerpts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
+import { createDeterministicPlanCheck } from './deterministic-plan-check.js';
 import {
   buildReviewFixReviewPrompt,
   buildReviewFixFixPrompt,
@@ -4248,30 +4250,25 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const planReviewArtifacts = artifactStoreForRun;
 
-      const planReviewCheckManifestSync = async (
-        ctx: import('@ai-sdlc/application').PlanReviewContext,
-      ): Promise<string | null> => {
-        const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
-        let planMd: string;
-        try {
-          planMd = await artifacts.read(String(ctx.runId), 'plan.md');
-        } catch (e) {
-          if (e instanceof ArtifactNotFoundError) return null;
-          throw e;
-        }
-        let manifestJson: string | undefined;
-        try {
-          manifestJson = await artifacts.read(String(ctx.runId), 'task-manifest.json');
-        } catch (e) {
-          if (e instanceof ArtifactNotFoundError) {
-            return null;
-          } else {
+      const planReviewSignatureAnalyzer = createSignatureReferenceAnalyzer();
+
+      const planReviewCheckDeterministicPlan = createDeterministicPlanCheck({
+        readPlanMd: async (ctx) => {
+          const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
+          return artifacts.read(String(ctx.runId), 'plan.md');
+        },
+        readManifest: async (ctx) => {
+          const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
+          try {
+            return await artifacts.read(String(ctx.runId), 'task-manifest.json');
+          } catch (e) {
+            if (e instanceof ArtifactNotFoundError) return null;
             throw e;
           }
-        }
-        const result = validatePlanTaskList(planMd, manifestJson);
-        return result.success ? null : result.error;
-      };
+        },
+        validatePlanTaskList,
+        signatureAnalyzer: planReviewSignatureAnalyzer,
+      });
 
       const computeSnapshot = async (
         cwd: string,
@@ -4482,12 +4479,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           runId: String(ctx.runId),
           vars: {
             reconciliationContext: opts.reconciliationContext ?? '(none — first iteration)',
-            manifestMismatch: opts.manifestMismatch ?? '(none)',
+            deterministicDiagnostic: opts.deterministicDiagnostic ?? '(none)',
           },
           artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
         });
         const finalPrompt = buildPlanReviewFixPrompt(promptBody, {
-          deterministicDiagnostic: opts.manifestMismatch,
+          deterministicDiagnostic: opts.deterministicDiagnostic,
           ...(opts.isTerminalFix !== undefined ? { isTerminalFix: opts.isTerminalFix } : {}),
           ...(opts.historyContext !== undefined ? { historyContext: opts.historyContext } : {}),
         });
@@ -4525,7 +4522,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           });
         }
 
-        const isDeterministic = !!opts.manifestMismatch;
+        const isDeterministic = !!opts.deterministicDiagnostic;
         const isSemanticRetry = ctx.iterationIndex > 1 && !isDeterministic;
         let invokeResult;
         try {
@@ -4825,7 +4822,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       const planReviewLoop = new PlanReviewLoop({
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
-        checkManifestSync: planReviewCheckManifestSync,
+        checkDeterministicPlan: planReviewCheckDeterministicPlan,
         computeLastFixDiffCitations: (cwd, headBeforeFix) =>
           getRecentFixCitations(cwd, headBeforeFix),
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),

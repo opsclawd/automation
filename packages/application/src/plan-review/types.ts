@@ -5,6 +5,12 @@ import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { ArbiterResult } from '../implement-step/types.js';
 import type { ReviewMode } from '../review-state/types.js';
 import type { ReviewStateRepositoryPort } from '../ports/review-state-repository-port.js';
+import type { SignatureBlastRadiusFailure } from './signature-blast-radius.js';
+
+export interface DeterministicPlanCheckResult {
+  diagnostic: string | null;
+  signatureBlastRadiusFailures: SignatureBlastRadiusFailure[];
+}
 
 export interface PlanReviewContext {
   loopId: string;
@@ -177,7 +183,7 @@ export interface PlanFixResult {
 export interface PlanFixOptions {
   historyContext?: string;
   reconciliationContext?: string;
-  manifestMismatch?: string;
+  deterministicDiagnostic?: string;
   metadata?: Record<string, unknown>;
   isTerminalFix?: boolean;
   triggerReason?: string;
@@ -229,13 +235,13 @@ export interface PlanReviewLoopDeps {
   ) => ReadonlyArray<string>;
   runFix: (ctx: PlanReviewContext, opts: PlanFixOptions) => Promise<PlanFixResult>;
   /**
-   * Deterministic, no-LLM-call structural check that `plan.md`'s `## Task N`
-   * prose headings agree with `task-manifest.json` — the same check
-   * `implement`'s pre-flight gate runs. Returns a human-readable mismatch
-   * description, or `null` when in sync (including when there is no
-   * manifest to reconcile against).
+   * Deterministic, no-LLM-call structural and blast-radius check.
+   * Runs `validatePlanTaskList` for structural sync and
+   * `SignatureReferenceAnalyzerPort` for blast-radius analysis.
+   * Returns a combined diagnostic string (or null when in sync)
+   * and any blast-radius failures for structured event emission.
    */
-  checkManifestSync: (ctx: PlanReviewContext) => Promise<string | null>;
+  checkDeterministicPlan: (ctx: PlanReviewContext) => Promise<DeterministicPlanCheckResult>;
   runArbiter?: (ctx: PlanReviewContext, fixResult: PlanFixResult) => Promise<ArbiterResult>;
   /**
    * Distinct from `runArbiter`: invoked only for the trailing final-review-fail
