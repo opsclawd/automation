@@ -137,6 +137,8 @@ export type { WorkerRegistryPort } from './ports/worker-registry-port.js';
 export type {
   WorkerLeasePort,
   AcquireLeaseInput,
+  HeartbeatLeaseInput,
+  ReleaseLeaseInput,
   ReclaimExpiredInput,
 } from './ports/worker-lease-port.js';
 
@@ -242,6 +244,7 @@ export interface EventRepositoryPort {
   ): Array<{
     id: number;
     runUuid: string;
+    repoId: RepositoryId;
     phase?: string;
     level: string;
     type: string;

@@ -240,12 +240,12 @@ export class ResumeRun implements ResumeRunUseCase {
       }
 
       if (leaseAcquired) {
-        this.deps.leases.release(repo.id, input.workerId);
+        this.deps.leases.release({ repoId: repo.id, workerId: input.workerId, runId: input.runId });
       }
       return { jobId: job.id, jobStatus: job.status as 'queued' };
     } catch (err) {
       if (leaseAcquired) {
-        this.deps.leases.release(repo.id, input.workerId);
+        this.deps.leases.release({ repoId: repo.id, workerId: input.workerId, runId: input.runId });
       }
       throw err;
     }

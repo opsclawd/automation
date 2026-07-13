@@ -9,6 +9,7 @@ import {
 import { FakeWorkerLeasePort, FakeWorkerRegistryPort } from '../test-doubles/index.js';
 
 const now0 = new Date('2026-01-01T00:00:00Z');
+const repoId = RepositoryId('r1');
 
 function makePorts() {
   const registry = new FakeWorkerRegistryPort();
@@ -19,8 +20,12 @@ function makePorts() {
 describe('FakeWorkerLeasePort', () => {
   it('two workers acquiring the same repo concurrently: exactly one wins', () => {
     const { registry, leases } = makePorts();
-    registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
-    registry.register(createWorker({ id: WorkerId('w2'), hostname: 'h', processId: 2, now: now0 }));
+    registry.register(
+      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
+    );
+    registry.register(
+      createWorker({ id: WorkerId('w2'), repoId, hostname: 'h', processId: 2, now: now0 }),
+    );
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
@@ -41,8 +46,24 @@ describe('FakeWorkerLeasePort', () => {
 
   it('two workers acquiring different repos: both succeed', () => {
     const { registry, leases } = makePorts();
-    registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
-    registry.register(createWorker({ id: WorkerId('w2'), hostname: 'h', processId: 2, now: now0 }));
+    registry.register(
+      createWorker({
+        id: WorkerId('w1'),
+        repoId: RepositoryId('r1'),
+        hostname: 'h',
+        processId: 1,
+        now: now0,
+      }),
+    );
+    registry.register(
+      createWorker({
+        id: WorkerId('w2'),
+        repoId: RepositoryId('r2'),
+        hostname: 'h',
+        processId: 2,
+        now: now0,
+      }),
+    );
     leases.acquire({
       repoId: RepositoryId('r1'),
       workerId: WorkerId('w1'),
@@ -63,7 +84,9 @@ describe('FakeWorkerLeasePort', () => {
 
   it('release is idempotent', () => {
     const { registry, leases } = makePorts();
-    registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
+    registry.register(
+      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
+    );
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
@@ -71,14 +94,16 @@ describe('FakeWorkerLeasePort', () => {
       now: now0,
       ttlMs: 60_000,
     });
-    leases.release(RepositoryId('r'), WorkerId('w1'));
-    leases.release(RepositoryId('r'), WorkerId('w1'));
+    leases.release({ repoId: RepositoryId('r'), workerId: WorkerId('w1'), runId: RunId('run-1') });
+    leases.release({ repoId: RepositoryId('r'), workerId: WorkerId('w1'), runId: RunId('run-1') });
     expect(leases.current(RepositoryId('r'))).toBeUndefined();
   });
 
   it('reclaimExpired does not reclaim unexpired leases', () => {
     const { registry, leases } = makePorts();
-    registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
+    registry.register(
+      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
+    );
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
@@ -99,7 +124,9 @@ describe('FakeWorkerLeasePort', () => {
 
   it('reclaimExpired requires worker stale or unhealthy', () => {
     const { registry, leases } = makePorts();
-    registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
+    registry.register(
+      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
+    );
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
@@ -120,7 +147,9 @@ describe('FakeWorkerLeasePort', () => {
 
   it('reclaimExpired requires run to be recoverable', () => {
     const { registry, leases } = makePorts();
-    registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
+    registry.register(
+      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
+    );
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
@@ -141,7 +170,9 @@ describe('FakeWorkerLeasePort', () => {
 
   it('reclaimExpired succeeds when all conditions hold and emits onReclaimed', () => {
     const { registry, leases } = makePorts();
-    registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
+    registry.register(
+      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
+    );
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
@@ -174,7 +205,9 @@ describe('FakeWorkerLeasePort', () => {
 
   it('reclaimExpired preserves the lease when onReclaimed throws', () => {
     const { registry, leases } = makePorts();
-    registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
+    registry.register(
+      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
+    );
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
@@ -183,9 +216,6 @@ describe('FakeWorkerLeasePort', () => {
       ttlMs: 60_000,
     });
 
-    // onReclaimed requeues the claimed/running job; if that write fails the lease
-    // MUST NOT be deleted, otherwise the repo is left unprotected with a
-    // non-claimable job still recorded as active. See worker-lease-port contract.
     expect(() =>
       leases.reclaimExpired({
         now: new Date(now0.getTime() + 120_000),
@@ -204,15 +234,17 @@ describe('FakeWorkerLeasePort', () => {
 
   it('reclaimExpired succeeds when worker is marked unhealthy even if isWorkerAlive returns true', () => {
     const { registry, leases } = makePorts();
-    registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
+    registry.register(
+      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
+    );
     leases.acquire({
-      repoId: RepositoryId('r'),
+      repoId: repoId,
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
       now: now0,
       ttlMs: 60_000,
     });
-    registry.markUnhealthy(WorkerId('w1'));
+    registry.markUnhealthy(WorkerId('w1'), repoId);
     const reclaimed = leases.reclaimExpired({
       now: new Date(now0.getTime() + 120_000),
       recoverableRunIds: new Set([RunId('run-1')]),
@@ -265,5 +297,61 @@ describe('FakeWorkerLeasePort', () => {
         ttlMs: 60_000,
       }),
     ).toThrow(WorkerLeaseConflictError);
+  });
+
+  it('stale lease heartbeat cannot extend a reassigned run lease', () => {
+    const { leases } = makePorts();
+    leases.acquire({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+    const later = new Date(now0.getTime() + 120_000);
+    leases.acquire({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w2'),
+      runId: RunId('run-2'),
+      now: later,
+      ttlMs: 60_000,
+    });
+    leases.heartbeat({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: later,
+      newExpiresAt: new Date(later.getTime() + 60_000),
+    });
+    const currentLease = leases.current(RepositoryId('r'));
+    expect(currentLease?.workerId).toBe('w2');
+    expect(currentLease?.runId).toBe('run-2');
+  });
+
+  it('stale lease release cannot delete a reassigned run lease', () => {
+    const { leases } = makePorts();
+    leases.acquire({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+    const later = new Date(now0.getTime() + 120_000);
+    leases.acquire({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w2'),
+      runId: RunId('run-2'),
+      now: later,
+      ttlMs: 60_000,
+    });
+    leases.release({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+    });
+    const currentLease = leases.current(RepositoryId('r'));
+    expect(currentLease?.workerId).toBe('w2');
+    expect(currentLease?.runId).toBe('run-2');
   });
 });

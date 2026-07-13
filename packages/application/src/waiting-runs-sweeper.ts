@@ -139,7 +139,7 @@ export class WaitingRunsSweeper {
       } finally {
         if (leaseAcquired) {
           try {
-            this.deps.leases.release(run.repoId, workerId);
+            this.deps.leases.release({ repoId: run.repoId, workerId, runId: run.uuid as RunId });
           } catch (relErr) {
             this.deps.logger.error(
               `WaitingRunsSweeper: Failed to release lease on failure for ${run.uuid}:`,

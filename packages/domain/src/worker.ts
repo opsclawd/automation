@@ -1,7 +1,8 @@
-import type { WorkerId } from './ids.js';
+import type { RepositoryId, WorkerId } from './ids.js';
 export type WorkerStatus = 'idle' | 'busy' | 'stopping' | 'unhealthy';
 export interface Worker {
   id: WorkerId;
+  repoId: RepositoryId;
   hostname: string;
   processId: number;
   status: WorkerStatus;
@@ -9,18 +10,20 @@ export interface Worker {
 }
 export interface CreateWorkerInput {
   id: WorkerId;
+  repoId: RepositoryId;
   hostname: string;
   processId: number;
   now: Date;
 }
 export function createWorker(input: CreateWorkerInput): Worker {
-  return {
+  return Object.freeze({
     id: input.id,
+    repoId: input.repoId,
     hostname: input.hostname,
     processId: input.processId,
     status: 'idle',
     heartbeatAt: input.now,
-  };
+  });
 }
 export function heartbeatWorker(w: Worker, now: Date): Worker {
   return { ...w, heartbeatAt: now };

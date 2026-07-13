@@ -38,7 +38,7 @@ describe('serve orphan-recovery integration', () => {
     leases = new FakeWorkerLeasePort(registry);
     eventBus = new FakeEventBus();
     registry.register(
-      createWorker({ id: serveWorkerId, hostname: 'test', processId: 1, now: fixedNow }),
+      createWorker({ id: serveWorkerId, repoId, hostname: 'test', processId: 1, now: fixedNow }),
     );
   });
 
@@ -78,6 +78,7 @@ describe('serve orphan-recovery integration', () => {
       queue,
       leases,
       repos,
+      repoId,
       executeRun: async () => ({ ok: true }),
       prepareWorktree: async () => ({ cwd: '/tmp/wt' }),
       resetWorktree: () => {},

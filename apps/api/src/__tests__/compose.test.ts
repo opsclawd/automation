@@ -1167,7 +1167,7 @@ exit 1
       .mockResolvedValue('feedfacefeedfacefeedfacefeedfacefeedface');
 
     const ac = new AbortController();
-    const result = await container.workerLoopDeps!.prepareWorktree({
+    const result = await container.workerLoopDeps!(RepositoryId('owner/repo')).prepareWorktree({
       repoId: RepositoryId('owner/repo'),
       runId: RunId('prepare-wt-uuid'),
       signal: ac.signal,

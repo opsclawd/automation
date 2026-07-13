@@ -839,12 +839,27 @@ class FakeRunRepositoryWithLookup extends FakeRunRepository {
 }
 
 class FakeEventRepository implements EventRepositoryPort {
-  events: Array<{ runUuid: string; type: string; timestamp: Date }> = [];
+  private readonly repoId: RepositoryId;
+  events: Array<{ runUuid: string; type: string; timestamp: Date; repoId: RepositoryId }> = [];
+  constructor(repoId: RepositoryId = stableRepoId) {
+    this.repoId = repoId;
+  }
   insert(event: { runUuid: string; type: string; timestamp: Date; [k: string]: unknown }): number {
-    this.events.push({ runUuid: event.runUuid, type: event.type, timestamp: event.timestamp });
+    this.events.push({
+      runUuid: event.runUuid,
+      type: event.type,
+      timestamp: event.timestamp,
+      repoId: this.repoId,
+    });
     return this.events.length;
   }
-  listByRunSince(): Array<{ id: number; runUuid: string; type: string; [k: string]: unknown }> {
+  listByRunSince(): Array<{
+    id: number;
+    runUuid: string;
+    repoId: RepositoryId;
+    type: string;
+    [k: string]: unknown;
+  }> {
     return [];
   }
 }

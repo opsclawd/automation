@@ -36,7 +36,13 @@ describe('startWorkerDrainLoop', () => {
     const registry = new FakeWorkerRegistryPort();
     const leases = new FakeWorkerLeasePort(registry);
     registry.register(
-      createWorker({ id: workerId, hostname: 'test', processId: 1, now: new Date() }),
+      createWorker({
+        id: workerId,
+        repoId: RepositoryId('owner/repo'),
+        hostname: 'test',
+        processId: 1,
+        now: new Date(),
+      }),
     );
     queue.enqueue({
       job: createJob({
@@ -57,6 +63,7 @@ describe('startWorkerDrainLoop', () => {
         queue,
         leases,
         repos,
+        repoId: RepositoryId('owner/repo'),
         runRepository: runRepo,
         executeRun,
         prepareWorktree: async () => ({ cwd: '/tmp/wt' }),
@@ -105,7 +112,13 @@ describe('startWorkerDrainLoop', () => {
     const registry = new FakeWorkerRegistryPort();
     const leases = new FakeWorkerLeasePort(registry);
     registry.register(
-      createWorker({ id: workerId, hostname: 'test', processId: 1, now: new Date() }),
+      createWorker({
+        id: workerId,
+        repoId: RepositoryId('owner/repo'),
+        hostname: 'test',
+        processId: 1,
+        now: new Date(),
+      }),
     );
 
     const { stop } = startWorkerDrainLoop(
@@ -115,6 +128,7 @@ describe('startWorkerDrainLoop', () => {
         queue,
         leases,
         repos,
+        repoId: RepositoryId('owner/repo'),
         runRepository: runRepo,
         executeRun: async () => ({ ok: true }),
         prepareWorktree: async () => ({ cwd: '/tmp/wt' }),
@@ -146,7 +160,13 @@ describe('startWorkerDrainLoop', () => {
     const registry = new FakeWorkerRegistryPort();
     const leases = new FakeWorkerLeasePort(registry);
     registry.register(
-      createWorker({ id: workerId, hostname: 'test', processId: 1, now: new Date() }),
+      createWorker({
+        id: workerId,
+        repoId: RepositoryId('owner/repo'),
+        hostname: 'test',
+        processId: 1,
+        now: new Date(),
+      }),
     );
 
     const { stop } = startWorkerDrainLoop(
@@ -156,6 +176,7 @@ describe('startWorkerDrainLoop', () => {
         queue,
         leases,
         repos,
+        repoId: RepositoryId('owner/repo'),
         runRepository: runRepo,
         executeRun: async () => ({ ok: true }),
         prepareWorktree: async () => ({ cwd: '/tmp/wt' }),

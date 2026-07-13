@@ -42,24 +42,24 @@ describe('FakeJobQueuePort', () => {
     q.enqueue({ job: job('a', 'r1', { priority: 0, createdAt: new Date('2026-01-01') }) });
     q.enqueue({ job: job('b', 'r1', { priority: 5, createdAt: new Date('2026-01-02') }) });
     q.enqueue({ job: job('c', 'r1', { priority: 5, createdAt: new Date('2026-01-01') }) });
-    const claimed = q.claimNext({ workerId: WorkerId('w1') });
+    const claimed = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') });
     expect(claimed?.id).toBe('c');
   });
   it('claimNext on second attempt returns next job (no double-claim)', () => {
     const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
     q.enqueue({ job: job('a', 'r1', { createdAt: new Date('2026-01-01T00:00:00Z') }) });
     q.enqueue({ job: job('b', 'r1', { createdAt: new Date('2026-01-01T00:00:01Z') }) });
-    expect(q.claimNext({ workerId: WorkerId('w1') })?.id).toBe('a');
-    expect(q.claimNext({ workerId: WorkerId('w2') })?.id).toBe('b');
+    expect(q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })?.id).toBe('a');
+    expect(q.claimNext({ workerId: WorkerId('w2'), repoId: RepositoryId('r1') })?.id).toBe('b');
   });
   it('claimNext returns undefined when nothing is queued', () => {
     const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
-    expect(q.claimNext({ workerId: WorkerId('w1') })).toBeUndefined();
+    expect(q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })).toBeUndefined();
   });
   it('lifecycle: claim -> markRunning -> markSucceeded', () => {
     const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
     q.enqueue({ job: job('a', 'r1') });
-    const c = q.claimNext({ workerId: WorkerId('w1') })!;
+    const c = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })!;
     q.markRunning(c.id, new Date());
     q.markSucceeded(c.id, new Date());
     expect(q.findById(c.id)?.status).toBe('succeeded');
@@ -67,7 +67,7 @@ describe('FakeJobQueuePort', () => {
   it('lifecycle: claim -> markRunning -> markFailed', () => {
     const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
     q.enqueue({ job: job('a', 'r1') });
-    const c = q.claimNext({ workerId: WorkerId('w1') })!;
+    const c = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })!;
     q.markRunning(c.id, new Date());
     q.markFailed(c.id, new Date());
     expect(q.findById(c.id)?.status).toBe('failed');
@@ -75,7 +75,7 @@ describe('FakeJobQueuePort', () => {
   it('lifecycle: claim -> markRunning -> markCancelled', () => {
     const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
     q.enqueue({ job: job('a', 'r1') });
-    const c = q.claimNext({ workerId: WorkerId('w1') })!;
+    const c = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })!;
     q.markRunning(c.id, new Date());
     q.markCancelled(c.id, new Date());
     expect(q.findById(c.id)?.status).toBe('cancelled');
@@ -86,5 +86,37 @@ describe('FakeJobQueuePort', () => {
     q.enqueue({ job: job('b', 'r2') });
     expect(q.listForRepo(RepositoryId('r1')).map((j) => j.id)).toEqual(['a']);
     expect(q.listForRun(RunId('run-a')).map((j) => j.id)).toEqual(['a']);
+  });
+
+  describe('repository-scoped claimNext', () => {
+    it('claim_is_repository_scoped: claimNext only returns queued jobs from the requested repository', () => {
+      const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1'), repo('r2')]));
+      q.enqueue({ job: job('a', 'r1') });
+      q.enqueue({ job: job('b', 'r2') });
+      const claimed = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') });
+      expect(claimed?.id).toBe('a');
+      expect(claimed?.repoId).toBe('r1');
+    });
+
+    it('claim_order_is_local_to_repository: claimNext preserves priority created-at and id order within the requested repository', () => {
+      const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1'), repo('r2')]));
+      q.enqueue({ job: job('a', 'r1', { priority: 0, createdAt: new Date('2026-01-01') }) });
+      q.enqueue({ job: job('b', 'r1', { priority: 5, createdAt: new Date('2026-01-02') }) });
+      q.enqueue({ job: job('c', 'r1', { priority: 5, createdAt: new Date('2026-01-01') }) });
+      q.enqueue({ job: job('x', 'r2', { priority: 10, createdAt: new Date('2026-01-01') }) });
+      const claimed = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') });
+      expect(claimed?.id).toBe('c');
+    });
+
+    it('concurrent repository-scoped claims cannot cross repository ids', () => {
+      const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1'), repo('r2')]));
+      q.enqueue({ job: job('a', 'r1') });
+      q.enqueue({ job: job('b', 'r2') });
+      const claimedR1 = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') });
+      expect(claimedR1?.repoId).toBe('r1');
+      const claimedR2 = q.claimNext({ workerId: WorkerId('w2'), repoId: RepositoryId('r2') });
+      expect(claimedR2?.repoId).toBe('r2');
+      expect(claimedR1?.id).not.toBe(claimedR2?.id);
+    });
   });
 });

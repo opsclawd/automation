@@ -4,6 +4,8 @@ export type { WorkerRegistryPort } from './worker-registry-port.js';
 export type {
   WorkerLeasePort,
   AcquireLeaseInput,
+  HeartbeatLeaseInput,
+  ReleaseLeaseInput,
   ReclaimExpiredInput,
 } from './worker-lease-port.js';
 export type {

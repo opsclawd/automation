@@ -8,6 +8,20 @@ export interface AcquireLeaseInput {
   ttlMs: number;
 }
 
+export interface HeartbeatLeaseInput {
+  repoId: RepositoryId;
+  workerId: WorkerId;
+  runId: RunId;
+  now: Date;
+  newExpiresAt: Date;
+}
+
+export interface ReleaseLeaseInput {
+  repoId: RepositoryId;
+  workerId: WorkerId;
+  runId: RunId;
+}
+
 export interface ReclaimExpiredInput {
   now: Date;
   recoverableRunIds: ReadonlySet<RunId>;
@@ -35,8 +49,8 @@ export interface ReclaimExpiredInput {
 
 export interface WorkerLeasePort {
   acquire(input: AcquireLeaseInput): WorkerLease;
-  heartbeat(repoId: RepositoryId, workerId: WorkerId, now: Date, newExpiresAt: Date): void;
-  release(repoId: RepositoryId, workerId: WorkerId): void;
+  heartbeat(input: HeartbeatLeaseInput): void;
+  release(input: ReleaseLeaseInput): void;
   current(repoId: RepositoryId): WorkerLease | undefined;
   checkActiveLease(repoId: RepositoryId, now: Date): boolean;
   reclaimExpired(input: ReclaimExpiredInput): WorkerLease[];

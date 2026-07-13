@@ -101,6 +101,7 @@ import {
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
+  type EventRepositoryFactory,
   type EventBusPort,
   type RunRecord,
   type RunRepositoryPort,
@@ -178,6 +179,8 @@ import {
   RunId,
   RepositoryId,
 } from '@ai-sdlc/domain';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- forward reference for Task 5 runtime factory
+import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -493,7 +496,14 @@ export interface Container {
   workerLeaseRepository: WorkerLeaseRepository;
   jobQueue: JobQueuePort;
   workerRegistry?: WorkerRegistryPort;
-  workerLoopDeps?: Omit<WorkerLoopDeps, 'recoverableRunIds'>;
+  /**
+   * A worker is bound to exactly one repository for its active lifetime
+   * (#651 invariant: worker_assignment_is_immutable_while_active), so the
+   * deps a worker loop needs are repo-scoped, not shared across repos.
+   * Callers build one worker identity + one deps object per repository
+   * they want to service concurrently (see the `serve` command).
+   */
+  workerLoopDeps?: (repoId: RepositoryId) => Omit<WorkerLoopDeps, 'recoverableRunIds'>;
   serveSweepIntervalSeconds: number;
   buildWaitingRunsSweeper: () => import('@ai-sdlc/application').WaitingRunsSweeper;
   buildOrphanedRunsSweeper: () => import('@ai-sdlc/application').OrphanedRunsSweeper;
@@ -1550,9 +1560,11 @@ export function composeRoot(opts: ComposeOptions): Container {
     metadata.nameWithOwner !== 'unknown/unknown' ? metadata.nameWithOwner : undefined;
   const resolvedRemoteUrl = metadata.remoteUrl;
 
+  const repoId = resolvedRepoFullName ? RepositoryId(resolvedRepoFullName) : ('' as RepositoryId);
+
   const singleRepo: RepositoryPort = resolvedRepoFullName
     ? new SingleRepoAdapter({
-        id: RepositoryId(resolvedRepoFullName),
+        id: repoId,
         owner: resolvedRepoFullName.split('/')[0]!,
         name: resolvedRepoFullName.split('/')[1]!,
         fullName: resolvedRepoFullName,
@@ -1569,7 +1581,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         updatedAt: new Date(),
       })
     : new SingleRepoAdapter({
-        id: '' as RepositoryId,
+        id: repoId,
         owner: '',
         name: '',
         fullName: '',
@@ -1882,7 +1894,9 @@ export function composeRoot(opts: ComposeOptions): Container {
   }
 
   const phaseRepository = new PhaseRepository(db);
-  const eventRepository = new EventRepository(db);
+  const eventRepository = new EventRepository(db, repoId);
+  const eventRepositoryFactory: EventRepositoryFactory = (rId: RepositoryId) =>
+    new EventRepository(db, rId);
   const failureRepository = new FailureRepository(db);
   const agentInvocationRepository = new AgentInvocationRepository(db);
   const validationRunRepository = new ValidationRunRepository(db);
@@ -1918,7 +1932,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     runBashScript,
     runsDir,
     scriptPath: opts.scriptPath,
-    eventRepository,
+    eventRepository: eventRepositoryFactory,
     eventBus,
     createEventTailer,
     baseTmpDir,
@@ -5459,13 +5473,16 @@ export function composeRoot(opts: ComposeOptions): Container {
       logger: sweepLogger,
     });
 
-  const workerLoopDeps: Omit<WorkerLoopDeps, 'recoverableRunIds'> | undefined =
+  const workerLoopDeps:
+    | ((repoId: RepositoryId) => Omit<WorkerLoopDeps, 'recoverableRunIds'>)
+    | undefined =
     runExecutor !== undefined
-      ? {
+      ? (repoId: RepositoryId) => ({
           registry: workerRegistry,
           queue: jobQueue,
           leases: workerLeaseRepository,
           repos: registryBackedRepo,
+          repoId,
           executeRun: async ({ run, signal: _signal }) => {
             runRepository.update(run.uuid, { pid: process.pid });
             const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
@@ -5505,7 +5522,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
           },
           isWorkerAlive: (workerId) => {
-            const w = workerRegistry.findById(workerId);
+            const w = workerRegistry.findById(workerId, repoId);
             if (!w) return false;
             if (w.hostname !== os.hostname()) {
               // Cannot check PID on a remote host — treat stale heartbeat as dead.
@@ -5521,7 +5538,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               `Lease reclaimed: repo=${info.repoId} prev=${info.previousWorkerId} by=${info.reclaimedByWorkerId}: ${info.reason}`,
             );
           },
-        }
+        })
       : undefined;
 
   const resumeRun = new ResumeRun({

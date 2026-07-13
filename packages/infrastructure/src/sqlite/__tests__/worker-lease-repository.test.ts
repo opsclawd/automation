@@ -115,7 +115,13 @@ describe('WorkerLeaseRepository', () => {
     });
     const now1 = new Date(now0.getTime() + 30_000);
     const newExpiry = new Date(now0.getTime() + 90_000);
-    repo.heartbeat(RepositoryId('repo-a'), WorkerId('w1'), now1, newExpiry);
+    repo.heartbeat({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: now1,
+      newExpiresAt: newExpiry,
+    });
     const lease = repo.current(RepositoryId('repo-a'));
     expect(lease?.heartbeatAt).toEqual(now1);
     expect(lease?.expiresAt).toEqual(newExpiry);
@@ -133,7 +139,13 @@ describe('WorkerLeaseRepository', () => {
       ttlMs: 60_000,
     });
     const now1 = new Date(now0.getTime() + 30_000);
-    repo.heartbeat(RepositoryId('repo-a'), WorkerId('wrong-worker'), now1, now1);
+    repo.heartbeat({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('wrong-worker'),
+      runId: RunId('run-1'),
+      now: now1,
+      newExpiresAt: now1,
+    });
     const lease = repo.current(RepositoryId('repo-a'));
     expect(lease?.heartbeatAt).toEqual(now0);
     db.close();
@@ -149,7 +161,11 @@ describe('WorkerLeaseRepository', () => {
       now: now0,
       ttlMs: 60_000,
     });
-    repo.release(RepositoryId('repo-a'), WorkerId('w1'));
+    repo.release({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+    });
     expect(repo.current(RepositoryId('repo-a'))).toBeUndefined();
     db.close();
   });
@@ -164,8 +180,18 @@ describe('WorkerLeaseRepository', () => {
       now: now0,
       ttlMs: 60_000,
     });
-    repo.release(RepositoryId('repo-a'), WorkerId('w1'));
-    expect(() => repo.release(RepositoryId('repo-a'), WorkerId('w1'))).not.toThrow();
+    repo.release({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+    });
+    expect(() =>
+      repo.release({
+        repoId: RepositoryId('repo-a'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+      }),
+    ).not.toThrow();
     db.close();
   });
 
@@ -179,7 +205,11 @@ describe('WorkerLeaseRepository', () => {
       now: now0,
       ttlMs: 60_000,
     });
-    repo.release(RepositoryId('repo-a'), WorkerId('wrong-worker'));
+    repo.release({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('wrong-worker'),
+      runId: RunId('run-1'),
+    });
     expect(repo.current(RepositoryId('repo-a'))?.workerId).toBe('w1');
     db.close();
   });
@@ -321,7 +351,11 @@ describe('WorkerLeaseRepository', () => {
       now: now0,
       ttlMs: 60_000,
     });
-    repo.release(RepositoryId('repo-a'), WorkerId('w1'));
+    repo.release({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+    });
     const lease2 = repo.acquire({
       repoId: RepositoryId('repo-a'),
       workerId: WorkerId('w2'),

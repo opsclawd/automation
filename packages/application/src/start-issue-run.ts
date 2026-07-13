@@ -23,6 +23,8 @@ import type {
   TmpDirectoryFactory,
 } from './ports.js';
 
+export type EventRepositoryFactory = (repoId: RepositoryId) => EventRepositoryPort;
+
 export interface StartIssueRunDeps {
   runRepository: RunRepositoryPort;
   failureRepository: FailureRepositoryPort;
@@ -31,7 +33,7 @@ export interface StartIssueRunDeps {
   runBashScript: RunBashScriptFn;
   runsDir: string;
   scriptPath: string;
-  eventRepository: EventRepositoryPort;
+  eventRepository: EventRepositoryPort | EventRepositoryFactory;
   eventBus: EventBusPort;
   createEventTailer: EventTailerFactory;
   baseTmpDir: string;
@@ -128,6 +130,11 @@ export class StartIssueRun {
       repoId,
     });
     this.deps.runRepository.insertIfNoActive(run);
+
+    const eventRepo: EventRepositoryPort =
+      typeof this.deps.eventRepository === 'function'
+        ? this.deps.eventRepository(run.repoId)
+        : this.deps.eventRepository;
     let dir: RunDirectoryHandle;
     try {
       dir = this.deps.runDirectoryFactory({ rootDir: this.deps.runsDir, run });
@@ -196,7 +203,7 @@ export class StartIssueRun {
           timestamp: new Date(e.timestamp),
         };
         if (e.phase !== undefined) insertInput.phase = e.phase;
-        this.deps.eventRepository.insert(insertInput);
+        eventRepo.insert(insertInput);
         this.deps.eventBus.publish(run.uuid, e);
       } catch (err) {
         logger.error(`Failed to process event for run ${run.displayId}`, err);

@@ -20,6 +20,8 @@ import { workerLoop } from '../worker-loop.js';
 
 let currentQueue: FakeJobQueuePort | undefined;
 
+const REPO_ID = RepositoryId('r1');
+
 function setup() {
   const repos = new FakeRepositoryPort([
     {
@@ -52,8 +54,12 @@ function setup() {
   const registry = new FakeWorkerRegistryPort();
   const leases = new FakeWorkerLeasePort(registry);
   const now = new Date();
-  registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now }));
-  registry.register(createWorker({ id: WorkerId('w2'), hostname: 'h', processId: 2, now }));
+  registry.register(
+    createWorker({ id: WorkerId('w1'), repoId: REPO_ID, hostname: 'h', processId: 1, now }),
+  );
+  registry.register(
+    createWorker({ id: WorkerId('w2'), repoId: REPO_ID, hostname: 'h', processId: 2, now }),
+  );
   return { repos, queue, registry, leases, now };
 }
 
@@ -106,6 +112,7 @@ describe('workerLoop', () => {
 
     const deps = {
       ...s,
+      repoId: RepositoryId('r1'),
       executeRun: executeOk,
       prepareWorktree: prepareOk,
       resetWorktree: (_repoId: import('@ai-sdlc/domain').RepositoryId) => {},
@@ -125,8 +132,20 @@ describe('workerLoop', () => {
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   });
 
-  it('two queued jobs on different repos: both run concurrently', async () => {
+  it('two queued jobs on different repos: each repo-bound worker drives its own job concurrently', async () => {
     const s = setup();
+    // A worker is bound to exactly one repo for its active lifetime (Task 3
+    // invariant), so w2 is re-registered against r2 instead of sharing w1's r1.
+    s.registry.deregister(WorkerId('w2'));
+    s.registry.register(
+      createWorker({
+        id: WorkerId('w2'),
+        repoId: RepositoryId('r2'),
+        hostname: 'h',
+        processId: 2,
+        now: s.now,
+      }),
+    );
     s.queue.enqueue({
       job: createJob({
         id: JobId('j1'),
@@ -146,7 +165,7 @@ describe('workerLoop', () => {
       }),
     });
 
-    const deps = {
+    const baseDeps = {
       registry: s.registry,
       queue: s.queue,
       leases: s.leases,
@@ -161,7 +180,10 @@ describe('workerLoop', () => {
       findRun: (runId: import('@ai-sdlc/domain').RunId) => makeRun(runId as string),
     };
 
-    await Promise.all([workerLoop(WorkerId('w1'), deps), workerLoop(WorkerId('w2'), deps)]);
+    await Promise.all([
+      workerLoop(WorkerId('w1'), { ...baseDeps, repoId: RepositoryId('r1') }),
+      workerLoop(WorkerId('w2'), { ...baseDeps, repoId: RepositoryId('r2') }),
+    ]);
 
     expect(s.queue.findById(JobId('j1'))!.status).toBe('succeeded');
     expect(s.queue.findById(JobId('j2'))!.status).toBe('succeeded');
@@ -186,6 +208,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: executeThrow,
       prepareWorktree: prepareOk,
       resetWorktree: (_repoId) => {},
@@ -221,6 +244,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: async ({ signal }) => {
         await new Promise<never>((_, reject) => {
           if (signal.aborted) {
@@ -279,6 +303,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun,
       prepareWorktree,
       resetWorktree: (_repoId) => {},
@@ -327,6 +352,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: executeOk,
       prepareWorktree: prepareOk,
       resetWorktree: (_repoId) => {},
@@ -350,9 +376,15 @@ describe('workerLoop', () => {
     const onLeaseReclaimed = vi.fn();
     // Register w3 and mark it stopping
     s.registry.register(
-      createWorker({ id: WorkerId('w3'), hostname: 'h', processId: 3, now: s.now }),
+      createWorker({
+        id: WorkerId('w3'),
+        repoId: RepositoryId('r1'),
+        hostname: 'h',
+        processId: 3,
+        now: s.now,
+      }),
     );
-    s.registry.markBusy(WorkerId('w3'));
+    s.registry.markBusy(WorkerId('w3'), RepositoryId('r1'));
 
     // Give w1 a lease that we will make "expired" by advancing time
     const lease = s.leases.acquire({
@@ -362,7 +394,7 @@ describe('workerLoop', () => {
       now: s.now,
       ttlMs: 60_000,
     });
-    s.registry.markStopping(WorkerId('w1'));
+    s.registry.markStopping(WorkerId('w1'), RepositoryId('r1'));
 
     const lateNow = new Date(lease.expiresAt.getTime() + 1000);
 
@@ -381,6 +413,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: executeOk,
       prepareWorktree: prepareOk,
       resetWorktree: (_repoId) => {},
@@ -417,7 +450,7 @@ describe('workerLoop', () => {
       }),
     });
     // Advance job through claimed→running (w1 crashed after markRunning)
-    s.queue.claimNext({ workerId: WorkerId('w1') });
+    s.queue.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') });
     s.queue.markRunning(JobId('j-old'), s.now);
 
     // Give w1 a lease that expired
@@ -436,6 +469,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: executeOk,
       prepareWorktree: prepareOk,
       resetWorktree: (_repoId) => {},
@@ -451,7 +485,7 @@ describe('workerLoop', () => {
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   });
 
-  it('skips lease-conflicted repo job and runs next claimable job from different repo', async () => {
+  it('repo-bound worker skips a lease-conflicted job in its own repo and leaves other repos untouched', async () => {
     const s = setup();
     // r1 is busy — another worker holds the lease
     s.leases.acquire({
@@ -462,7 +496,8 @@ describe('workerLoop', () => {
       ttlMs: 60_000,
     });
 
-    // Oldest queued job is for r1 (blocked), next is for r2 (claimable)
+    // j1 is for r1 (blocked by the lease conflict); j2 is for r2, but w1 is
+    // bound to r1 only (Task 3 invariant) and never scans other repos' queues.
     s.queue.enqueue({
       job: createJob({
         id: JobId('j1'),
@@ -490,6 +525,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun,
       prepareWorktree,
       resetWorktree: (_repoId) => {},
@@ -502,18 +538,14 @@ describe('workerLoop', () => {
 
     // j1 was released back to queued (r1 lease still held by w2)
     expect(s.queue.findById(JobId('j1'))!.status).toBe('queued');
-    // j2 was claimed and executed
-    expect(s.queue.findById(JobId('j2'))!.status).toBe('succeeded');
+    // j2 was never touched — w1 never claims jobs outside its bound repo
+    expect(s.queue.findById(JobId('j2'))!.status).toBe('queued');
     // r1 lease still belongs to original holder
     expect(s.leases.current(RepositoryId('r1'))?.workerId).toBe('w2');
-    // r2 lease was released
     expect(s.leases.current(RepositoryId('r2'))).toBeUndefined();
 
-    expect(prepareWorktree).toHaveBeenCalledTimes(1);
-    expect(prepareWorktree.mock.calls[0]?.[0].repoId).toBe(RepositoryId('r2'));
-    expect(prepareWorktree.mock.calls[0]?.[0].runId).toBe(RunId('run-2'));
-    expect(executeRun).toHaveBeenCalledTimes(1);
-    expect(executeRun.mock.calls[0]?.[0].run.uuid).toBe('run-2');
+    expect(prepareWorktree).not.toHaveBeenCalled();
+    expect(executeRun).not.toHaveBeenCalled();
   });
 
   it('no jobs available: returns without side effects', async () => {
@@ -524,6 +556,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: executeOk,
       prepareWorktree: prepareOk,
       resetWorktree: (_repoId) => {},
@@ -534,19 +567,20 @@ describe('workerLoop', () => {
       findRun: (runId) => makeRun(runId as string),
     });
 
-    const w = s.registry.findById(WorkerId('w1'));
+    const w = s.registry.findById(WorkerId('w1'), RepositoryId('r1'));
     expect(w!.status).toBe('idle');
   });
 
   it('reentrant call while worker is busy is rejected', async () => {
     const s = setup();
-    s.registry.markBusy(WorkerId('w1'));
+    s.registry.markBusy(WorkerId('w1'), RepositoryId('r1'));
 
     await workerLoop(WorkerId('w1'), {
       registry: s.registry,
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: executeOk,
       prepareWorktree: prepareOk,
       resetWorktree: (_repoId) => {},
@@ -557,7 +591,7 @@ describe('workerLoop', () => {
       findRun: (runId) => makeRun(runId as string),
     });
 
-    expect(s.registry.findById(WorkerId('w1'))!.status).toBe('busy');
+    expect(s.registry.findById(WorkerId('w1'), RepositoryId('r1'))!.status).toBe('busy');
   });
 
   it('heartbeat failure during prepareWorktree: aborts prep, job marked failed, lease released (gap A)', async () => {
@@ -583,6 +617,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: executeOk,
       prepareWorktree: async ({ signal }) => {
         capturedSignal = signal;
@@ -631,6 +666,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: async ({ signal }) => {
         // Simulate an adapter that needs ~200 ms to kill its child process.
         // This margin is generous enough to avoid flakiness on slow CI runners.
@@ -682,6 +718,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: async () => ({ ok: true }),
       prepareWorktree: prepareOk,
       resetWorktree: (_repoId) => {},
@@ -721,6 +758,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: async () => await new Promise<never>(() => {}),
       prepareWorktree: prepareOk,
       resetWorktree: (_repoId) => {},
@@ -755,6 +793,7 @@ describe('workerLoop', () => {
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
+      repoId: RepositoryId('r1'),
       executeRun: async () => {
         // Wait for heartbeat to fire
         await new Promise((resolve) => setTimeout(resolve, 150));

@@ -6,6 +6,7 @@ export interface EnqueueJobInput {
 
 export interface ClaimNextInput {
   workerId: WorkerId;
+  repoId: RepositoryId;
   skipJobIds?: Set<JobId>;
   ttlMs?: number;
 }

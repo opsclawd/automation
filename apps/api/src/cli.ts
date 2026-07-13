@@ -55,8 +55,14 @@ export interface BuildProgramOptions {
 }
 
 interface LeaseRepo {
-  heartbeat(repoId: RepositoryId, workerId: WorkerId, now: Date, expiresAt: Date): void;
-  release(repoId: RepositoryId, workerId: WorkerId): void;
+  heartbeat(input: {
+    repoId: RepositoryId;
+    workerId: WorkerId;
+    runId: RunId;
+    now: Date;
+    newExpiresAt: Date;
+  }): void;
+  release(input: { repoId: RepositoryId; workerId: WorkerId; runId: RunId }): void;
 }
 
 // Event types that are recorded (persisted to the DB, available for later
@@ -73,6 +79,7 @@ function startLeaseHeartbeat(
   leaseRepo: LeaseRepo,
   repoId: RepositoryId,
   workerId: WorkerId,
+  runId: RunId,
   ttlMs: number,
   intervalMs: number,
 ): { stop: () => void } {
@@ -81,14 +88,20 @@ function startLeaseHeartbeat(
   const timer = setInterval(() => {
     const hbNow = new Date();
     try {
-      leaseRepo.heartbeat(repoId, workerId, hbNow, new Date(hbNow.getTime() + ttlMs));
+      leaseRepo.heartbeat({
+        repoId,
+        workerId,
+        runId,
+        now: hbNow,
+        newExpiresAt: new Date(hbNow.getTime() + ttlMs),
+      });
       heartbeatFailures = 0;
     } catch (err) {
       heartbeatFailures++;
       if (heartbeatFailures >= maxHeartbeatFailures) {
         console.error(`Fatal: heartbeat failed ${heartbeatFailures}x, aborting run.`);
         clearInterval(timer);
-        leaseRepo.release(repoId, workerId);
+        leaseRepo.release({ repoId, workerId, runId });
         process.exit(EXIT_INTERNAL_ERROR);
       }
       console.error(
@@ -99,7 +112,7 @@ function startLeaseHeartbeat(
   return {
     stop: () => {
       clearInterval(timer);
-      leaseRepo.release(repoId, workerId);
+      leaseRepo.release({ repoId, workerId, runId });
     },
   };
 }
@@ -117,13 +130,14 @@ function printRunFailureSummary(uuid: string, reason?: string): void {
 }
 
 function startWorkerRegistryHeartbeat(
-  registry: { heartbeat(id: WorkerId, now: Date): void },
+  registry: { heartbeat(id: WorkerId, repoId: RepositoryId, now: Date): void },
   workerId: WorkerId,
+  repoId: RepositoryId,
   intervalMs: number,
 ): { stop: () => void } {
   const timer = setInterval(() => {
     try {
-      registry.heartbeat(workerId, new Date());
+      registry.heartbeat(workerId, repoId, new Date());
     } catch (err) {
       console.error(
         `worker-registry heartbeat failed for ${workerId}: ${
@@ -579,6 +593,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             c.workerRegistry.register(
               createWorker({
                 id: workerId,
+                repoId,
                 hostname: os.hostname(),
                 processId: process.pid,
                 now: startedAt,
@@ -588,6 +603,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             workerHeartbeat = startWorkerRegistryHeartbeat(
               c.workerRegistry,
               workerId,
+              repoId,
               buildOpts?.lease?.heartbeatIntervalMs ??
                 DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS,
             );
@@ -637,7 +653,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   'running',
                 );
                 try {
-                  c.workerLeaseRepository.release(repoId, workerId);
+                  c.workerLeaseRepository.release({ repoId, workerId, runId: RunId(run.uuid) });
                 } catch (err) {
                   console.error(
                     `Failed to release lease on exit: ${err instanceof Error ? err.message : String(err)}`,
@@ -654,7 +670,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.once('SIGINT', sigintHandler);
             process.once('SIGTERM', sigtermHandler);
 
-            const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps);
+            const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps(repoId));
 
             await scheduler.runUntilComplete(jobId, abortController.signal);
 
@@ -876,31 +892,51 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
         const testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
 
-        let workerDrainLoop: { stop: () => void } | undefined;
-        let serveWorkerHeartbeat: { stop: () => void } | undefined;
+        // A worker is bound to exactly one repository for its active lifetime
+        // (#651 invariant: worker_assignment_is_immutable_while_active), so
+        // `serve` runs one worker identity + one drain loop per enabled
+        // repository, all concurrently in this single process, rather than
+        // one worker shared across every repo.
+        const workerDrainLoops: Array<{ stop: () => void }> = [];
+        const serveWorkerHeartbeats: Array<{ stop: () => void }> = [];
+        const serveWorkerIds: WorkerId[] = [];
+        // Retained as the sweep mechanism's bookkeeping identity (orphan/
+        // waiting-run recovery is repo-agnostic and unrelated to the #651
+        // per-repo worker binding) — synthetic, never registered.
         let serveWorkerId: WorkerId | undefined;
         if (c.workerRegistry && c.workerLoopDeps) {
+          const enabledRepos = c.listRepositories.execute();
           serveWorkerId = WorkerId(`serve-${process.pid}`);
-          c.workerRegistry.register(
-            createWorker({
-              id: serveWorkerId,
-              hostname: os.hostname(),
-              processId: process.pid,
-              now: new Date(),
-            }),
-          );
           const heartbeatIntervalMs =
             (typeof buildOpts !== 'undefined' && buildOpts?.lease?.heartbeatIntervalMs) ||
             DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS;
-          serveWorkerHeartbeat = startWorkerRegistryHeartbeat(
-            c.workerRegistry,
-            serveWorkerId,
-            heartbeatIntervalMs,
-          );
-          workerDrainLoop = startWorkerDrainLoop(serveWorkerId, {
-            ...c.workerLoopDeps,
-            runRepository: c.runRepository,
-          });
+          for (const repo of enabledRepos) {
+            const repoWorkerId = WorkerId(`serve-${process.pid}-${repo.id}`);
+            c.workerRegistry.register(
+              createWorker({
+                id: repoWorkerId,
+                repoId: repo.id,
+                hostname: os.hostname(),
+                processId: process.pid,
+                now: new Date(),
+              }),
+            );
+            serveWorkerIds.push(repoWorkerId);
+            serveWorkerHeartbeats.push(
+              startWorkerRegistryHeartbeat(
+                c.workerRegistry,
+                repoWorkerId,
+                repo.id,
+                heartbeatIntervalMs,
+              ),
+            );
+            workerDrainLoops.push(
+              startWorkerDrainLoop(repoWorkerId, {
+                ...c.workerLoopDeps(repo.id),
+                runRepository: c.runRepository,
+              }),
+            );
+          }
         }
 
         let sweepTimer: { stop: () => void } | undefined;
@@ -953,13 +989,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           if (isShuttingDown) return;
           isShuttingDown = true;
           sweepTimer?.stop();
-          workerDrainLoop?.stop();
-          serveWorkerHeartbeat?.stop();
-          if (serveWorkerId && c.workerRegistry) {
-            try {
-              c.workerRegistry.deregister(serveWorkerId);
-            } catch (err) {
-              console.error('Failed to deregister worker on exit:', err);
+          for (const loop of workerDrainLoops) loop.stop();
+          for (const hb of serveWorkerHeartbeats) hb.stop();
+          if (c.workerRegistry) {
+            for (const wid of serveWorkerIds) {
+              try {
+                c.workerRegistry.deregister(wid);
+              } catch (err) {
+                console.error('Failed to deregister worker on exit:', err);
+              }
             }
           }
           testWorkerReaper.stop();
@@ -1221,7 +1259,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const releaseLeaseOnSignal = () => {
               try {
                 testWorkerReaper?.stop();
-                c.workerLeaseRepository.release(repoId, workerId);
+                c.workerLeaseRepository.release({ repoId, workerId, runId: RunId(run.uuid) });
               } catch (err) {
                 console.error(
                   `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
@@ -1239,6 +1277,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 c.workerLeaseRepository,
                 repoId,
                 workerId,
+                RunId(run.uuid),
                 leaseTtlMs,
                 heartbeatIntervalMs,
               );
@@ -1389,7 +1428,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const releaseLeaseOnSignal = () => {
                 try {
                   testWorkerReaper?.stop();
-                  c.workerLeaseRepository.release(repoId, workerId);
+                  c.workerLeaseRepository.release({ repoId, workerId, runId: RunId(run.uuid) });
                 } catch (err) {
                   console.error(
                     `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
@@ -1418,6 +1457,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   c.workerLeaseRepository,
                   repoId,
                   workerId,
+                  RunId(run.uuid),
                   leaseTtlMs,
                   heartbeatIntervalMs,
                 );

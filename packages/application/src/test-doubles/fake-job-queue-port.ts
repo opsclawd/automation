@@ -33,7 +33,9 @@ export class FakeJobQueuePort implements JobQueuePort {
 
   claimNext(input: ClaimNextInput): Job | undefined {
     const queued = [...this.jobs.values()]
-      .filter((j) => j.status === 'queued' && !input.skipJobIds?.has(j.id))
+      .filter(
+        (j) => j.status === 'queued' && j.repoId === input.repoId && !input.skipJobIds?.has(j.id),
+      )
       .sort(
         (a, b) =>
           b.priority - a.priority ||
