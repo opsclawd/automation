@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import type { Repository, RepositoryId } from '@ai-sdlc/domain';
 
-const UNSAFE_SEGMENT_PATTERN = /[\\/\\s]/;
+const UNSAFE_SEGMENT_PATTERN = /[\/\s\\]/;
 
 function isUnsafeSegment(value: string): boolean {
   if (!value || value.trim() !== value) {
