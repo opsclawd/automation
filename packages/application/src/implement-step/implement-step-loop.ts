@@ -1992,6 +1992,29 @@ export class ImplementStepLoop {
         }
       }
 
+      // Deterministic pre-verification: typecheck + validation commands + tests.
+      const preTcResult = await deps.runTypecheck(baseCtx);
+      let preRevalidationPassed = true;
+      let preRevalidationDetail: string | undefined;
+
+      if (preTcResult.outcome === 'pass' && deps.runRevalidation) {
+        const revalResult = await deps.runRevalidation(baseCtx);
+        preRevalidationPassed = revalResult.passed;
+        preRevalidationDetail = revalResult.failureDetail;
+      }
+
+      let terminalDeterministicFailures: string | undefined;
+      if (preTcResult.outcome === 'fail' || !preRevalidationPassed) {
+        const failures: string[] = [];
+        if (preTcResult.outcome === 'fail') {
+          failures.push(`Typecheck failed:\n${preTcResult.output}`);
+        }
+        if (!preRevalidationPassed && preRevalidationDetail) {
+          failures.push(preRevalidationDetail);
+        }
+        terminalDeterministicFailures = failures.join('\n\n---\n\n');
+      }
+
       const terminalFixStart = deps.now();
       const terminalFix = await deps.runFix(
         {
@@ -2006,6 +2029,7 @@ export class ImplementStepLoop {
         {
           useFallback: false,
           isTerminalFix: true,
+          ...(terminalDeterministicFailures !== undefined ? { terminalDeterministicFailures } : {}),
           ...(historyContext !== undefined ? { historyContext } : {}),
           ...(terminalHolisticFindings ? { holisticFindings: terminalHolisticFindings } : {}),
         },
@@ -2082,6 +2106,25 @@ export class ImplementStepLoop {
       const isTerminalRebuttal =
         terminalFix.agentOutcome === 'success' && terminalFix.verdict === 'done_no_fixes_needed';
 
+      if (!producedWork && isTerminalRebuttal) {
+        // Rebuttals cannot clear deterministic failures.
+        if (preTcResult.outcome === 'fail' || !preRevalidationPassed) {
+          this.emit(
+            input,
+            'step.terminal_fix.rejected',
+            'warn',
+            `terminal fixer rebutted the outstanding findings but the tree has pre-existing deterministic failures that must be fixed`,
+            {
+              profile: deps.terminalFixProfile,
+              priorIterations: loop.iterations.length,
+              typecheckOutcome: preTcResult.outcome,
+              revalidationPassed: preRevalidationPassed,
+            },
+          );
+          return { outcome: 'needs_human_review', loop };
+        }
+      }
+
       if (!producedWork && !isTerminalRebuttal) {
         this.emit(
           input,
@@ -2101,17 +2144,25 @@ export class ImplementStepLoop {
       }
 
       // Deterministic verification: typecheck + validation commands + tests.
-      // The auto-commit path already typechecked this exact tree content;
-      // reuse that result rather than re-running.
-      const tcResult = typecheckAfterFix ?? (await deps.runTypecheck(baseCtx));
+      let tcResult: TypecheckResult;
       let revalidationPassed = true;
       let revalidationDurationMs = 0;
 
-      if (tcResult.outcome === 'pass' && deps.runRevalidation) {
-        const revalStart = deps.now();
-        const revalResult = await deps.runRevalidation(baseCtx);
-        revalidationPassed = revalResult.passed;
-        revalidationDurationMs = deps.now().getTime() - revalStart.getTime();
+      if (!producedWork && isTerminalRebuttal) {
+        // Optimization: reuse pre-verify result for rebuttals on an identical tree.
+        tcResult = preTcResult;
+        revalidationPassed = preRevalidationPassed;
+      } else {
+        // The auto-commit path already typechecked this exact tree content;
+        // reuse that result rather than re-running.
+        tcResult = typecheckAfterFix ?? (await deps.runTypecheck(baseCtx));
+
+        if (tcResult.outcome === 'pass' && deps.runRevalidation) {
+          const revalStart = deps.now();
+          const revalResult = await deps.runRevalidation(baseCtx);
+          revalidationPassed = revalResult.passed;
+          revalidationDurationMs = deps.now().getTime() - revalStart.getTime();
+        }
       }
 
       const verificationPassed = tcResult.outcome === 'pass' && revalidationPassed;

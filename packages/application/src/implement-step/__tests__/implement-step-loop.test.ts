@@ -4065,4 +4065,126 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     expect(holisticEvent).toBeDefined();
     expect(holisticEvent?.metadata.file).toBe('src/bad.ts');
   });
+
+  it('regression — red pre-verify -> terminal fix sees failures -> accepted on green post-verify', async () => {
+    const { bus, events } = collectEvents();
+    let typecheckCalls = 0;
+    let fixOpts: ImplementFixStepOptions | undefined;
+    const deps = makeDeps({
+      events: bus,
+      runSpecReview: async () => ({ invocationId: 'sr-fail', agentOutcome: 'success', verdict: 'fail' }),
+      runTypecheck: async () => {
+        typecheckCalls++;
+        // Call 1: pre-loop (pass)
+        // Call 2: top-of-iter 2 (pass)
+        // Call 3: pre-verify (fail)
+        // Call 4: post-verify (pass)
+        if (typecheckCalls === 3) return { outcome: 'fail', output: 'Pre-verify fail' };
+        return { outcome: 'pass', output: '' };
+      },
+      runFix: async (_ctx, opts) => {
+        if (opts.isTerminalFix) {
+          fixOpts = opts;
+          return { invocationId: 'fix-terminal', agentOutcome: 'success', verdict: 'done_with_fixes', headBeforeFix: 'sha-1' };
+        }
+        return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
+      },
+      terminalFixProfile: AgentProfileName('fixer'),
+      git: {
+        ...makeFakeGitPort({ headSha: 'sha-1' }),
+        headCommitSha: async () => (typecheckCalls >= 3 ? 'sha-2' : 'sha-1'),
+      },
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('success');
+    expect(fixOpts?.terminalDeterministicFailures).toContain('Pre-verify fail');
+    expect(events.find((e) => e.type === 'step.terminal_fix.accepted')).toBeDefined();
+  });
+
+  it('regression — red pre-verify + terminal rebuttal -> rejected immediately', async () => {
+    const { bus, events } = collectEvents();
+    let typecheckCalls = 0;
+    const deps = makeDeps({
+      events: bus,
+      runSpecReview: async () => ({ invocationId: 'sr-fail', agentOutcome: 'success', verdict: 'fail' }),
+      runTypecheck: async () => {
+        typecheckCalls++;
+        // Call 1: pre-loop (pass)
+        // Call 2: top-of-iter 2 (pass)
+        // Call 3: pre-verify (fail)
+        if (typecheckCalls === 3) return { outcome: 'fail', output: 'Pre-verify fail' };
+        return { outcome: 'pass', output: '' };
+      },
+      runFix: async (_ctx, opts) => {
+        if (opts.isTerminalFix) {
+          return { invocationId: 'fix-terminal', agentOutcome: 'success', verdict: 'done_no_fixes_needed', rebuttal: 'Rebuttal', headBeforeFix: 'sha-1' };
+        }
+        return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
+      },
+      terminalFixProfile: AgentProfileName('fixer'),
+      git: makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('needs_human_review');
+    expect(events.find((e) => e.type === 'step.terminal_fix.rejected')).toBeDefined();
+    expect(typecheckCalls).toBe(3);
+  });
+
+  it('regression — green pre-verify + terminal rebuttal -> accepted without duplicate verification', async () => {
+    const { bus, events } = collectEvents();
+    let typecheckCalls = 0;
+    let revalidationCalls = 0;
+    const deps = makeDeps({
+      events: bus,
+      runSpecReview: async () => ({ invocationId: 'sr-fail', agentOutcome: 'success', verdict: 'fail' }),
+      runTypecheck: async () => {
+        typecheckCalls++;
+        return { outcome: 'pass', output: '' };
+      },
+      runRevalidation: async () => {
+        revalidationCalls++;
+        return { validationRunId: 'v1', passed: true };
+      },
+      runFix: async (_ctx, opts) => {
+        if (opts.isTerminalFix) {
+          return { invocationId: 'fix-terminal', agentOutcome: 'success', verdict: 'done_no_fixes_needed', rebuttal: 'Rebuttal', headBeforeFix: 'sha-1' };
+        }
+        return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
+      },
+      terminalFixProfile: AgentProfileName('fixer'),
+      git: makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('success');
+    expect(events.find((e) => e.type === 'step.terminal_fix.accepted')).toBeDefined();
+    // typecheckCalls: initial (1) + top-of-iter 1 (2) + top-of-trailing (3) + pre-verify (4).
+    // Wait, let's trace:
+    // 1. runImplement
+    // 2. runTypecheck (pre-loop) -> tcCalls=1
+    // 3. Iteration 1 starts.
+    // 4. runTypecheck (top-of-iteration 1 is skipped because iterationIndex=1)
+    // 5. runSpecReview
+    // 6. runQualityReview
+    // 7. runFix -> fixed
+    // 8. Iteration 2 (trailing) starts.
+    // 9. runTypecheck (top-of-iteration 2) -> tcCalls=2
+    // 10. runSpecReview -> fail
+    // 11. runQualityReview -> pass
+    // 12. fix is skipped in trailing.
+    // 13. loop exhausted.
+    // 14. Terminal fix started.
+    // 15. pre-verify runTypecheck -> tcCalls=3
+    // 16. pre-verify runRevalidation -> revalCalls=1
+    // 17. runFix (terminal) -> rebuttal
+    // 18. Acceptance logic: ProducedWork=false, isTerminalRebuttal=true. Optimization: tcResult=preTcResult.
+    // No more TC/Reval calls.
+    expect(typecheckCalls).toBe(3);
+    expect(revalidationCalls).toBe(1);
+  });
 });
