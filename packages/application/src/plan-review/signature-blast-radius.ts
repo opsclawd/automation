@@ -27,7 +27,7 @@ function normalizeFile(file: string): string {
 }
 
 function getOwnedFiles(task: TaskManifestEntryV2): Set<string> {
-  const files = [...(task.expected_files ?? []), ...(task.files ?? [])];
+  const files = task.expected_files ?? task.files ?? [];
   return new Set(files.map(normalizeFile));
 }
 
@@ -212,7 +212,8 @@ export function renderSignatureBlastRadiusDiagnostic(
       if (a.file !== b.file) {
         return a.file.localeCompare(b.file);
       }
-      return a.line - b.line;
+      if (a.line !== b.line) return a.line - b.line;
+      return a.column - b.column;
     });
 
     for (const ref of sortedRefs) {
