@@ -1559,9 +1559,11 @@ export function composeRoot(opts: ComposeOptions): Container {
     metadata.nameWithOwner !== 'unknown/unknown' ? metadata.nameWithOwner : undefined;
   const resolvedRemoteUrl = metadata.remoteUrl;
 
+  const repoId = resolvedRepoFullName ? RepositoryId(resolvedRepoFullName) : ('' as RepositoryId);
+
   const singleRepo: RepositoryPort = resolvedRepoFullName
     ? new SingleRepoAdapter({
-        id: RepositoryId(resolvedRepoFullName),
+        id: repoId,
         owner: resolvedRepoFullName.split('/')[0]!,
         name: resolvedRepoFullName.split('/')[1]!,
         fullName: resolvedRepoFullName,
@@ -1578,7 +1580,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         updatedAt: new Date(),
       })
     : new SingleRepoAdapter({
-        id: '' as RepositoryId,
+        id: repoId,
         owner: '',
         name: '',
         fullName: '',
@@ -1891,7 +1893,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   }
 
   const phaseRepository = new PhaseRepository(db);
-  const eventRepository = new EventRepository(db);
+  const eventRepository = new EventRepository(db, repoId);
   const failureRepository = new FailureRepository(db);
   const agentInvocationRepository = new AgentInvocationRepository(db);
   const validationRunRepository = new ValidationRunRepository(db);
