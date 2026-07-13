@@ -81,8 +81,8 @@ describe('RepositoryRuntimeMigrator', () => {
         startedAt: new Date('2026-05-13T00:00:00Z'),
       });
 
-      const operationalEvents = new EventRepository(operationalDb, repoIdA);
-      operationalEvents.insert({
+      const legacyEvents = new EventRepository(legacyDb, repoIdA);
+      legacyEvents.insert({
         runUuid: 'legacy-run-1',
         level: 'info',
         type: 'run.started',

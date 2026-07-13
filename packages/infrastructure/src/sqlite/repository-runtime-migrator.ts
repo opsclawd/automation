@@ -79,8 +79,17 @@ export class RepositoryRuntimeMigrator {
     const { controlPlaneDb, operationalDb } = this.deps;
 
     const unownedEvents = controlPlaneDb
-      .prepare(`SELECT id FROM events WHERE repo_id IS NULL`)
-      .all() as Array<{ id: number }>;
+      .prepare(`SELECT * FROM events WHERE repo_id IS NULL`)
+      .all() as Array<{
+      id: number;
+      run_uuid: string;
+      phase: string;
+      level: string;
+      type: string;
+      message: string;
+      metadata: unknown;
+      timestamp: number;
+    }>;
 
     if (unownedEvents.length === 0) {
       return;
@@ -91,10 +100,18 @@ export class RepositoryRuntimeMigrator {
         operationalDb
           .prepare(
             `INSERT INTO events (run_uuid, repo_id, phase, level, type, message, metadata, timestamp)
-             SELECT run_uuid, ?, phase, level, type, message, metadata, timestamp
-             FROM events WHERE id = ?`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(repoId, event.id);
+          .run(
+            event.run_uuid,
+            repoId,
+            event.phase,
+            event.level,
+            event.type,
+            event.message,
+            event.metadata,
+            event.timestamp,
+          );
       }
     });
 
