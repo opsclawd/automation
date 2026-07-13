@@ -99,44 +99,75 @@ export function evaluateSignatureBlastRadius(
     return { pass: true, failures: [] };
   }
 
-  const failures: SignatureBlastRadiusFailure[] = [];
+  type FailureEntry = {
+    taskN: number;
+    symbol: string;
+    declarationFile: string;
+    unresolvedDiagnostic?: string;
+    uncoveredReferences: SignatureReferenceLocation[];
+  };
+
+  const grouped = new Map<string, FailureEntry>();
 
   for (const analysis of analyses) {
     const change = analysis.change;
-    const taskN = changes.find(
+    const changeInfo = changes.find(
       (c) => c.declarationFile === change.declarationFile && c.symbol === change.symbol,
-    )?.n;
+    );
 
-    if (taskN === undefined) {
+    if (changeInfo === undefined) {
       continue;
+    }
+
+    const key = `${changeInfo.n}|${change.declarationFile}|${change.symbol}`;
+
+    let entry = grouped.get(key);
+    if (entry === undefined) {
+      entry = {
+        taskN: changeInfo.n,
+        symbol: change.symbol,
+        declarationFile: change.declarationFile,
+        uncoveredReferences: [],
+      };
+      grouped.set(key, entry);
     }
 
     if (analysis.unresolvedDiagnostic) {
-      failures.push({
-        taskN,
-        symbol: change.symbol,
-        declarationFile: change.declarationFile,
-        unresolvedDiagnostic: analysis.unresolvedDiagnostic,
-        uncoveredReferences: [],
-      });
-      continue;
+      entry.unresolvedDiagnostic = analysis.unresolvedDiagnostic;
+    } else {
+      for (const ref of analysis.references) {
+        if (!isFileOwnedByChangingOrLaterTask(ref.file, changeInfo.n, manifest)) {
+          entry.uncoveredReferences.push(ref);
+        }
+      }
     }
+  }
 
-    const uncoveredReferences: SignatureReferenceLocation[] = [];
+  const failures: SignatureBlastRadiusFailure[] = [];
 
-    for (const ref of analysis.references) {
-      if (!isFileOwnedByChangingOrLaterTask(ref.file, taskN, manifest)) {
-        uncoveredReferences.push(ref);
+  for (const entry of grouped.values()) {
+    const seen = new Set<string>();
+    const deduplicated: SignatureReferenceLocation[] = [];
+
+    for (const ref of entry.uncoveredReferences) {
+      const refKey = `${ref.file}|${ref.line}|${ref.column}`;
+      if (!seen.has(refKey)) {
+        seen.add(refKey);
+        deduplicated.push(ref);
       }
     }
 
-    if (uncoveredReferences.length > 0) {
-      failures.push({
-        taskN,
-        symbol: change.symbol,
-        declarationFile: change.declarationFile,
-        uncoveredReferences,
-      });
+    if (deduplicated.length > 0 || entry.unresolvedDiagnostic !== undefined) {
+      const failure: SignatureBlastRadiusFailure = {
+        taskN: entry.taskN,
+        symbol: entry.symbol,
+        declarationFile: entry.declarationFile,
+        uncoveredReferences: deduplicated,
+      };
+      if (entry.unresolvedDiagnostic !== undefined) {
+        failure.unresolvedDiagnostic = entry.unresolvedDiagnostic;
+      }
+      failures.push(failure);
     }
   }
 
