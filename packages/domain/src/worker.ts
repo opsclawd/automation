@@ -16,14 +16,14 @@ export interface CreateWorkerInput {
   now: Date;
 }
 export function createWorker(input: CreateWorkerInput): Worker {
-  return {
+  return Object.freeze({
     id: input.id,
     repoId: input.repoId,
     hostname: input.hostname,
     processId: input.processId,
     status: 'idle',
     heartbeatAt: input.now,
-  };
+  });
 }
 export function heartbeatWorker(w: Worker, now: Date): Worker {
   return { ...w, heartbeatAt: now };
