@@ -286,3 +286,12 @@ export interface ProcessInfo {
 
 export type ListProcessesPort = () => ProcessInfo[];
 export type KillProcessPort = (pid: number) => void;
+
+export type {
+  SignatureReferenceAnalyzerPort,
+  SignatureReferenceAnalyzerInput,
+  SignatureReferenceAnalysis,
+  SignatureReferenceLocation,
+  SignatureReferenceKind,
+  DeclaredSignatureChange,
+} from './ports/signature-reference-analyzer-port.js';

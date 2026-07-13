@@ -92,5 +92,14 @@ export type {
 
 export type { RepositoryRegistryPort, RepositoryUpdatePatch } from './repository-registry-port.js';
 
+export type {
+  SignatureReferenceAnalyzerPort,
+  SignatureReferenceAnalyzerInput,
+  SignatureReferenceAnalysis,
+  SignatureReferenceLocation,
+  SignatureReferenceKind,
+  DeclaredSignatureChange,
+} from './signature-reference-analyzer-port.js';
+
 export type { ProcessInfo } from '../ports.js';
 export * from './review-state-repository-port.js';
