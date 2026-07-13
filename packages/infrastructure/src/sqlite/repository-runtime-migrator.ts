@@ -109,9 +109,13 @@ export class RepositoryRuntimeMigrator {
 
     migrateTx();
 
-    controlPlaneDb
-      .prepare(`DELETE FROM events WHERE id IN (${eventIds.map(() => '?').join(',')})`)
-      .run(...eventIds);
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < eventIds.length; i += BATCH_SIZE) {
+      const batch = eventIds.slice(i, i + BATCH_SIZE);
+      controlPlaneDb
+        .prepare(`DELETE FROM events WHERE id IN (${batch.map(() => '?').join(',')})`)
+        .run(...batch);
+    }
   }
 }
 

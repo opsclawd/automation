@@ -101,6 +101,7 @@ import {
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
+  type EventRepositoryFactory,
   type EventBusPort,
   type RunRecord,
   type RunRepositoryPort,
@@ -1894,6 +1895,8 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const phaseRepository = new PhaseRepository(db);
   const eventRepository = new EventRepository(db, repoId);
+  const eventRepositoryFactory: EventRepositoryFactory = (rId: RepositoryId) =>
+    new EventRepository(db, rId);
   const failureRepository = new FailureRepository(db);
   const agentInvocationRepository = new AgentInvocationRepository(db);
   const validationRunRepository = new ValidationRunRepository(db);
@@ -1929,7 +1932,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     runBashScript,
     runsDir,
     scriptPath: opts.scriptPath,
-    eventRepository,
+    eventRepository: eventRepositoryFactory,
     eventBus,
     createEventTailer,
     baseTmpDir,
