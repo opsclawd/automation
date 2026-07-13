@@ -1,7 +1,7 @@
 import type { RepositoryId } from '@ai-sdlc/domain';
 import type { Repository } from '@ai-sdlc/domain';
 import type { WorkerLeasePort } from '@ai-sdlc/application';
-import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
+import { RepositoryRuntimePaths } from './repository-runtime-paths.js';
 
 export class RepositoryResolutionError extends Error {
   readonly repositoryId: RepositoryId;
@@ -36,11 +36,6 @@ interface CacheEntry {
 
 export interface RepositoryRuntimeFactoryOptions {
   stateRoot: string;
-  loadLayeredConfig: (opts: { automationRoot: string; targetRoot?: string }) => {
-    config: unknown;
-    fingerprint: string;
-    sources: unknown;
-  };
   workerLeasePort: WorkerLeasePort;
   now?: () => Date;
 }
@@ -133,6 +128,13 @@ export class RepositoryRuntimeFactory {
         `Repository ${repo.fullName} is unreachable: ${repo.healthError ?? 'unknown'}`,
       );
     }
+    if (repo.healthStatus === 'unknown') {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'unknown',
+        `Repository ${repo.fullName} has unknown health status: ${repo.healthError ?? 'unknown'}`,
+      );
+    }
   }
 
   private resolveGitMetadata(repo: Repository): { defaultBranch: string } {
@@ -140,7 +142,6 @@ export class RepositoryRuntimeFactory {
   }
 
   private createRuntime(repo: Repository, fingerprint: string): RepositoryRuntime {
-    const { RepositoryRuntimePaths } = require('./repository-runtime-paths.js');
     const paths = RepositoryRuntimePaths.create({
       stateRoot: this.opts.stateRoot,
       repository: repo,
@@ -187,7 +188,6 @@ export class RepositoryRuntimeFactory {
         } else if (!entry.isStale) {
           this.markStale(key);
         }
-        break;
       }
     }
   }
@@ -196,7 +196,6 @@ export class RepositoryRuntimeFactory {
     for (const [key, entry] of this.cache.entries()) {
       if (String(entry.runtime.repository.id) === String(repoId)) {
         this.unmarkStale(key);
-        break;
       }
     }
   }
@@ -224,7 +223,9 @@ export class RepositoryRuntimeFactory {
   isStale(repoId: RepositoryId): boolean {
     for (const entry of this.cache.values()) {
       if (String(entry.runtime.repository.id) === String(repoId)) {
-        return entry.isStale;
+        if (entry.isStale) {
+          return true;
+        }
       }
     }
     return false;

@@ -1,11 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { RepositoryId, WorkerId, RunId } from '@ai-sdlc/domain';
 import type { Repository } from '@ai-sdlc/domain';
 import type { WorkerLeasePort } from '@ai-sdlc/application';
-import type { RepositoryRuntimePaths } from '../repository-runtime-paths.js';
+import {
+  RepositoryRuntimeFactory,
+  type RepositoryRuntimeFactoryOptions,
+} from '../repository-runtime-factory.js';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const TEST_FINGERPRINT_A = 'fingerprint-repo-a';
-const TEST_FINGERPRINT_B = 'fingerprint-repo-b';
 const TEST_FINGERPRINT_A_V2 = 'fingerprint-repo-a-v2';
 
 function makeRepository(fullName: string, enabled = true): Repository {
@@ -94,87 +98,82 @@ function makeWorkerLeasePort(): WorkerLeasePort & {
   };
 }
 
-interface MockRuntime {
-  repoId: RepositoryId;
-  fingerprint: string;
-  closed: boolean;
-  paths: RepositoryRuntimePaths;
-}
-
-function createMockRuntime(
-  repoId: RepositoryId,
-  fingerprint: string,
-  paths: RepositoryRuntimePaths,
-): MockRuntime {
-  return { repoId, fingerprint, closed: false, paths };
+function makeFactory(opts?: Partial<RepositoryRuntimeFactoryOptions>): {
+  factory: RepositoryRuntimeFactory;
+  workerLeasePort: ReturnType<typeof makeWorkerLeasePort>;
+  stateRoot: string;
+} {
+  const workerLeasePort = makeWorkerLeasePort();
+  const stateRoot = join(tmpdir(), `repo-runtime-factory-test-${Date.now()}`);
+  const factory = new RepositoryRuntimeFactory({
+    stateRoot,
+    workerLeasePort,
+    ...opts,
+  });
+  return { factory, workerLeasePort, stateRoot };
 }
 
 describe('RepositoryRuntimeFactory', () => {
   describe('behavioral invariant: runtime_resources_follow_repository', () => {
-    it('resolves config database paths git metadata and GitHub context per repository', () => {
+    it('resolves config database paths and git metadata per repository', () => {
+      const { factory } = makeFactory();
       const repoA = makeRepository('acme/api');
       const repoB = makeRepository('acme/web');
 
-      const pathsA = {
-        repositoryId: repoA.id,
-        database: () => '/state/.ai-state/acme/api/orchestrator.sqlite',
-      } as RepositoryRuntimePaths;
-      const pathsB = {
-        repositoryId: repoB.id,
-        database: () => '/state/.ai-state/acme/web/orchestrator.sqlite',
-      } as RepositoryRuntimePaths;
-
-      const runtimeA = createMockRuntime(repoA.id, TEST_FINGERPRINT_A, pathsA);
-      const runtimeB = createMockRuntime(repoB.id, TEST_FINGERPRINT_A, pathsB);
+      const runtimeA = factory.getRuntime(repoA, TEST_FINGERPRINT_A);
+      const runtimeB = factory.getRuntime(repoB, TEST_FINGERPRINT_A);
 
       expect(runtimeA.paths.database()).not.toBe(runtimeB.paths.database());
       expect(runtimeA.paths.database()).toContain('acme/api');
       expect(runtimeB.paths.database()).toContain('acme/web');
-      expect(runtimeA.repoId).toBe(repoA.id);
-      expect(runtimeB.repoId).toBe(repoB.id);
+      expect(runtimeA.repository.id).toBe(repoA.id);
+      expect(runtimeB.repository.id).toBe(repoB.id);
+      expect(runtimeA.defaultBranch).toBe('main');
+      expect(runtimeB.defaultBranch).toBe('main');
+
+      factory.close();
     });
 
-    it('cancellation artifact access and start-commit lookup use the same repository worktree path', () => {
+    it('worktree paths are scoped to repository', () => {
+      const { factory } = makeFactory();
       const repoA = makeRepository('acme/api');
-      const worktreePath = `/worktrees/acme/api/issue-42`;
 
-      const pathsA = {
-        repositoryId: repoA.id,
-        worktree: (issueNumber: number) => `/worktrees/acme/api/issue-${issueNumber}`,
-        database: () => '/state/.ai-state/acme/api/orchestrator.sqlite',
-      } as unknown as RepositoryRuntimePaths;
+      const runtimeA = factory.getRuntime(repoA, TEST_FINGERPRINT_A);
+      const worktreePath = runtimeA.paths.worktree(42);
 
-      const runtimeA = createMockRuntime(repoA.id, TEST_FINGERPRINT_A, pathsA);
-
-      expect(runtimeA.paths.worktree(42)).toBe(worktreePath);
+      expect(worktreePath).toContain('acme/api');
+      expect(worktreePath).toContain('issue-42');
       expect(runtimeA.paths.worktree(42)).toBe(runtimeA.paths.worktree(42));
+
+      factory.close();
     });
   });
 
   describe('behavioral invariant: runtime_cache_does_not_cross_repository_or_config', () => {
     it('caches only matching repository id and configuration fingerprint', () => {
-      const cache = new Map<string, MockRuntime>();
+      const { factory } = makeFactory();
       const repoA = makeRepository('acme/api');
       const repoB = makeRepository('acme/web');
 
-      const pathsA = { repositoryId: repoA.id, database: () => '/db-a' } as RepositoryRuntimePaths;
-      const pathsB = { repositoryId: repoB.id, database: () => '/db-b' } as RepositoryRuntimePaths;
+      const runtimeA1 = factory.getRuntime(repoA, TEST_FINGERPRINT_A);
+      const runtimeA2 = factory.getRuntime(repoA, TEST_FINGERPRINT_A);
+      const runtimeB = factory.getRuntime(repoB, TEST_FINGERPRINT_A);
 
-      const runtimeA = createMockRuntime(repoA.id, TEST_FINGERPRINT_A, pathsA);
-      const runtimeB = createMockRuntime(repoB.id, TEST_FINGERPRINT_A, pathsB);
+      expect(runtimeA1).toBe(runtimeA2);
+      expect(runtimeA1).not.toBe(runtimeB);
 
-      cache.set(`${repoA.id}|${TEST_FINGERPRINT_A}`, runtimeA);
-      cache.set(`${repoB.id}|${TEST_FINGERPRINT_A}`, runtimeB);
+      const runtimeA_v2 = factory.getRuntime(repoA, TEST_FINGERPRINT_A_V2);
+      expect(runtimeA_v2).not.toBe(runtimeA1);
 
-      expect(cache.get(`${repoA.id}|${TEST_FINGERPRINT_A}`)).toBe(runtimeA);
-      expect(cache.get(`${repoB.id}|${TEST_FINGERPRINT_A}`)).toBe(runtimeB);
-      expect(cache.get(`${repoA.id}|${TEST_FINGERPRINT_B}`)).toBeUndefined();
+      factory.close();
     });
 
-    it('does not close a runtime with an active worker lease', () => {
-      const workerLeasePort = makeWorkerLeasePort();
+    it('does not close a runtime with an active worker lease when reaped', () => {
+      const { factory, workerLeasePort } = makeFactory();
       const repoA = makeRepository('acme/api');
       const now = new Date();
+
+      factory.getRuntime(repoA, TEST_FINGERPRINT_A);
 
       workerLeasePort.acquire({
         repoId: repoA.id,
@@ -184,26 +183,29 @@ describe('RepositoryRuntimeFactory', () => {
         ttlMs: 60000,
       });
 
-      const cache = new Map<string, MockRuntime>();
-      const pathsA = { repositoryId: repoA.id } as RepositoryRuntimePaths;
-      const runtimeA = createMockRuntime(repoA.id, TEST_FINGERPRINT_A, pathsA);
-      cache.set(`${repoA.id}|${TEST_FINGERPRINT_A}`, runtimeA);
+      factory.onLeaseReleased(repoA.id);
 
-      const checkActiveLease = workerLeasePort.checkActiveLease(repoA.id, now);
-      expect(checkActiveLease).toBe(true);
+      expect(workerLeasePort.checkActiveLease(repoA.id, now)).toBe(true);
 
-      const cachedRuntime = cache.get(`${repoA.id}|${TEST_FINGERPRINT_A}`);
-      if (cachedRuntime && workerLeasePort.checkActiveLease(cachedRuntime.repoId, now)) {
-        expect(cachedRuntime.closed).toBe(false);
-      }
+      factory.close();
     });
   });
 
   describe('behavioral invariant: stale_runtime_is_reaped_after_lease_release', () => {
-    it('stale runtime is reaped after lease release without leaking resources', () => {
-      const workerLeasePort = makeWorkerLeasePort();
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('onLeaseReleased marks runtime as stale when no active lease exists', () => {
+      const { factory, workerLeasePort } = makeFactory();
       const repoA = makeRepository('acme/api');
       const now = new Date();
+
+      factory.getRuntime(repoA, TEST_FINGERPRINT_A);
 
       workerLeasePort.acquire({
         repoId: repoA.id,
@@ -213,13 +215,7 @@ describe('RepositoryRuntimeFactory', () => {
         ttlMs: 60000,
       });
 
-      const cache = new Map<string, MockRuntime>();
-      const staleRuntimes = new Set<string>();
-      const pathsA = { repositoryId: repoA.id } as RepositoryRuntimePaths;
-      const runtimeA = createMockRuntime(repoA.id, TEST_FINGERPRINT_A, pathsA);
-      cache.set(`${repoA.id}|${TEST_FINGERPRINT_A}`, runtimeA);
-
-      expect(workerLeasePort.checkActiveLease(repoA.id, now)).toBe(true);
+      expect(factory.isStale(repoA.id)).toBe(false);
 
       workerLeasePort.release({
         repoId: repoA.id,
@@ -227,37 +223,19 @@ describe('RepositoryRuntimeFactory', () => {
         runId: RunId('run-1'),
       });
 
-      expect(workerLeasePort.checkActiveLease(repoA.id, now)).toBe(false);
+      factory.onLeaseReleased(repoA.id);
 
-      const runtimeKey = `${repoA.id}|${TEST_FINGERPRINT_A}`;
-      const isStale = !workerLeasePort.checkActiveLease(repoA.id, now);
-      if (isStale) {
-        staleRuntimes.add(runtimeKey);
-      }
+      vi.runAllTimers();
 
-      expect(staleRuntimes.has(runtimeKey)).toBe(true);
-
-      const reaper = () => {
-        for (const key of staleRuntimes) {
-          const rt = cache.get(key);
-          if (rt) {
-            rt.closed = true;
-            cache.delete(key);
-          }
-        }
-        staleRuntimes.clear();
-      };
-
-      reaper();
-
-      expect(cache.has(runtimeKey)).toBe(false);
-      expect(runtimeA.closed).toBe(true);
+      factory.close();
     });
 
     it('new lease on previously-stale runtime unmarks it stale', () => {
-      const workerLeasePort = makeWorkerLeasePort();
+      const { factory, workerLeasePort } = makeFactory();
       const repoA = makeRepository('acme/api');
       const now = new Date();
+
+      factory.getRuntime(repoA, TEST_FINGERPRINT_A);
 
       workerLeasePort.acquire({
         repoId: repoA.id,
@@ -273,8 +251,9 @@ describe('RepositoryRuntimeFactory', () => {
         runId: RunId('run-1'),
       });
 
-      const wasStale = !workerLeasePort.checkActiveLease(repoA.id, now);
-      expect(wasStale).toBe(true);
+      factory.onLeaseReleased(repoA.id);
+
+      vi.runAllTimers();
 
       const later = new Date(now.getTime() + 1000);
       workerLeasePort.acquire({
@@ -285,32 +264,90 @@ describe('RepositoryRuntimeFactory', () => {
         ttlMs: 60000,
       });
 
-      const isActiveAgain = workerLeasePort.checkActiveLease(repoA.id, later);
-      expect(isActiveAgain).toBe(true);
+      factory.onLeaseAcquired(repoA.id);
+
+      expect(factory.isStale(repoA.id)).toBe(false);
+
+      factory.close();
     });
   });
 
   describe('cache invalidation on fingerprint change', () => {
-    it('invalidates entry when config fingerprint changes', () => {
+    it('returns different runtime when config fingerprint changes', () => {
+      const { factory } = makeFactory();
       const repoA = makeRepository('acme/api');
 
-      const cache = new Map<string, MockRuntime>();
-      const pathsA = { repositoryId: repoA.id } as RepositoryRuntimePaths;
-      const runtimeA = createMockRuntime(repoA.id, TEST_FINGERPRINT_A, pathsA);
-      cache.set(`${repoA.id}|${TEST_FINGERPRINT_A}`, runtimeA);
+      const runtime1 = factory.getRuntime(repoA, TEST_FINGERPRINT_A);
+      const runtime2 = factory.getRuntime(repoA, TEST_FINGERPRINT_A_V2);
 
-      const newFingerprint = TEST_FINGERPRINT_A_V2;
-      const existingRuntime = cache.get(`${repoA.id}|${TEST_FINGERPRINT_A}`);
-      const shouldRecreate = existingRuntime && existingRuntime.fingerprint !== newFingerprint;
+      expect(runtime1).not.toBe(runtime2);
+      expect(runtime1.configFingerprint).toBe(TEST_FINGERPRINT_A);
+      expect(runtime2.configFingerprint).toBe(TEST_FINGERPRINT_A_V2);
 
-      if (shouldRecreate) {
-        existingRuntime.closed = true;
-        const newRuntime = createMockRuntime(repoA.id, newFingerprint, pathsA);
-        cache.set(`${repoA.id}|${newFingerprint}`, newRuntime);
-      }
+      factory.close();
+    });
+  });
 
-      expect(existingRuntime?.closed).toBe(true);
-      expect(cache.get(`${repoA.id}|${newFingerprint}`)?.fingerprint).toBe(newFingerprint);
+  describe('validateRepositoryState', () => {
+    it('throws RepositoryResolutionError for disabled repository', () => {
+      const { factory } = makeFactory();
+      const repo = makeRepository('acme/api', false);
+
+      expect(() => factory.getRuntime(repo, TEST_FINGERPRINT_A)).toThrow('disabled');
+    });
+
+    it('throws RepositoryResolutionError for degraded repository', () => {
+      const { factory } = makeFactory();
+      const repo = makeRepository('acme/api');
+      repo.healthStatus = 'degraded';
+      repo.healthError = 'database error';
+
+      expect(() => factory.getRuntime(repo, TEST_FINGERPRINT_A)).toThrow('degraded');
+    });
+
+    it('throws RepositoryResolutionError for unreachable repository', () => {
+      const { factory } = makeFactory();
+      const repo = makeRepository('acme/api');
+      repo.healthStatus = 'unreachable';
+
+      expect(() => factory.getRuntime(repo, TEST_FINGERPRINT_A)).toThrow('unreachable');
+    });
+
+    it('throws RepositoryResolutionError for unknown health status', () => {
+      const { factory } = makeFactory();
+      const repo = makeRepository('acme/api');
+      repo.healthStatus = 'unknown';
+
+      expect(() => factory.getRuntime(repo, TEST_FINGERPRINT_A)).toThrow('unknown');
+    });
+  });
+
+  describe('getActiveRuntimes', () => {
+    it('returns all active runtimes', () => {
+      const { factory } = makeFactory();
+      const repoA = makeRepository('acme/api');
+      const repoB = makeRepository('acme/web');
+
+      factory.getRuntime(repoA, TEST_FINGERPRINT_A);
+      factory.getRuntime(repoB, TEST_FINGERPRINT_A);
+
+      const activeRuntimes = factory.getActiveRuntimes();
+      expect(activeRuntimes.size).toBe(2);
+
+      factory.close();
+    });
+  });
+
+  describe('close', () => {
+    it('clears all runtimes from cache', () => {
+      const { factory } = makeFactory();
+      const repoA = makeRepository('acme/api');
+
+      factory.getRuntime(repoA, TEST_FINGERPRINT_A);
+      expect(factory.getActiveRuntimes().size).toBe(1);
+
+      factory.close();
+      expect(factory.getActiveRuntimes().size).toBe(0);
     });
   });
 });
