@@ -84,25 +84,25 @@ export const taskManifestV2Schema = z
     tasks: z.array(taskManifestEntryV2Schema),
   })
   .passthrough()
-  .refine(
-    (manifest) => {
-      for (const task of manifest.tasks) {
-        const ownedFiles = new Set([...(task.expected_files ?? []), ...(task.files ?? [])]);
-        if (task.signature_changes) {
-          for (const sc of task.signature_changes) {
-            if (!ownedFiles.has(sc.declaration_file)) {
-              return false;
-            }
+  .superRefine((manifest, ctx) => {
+    for (const [taskIndex, task] of manifest.tasks.entries()) {
+      const ownedFiles = new Set(
+        (task.expected_files ?? task.files ?? []).map((f) => f.replace(/\\/g, '/')),
+      );
+      if (task.signature_changes) {
+        for (const [scIndex, sc] of task.signature_changes.entries()) {
+          if (!ownedFiles.has(sc.declaration_file.replace(/\\/g, '/'))) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                "each signature_changes declaration_file must be in the task's expected_files or files",
+              path: ['tasks', taskIndex, 'signature_changes', scIndex, 'declaration_file'],
+            });
           }
         }
       }
-      return true;
-    },
-    {
-      message:
-        "each signature_changes declaration_file must be in the task's expected_files or files",
-    },
-  );
+    }
+  });
 
 export const taskManifestSchema = z.union([taskManifestV1Schema, taskManifestV2Schema]);
 
