@@ -73,20 +73,26 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
 
   const skippedJobIds = new Set<JobId>();
 
-  const claimRepoId = deps.repoId ?? deps.repos.listEnabled()[0]?.id;
-  if (!claimRepoId) {
+  const reposToTry = deps.repoId ? [deps.repoId] : deps.repos.listEnabled().map((r) => r.id);
+
+  if (reposToTry.length === 0) {
     return;
   }
 
   while (true) {
-    // Reset the scheduler's watchdog timer at the start of each job claim cycle.
     deps.onProgress?.();
-    const job = queue.claimNext({
-      workerId,
-      repoId: claimRepoId,
-      skipJobIds: skippedJobIds,
-      ttlMs: deps.ttlMs,
-    });
+
+    let job = null;
+    for (const repoId of reposToTry) {
+      job = queue.claimNext({
+        workerId,
+        repoId: repoId!,
+        skipJobIds: skippedJobIds,
+        ttlMs: deps.ttlMs,
+      });
+      if (job) break;
+    }
+
     if (!job) {
       return;
     }

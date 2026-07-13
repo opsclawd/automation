@@ -417,7 +417,7 @@ describe('workerLoop', () => {
       }),
     });
     // Advance job through claimed→running (w1 crashed after markRunning)
-    s.queue.claimNext({ workerId: WorkerId('w1') });
+    s.queue.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') });
     s.queue.markRunning(JobId('j-old'), s.now);
 
     // Give w1 a lease that expired
