@@ -85,7 +85,13 @@ describe('serve sweep-then-drive integration', () => {
     registry = new FakeWorkerRegistryPort();
     leases = new FakeWorkerLeasePort(registry);
     registry.register(
-      createWorker({ id: serveWorkerId, hostname: 'test', processId: 1, now: fixedNow }),
+      createWorker({
+        id: serveWorkerId,
+        repoId: RepositoryId('owner/repo'),
+        hostname: 'test',
+        processId: 1,
+        now: fixedNow,
+      }),
     );
   });
 
@@ -130,6 +136,7 @@ describe('serve sweep-then-drive integration', () => {
       queue,
       leases,
       repos,
+      repoId: RepositoryId('owner/repo'),
       executeRun,
       prepareWorktree: async () => ({ cwd: '/tmp/wt' }),
       resetWorktree: () => {},
@@ -176,6 +183,7 @@ describe('serve sweep-then-drive integration', () => {
       queue,
       leases,
       repos,
+      repoId: RepositoryId('owner/repo'),
       executeRun,
       prepareWorktree: async () => ({ cwd: '/tmp/wt' }),
       resetWorktree: () => {},

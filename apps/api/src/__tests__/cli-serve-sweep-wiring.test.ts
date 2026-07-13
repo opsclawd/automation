@@ -40,8 +40,11 @@ const { mockServer, mockContainer, mockSweeper, mockOrphanSweeper, registerSpy, 
         deregister: vi.fn(),
         heartbeat: heartbeatSpy,
       },
-      workerLoopDeps: {
+      workerLoopDeps: () => ({
         mock: 'deps',
+      }),
+      listRepositories: {
+        execute: vi.fn().mockReturnValue([{ id: 'owner/repo', fullName: 'owner/repo' }]),
       },
       runRepository: {
         findActiveRuns: vi.fn().mockReturnValue([]),

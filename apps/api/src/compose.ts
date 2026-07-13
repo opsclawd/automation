@@ -495,7 +495,14 @@ export interface Container {
   workerLeaseRepository: WorkerLeaseRepository;
   jobQueue: JobQueuePort;
   workerRegistry?: WorkerRegistryPort;
-  workerLoopDeps?: Omit<WorkerLoopDeps, 'recoverableRunIds'>;
+  /**
+   * A worker is bound to exactly one repository for its active lifetime
+   * (#651 invariant: worker_assignment_is_immutable_while_active), so the
+   * deps a worker loop needs are repo-scoped, not shared across repos.
+   * Callers build one worker identity + one deps object per repository
+   * they want to service concurrently (see the `serve` command).
+   */
+  workerLoopDeps?: (repoId: RepositoryId) => Omit<WorkerLoopDeps, 'recoverableRunIds'>;
   serveSweepIntervalSeconds: number;
   buildWaitingRunsSweeper: () => import('@ai-sdlc/application').WaitingRunsSweeper;
   buildOrphanedRunsSweeper: () => import('@ai-sdlc/application').OrphanedRunsSweeper;
@@ -5461,13 +5468,16 @@ export function composeRoot(opts: ComposeOptions): Container {
       logger: sweepLogger,
     });
 
-  const workerLoopDeps: Omit<WorkerLoopDeps, 'recoverableRunIds'> | undefined =
+  const workerLoopDeps:
+    | ((repoId: RepositoryId) => Omit<WorkerLoopDeps, 'recoverableRunIds'>)
+    | undefined =
     runExecutor !== undefined
-      ? {
+      ? (repoId: RepositoryId) => ({
           registry: workerRegistry,
           queue: jobQueue,
           leases: workerLeaseRepository,
           repos: registryBackedRepo,
+          repoId,
           executeRun: async ({ run, signal: _signal }) => {
             runRepository.update(run.uuid, { pid: process.pid });
             const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
@@ -5507,7 +5517,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
           },
           isWorkerAlive: (workerId) => {
-            const w = workerRegistry.findById(workerId);
+            const w = workerRegistry.findById(workerId, repoId);
             if (!w) return false;
             if (w.hostname !== os.hostname()) {
               // Cannot check PID on a remote host — treat stale heartbeat as dead.
@@ -5523,7 +5533,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               `Lease reclaimed: repo=${info.repoId} prev=${info.previousWorkerId} by=${info.reclaimedByWorkerId}: ${info.reason}`,
             );
           },
-        }
+        })
       : undefined;
 
   const resumeRun = new ResumeRun({
