@@ -43,6 +43,7 @@ export interface RepositoryRuntimeFactoryOptions {
 export class RepositoryRuntimeFactory {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly staleRuntimes = new Set<string>();
+  private readonly activeFingerprint = new Map<string, string>();
   private reapScheduled = false;
   private readonly opts: RepositoryRuntimeFactoryOptions;
 
@@ -91,7 +92,17 @@ export class RepositoryRuntimeFactory {
         continue;
       }
 
-      if (this.opts.workerLeasePort.checkActiveLease(entry.runtime.repository.id, now)) {
+      let hasActiveLease = false;
+      try {
+        hasActiveLease = this.opts.workerLeasePort.checkActiveLease(
+          entry.runtime.repository.id,
+          now,
+        );
+      } catch {
+        continue;
+      }
+
+      if (hasActiveLease) {
         this.unmarkStale(key);
         continue;
       }
@@ -103,6 +114,11 @@ export class RepositoryRuntimeFactory {
       }
       this.cache.delete(key);
       this.staleRuntimes.delete(key);
+
+      const repoIdStr = String(entry.runtime.repository.id);
+      if (this.activeFingerprint.get(repoIdStr) === entry.fingerprint) {
+        this.activeFingerprint.delete(repoIdStr);
+      }
     }
   }
 
@@ -172,6 +188,14 @@ export class RepositoryRuntimeFactory {
       return existingEntry.runtime;
     }
 
+    const previousActiveFingerprint = this.activeFingerprint.get(String(repo.id));
+    if (previousActiveFingerprint && previousActiveFingerprint !== fingerprint) {
+      const previousKey = this.cacheKey(repo.id, previousActiveFingerprint);
+      this.markStale(previousKey);
+    }
+
+    this.activeFingerprint.set(String(repo.id), fingerprint);
+
     const runtime = this.createRuntime(repo, fingerprint);
     this.cache.set(key, { runtime, fingerprint, isStale: false });
 
@@ -180,10 +204,12 @@ export class RepositoryRuntimeFactory {
 
   onLeaseReleased(repoId: RepositoryId): void {
     const now = this.opts.now?.() ?? new Date();
+    const repoIdStr = String(repoId);
+    const hasActiveLease = this.opts.workerLeasePort.checkActiveLease(repoId, now);
 
     for (const [key, entry] of this.cache.entries()) {
-      if (String(entry.runtime.repository.id) === String(repoId)) {
-        if (this.opts.workerLeasePort.checkActiveLease(repoId, now)) {
+      if (String(entry.runtime.repository.id) === repoIdStr) {
+        if (hasActiveLease) {
           this.unmarkStale(key);
         } else if (!entry.isStale) {
           this.markStale(key);
@@ -193,11 +219,11 @@ export class RepositoryRuntimeFactory {
   }
 
   onLeaseAcquired(repoId: RepositoryId): void {
-    for (const [key, entry] of this.cache.entries()) {
-      if (String(entry.runtime.repository.id) === String(repoId)) {
-        this.unmarkStale(key);
-      }
-    }
+    const activeFp = this.activeFingerprint.get(String(repoId));
+    if (!activeFp) return;
+
+    const key = this.cacheKey(repoId, activeFp);
+    this.unmarkStale(key);
   }
 
   close(): void {
@@ -210,24 +236,28 @@ export class RepositoryRuntimeFactory {
     }
     this.cache.clear();
     this.staleRuntimes.clear();
+    this.activeFingerprint.clear();
   }
 
   getActiveRuntimes(): ReadonlyMap<string, RepositoryRuntime> {
     const result = new Map<string, RepositoryRuntime>();
-    for (const [key, entry] of this.cache.entries()) {
-      result.set(key, entry.runtime);
+    for (const [repoIdStr, activeFp] of this.activeFingerprint.entries()) {
+      const key = this.cacheKey(repoIdStr as RepositoryId, activeFp);
+      const entry = this.cache.get(key);
+      if (entry && !entry.isStale) {
+        result.set(key, entry.runtime);
+      }
     }
     return result;
   }
 
   isStale(repoId: RepositoryId): boolean {
-    for (const entry of this.cache.values()) {
-      if (String(entry.runtime.repository.id) === String(repoId)) {
-        if (entry.isStale) {
-          return true;
-        }
-      }
-    }
-    return false;
+    const repoIdStr = String(repoId);
+    const activeFp = this.activeFingerprint.get(repoIdStr);
+    if (!activeFp) return false;
+
+    const key = this.cacheKey(repoId, activeFp);
+    const entry = this.cache.get(key);
+    return entry?.isStale ?? false;
   }
 }
