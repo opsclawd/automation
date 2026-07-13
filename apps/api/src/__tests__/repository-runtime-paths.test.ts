@@ -150,6 +150,84 @@ describe('RepositoryRuntimePaths', () => {
     const repo = makeRepository('acme', 'api', 'acme/api');
     const paths = RepositoryRuntimePaths.create({ stateRoot, repository: repo });
 
+    describe('rejects unsafe segment inputs', () => {
+      it('run() rejects unsafe displayId', () => {
+        const unsafeCases = [
+          { displayId: '..', reason: 'displayId is ..' },
+          { displayId: '.', reason: 'displayId is .' },
+          { displayId: '../run', reason: 'displayId contains .. traversal' },
+          { displayId: './run', reason: 'displayId contains . traversal' },
+          { displayId: '', reason: 'displayId is empty' },
+          { displayId: 'run name', reason: 'displayId contains space' },
+          { displayId: 'run/name', reason: 'displayId contains /' },
+          { displayId: 'run\\name', reason: 'displayId contains backslash' },
+        ];
+
+        for (const { displayId, reason } of unsafeCases) {
+          expect(() => paths.run(displayId), reason).toThrow();
+        }
+      });
+
+      it('tmp() rejects unsafe runUuid', () => {
+        const unsafeCases = [
+          { runUuid: '..', reason: 'runUuid is ..' },
+          { runUuid: '.', reason: 'runUuid is .' },
+          { runUuid: '../tmp', reason: 'runUuid contains .. traversal' },
+          { runUuid: './tmp', reason: 'runUuid contains . traversal' },
+          { runUuid: '', reason: 'runUuid is empty' },
+          { runUuid: 'uuid name', reason: 'runUuid contains space' },
+          { runUuid: 'uuid/name', reason: 'runUuid contains /' },
+          { runUuid: 'uuid\\name', reason: 'runUuid contains backslash' },
+        ];
+
+        for (const { runUuid, reason } of unsafeCases) {
+          expect(() => paths.tmp(runUuid), reason).toThrow();
+        }
+      });
+
+      it('validationLog() rejects unsafe displayId or checkId', () => {
+        const unsafeCases = [
+          { displayId: '..', checkId: 'check', reason: 'displayId is ..' },
+          { displayId: '.', checkId: 'check', reason: 'displayId is .' },
+          { displayId: '../log', checkId: 'check', reason: 'displayId contains .. traversal' },
+          { displayId: '', checkId: 'check', reason: 'displayId is empty' },
+          { displayId: 'run name', checkId: 'check', reason: 'displayId contains space' },
+          { displayId: 'run/name', checkId: 'check', reason: 'displayId contains /' },
+          { displayId: 'run', checkId: '..', reason: 'checkId is ..' },
+          { displayId: 'run', checkId: '.', reason: 'checkId is .' },
+          { displayId: 'run', checkId: '../check', reason: 'checkId contains .. traversal' },
+          { displayId: 'run', checkId: '', reason: 'checkId is empty' },
+          { displayId: 'run', checkId: 'check name', reason: 'checkId contains space' },
+          { displayId: 'run', checkId: 'check/name', reason: 'checkId contains /' },
+        ];
+
+        for (const { displayId, checkId, reason } of unsafeCases) {
+          expect(() => paths.validationLog(displayId, checkId), reason).toThrow();
+        }
+      });
+
+      it('prompt() rejects unsafe runUuid or purpose', () => {
+        const unsafeCases = [
+          { runUuid: '..', purpose: 'impl', reason: 'runUuid is ..' },
+          { runUuid: '.', purpose: 'impl', reason: 'runUuid is .' },
+          { runUuid: '../prompt', purpose: 'impl', reason: 'runUuid contains .. traversal' },
+          { runUuid: '', purpose: 'impl', reason: 'runUuid is empty' },
+          { runUuid: 'uuid name', purpose: 'impl', reason: 'runUuid contains space' },
+          { runUuid: 'uuid/name', purpose: 'impl', reason: 'runUuid contains /' },
+          { runUuid: 'uuid', purpose: '..', reason: 'purpose is ..' },
+          { runUuid: 'uuid', purpose: '.', reason: 'purpose is .' },
+          { runUuid: 'uuid', purpose: '../prompt', reason: 'purpose contains .. traversal' },
+          { runUuid: 'uuid', purpose: '', reason: 'purpose is empty' },
+          { runUuid: 'uuid', purpose: 'prompt text', reason: 'purpose contains space' },
+          { runUuid: 'uuid', purpose: 'prompt/text', reason: 'purpose contains /' },
+        ];
+
+        for (const { runUuid, purpose, reason } of unsafeCases) {
+          expect(() => paths.prompt(runUuid, purpose), reason).toThrow();
+        }
+      });
+    });
+
     it('exposes repositoryId', () => {
       expect(paths.repositoryId).toBe(repo.id);
     });
