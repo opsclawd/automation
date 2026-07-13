@@ -61,13 +61,14 @@ This list is the documented minimum; concrete adapter implementations may add st
       bare.git/
       worktrees/
         issue-123-run-<runId>/
-  runs/
-    <runId>/
-      prompts/
-      logs/
-      artifacts/
-      diffs/
-  orchestrator.sqlite
+      .ai-runs/
+        <runId>/
+          prompts/
+          logs/
+          artifacts/
+          diffs/
+      operational.sqlite  # per-repository operational state (Jobs, Runs, Workers, leases, events, artifacts)
+  control.sqlite  # registry/control plane (Repositories, configuration)
 ```
 
 Rules:
@@ -76,6 +77,7 @@ Rules:
 - One active worktree per repo lease.
 - Completed worktrees may be cleaned or archived.
 - Artifacts remain under the run directory; the repo cache and run artifacts are kept in separate trees.
+- **Operational state partitioning**: Jobs, Runs, Workers, leases, events, and artifacts are repository-local operational state stored in each repository's `operational.sqlite`. The registry/control plane (`control.sqlite`) is central and contains repository metadata needed to resolve a Repository. This separation ensures per-repository event audit trails, query isolation, and potential future per-repo data retention.
 
 ## systemd services (VPS)
 
@@ -157,6 +159,7 @@ Routing is never inferred by opaque LLM judgment.
 - Local Qwen via Pi reduces frontier-model cost for bounded tasks; OpenCode remains available for complex work.
 - M8's TypeScript executor stays runtime-agnostic — it only depends on `JobQueuePort`, `WorkerLeasePort`, `AgentPort`, `GitPort`, `GitHubPort`, `ValidationPort`, and `ArtifactStore`.
 - Every `AgentInvocation` records its profile, runtime, provider, model, prompt path, stdout/stderr paths, timeout, artifacts, result, contract violations, and (when relevant) the failed invocation it is a fallback of.
+- **Operational state partitioning**: Jobs, Runs, Workers, leases, events, and artifacts are repository-local operational state. This enables per-repository event audit trails, query isolation, and future per-repo data retention without cross-repo contamination. Each persisted event carries its stable `repoId` bound at insertion time, ensuring unambiguous ownership.
 
 **Negative / costs**
 
@@ -166,6 +169,7 @@ Routing is never inferred by opaque LLM judgment.
 - Lease recovery must be implemented for the case where a Worker crashes mid-Run.
 - Git worktree isolation must be strict to keep concurrent Runs from colliding on the repo cache.
 - Routing policy adds configuration complexity and must be kept current as new failure modes emerge.
+- Legacy data from a shared database must be migrated on first per-repository runtime creation; ambiguous ownership fails closed to prevent data corruption.
 
 ## Non-goals
 

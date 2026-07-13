@@ -2,9 +2,12 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { RepositoryId } from '@ai-sdlc/domain';
 import { openDatabase, applyMigrations } from '../../index.js';
 import { RunRepository } from '../run-repository.js';
 import { EventRepository } from '../event-repository.js';
+
+const stableRepoId = RepositoryId('owner/repo');
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'ai-orch-ev-'));
@@ -17,7 +20,7 @@ describe('EventRepository', () => {
   it('inserts an event and returns a monotonic row id', () => {
     const db = freshDb();
     const runs = new RunRepository(db);
-    const repo = new EventRepository(db);
+    const repo = new EventRepository(db, stableRepoId);
 
     runs.insert({
       uuid: 'r',
@@ -50,7 +53,7 @@ describe('EventRepository', () => {
   it('lists events by run with since-cursor filtering', () => {
     const db = freshDb();
     const runs = new RunRepository(db);
-    const repo = new EventRepository(db);
+    const repo = new EventRepository(db, stableRepoId);
 
     runs.insert({
       uuid: 'r',
@@ -94,7 +97,7 @@ describe('EventRepository', () => {
   it('orders by (timestamp, id) for deterministic pagination when timestamps collide', () => {
     const db = freshDb();
     const runs = new RunRepository(db);
-    const repo = new EventRepository(db);
+    const repo = new EventRepository(db, stableRepoId);
     runs.insert({
       uuid: 'r',
       displayId: 'issue-1-20260513-000000',
@@ -128,7 +131,7 @@ describe('EventRepository', () => {
   it('stores and retrieves metadata as JSON', () => {
     const db = freshDb();
     const runs = new RunRepository(db);
-    const repo = new EventRepository(db);
+    const repo = new EventRepository(db, stableRepoId);
 
     runs.insert({
       uuid: 'r',
@@ -151,6 +154,37 @@ describe('EventRepository', () => {
 
     const events = repo.listByRunSince('r');
     expect(events[0].metadata).toEqual({ attempt: 3, agent: 'coder' });
+    db.close();
+  });
+
+  it('event_repository_identity_is_runtime_bound: persists and returns the stable repoId', () => {
+    const db = freshDb();
+    const runs = new RunRepository(db);
+    const repoIdA = RepositoryId('owner/repo-a');
+    const repoA = new EventRepository(db, repoIdA);
+
+    runs.insert({
+      uuid: 'r1',
+      displayId: 'issue-1-20260513-000000',
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+
+    repoA.insert({
+      runUuid: 'r1',
+      level: 'info',
+      type: 'run.started',
+      message: 'started',
+      timestamp: new Date('2026-05-13T00:00:01Z'),
+    });
+
+    const events = repoA.listByRunSince('r1');
+    expect(events).toHaveLength(1);
+    expect(events[0]!.repoId).toBe(repoIdA);
+    expect(events[0]!.runUuid).toBe('r1');
     db.close();
   });
 });

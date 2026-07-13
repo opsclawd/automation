@@ -1,8 +1,10 @@
 import type { Db } from './database.js';
+import type { RepositoryId } from '@ai-sdlc/domain';
 
 export interface EventRow {
   id: number;
   runUuid: string;
+  repoId: RepositoryId;
   phase?: string;
   level: string;
   type: string;
@@ -23,16 +25,20 @@ export interface EventInput {
 
 /** Implements EventRepositoryPort (@ai-sdlc/application). */
 export class EventRepository {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly repoId: RepositoryId,
+  ) {}
 
   insert(event: EventInput): number {
     const res = this.db
       .prepare(
-        `INSERT INTO events (run_uuid, phase, level, type, message, metadata, timestamp)
-         VALUES (@run_uuid, @phase, @level, @type, @message, @metadata, @timestamp)`,
+        `INSERT INTO events (run_uuid, repo_id, phase, level, type, message, metadata, timestamp)
+         VALUES (@run_uuid, @repo_id, @phase, @level, @type, @message, @metadata, @timestamp)`,
       )
       .run({
         run_uuid: event.runUuid,
+        repo_id: this.repoId,
         phase: event.phase ?? null,
         level: event.level,
         type: event.type,
@@ -58,6 +64,7 @@ export class EventRepository {
     const rows = this.db.prepare(sql).all(...params) as Array<{
       id: number;
       run_uuid: string;
+      repo_id: string | null;
       phase: string | null;
       level: string;
       type: string;
@@ -68,6 +75,7 @@ export class EventRepository {
     return rows.map((r) => ({
       id: r.id,
       runUuid: r.run_uuid,
+      repoId: r.repo_id as RepositoryId,
       ...(r.phase !== null ? { phase: r.phase } : {}),
       level: r.level,
       type: r.type,

@@ -1,0 +1,117 @@
+import type { Db } from './database.js';
+import type { RepositoryId } from '@ai-sdlc/domain';
+
+export interface LegacyOperationalState {
+  hasLegacyRuns: boolean;
+  hasLegacyEvents: boolean;
+  hasLegacyArtifacts: boolean;
+  legacyArtifactRoot?: string;
+}
+
+export interface RepositoryRuntimeMigratorDeps {
+  controlPlaneDb: Db;
+  operationalDb: Db;
+  legacyArtifactRoot?: string;
+  listEnabledRepositories: () => Array<{ id: RepositoryId; fullName: string }>;
+  artifactMover?: (src: string, dest: string) => Promise<void>;
+}
+
+export class RepositoryRuntimeMigrator {
+  constructor(private readonly deps: RepositoryRuntimeMigratorDeps) {}
+
+  detectLegacyState(): LegacyOperationalState {
+    const { controlPlaneDb, legacyArtifactRoot } = this.deps;
+
+    const runsWithoutRepoId = (
+      controlPlaneDb
+        .prepare(`SELECT COUNT(*) as c FROM runs WHERE repo_id IS NULL OR repo_id = 'unknown'`)
+        .get() as { c: number }
+    ).c;
+
+    const eventsWithoutRepoId = (
+      controlPlaneDb.prepare(`SELECT COUNT(*) as c FROM events WHERE repo_id IS NULL`).get() as {
+        c: number;
+      }
+    ).c;
+
+    return {
+      hasLegacyRuns: runsWithoutRepoId > 0,
+      hasLegacyEvents: eventsWithoutRepoId > 0,
+      hasLegacyArtifacts: legacyArtifactRoot !== undefined,
+      ...(legacyArtifactRoot !== undefined ? { legacyArtifactRoot } : {}),
+    };
+  }
+
+  findEligibleRepositories(): Array<{ id: RepositoryId; fullName: string }> {
+    return this.deps.listEnabledRepositories();
+  }
+
+  migrateLegacyState(targetRepoId: RepositoryId): void {
+    const eligible = this.findEligibleRepositories();
+
+    if (eligible.length === 0) {
+      throw new MigrationError(
+        `Migration failed: no eligible repositories found. Cannot determine ownership of legacy operational state.`,
+        'no_eligible_repositories',
+      );
+    }
+
+    if (eligible.length > 1) {
+      throw new MigrationError(
+        `Migration failed: ${eligible.length} eligible repositories found. Legacy operational state ownership is ambiguous. Found: ${eligible.map((r) => r.fullName).join(', ')}.`,
+        'ambiguous_ownership',
+      );
+    }
+
+    const soleRepo = eligible[0]!;
+
+    if (soleRepo.id !== targetRepoId) {
+      throw new MigrationError(
+        `Migration failed: legacy operational state belongs to '${soleRepo.fullName}' but requested repository is '${targetRepoId}'. No migration performed.`,
+        'repository_mismatch',
+      );
+    }
+
+    this.migrateEvents(targetRepoId);
+  }
+
+  private migrateEvents(repoId: RepositoryId): void {
+    const { controlPlaneDb, operationalDb } = this.deps;
+
+    const unownedEvents = controlPlaneDb
+      .prepare(`SELECT id FROM events WHERE repo_id IS NULL`)
+      .all() as Array<{ id: number }>;
+
+    if (unownedEvents.length === 0) {
+      return;
+    }
+
+    const migrateTx = operationalDb.transaction(() => {
+      for (const event of unownedEvents) {
+        operationalDb
+          .prepare(
+            `INSERT INTO events (run_uuid, repo_id, phase, level, type, message, metadata, timestamp)
+             SELECT run_uuid, ?, phase, level, type, message, metadata, timestamp
+             FROM events WHERE id = ?`,
+          )
+          .run(repoId, event.id);
+      }
+    });
+
+    migrateTx();
+  }
+}
+
+export class MigrationError extends Error {
+  constructor(
+    message: string,
+    public readonly code:
+      | 'no_eligible_repositories'
+      | 'ambiguous_ownership'
+      | 'repository_mismatch'
+      | 'artifact_migration_failed',
+  ) {
+    super(message);
+    this.name = 'MigrationError';
+  }
+}

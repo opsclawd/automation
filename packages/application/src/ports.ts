@@ -244,6 +244,7 @@ export interface EventRepositoryPort {
   ): Array<{
     id: number;
     runUuid: string;
+    repoId: RepositoryId;
     phase?: string;
     level: string;
     type: string;
