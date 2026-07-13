@@ -92,6 +92,8 @@ export class RepositoryRuntimeFactory {
         continue;
       }
 
+      const repoIdStr = String(entry.runtime.repository.id);
+      const activeFp = this.activeFingerprint.get(repoIdStr);
       let hasActiveLease = false;
       try {
         hasActiveLease = this.opts.workerLeasePort.checkActiveLease(
@@ -99,11 +101,14 @@ export class RepositoryRuntimeFactory {
           now,
         );
       } catch {
-        continue;
+        hasActiveLease = true;
+        this.scheduleReap();
       }
 
       if (hasActiveLease) {
-        this.unmarkStale(key);
+        if (entry.fingerprint === activeFp) {
+          this.unmarkStale(key);
+        }
         continue;
       }
 
@@ -115,7 +120,6 @@ export class RepositoryRuntimeFactory {
       this.cache.delete(key);
       this.staleRuntimes.delete(key);
 
-      const repoIdStr = String(entry.runtime.repository.id);
       if (this.activeFingerprint.get(repoIdStr) === entry.fingerprint) {
         this.activeFingerprint.delete(repoIdStr);
       }
@@ -184,6 +188,12 @@ export class RepositoryRuntimeFactory {
     const existingEntry = this.cache.get(key);
 
     if (existingEntry) {
+      const previousActiveFingerprint = this.activeFingerprint.get(String(repo.id));
+      if (previousActiveFingerprint && previousActiveFingerprint !== fingerprint) {
+        const previousKey = this.cacheKey(repo.id, previousActiveFingerprint);
+        this.markStale(previousKey);
+      }
+      this.activeFingerprint.set(String(repo.id), fingerprint);
       this.unmarkStale(key);
       return existingEntry.runtime;
     }
@@ -205,16 +215,19 @@ export class RepositoryRuntimeFactory {
   onLeaseReleased(repoId: RepositoryId): void {
     const now = this.opts.now?.() ?? new Date();
     const repoIdStr = String(repoId);
+    const activeFp = this.activeFingerprint.get(repoIdStr);
+    if (!activeFp) return;
+
+    const activeKey = this.cacheKey(repoId, activeFp);
+    const activeEntry = this.cache.get(activeKey);
+    if (!activeEntry) return;
+
     const hasActiveLease = this.opts.workerLeasePort.checkActiveLease(repoId, now);
 
-    for (const [key, entry] of this.cache.entries()) {
-      if (String(entry.runtime.repository.id) === repoIdStr) {
-        if (hasActiveLease) {
-          this.unmarkStale(key);
-        } else if (!entry.isStale) {
-          this.markStale(key);
-        }
-      }
+    if (hasActiveLease) {
+      this.unmarkStale(activeKey);
+    } else if (!activeEntry.isStale) {
+      this.markStale(activeKey);
     }
   }
 
