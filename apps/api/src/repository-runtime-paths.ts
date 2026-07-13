@@ -63,6 +63,9 @@ export const RepositoryRuntimePaths = {
       },
 
       run(displayId: string): string {
+        if (isUnsafeSegment(displayId)) {
+          throw new Error(`Invalid displayId: ${displayId}`);
+        }
         return join(runsRoot, displayId);
       },
 
@@ -71,6 +74,9 @@ export const RepositoryRuntimePaths = {
       },
 
       tmp(runUuid: string): string {
+        if (isUnsafeSegment(runUuid)) {
+          throw new Error(`Invalid runUuid: ${runUuid}`);
+        }
         return join(tmpRoot, runUuid);
       },
 
@@ -79,10 +85,22 @@ export const RepositoryRuntimePaths = {
       },
 
       validationLog(displayId: string, checkId: string): string {
+        if (isUnsafeSegment(displayId)) {
+          throw new Error(`Invalid displayId: ${displayId}`);
+        }
+        if (isUnsafeSegment(checkId)) {
+          throw new Error(`Invalid checkId: ${checkId}`);
+        }
         return join(runsRoot, displayId, `validation-${checkId}.log`);
       },
 
       prompt(runUuid: string, purpose: string): string {
+        if (isUnsafeSegment(runUuid)) {
+          throw new Error(`Invalid runUuid: ${runUuid}`);
+        }
+        if (isUnsafeSegment(purpose)) {
+          throw new Error(`Invalid purpose: ${purpose}`);
+        }
         return join(tmpRoot, runUuid, `prompt-${purpose}.txt`);
       },
     };
