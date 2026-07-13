@@ -73,24 +73,42 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
 
   const skippedJobIds = new Set<JobId>();
 
-  const reposToTry = deps.repoId ? [deps.repoId] : deps.repos.listEnabled().map((r) => r.id);
+  let repoIndex = 0;
 
-  if (reposToTry.length === 0) {
-    return;
+  if (deps.repoId) {
+    if (deps.repos.listEnabled().every((r) => r.id !== deps.repoId)) {
+      return;
+    }
+  } else {
+    if (deps.repos.listEnabled().length === 0) {
+      return;
+    }
   }
 
   while (true) {
     deps.onProgress?.();
 
+    const reposToTry = deps.repoId ? [deps.repoId] : deps.repos.listEnabled().map((r) => r.id);
+
+    if (reposToTry.length === 0) {
+      return;
+    }
+
     let job = null;
-    for (const repoId of reposToTry) {
+    const startIdx = repoIndex % reposToTry.length;
+    for (let i = 0; i < reposToTry.length; i++) {
+      const idx = (startIdx + i) % reposToTry.length;
+      const repoId = reposToTry[idx];
       job = queue.claimNext({
         workerId,
         repoId: repoId!,
         skipJobIds: skippedJobIds,
         ttlMs: deps.ttlMs,
       });
-      if (job) break;
+      if (job) {
+        repoIndex = idx;
+        break;
+      }
     }
 
     if (!job) {
