@@ -22,6 +22,7 @@ function toWire(repo: import('@ai-sdlc/domain').Repository) {
     defaultBranch: repo.defaultBranch,
     remoteUrl: repo.remoteUrl,
     enabled: repo.enabled,
+    maxConcurrentRuns: repo.maxConcurrentRuns,
     healthStatus: repo.healthStatus,
     healthError: repo.healthError,
     lastHealthCheckAt: repo.lastHealthCheckAt?.toISOString() ?? null,
@@ -101,6 +102,7 @@ export async function registerRepositoriesRoutes(
       remoteUrl?: string;
       configMetadata?: string;
       enabled?: boolean;
+      maxConcurrentRuns?: number;
     };
   }>('/api/repositories/:id', async (req, reply) => {
     const { id } = req.params;
@@ -124,6 +126,9 @@ export async function registerRepositoriesRoutes(
       }
       if (req.body?.configMetadata !== undefined) {
         input.configMetadata = req.body.configMetadata;
+      }
+      if (req.body?.maxConcurrentRuns !== undefined) {
+        input.maxConcurrentRuns = req.body.maxConcurrentRuns;
       }
       const repo = c.updateRepository.execute(input);
       return toWire(repo);

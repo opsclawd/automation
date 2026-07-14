@@ -41,6 +41,9 @@ export class FakeRepositoryRegistryPort implements RepositoryRegistryPort {
       ...(patch.lastHealthCheckAt !== undefined
         ? { lastHealthCheckAt: patch.lastHealthCheckAt }
         : {}),
+      ...(patch.maxConcurrentRuns !== undefined
+        ? { maxConcurrentRuns: patch.maxConcurrentRuns }
+        : {}),
       updatedAt: now,
     };
     this.byId.set(id, next);

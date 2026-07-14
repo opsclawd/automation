@@ -8,6 +8,7 @@ export interface RepositoryUpdatePatch {
   healthStatus?: RepositoryHealthStatus;
   healthError?: string | null;
   lastHealthCheckAt?: Date | null;
+  maxConcurrentRuns?: 1;
 }
 
 export interface RepositoryRegistryPort {

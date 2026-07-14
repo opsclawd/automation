@@ -8,6 +8,7 @@ import {
   DuplicateRepositoryError,
   RepositoryHasActiveRunsError,
   RepositoryNotFoundError,
+  RepositoryValidationError,
   type Repository,
   RepositoryId,
   type RepositoryHealthStatus,
@@ -130,6 +131,16 @@ export class RepositoryRegistryRepository implements RepositoryRegistryPort, Rep
     if (patch.lastHealthCheckAt !== undefined) {
       fields.push('last_health_check_at = @last_health_check_at');
       params.last_health_check_at = patch.lastHealthCheckAt?.toISOString() ?? null;
+    }
+    if (patch.maxConcurrentRuns !== undefined) {
+      if (patch.maxConcurrentRuns !== 1) {
+        throw new RepositoryValidationError(
+          'maxConcurrentRuns must be 1 until multiple lease slots are supported',
+          existing.local_base_path,
+        );
+      }
+      fields.push('max_concurrent_runs = @max_concurrent_runs');
+      params.max_concurrent_runs = patch.maxConcurrentRuns;
     }
     fields.push('updated_at = @updated_at');
 

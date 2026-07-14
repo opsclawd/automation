@@ -18,6 +18,7 @@ export interface UpdateRepositoryInput {
   remoteUrl?: string;
   enabled?: boolean;
   configMetadata?: string;
+  maxConcurrentRuns?: number;
 }
 
 export class UpdateRepository {
@@ -46,6 +47,15 @@ export class UpdateRepository {
     }
     if (input.configMetadata !== undefined && input.configMetadata !== existing.configMetadata) {
       patch.configMetadata = input.configMetadata;
+    }
+    if (input.maxConcurrentRuns !== undefined) {
+      if (input.maxConcurrentRuns !== 1) {
+        throw new RepositoryValidationError(
+          'maxConcurrentRuns must be 1 until multiple lease slots are supported',
+          existing.localBasePath,
+        );
+      }
+      patch.maxConcurrentRuns = 1;
     }
     this.deps.registry.update(input.id, patch, now);
     return this.deps.repos.findById(input.id)!;
