@@ -13,13 +13,13 @@ output is a single `plan-fix-result.json` file describing the fix outcome.
 ## INPUTS
 
 - `{{artifact:plan.md}}` — the plan to fix
-- `{{artifact:plan-review-findings.md}}` — the reviewer's findings
+- `{{artifact?:plan-review-findings.md}}` — the reviewer's findings, when any
+  exist. Empty on a deterministic-check-triggered fix (e.g. signature blast
+  radius) that fires before any semantic review pass has run — in that case
+  `{{var:deterministicDiagnostic}}` below is the sole and authoritative input.
 - `{{artifact:design.md}}` — the design the plan must satisfy
 - `{{var:reconciliationContext}}` — optional arbiter rationale when this is
   a post-arbiter iteration; cite it explicitly when revising
-- `{{var:manifestMismatch}}` — structural inconsistency detected between
-  `plan.md` and `task-manifest.json` (empty when none); fix this in addition
-  to (or instead of) any reviewer findings above
 - `{{var:deterministicDiagnostic}}` — a general deterministic diagnostic label
   (e.g., "deterministic scope evidence") produced by the analyzer for a specific
   finding class; use this when the diagnostic is the subject of a signature-change

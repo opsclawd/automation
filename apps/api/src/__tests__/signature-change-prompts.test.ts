@@ -172,5 +172,33 @@ describe('signature_changePrompts', () => {
       );
       expect(template).toContain('{{var:deterministicDiagnostic}}');
     });
+
+    it('references plan-review-findings.md as optional, not required', () => {
+      // Regression: a deterministic-check-triggered fix (e.g. signature
+      // blast radius) can fire on iteration 1, before any semantic review
+      // pass has ever run — plan-review-findings.md does not exist yet at
+      // that point. The strict {{artifact:...}} form throws and crashes the
+      // whole plan-review loop (issue #652, run 2d8537cf); {{artifact?:...}}
+      // resolves to '' instead.
+      const template = readFileSync(
+        new URL('../../../../prompts/plan-review/plan-fix.md', import.meta.url),
+        'utf-8',
+      );
+      expect(template).toContain('{{artifact?:plan-review-findings.md}}');
+      expect(template).not.toContain('{{artifact:plan-review-findings.md}}');
+    });
+
+    it('does not reference the unwired manifestMismatch var', () => {
+      // manifestMismatch was never provided by compose.ts's planReviewRunFix
+      // vars object, so any deterministic fix that reached this placeholder
+      // would immediately crash with "unknown var: manifestMismatch" right
+      // after the plan-review-findings.md fix above. validatePlanTaskList's
+      // output already flows through the generic deterministicDiagnostic var.
+      const template = readFileSync(
+        new URL('../../../../prompts/plan-review/plan-fix.md', import.meta.url),
+        'utf-8',
+      );
+      expect(template).not.toContain('manifestMismatch');
+    });
   });
 });
