@@ -91,6 +91,34 @@ export function createFilesystemArtifactStore(
             : 0,
       );
     },
+
+    async hydrateWorktree(runId: string): Promise<void> {
+      const artifacts = await listRootArtifacts(durableRoot, runId);
+      for (const artifact of artifacts) {
+        const normalizedPath = normalizeSafeRelativePath(artifact.relativePath);
+        const durablePath = await resolveArtifactPath(
+          durableRoot,
+          normalizedPath,
+          artifact.relativePath,
+        );
+        const worktreePath = await resolveArtifactPath(
+          worktreeRoot,
+          normalizedPath,
+          artifact.relativePath,
+        );
+
+        const durableContents = await readFileIfPresent(durablePath, artifact.relativePath);
+        if (durableContents === undefined) {
+          continue;
+        }
+
+        const worktreeContents = await readFileIfPresent(worktreePath, artifact.relativePath);
+        if (worktreeContents !== durableContents) {
+          await mkdir(dirname(worktreePath), { recursive: true });
+          await writeFile(worktreePath, durableContents, 'utf8');
+        }
+      }
+    },
   };
 }
 

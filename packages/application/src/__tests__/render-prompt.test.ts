@@ -16,6 +16,7 @@ const fakeArtifacts = (map: Record<string, string>): ArtifactStore => ({
   async list() {
     return [];
   },
+  async hydrateWorktree() {},
 });
 
 describe('renderPrompt', () => {
@@ -108,6 +109,7 @@ describe('renderPrompt', () => {
       async list() {
         return [];
       },
+      async hydrateWorktree() {},
     };
     try {
       await renderPrompt('{{artifact:x.md}}', {
@@ -133,6 +135,7 @@ describe('renderPrompt', () => {
       async list() {
         return [];
       },
+      async hydrateWorktree() {},
     };
     try {
       await renderPrompt('{{artifact:x.md}}', {

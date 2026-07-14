@@ -3,6 +3,7 @@ import type { ArtifactStore, WriteArtifactInput, Artifact } from '../ports/artif
 
 export class FakeArtifactStore implements ArtifactStore {
   private files = new Map<string, { artifact: Artifact; contents: string }>();
+  private worktree = new Map<string, string>();
   shouldThrowOnWrite = false;
 
   async write(input: WriteArtifactInput): Promise<Artifact> {
@@ -20,18 +21,39 @@ export class FakeArtifactStore implements ArtifactStore {
       createdAt: new Date(),
     };
     this.files.set(key, { artifact, contents: input.contents });
+    this.worktree.set(key, input.contents);
     return artifact;
   }
 
   async read(runId: string, relativePath: string): Promise<string> {
-    const entry = this.files.get(`${runId}/${relativePath}`);
-    if (!entry) throw new ArtifactNotFoundError(runId, relativePath);
-    return entry.contents;
+    const key = `${runId}/${relativePath}`;
+    const entry = this.files.get(key);
+    if (entry) return entry.contents;
+    const wt = this.worktree.get(key);
+    if (wt !== undefined) return wt;
+    throw new ArtifactNotFoundError(runId, relativePath);
   }
 
   async list(runId: string): Promise<Artifact[]> {
     return [...this.files.values()]
       .filter((e) => e.artifact.runId === runId)
       .map((e) => e.artifact);
+  }
+
+  async hydrateWorktree(runId: string): Promise<void> {
+    for (const [key, entry] of this.files.entries()) {
+      if (key.startsWith(`${runId}/`)) {
+        this.worktree.set(key, entry.contents);
+      }
+    }
+  }
+
+  // Test helpers
+  deleteFromWorktree(runId: string, relativePath: string): void {
+    this.worktree.delete(`${runId}/${relativePath}`);
+  }
+
+  existsInWorktree(runId: string, relativePath: string): boolean {
+    return this.worktree.has(`${runId}/${relativePath}`);
   }
 }

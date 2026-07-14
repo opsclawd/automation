@@ -76,6 +76,24 @@ export class RunExecutor {
     const completedSet = new Set(currentRun.completedPhases);
     const previouslySkippedSet = new Set(currentRun.skippedPhases);
 
+    const ctx = this.deps.contextFactory(run);
+    // When resuming, the worktree may have been cleaned or artifacts lost
+    // (e.g. CancelRun runs git clean). Re-materialize durable artifacts
+    // into the worktree before starting the phase loop.
+    try {
+      await ctx.artifacts.hydrateWorktree(run.uuid);
+    } catch (err) {
+      this.emit(
+        run.displayId,
+        run.uuid,
+        undefined,
+        'warn',
+        'run.worktree_hydration_failed',
+        `failed to hydrate worktree from durable artifacts: ${err instanceof Error ? err.message : String(err)}`,
+        now(),
+      );
+    }
+
     // When resuming with completedPhases, verify that declared outputs
     // actually exist in the artifact store.  If they are missing (crash,
     // manual cleanup, data corruption) we fail fast with a clear mismatch
@@ -85,7 +103,6 @@ export class RunExecutor {
     let storedArtifacts: Set<string> | undefined;
     if (completedSet.size > 0) {
       try {
-        const ctx = this.deps.contextFactory(run);
         const stored = await ctx.artifacts.list(run.uuid);
         storedArtifacts = new Set(stored.map((a) => a.relativePath));
       } catch {
