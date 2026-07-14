@@ -192,8 +192,14 @@ import {
   SynthesizeFromTranscript,
   RepositoryRegistryRepository,
   StructuredResultRepair,
+  createSignatureReferenceAnalyzer,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
+import { deriveTrustedImplicatedFiles } from './typecheck-implicated-files.js';
+import {
+  renderImplementRetryScopePrompt,
+  buildImplementRetryScopeMetadata,
+} from './implement-retry-scope.js';
 import {
   buildArbiterPrompt,
   buildImplementStepFinalReviewArbiterPrompt,
@@ -210,6 +216,7 @@ import {
   readImplementStepFinalReviewExcerpts,
 } from './arbiter-excerpts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
+import { createDeterministicPlanCheck } from './deterministic-plan-check.js';
 import {
   buildReviewFixReviewPrompt,
   buildReviewFixFixPrompt,
@@ -338,6 +345,7 @@ export function buildImplementPrompt(
   taskContext: string,
   branchName: string,
   typecheckErrors?: TypescriptError[] | string,
+  additionalEditableFiles?: string[],
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
@@ -381,6 +389,8 @@ export function buildImplementPrompt(
     '',
     'You may READ files associated with later tasks for context, but you must',
     'not write, modify, stage, or commit them in this run.',
+    '',
+    ...renderImplementRetryScopePrompt(additionalEditableFiles),
     '',
     ...(structuredErrors !== undefined && structuredErrors.length > 0
       ? renderStructuredTypecheckErrors(structuredErrors)
@@ -3074,11 +3084,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           taskContext,
           branchName,
           opts?.typecheckErrors,
+          opts?.additionalEditableFiles,
         );
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         const isDeterministic = !!opts?.typecheckErrors;
         const isSemanticRetry = ctx.iterationIndex > 1 && !opts?.useFallback && !isDeterministic;
+        const retryScopeMetadata = buildImplementRetryScopeMetadata(opts?.additionalEditableFiles);
         let result;
         try {
           result = await artifactAgent.invoke({
@@ -3098,6 +3110,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                     implementation_task_number: ctx.stepIndex,
                     iteration: ctx.iterationIndex,
                     invocation_type: 'fallback',
+                    ...retryScopeMetadata,
                   },
                 }
               : {
@@ -3109,6 +3122,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                       : isSemanticRetry
                         ? 'semantic_retry'
                         : 'initial',
+                    ...retryScopeMetadata,
                   },
                   ...(isSemanticRetry
                     ? {
@@ -3345,10 +3359,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             encoding: 'utf-8',
           });
           if (buildError) {
+            const structuredErrors = parseTypescriptErrors(buildError);
             return {
               outcome: 'fail',
               output: buildError,
-              structuredErrors: parseTypescriptErrors(buildError),
+              structuredErrors,
+              implicatedFiles: deriveTrustedImplicatedFiles(ctx.cwd, structuredErrors),
             };
           }
           return { outcome: 'pass', output: '' };
@@ -3359,10 +3375,14 @@ export function composeRoot(opts: ComposeOptions): Container {
               : String(err);
           const lines = raw.split('\n');
           const truncated = lines.length > 100 ? lines.slice(-100).join('\n') : raw;
+          const truncatedOutput = truncated.slice(0, 3000);
+          const allErrors = parseTypescriptErrors(raw);
+          const structuredErrors = parseTypescriptErrors(truncatedOutput);
           return {
             outcome: 'fail',
-            output: truncated.slice(0, 3000),
-            structuredErrors: parseTypescriptErrors(truncated.slice(0, 3000)),
+            output: truncatedOutput,
+            structuredErrors,
+            implicatedFiles: deriveTrustedImplicatedFiles(ctx.cwd, allErrors),
           };
         }
       };
@@ -4248,30 +4268,25 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const planReviewArtifacts = artifactStoreForRun;
 
-      const planReviewCheckManifestSync = async (
-        ctx: import('@ai-sdlc/application').PlanReviewContext,
-      ): Promise<string | null> => {
-        const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
-        let planMd: string;
-        try {
-          planMd = await artifacts.read(String(ctx.runId), 'plan.md');
-        } catch (e) {
-          if (e instanceof ArtifactNotFoundError) return null;
-          throw e;
-        }
-        let manifestJson: string | undefined;
-        try {
-          manifestJson = await artifacts.read(String(ctx.runId), 'task-manifest.json');
-        } catch (e) {
-          if (e instanceof ArtifactNotFoundError) {
-            return null;
-          } else {
+      const planReviewSignatureAnalyzer = createSignatureReferenceAnalyzer();
+
+      const planReviewCheckDeterministicPlan = createDeterministicPlanCheck({
+        readPlanMd: async (ctx) => {
+          const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
+          return artifacts.read(String(ctx.runId), 'plan.md');
+        },
+        readManifest: async (ctx) => {
+          const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
+          try {
+            return await artifacts.read(String(ctx.runId), 'task-manifest.json');
+          } catch (e) {
+            if (e instanceof ArtifactNotFoundError) return null;
             throw e;
           }
-        }
-        const result = validatePlanTaskList(planMd, manifestJson);
-        return result.success ? null : result.error;
-      };
+        },
+        validatePlanTaskList,
+        signatureAnalyzer: planReviewSignatureAnalyzer,
+      });
 
       const computeSnapshot = async (
         cwd: string,
@@ -4482,12 +4497,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           runId: String(ctx.runId),
           vars: {
             reconciliationContext: opts.reconciliationContext ?? '(none — first iteration)',
-            manifestMismatch: opts.manifestMismatch ?? '(none)',
+            deterministicDiagnostic: opts.deterministicDiagnostic ?? '(none)',
           },
           artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
         });
         const finalPrompt = buildPlanReviewFixPrompt(promptBody, {
-          deterministicDiagnostic: opts.manifestMismatch,
+          deterministicDiagnostic: opts.deterministicDiagnostic,
           ...(opts.isTerminalFix !== undefined ? { isTerminalFix: opts.isTerminalFix } : {}),
           ...(opts.historyContext !== undefined ? { historyContext: opts.historyContext } : {}),
         });
@@ -4525,7 +4540,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           });
         }
 
-        const isDeterministic = !!opts.manifestMismatch;
+        const isDeterministic = !!opts.deterministicDiagnostic;
         const isSemanticRetry = ctx.iterationIndex > 1 && !isDeterministic;
         let invokeResult;
         try {
@@ -4825,7 +4840,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       const planReviewLoop = new PlanReviewLoop({
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
-        checkManifestSync: planReviewCheckManifestSync,
+        checkDeterministicPlan: planReviewCheckDeterministicPlan,
         computeLastFixDiffCitations: (cwd, headBeforeFix) =>
           getRecentFixCitations(cwd, headBeforeFix),
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),

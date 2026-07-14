@@ -62,8 +62,15 @@ export type {
   PlanReviewSnapshot,
   EvidenceResolver,
   TerminalValidationResult,
+  DeterministicPlanCheckResult,
 } from './plan-review/types.js';
 export * from './plan-review/plan-review-loop.js';
+export {
+  collectDeclaredSignatureChanges,
+  evaluateSignatureBlastRadius,
+  renderSignatureBlastRadiusDiagnostic,
+  type SignatureBlastRadiusFailure,
+} from './plan-review/signature-blast-radius.js';
 export {
   parsePlanReviewFindings,
   planReviewFindingSchema,

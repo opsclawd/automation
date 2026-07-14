@@ -47,6 +47,12 @@ Write `task-manifest.json` as a JSON file with this exact structure:
       "title": "Short task title",
       "expected_files": ["path/to/file1", "path/to/file2"],
       "validation_commands": ["command to verify"],
+      "signature_changes": [
+        {
+          "declaration_file": "path/to/declaration.ts",
+          "symbol": "ExportedSymbolName"
+        }
+      ],
       "invariants": [
         {
           "name": "invariant name",
@@ -67,6 +73,7 @@ Fields:
 - `tasks[].title`: one-line summary matching the prose task header
 - `tasks[].expected_files`: files the task touches (optional but encouraged)
 - `tasks[].validation_commands`: commands to verify task completion (optional but encouraged)
+- `tasks[].signature_changes`: REQUIRED when the task changes the surface of an exported API (parameter-list, return-type, overload-set, required-generic parameter, or required-member-shape). Each entry names a repository-relative declaration file and the exact symbol being changed. Declaration files MUST be in `expected_files` (or legacy `files`). This field is nullish (optional) when no exported-API signatures change.
 - `tasks[].invariants`: behavioral invariants to be implemented as tests first (REQUIRED for stateful/logic-heavy tasks)
 
 The manifest is the machine-readable source of truth for task boundaries. `plan.md` remains the human-readable document with full prose.

@@ -1276,6 +1276,316 @@ describe('ImplementStepLoop', () => {
     });
   });
 
+  describe('typecheck scope widening', () => {
+    function manifestWithTask(files: string[], expected_files?: string[]) {
+      return {
+        tasks: [
+          {
+            n: 1,
+            title: 'Test task',
+            ...(expected_files !== undefined ? { expected_files } : { files }),
+          },
+        ],
+      };
+    }
+
+    it('first out-of-scope typecheck failure widens before the retry', async () => {
+      const { events, bus } = collectEvents();
+      const retryOptions: Array<ImplementStepOptions | undefined> = [];
+      const deps = makeDeps({
+        events: bus,
+        runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
+          retryOptions.push(opts);
+          return { invocationId: `impl-${retryOptions.length}`, agentOutcome: 'success' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => ({
+          outcome: 'fail',
+          output: 'error TS2339 in external.ts',
+          implicatedFiles: ['src/external.ts', 'src/task-file.ts'],
+        }),
+      });
+
+      await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        manifest: manifestWithTask(['src/task-file.ts'], ['src/task-file.ts']),
+      });
+
+      expect(retryOptions).toHaveLength(2);
+      expect(retryOptions[1]?.additionalEditableFiles).toEqual(['src/external.ts']);
+
+      const widenEvent = events.find((e) => e.type === 'step.typecheck.scope_widened');
+      expect(widenEvent).toBeDefined();
+      expect(widenEvent!.metadata.newlyAddedFiles).toEqual(['src/external.ts']);
+      expect(widenEvent!.metadata.accumulatedScope).toEqual(['src/external.ts']);
+    });
+
+    it('multiple changed failures grow recovery scope monotonically without duplicates', async () => {
+      const { events, bus } = collectEvents();
+      const retryOptions: Array<ImplementStepOptions | undefined> = [];
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
+          retryOptions.push(opts);
+          return { invocationId: `impl-${retryOptions.length}`, agentOutcome: 'success' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          if (typecheckCalls === 1) {
+            return {
+              outcome: 'fail',
+              output: 'error TS2339 in external-a.ts',
+              implicatedFiles: ['src/external-a.ts'],
+            };
+          }
+          if (typecheckCalls === 2) {
+            return {
+              outcome: 'fail',
+              output: 'error TS2339 in external-b.ts',
+              implicatedFiles: ['src/external-a.ts', 'src/external-b.ts'],
+            };
+          }
+          return { outcome: 'pass', output: '' };
+        },
+      });
+
+      await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        manifest: manifestWithTask(['src/task-file.ts'], ['src/task-file.ts']),
+      });
+
+      expect(retryOptions).toHaveLength(3);
+      expect(retryOptions[1]?.additionalEditableFiles).toEqual(['src/external-a.ts']);
+      expect(retryOptions[2]?.additionalEditableFiles).toEqual([
+        'src/external-a.ts',
+        'src/external-b.ts',
+      ]);
+
+      const eventsForAttempt1 = events.filter(
+        (e) => e.type === 'step.typecheck.scope_widened' && e.metadata.attempt === 1,
+      );
+      const eventsForAttempt2 = events.filter(
+        (e) => e.type === 'step.typecheck.scope_widened' && e.metadata.attempt === 2,
+      );
+      expect(eventsForAttempt1).toHaveLength(1);
+      expect(eventsForAttempt1[0].metadata.newlyAddedFiles).toEqual(['src/external-a.ts']);
+      expect(eventsForAttempt2).toHaveLength(1);
+      expect(eventsForAttempt2[0].metadata.newlyAddedFiles).toEqual(['src/external-b.ts']);
+      expect(eventsForAttempt2[0].metadata.accumulatedScope).toEqual([
+        'src/external-a.ts',
+        'src/external-b.ts',
+      ]);
+    });
+
+    it('in-scope diagnostics do not widen or emit', async () => {
+      const { events, bus } = collectEvents();
+      const retryOptions: Array<ImplementStepOptions | undefined> = [];
+      const deps = makeDeps({
+        events: bus,
+        runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
+          retryOptions.push(opts);
+          return { invocationId: `impl-${retryOptions.length}`, agentOutcome: 'success' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => ({
+          outcome: 'fail',
+          output: 'error TS2339 in task-file.ts',
+          implicatedFiles: ['src/task-file.ts'],
+        }),
+      });
+
+      await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        manifest: manifestWithTask(['src/task-file.ts'], ['src/task-file.ts']),
+      });
+
+      expect(retryOptions).toHaveLength(2);
+      expect(retryOptions[1]?.additionalEditableFiles).toBeUndefined();
+
+      const widenEvents = events.filter((e) => e.type === 'step.typecheck.scope_widened');
+      expect(widenEvents).toHaveLength(0);
+    });
+
+    it('missing trusted implicated files retry without widening', async () => {
+      const { events, bus } = collectEvents();
+      const retryOptions: Array<ImplementStepOptions | undefined> = [];
+      const deps = makeDeps({
+        events: bus,
+        runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
+          retryOptions.push(opts);
+          return { invocationId: `impl-${retryOptions.length}`, agentOutcome: 'success' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => ({
+          outcome: 'fail',
+          output: 'Build failed with fatal error',
+          implicatedFiles: [],
+        }),
+      });
+
+      await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        manifest: manifestWithTask(['src/task-file.ts'], ['src/task-file.ts']),
+      });
+
+      expect(retryOptions).toHaveLength(2);
+      expect(retryOptions[1]?.additionalEditableFiles).toBeUndefined();
+
+      const widenEvents = events.filter((e) => e.type === 'step.typecheck.scope_widened');
+      expect(widenEvents).toHaveLength(0);
+    });
+
+    it('identical diagnostics after an authorized retry still stall', async () => {
+      const { events, bus } = collectEvents();
+      let implementCalls = 0;
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runImplement: async () => {
+          implementCalls += 1;
+          return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return {
+            outcome: 'fail',
+            output: 'error TS2339 in external.ts',
+            implicatedFiles: ['src/external.ts'],
+            structuredErrors: [
+              { file: 'src/external.ts', line: 10, col: 5, code: 'TS2339', message: 'error' },
+            ],
+          };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxTypeCheckRetries: 5,
+        manifest: manifestWithTask(['src/task-file.ts'], ['src/task-file.ts']),
+      });
+
+      expect(out.outcome).toBe('failed');
+      expect(implementCalls).toBe(2);
+      expect(typecheckCalls).toBe(2);
+
+      const stallEvent = events.find((e) => e.type === 'step.typecheck.stalled');
+      expect(stallEvent).toBeDefined();
+    });
+
+    it('an authorized retry that fixes the external caller proceeds to review', async () => {
+      const { events, bus } = collectEvents();
+      let specReviewCalls = 0;
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return typecheckCalls === 1
+            ? {
+                outcome: 'fail',
+                output: 'error TS2339 in external.ts',
+                implicatedFiles: ['src/external.ts'],
+              }
+            : { outcome: 'pass', output: '' };
+        },
+        runImplement: async (_ctx: StepLoopContext, _opts?: ImplementStepOptions) => {
+          return { invocationId: `impl-${typecheckCalls}`, agentOutcome: 'success' as const };
+        },
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          return {
+            invocationId: 'sr-1',
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+        runQualityReview: async () => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        manifest: manifestWithTask(['src/task-file.ts'], ['src/task-file.ts']),
+      });
+
+      expect(out.outcome).toBe('success');
+      expect(specReviewCalls).toBe(1);
+
+      const widenEvents = events.filter((e) => e.type === 'step.typecheck.scope_widened');
+      expect(widenEvents).toHaveLength(1);
+    });
+
+    it('fallback implement invocations receive the same recovery scope', async () => {
+      const { bus } = collectEvents();
+      const retryOptions: Array<ImplementStepOptions | undefined> = [];
+      let implementCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        implementFallbackProfile: AgentProfileName('fallback-profile'),
+        runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
+          implementCalls += 1;
+          retryOptions.push(opts);
+          if (implementCalls === 1) {
+            return { invocationId: 'impl-1', agentOutcome: 'success' as const };
+          }
+          return { invocationId: `impl-${implementCalls}`, agentOutcome: 'fail' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => ({
+          outcome: 'fail',
+          output: 'error TS2339 in external.ts',
+          implicatedFiles: ['src/external.ts'],
+        }),
+      });
+
+      await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        manifest: manifestWithTask(['src/task-file.ts'], ['src/task-file.ts']),
+      });
+
+      expect(retryOptions).toHaveLength(3);
+      expect(retryOptions[1]?.additionalEditableFiles).toEqual(['src/external.ts']);
+      expect(retryOptions[2]?.additionalEditableFiles).toEqual(['src/external.ts']);
+    });
+
+    it('a new execute call reconstructs scope from diagnostics', async () => {
+      const { events: events1, bus: bus1 } = collectEvents();
+      const { events: events2, bus: bus2 } = collectEvents();
+      const deps1 = makeDeps({
+        events: bus1,
+        runImplement: async () => ({ invocationId: 'impl-1', agentOutcome: 'success' as const }),
+        runTypecheck: async (): Promise<TypecheckResult> => ({
+          outcome: 'fail',
+          output: 'error TS2339 in external-a.ts',
+          implicatedFiles: ['src/external-a.ts'],
+        }),
+      });
+      const deps2 = makeDeps({
+        events: bus2,
+        runImplement: async () => ({ invocationId: 'impl-1', agentOutcome: 'success' as const }),
+        runTypecheck: async (): Promise<TypecheckResult> => ({
+          outcome: 'fail',
+          output: 'error TS2339 in external-b.ts',
+          implicatedFiles: ['src/external-b.ts'],
+        }),
+      });
+
+      await new ImplementStepLoop(deps1).execute({
+        ...baseInput(),
+        manifest: manifestWithTask(['src/task-file.ts'], ['src/task-file.ts']),
+      });
+      await new ImplementStepLoop(deps2).execute({
+        ...baseInput(),
+        manifest: manifestWithTask(['src/task-file.ts'], ['src/task-file.ts']),
+      });
+
+      const widenEvents1 = events1.filter((e) => e.type === 'step.typecheck.scope_widened');
+      const widenEvents2 = events2.filter((e) => e.type === 'step.typecheck.scope_widened');
+      expect(widenEvents1[0]?.metadata.newlyAddedFiles).toEqual(['src/external-a.ts']);
+      expect(widenEvents2[0]?.metadata.newlyAddedFiles).toEqual(['src/external-b.ts']);
+    });
+  });
+
   describe('parity[#403]: typecheck injection into reviewer prompts', () => {
     it('parity[#403]: runTypecheck is called once after runImplement succeeds', async () => {
       let tcCalls = 0;
@@ -4072,7 +4382,11 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     let fixOpts: ImplementFixStepOptions | undefined;
     const deps = makeDeps({
       events: bus,
-      runSpecReview: async () => ({ invocationId: 'sr-fail', agentOutcome: 'success', verdict: 'fail' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
       runTypecheck: async () => {
         typecheckCalls++;
         // Call 1: pre-loop (pass)
@@ -4085,7 +4399,12 @@ describe('ImplementStepLoop terminal fix escalation', () => {
       runFix: async (_ctx, opts) => {
         if (opts.isTerminalFix) {
           fixOpts = opts;
-          return { invocationId: 'fix-terminal', agentOutcome: 'success', verdict: 'done_with_fixes', headBeforeFix: 'sha-1' };
+          return {
+            invocationId: 'fix-terminal',
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+            headBeforeFix: 'sha-1',
+          };
         }
         return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
       },
@@ -4108,7 +4427,11 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     let typecheckCalls = 0;
     const deps = makeDeps({
       events: bus,
-      runSpecReview: async () => ({ invocationId: 'sr-fail', agentOutcome: 'success', verdict: 'fail' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
       runTypecheck: async () => {
         typecheckCalls++;
         // Call 1: pre-loop (pass)
@@ -4119,7 +4442,13 @@ describe('ImplementStepLoop terminal fix escalation', () => {
       },
       runFix: async (_ctx, opts) => {
         if (opts.isTerminalFix) {
-          return { invocationId: 'fix-terminal', agentOutcome: 'success', verdict: 'done_no_fixes_needed', rebuttal: 'Rebuttal', headBeforeFix: 'sha-1' };
+          return {
+            invocationId: 'fix-terminal',
+            agentOutcome: 'success',
+            verdict: 'done_no_fixes_needed',
+            rebuttal: 'Rebuttal',
+            headBeforeFix: 'sha-1',
+          };
         }
         return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
       },
@@ -4140,7 +4469,11 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     let revalidationCalls = 0;
     const deps = makeDeps({
       events: bus,
-      runSpecReview: async () => ({ invocationId: 'sr-fail', agentOutcome: 'success', verdict: 'fail' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
       runTypecheck: async () => {
         typecheckCalls++;
         return { outcome: 'pass', output: '' };
@@ -4151,7 +4484,13 @@ describe('ImplementStepLoop terminal fix escalation', () => {
       },
       runFix: async (_ctx, opts) => {
         if (opts.isTerminalFix) {
-          return { invocationId: 'fix-terminal', agentOutcome: 'success', verdict: 'done_no_fixes_needed', rebuttal: 'Rebuttal', headBeforeFix: 'sha-1' };
+          return {
+            invocationId: 'fix-terminal',
+            agentOutcome: 'success',
+            verdict: 'done_no_fixes_needed',
+            rebuttal: 'Rebuttal',
+            headBeforeFix: 'sha-1',
+          };
         }
         return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
       },

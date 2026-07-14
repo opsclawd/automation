@@ -32,3 +32,4 @@ export { createFixDiffInspector } from './git/fix-diff-inspector.js';
 export { createFindingEvidenceInspector } from './git/finding-evidence-inspector.js';
 export * from './artifacts/filesystem-artifact-store.js';
 export * from './artifacts/file-tailer.js';
+export { createSignatureReferenceAnalyzer } from './typescript/signature-reference-analyzer.js';

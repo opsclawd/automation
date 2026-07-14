@@ -31,6 +31,12 @@ export interface ImplementStepOptions {
   typecheckErrors?: TypescriptError[] | string;
   useFallback?: boolean;
   previousInvocationId?: string;
+  /**
+   * Additional files outside the current task's scope that the implement agent
+   * is authorized to edit during this retry. Used when typecheck failures
+   * implicate trusted files not in `expected_files` or `files`.
+   */
+  additionalEditableFiles?: string[];
 }
 
 export interface TypescriptError {
@@ -45,6 +51,7 @@ export interface TypecheckResult {
   outcome: 'pass' | 'fail';
   output: string;
   structuredErrors?: TypescriptError[];
+  implicatedFiles?: string[];
 }
 
 export type ReviewMode = 'initial_full' | 'intermediate_delta' | 'final_full';

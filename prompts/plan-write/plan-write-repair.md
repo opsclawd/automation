@@ -41,8 +41,9 @@ scratch. For example:
   part its own sequential integer instead.
 - Task numbers must be contiguous starting at 1 with no gaps or duplicates, in both `plan.md` and
   `task-manifest.json`.
-- `task-manifest.json` must remain valid per its schema: `version: 1`, `task_count` equal to
-  `tasks.length`, each task with a numeric `n` and non-empty string `title`.
+- `task-manifest.json` must remain valid per its schema: `version: 2`, `task_count` equal to
+  `tasks.length`, each task with a numeric `n` and non-empty string `title`. Preserve any existing
+  `signature_changes` fields — do not remove them or convert them to V1 format.
 - When showing example task headers for illustration only (not real task headings), indent them by
   at least 2 spaces or wrap in inline code — a real task heading always starts at column 0.
 

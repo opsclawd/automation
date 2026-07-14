@@ -163,4 +163,54 @@ describe('buildImplementPrompt', () => {
     expect(prompt).toContain('### src/foo.ts (1 error)');
     expect(prompt).toContain('- Line 1: TS2339:');
   });
+
+  describe('additional editable files', () => {
+    it('renders TYPECHECK-AUTHORIZED SCOPE OVERRIDE with populated list', () => {
+      const prompt = buildImplementPrompt(
+        { stepIndex: 1, stepTitle: 'T', cwd: '/c', repoId: 'r' },
+        '',
+        'branch',
+        undefined,
+        ['apps/api/src/cli.ts', 'apps/api/src/compose.ts'],
+      );
+      expect(prompt).toContain('## TYPECHECK-AUTHORIZED SCOPE OVERRIDE');
+      expect(prompt).toContain(
+        'The whole-repository typecheck directly implicated these existing files:',
+      );
+      expect(prompt).toContain('- apps/api/src/cli.ts');
+      expect(prompt).toContain('- apps/api/src/compose.ts');
+      expect(prompt).toContain(
+        'You may edit only these additional existing files, and only to resolve the',
+      );
+      expect(prompt).toContain(
+        'listed compile failures. This narrow authorization overrides the later-task',
+      );
+      expect(prompt).toContain(
+        'file prohibition for this retry; it does not authorize later-task behavior,',
+      );
+      expect(prompt).toContain('new files, dependencies, migrations, or unrelated refactors.');
+    });
+
+    it('omits override block when additionalEditableFiles is empty', () => {
+      const prompt = buildImplementPrompt(
+        { stepIndex: 1, stepTitle: 'T', cwd: '/c', repoId: 'r' },
+        '',
+        'branch',
+        undefined,
+        [],
+      );
+      expect(prompt).not.toContain('TYPECHECK-AUTHORIZED SCOPE OVERRIDE');
+    });
+
+    it('omits override block when additionalEditableFiles is undefined', () => {
+      const prompt = buildImplementPrompt(
+        { stepIndex: 1, stepTitle: 'T', cwd: '/c', repoId: 'r' },
+        '',
+        'branch',
+        undefined,
+        undefined,
+      );
+      expect(prompt).not.toContain('TYPECHECK-AUTHORIZED SCOPE OVERRIDE');
+    });
+  });
 });

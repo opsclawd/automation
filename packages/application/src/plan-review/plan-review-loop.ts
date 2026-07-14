@@ -57,7 +57,7 @@ function buildPlanReviewAttempt(params: {
 }
 
 interface HistoryItem {
-  type: 'review' | 'fix' | 'arbiter' | 'manifest_mismatch';
+  type: 'review' | 'fix' | 'arbiter' | 'deterministic_check';
   iterationIndex: number;
   data: Record<string, unknown>;
 }
@@ -81,7 +81,7 @@ function formatHistory(history: HistoryItem[]): string {
       }
     } else if (item.type === 'fix') {
       if (item.data.isDeterministicFix) {
-        lines.push(`- Deterministic Manifest Fix`);
+        lines.push(`- Deterministic Plan Fix`);
       }
       lines.push(`- Verdict: ${item.data.verdict}`);
       if (item.data.summary) lines.push(`- Summary: ${item.data.summary}`);
@@ -91,8 +91,8 @@ function formatHistory(history: HistoryItem[]): string {
       lines.push(`- Outcome: ${item.data.outcome}`);
       if (item.data.evidence) lines.push(`- Evidence: ${item.data.evidence}`);
       if (item.data.rationale) lines.push(`- Rationale: ${item.data.rationale}`);
-    } else if (item.type === 'manifest_mismatch') {
-      lines.push(`- Manifest Mismatch: ${item.data.mismatch}`);
+    } else if (item.type === 'deterministic_check') {
+      lines.push(`- Deterministic Diagnostic: ${item.data.diagnostic}`);
     }
     lines.push('');
   }
@@ -185,41 +185,62 @@ export class PlanReviewLoop {
       }
     }
 
-    let lastDeterministicMismatch: string | null = null;
+    let lastDeterministicDiagnostic: string | null = null;
     let lastDeterministicWasUnresolvedWithNoChanges = false;
 
-    const checkAndFixManifest = async (
+    const checkAndFixDeterministic = async (
       currentCtx: PlanReviewContext,
     ): Promise<{ success: boolean; loop: Loop }> => {
       let localCtx = { ...currentCtx };
       while (true) {
-        const manifestError = await deps.checkManifestSync(localCtx);
-        if (!manifestError) {
+        const checkResult = await deps.checkDeterministicPlan(localCtx);
+        if (!checkResult.diagnostic) {
           return { success: true, loop };
         }
 
         if (
-          lastDeterministicMismatch === manifestError &&
+          lastDeterministicDiagnostic === checkResult.diagnostic &&
           lastDeterministicWasUnresolvedWithNoChanges
         ) {
           this.emit(
             input,
-            'plan-review.manifest_mismatch.suppressed',
+            'plan-review.deterministic_check.suppressed',
             'warn',
-            `suppressing duplicate manifest fix attempt: mismatch and state unchanged (${manifestError})`,
-            { manifestError },
+            `suppressing duplicate deterministic fix attempt: diagnostic and state unchanged (${checkResult.diagnostic})`,
+            { diagnostic: checkResult.diagnostic },
           );
           return { success: false, loop };
         }
 
-        this.emit(input, 'deterministic_fix', 'warn', `manifest mismatch: ${manifestError}`, {
-          diagnostic: manifestError,
-        });
+        for (const failure of checkResult.signatureBlastRadiusFailures) {
+          this.emit(
+            input,
+            'plan-review.signature_blast_radius.failed',
+            'warn',
+            `signature blast radius check failed for task ${failure.taskN} symbol ${failure.symbol}`,
+            {
+              taskN: failure.taskN,
+              symbol: failure.symbol,
+              uncoveredFileCount: failure.uncoveredReferences.length,
+            },
+          );
+        }
+
+        this.emit(
+          input,
+          'deterministic_fix',
+          'warn',
+          `deterministic check failed: ${checkResult.diagnostic}`,
+          {
+            diagnostic: checkResult.diagnostic,
+            signatureBlastRadiusFailureCount: checkResult.signatureBlastRadiusFailures.length,
+          },
+        );
 
         if (!canIterate(loop)) {
           this.emit(
             input,
-            'plan-review.manifest_mismatch.exhausted',
+            'plan-review.deterministic_check.exhausted',
             'error',
             `cannot run deterministic fix: loop budget exhausted`,
             {},
@@ -237,13 +258,13 @@ export class PlanReviewLoop {
         );
 
         history.push({
-          type: 'manifest_mismatch',
+          type: 'deterministic_check',
           iterationIndex,
-          data: { mismatch: manifestError },
+          data: { diagnostic: checkResult.diagnostic },
         });
 
         const fix = await deps.runFix(localCtx, {
-          manifestMismatch: manifestError,
+          deterministicDiagnostic: checkResult.diagnostic,
           metadata: {
             iteration: iterationIndex,
             invocation_type: 'deterministic_fix',
@@ -261,7 +282,7 @@ export class PlanReviewLoop {
           },
         });
 
-        lastDeterministicMismatch = manifestError;
+        lastDeterministicDiagnostic = checkResult.diagnostic;
         lastDeterministicWasUnresolvedWithNoChanges =
           fix.agentOutcome !== 'success' ||
           fix.verdict === undefined ||
@@ -284,9 +305,9 @@ export class PlanReviewLoop {
         if (fix.verdict === 'done_no_fixes_needed') {
           this.emit(
             input,
-            'plan-review.manifest_mismatch.fixer_declined',
+            'plan-review.deterministic_check.fixer_declined',
             'warn',
-            `fixer declined to address manifest/prose mismatch at iteration ${iterationIndex}; treating as unresolved`,
+            `fixer declined to address deterministic check failure at iteration ${iterationIndex}; treating as unresolved`,
             { iterationIndex },
           );
         }
@@ -306,8 +327,6 @@ export class PlanReviewLoop {
         );
 
         localCtx = { ...currentCtx, iterationIndex: loop.iterations.length + 1 };
-        // If the fixer returned done_no_fixes_needed or cannot_fix, we keep it unresolved but bounded
-        // (meaning we return to the check loop which will find the same error and suppress the duplicate, exiting loop).
       }
     };
 
@@ -349,7 +368,7 @@ export class PlanReviewLoop {
     };
 
     while (canIterate(loop)) {
-      const syncResult = await checkAndFixManifest({
+      const syncResult = await checkAndFixDeterministic({
         ...baseCtx,
         iterationIndex: loop.iterations.length + 1,
       });
@@ -644,7 +663,7 @@ export class PlanReviewLoop {
         );
 
         const iterationsBeforeSync = loop.iterations.length;
-        const finalSyncResult = await checkAndFixManifest({
+        const finalSyncResult = await checkAndFixDeterministic({
           ...baseCtx,
           iterationIndex: loop.iterations.length + 1,
         });
@@ -753,7 +772,7 @@ export class PlanReviewLoop {
           { index: iterationIndex, outcome: 'resolved' },
         );
         const iterationsBeforeSync = loop.iterations.length;
-        const finalSyncResult = await checkAndFixManifest({
+        const finalSyncResult = await checkAndFixDeterministic({
           ...baseCtx,
           iterationIndex: loop.iterations.length + 1,
         });
@@ -1074,7 +1093,7 @@ export class PlanReviewLoop {
       );
 
       if (iterationIndex === loop.maxIterations) {
-        const syncResult = await checkAndFixManifest({
+        const syncResult = await checkAndFixDeterministic({
           ...baseCtx,
           iterationIndex: loop.iterations.length + 1,
         });
@@ -1508,7 +1527,7 @@ export class PlanReviewLoop {
 
             if (fixIteration.outcome === 'fixed') {
               // 2. Confirmation Review
-              const syncResult = await checkAndFixManifest({
+              const syncResult = await checkAndFixDeterministic({
                 ...baseCtx,
                 iterationIndex: loop.iterations.length + 1,
               });
