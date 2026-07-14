@@ -592,5 +592,48 @@ outsideExclude();
       const outsideRefs = results[0]!.references.filter((r) => r.file.startsWith(tmpdir()));
       expect(outsideRefs).toHaveLength(0);
     });
+
+    it('discovers source files when the scan root itself sits inside a directory named .ai-worktrees', async () => {
+      // Regression: the orchestrator invokes this analyzer with worktreeRoot
+      // pointed at <repo>/.ai-worktrees/issue-N/ — the exact real-world root.
+      // isExcludedPath previously checked every segment of the absolute path,
+      // so the root's own ".ai-worktrees" ancestor segment matched the
+      // exclude list and every file was filtered out, even though none of
+      // them are actually nested inside another worktree.
+      const outer = mkdtempSync(join(tmpdir(), 'sig-ref-analyzer-outer-'));
+      tempRoots.push(outer);
+      const root = join(outer, '.ai-worktrees', 'issue-999');
+      const srcDir = join(root, 'src');
+      mkdirSync(srcDir, { recursive: true });
+      writePackageJson(root, 'worktree-root');
+
+      writeFileSync(
+        join(srcDir, 'lib.ts'),
+        `
+export function worktreeRootFunc() {}
+`,
+      );
+      writeFileSync(
+        join(srcDir, 'caller.ts'),
+        `
+import { worktreeRootFunc } from './lib.js';
+worktreeRootFunc();
+`,
+      );
+      writeFileSync(
+        join(root, 'tsconfig.json'),
+        JSON.stringify(makeMinimalTsconfig('./src'), null, 2),
+      );
+
+      const results = await runAnalyzer(root, [
+        { declarationFile: 'src/lib.ts', symbol: 'worktreeRootFunc' },
+      ]);
+
+      expect(results).toHaveLength(1);
+      expect(results[0]!.unresolvedDiagnostic).toBeUndefined();
+      expect(results[0]!.references).toContainEqual(
+        expect.objectContaining({ file: 'src/caller.ts', kind: 'call' }),
+      );
+    });
   });
 });

@@ -41,12 +41,6 @@ const SUPPORTED_EXTENSIONS = new Set([
   '.jsx',
 ]);
 
-function isExcludedPath(path: string, isRoot = false): boolean {
-  if (isRoot) return false;
-  const parts = path.replace(/\\/g, '/').split('/');
-  return parts.some((part) => EXCLUDED_DIRS.has(part));
-}
-
 function normalizePath(path: string): string {
   return path.replace(/\\/g, '/');
 }
@@ -60,12 +54,23 @@ function relativeToRoot(root: string, filePath: string): string {
   return normalizedFile;
 }
 
+// Only checks path segments *below* root against EXCLUDED_DIRS. Checking the
+// full absolute path would wrongly exclude everything when root itself sits
+// inside a directory that happens to share a name with an excluded dir — e.g.
+// the orchestrator's own worktrees live at <repo>/.ai-worktrees/issue-N/, and
+// .ai-worktrees is excluded specifically to avoid recursing into *nested*
+// worktrees while scanning a normal repo root, not to blank out a scan whose
+// root is itself inside one.
+function isExcludedPath(path: string, root: string): boolean {
+  const rel = relativeToRoot(root, path);
+  const parts = rel.split('/');
+  return parts.some((part) => EXCLUDED_DIRS.has(part));
+}
+
 function discoverSourceFiles(root: string): string[] {
   const files: string[] = [];
 
-  function walk(dir: string, isRootDir = false): void {
-    if (isExcludedPath(dir, isRootDir)) return;
-
+  function walk(dir: string): void {
     let entries: string[];
     try {
       entries = ts.sys.readDirectory(dir, [...SUPPORTED_EXTENSIONS], ['node_modules', '.git']);
@@ -75,7 +80,7 @@ function discoverSourceFiles(root: string): string[] {
 
     for (const entry of entries) {
       const fullPath = normalizePath(entry);
-      if (isExcludedPath(fullPath)) continue;
+      if (isExcludedPath(fullPath, root)) continue;
 
       if (ts.sys.fileExists?.(fullPath)) {
         const ext = fullPath.slice(fullPath.lastIndexOf('.'));
@@ -86,7 +91,7 @@ function discoverSourceFiles(root: string): string[] {
     }
   }
 
-  walk(root, true);
+  walk(root);
   return files;
 }
 
@@ -94,7 +99,7 @@ function getPathMappings(root: string): Record<string, string[]> {
   const paths: Record<string, string[]> = {};
 
   function scan(dir: string) {
-    if (isExcludedPath(dir)) return;
+    if (isExcludedPath(dir, root)) return;
     let entries: string[];
     try {
       entries = readdirSync(dir);
@@ -419,7 +424,7 @@ function collectReferences(
 
       const entryFileName = normalizePath(entry.fileName);
 
-      if (isExcludedPath(entryFileName)) continue;
+      if (isExcludedPath(entryFileName, root)) continue;
 
       const sourceFile = program.getSourceFile(entryFileName);
       if (!sourceFile) continue;
