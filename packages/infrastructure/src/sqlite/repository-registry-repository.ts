@@ -198,9 +198,9 @@ export class RepositoryRegistryRepository implements RepositoryRegistryPort, Rep
     return rows.map(rowToRepository);
   }
 
-  private findRow(id: string): { id: string } | undefined {
-    return this.db.prepare(`SELECT id FROM repositories WHERE id = ?`).get(id) as
-      | { id: string }
+  private findRow(id: string): { id: string; local_base_path: string } | undefined {
+    return this.db.prepare(`SELECT id, local_base_path FROM repositories WHERE id = ?`).get(id) as
+      | { id: string; local_base_path: string }
       | undefined;
   }
 }
