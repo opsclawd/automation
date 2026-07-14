@@ -182,6 +182,10 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- forward reference for Task 5 runtime factory
 import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
 import {
+  DefaultRepositoryRuntimeCatalog,
+  type RepositoryRuntimeCatalog,
+} from './repository-runtime-catalog.js';
+import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
   PiAgentAdapter,
@@ -585,6 +589,7 @@ export interface Container {
   disableRepository: DisableRepository;
   refreshRepository: RefreshRepository;
   removeRepository: RemoveRepository;
+  runtimeCatalog: RepositoryRuntimeCatalog;
 }
 
 export interface ComposeOptions {
@@ -6071,6 +6076,13 @@ export function composeRoot(opts: ComposeOptions): Container {
     };
   };
 
+  const runtimeCatalog = new DefaultRepositoryRuntimeCatalog({
+    automationRoot: targetRoot,
+    stateRoot: baseTmpDir,
+    controlPlaneDb: db,
+    registry: registryBackedRepo,
+  });
+
   return {
     runRepository,
     phaseRepository,
@@ -6124,6 +6136,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     disableRepository,
     refreshRepository,
     removeRepository,
+    runtimeCatalog,
     serveSweepIntervalSeconds,
     buildWaitingRunsSweeper,
     buildOrphanedRunsSweeper,

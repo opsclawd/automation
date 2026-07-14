@@ -1,0 +1,221 @@
+import type { RepositoryId, RunId, Repository } from '@ai-sdlc/domain';
+import type { RunRecord, ListRunsFilter } from '@ai-sdlc/application/ports';
+import { loadLayeredConfig } from '@ai-sdlc/shared';
+import type { LoadedConfig } from '@ai-sdlc/shared';
+import {
+  RepositoryRuntimeFactory,
+  RepositoryRuntime,
+  RepositoryResolutionError,
+} from './repository-runtime-factory.js';
+import type { Db } from '@ai-sdlc/infrastructure';
+import { composeRepositoryRuntime } from './compose-repository-runtime.js';
+
+export interface RepositoryRuntimeCatalogOptions {
+  automationRoot: string;
+  stateRoot: string;
+  controlPlaneDb: Db;
+  registry: {
+    findById(id: RepositoryId): Repository | undefined;
+    findByFullName(fullName: string): Repository | undefined;
+    findByLocalPath(localBasePath: string): Repository | undefined;
+    listAll(): Array<Repository>;
+    listEnabled(): Array<Repository>;
+  };
+}
+
+export interface RepositoryRuntimeCatalog {
+  resolve(
+    repositoryId: RepositoryId,
+    options?: { allowDisabled?: boolean },
+  ): Promise<RepositoryRuntime>;
+  resolveEnabled(): Promise<Array<{ repository: Repository; runtime: RepositoryRuntime }>>;
+  findRun(
+    runId: RunId,
+    repositoryId?: RepositoryId,
+  ): Promise<{ runtime: RepositoryRuntime; run: RunRecord } | undefined>;
+  listRuns(filter: ListRunsFilter): Promise<{ runs: RunRecord[]; total: number }>;
+  close(): Promise<void>;
+}
+
+interface RuntimeEntry {
+  runtime: RepositoryRuntime;
+  loadedConfig: LoadedConfig;
+}
+
+export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog {
+  private readonly factory: RepositoryRuntimeFactory;
+  private readonly cache = new Map<string, RuntimeEntry>();
+  private readonly opts: RepositoryRuntimeCatalogOptions;
+
+  constructor(opts: RepositoryRuntimeCatalogOptions) {
+    this.opts = opts;
+    this.factory = new RepositoryRuntimeFactory({
+      stateRoot: opts.stateRoot,
+      buildRuntime: async ({ repository, paths, loadedConfig }) => {
+        return composeRepositoryRuntime({
+          automationRoot: opts.automationRoot,
+          stateRoot: opts.stateRoot,
+          repository,
+          paths,
+          loadedConfig,
+          controlPlaneDb: opts.controlPlaneDb,
+          listEnabledRepositories: () =>
+            opts.registry.listEnabled().map((r) => ({ id: r.id, fullName: r.fullName })),
+        });
+      },
+    });
+  }
+
+  async resolve(
+    repositoryId: RepositoryId,
+    options?: { allowDisabled?: boolean },
+  ): Promise<RepositoryRuntime> {
+    const repo = this.opts.registry.findById(repositoryId);
+    if (!repo) {
+      throw new RepositoryResolutionError(
+        repositoryId,
+        'unknown',
+        `Repository ${repositoryId} not found`,
+      );
+    }
+
+    if (!options?.allowDisabled && !repo.enabled) {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'disabled',
+        `Repository ${repo.fullName} is disabled`,
+      );
+    }
+
+    if (repo.healthStatus === 'degraded') {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'degraded',
+        `Repository ${repo.fullName} is in degraded health state`,
+      );
+    }
+
+    if (repo.healthStatus === 'unreachable') {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'unreachable',
+        `Repository ${repo.fullName} is unreachable`,
+      );
+    }
+
+    const layered = loadLayeredConfig({
+      automationRoot: this.opts.automationRoot,
+      targetRoot: repo.localBasePath,
+    });
+
+    const runtime = await this.factory.getRuntime(repo, layered);
+    return runtime;
+  }
+
+  async resolveEnabled(): Promise<Array<{ repository: Repository; runtime: RepositoryRuntime }>> {
+    const results: Array<{ repository: Repository; runtime: RepositoryRuntime }> = [];
+    const enabledRepos = this.opts.registry.listEnabled();
+
+    await Promise.all(
+      enabledRepos.map(async (repo) => {
+        try {
+          const runtime = await this.resolve(repo.id, { allowDisabled: false });
+          results.push({ repository: repo, runtime });
+        } catch {
+          // Skip repos that fail to resolve
+        }
+      }),
+    );
+
+    return results;
+  }
+
+  async findRun(
+    runId: RunId,
+    repositoryId?: RepositoryId,
+  ): Promise<{ runtime: RepositoryRuntime; run: RunRecord } | undefined> {
+    if (repositoryId) {
+      const runtime = await this.resolve(repositoryId, { allowDisabled: true });
+      const run = runtime.runRepository.findByUuid(String(runId));
+      if (run) {
+        return { runtime, run };
+      }
+      return undefined;
+    }
+
+    const enabled = await this.resolveEnabled();
+    for (const { runtime } of enabled) {
+      const run = runtime.runRepository.findByUuid(String(runId));
+      if (run) {
+        return { runtime, run };
+      }
+    }
+
+    const allRepos = this.opts.registry.listAll();
+    for (const repo of allRepos) {
+      const repoIdStr = String(repo.id);
+      const existingEntry = this.cache.get(repoIdStr);
+      if (existingEntry) {
+        const run = existingEntry.runtime.runRepository.findByUuid(String(runId));
+        if (run) {
+          return { runtime: existingEntry.runtime, run };
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  async listRuns(filter: ListRunsFilter): Promise<{ runs: RunRecord[]; total: number }> {
+    if (filter.repositoryId) {
+      const runtime = await this.resolve(filter.repositoryId, { allowDisabled: true });
+      return runtime.runRepository.list(filter);
+    }
+
+    const allResults: Array<{ runs: RunRecord[]; total: number }> = [];
+    const enabled = await this.resolveEnabled();
+
+    for (const { runtime } of enabled) {
+      const result = runtime.runRepository.list(filter);
+      allResults.push(result);
+    }
+
+    const disabledRepos = this.opts.registry.listAll().filter((r) => !r.enabled);
+    for (const repo of disabledRepos) {
+      try {
+        const runtime = await this.resolve(repo.id, { allowDisabled: true });
+        const result = runtime.runRepository.list(filter);
+        allResults.push(result);
+      } catch {
+        // Skip repos that fail to resolve
+      }
+    }
+
+    const allRuns: RunRecord[] = [];
+    let total = 0;
+    for (const result of allResults) {
+      allRuns.push(...result.runs);
+      total += result.total;
+    }
+
+    allRuns.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+
+    const limit = filter.limit ?? 25;
+    const offset = filter.offset ?? 0;
+    const paginatedRuns = allRuns.slice(offset, offset + limit);
+
+    return { runs: paginatedRuns, total };
+  }
+
+  async close(): Promise<void> {
+    this.factory.close();
+    for (const entry of this.cache.values()) {
+      try {
+        entry.runtime.close();
+      } catch {
+        // Best-effort close
+      }
+    }
+    this.cache.clear();
+  }
+}

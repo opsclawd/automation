@@ -115,6 +115,8 @@ module.exports = {
         pathNot: [
           '^apps/api/src/compose\\.ts$',
           '^apps/api/src/compose-repository-runtime\\.ts$',
+          '^apps/api/src/repository-runtime-catalog\\.ts$',
+          '^apps/api/src/repository-runtime-factory\\.ts$',
           '(^|/)__tests__/',
           '^apps/api/src/port-conformance\\.check\\.ts$',
         ],
