@@ -77,6 +77,18 @@ function pickTypecheckPayload(tcResult: TypecheckResult): string | unknown[] | u
 // with the documented behavior in `packages/shared/src/config/schema.ts`.
 export const DEFAULT_MAX_TYPE_CHECK_RETRIES = 2;
 
+/**
+ * Returns the declared files for a task entry (V2 expected_files merged with
+ * V1 files for backwards compatibility). Normalizes slashes without filesystem
+ * access.
+ */
+function getDeclaredFiles(task: {
+  expected_files?: string[] | null | undefined;
+  files?: string[] | null | undefined;
+}): string[] {
+  return [...(task.expected_files ?? []), ...(task.files ?? [])].map((f) => f.replace(/\\/g, '/'));
+}
+
 // Stall detection horizon: keep a small history of recent fingerprints so
 // cyclic regressions (A → B → A → B) don't escape detection. Tunable for tests.
 const DEFAULT_STALL_HISTORY_SIZE = 2;
@@ -508,6 +520,9 @@ export class ImplementStepLoop {
     const maxTypeCheckRetries = input.maxTypeCheckRetries ?? DEFAULT_MAX_TYPE_CHECK_RETRIES;
     let typecheckRetryCount = 0;
     const stallHistory: string[] = [];
+    const scopeSet: Set<string> = new Set();
+    const taskEntry = input.manifest?.tasks?.[input.stepIndex - 1];
+    const declaredFiles = taskEntry ? getDeclaredFiles(taskEntry) : [];
 
     while (tcResult.outcome === 'fail' && typecheckRetryCount < maxTypeCheckRetries) {
       const iterationIndex = typecheckRetryCount + 2;
@@ -553,6 +568,39 @@ export class ImplementStepLoop {
       }
 
       typecheckRetryCount += 1;
+
+      const implicatedFiles = tcResult.implicatedFiles ?? [];
+      const outOfScopeFiles = implicatedFiles.filter(
+        (f: string) => !declaredFiles.includes(f.replace(/\\/g, '/')),
+      );
+      const newFiles: string[] = [];
+      for (const file of outOfScopeFiles) {
+        const normalized = file.replace(/\\/g, '/');
+        if (!scopeSet.has(normalized)) {
+          scopeSet.add(normalized);
+          newFiles.push(normalized);
+        }
+      }
+      if (newFiles.length > 0) {
+        const sortedScope = [...scopeSet].sort();
+        this.emit(
+          input,
+          'step.typecheck.scope_widened',
+          'warn',
+          `step ${input.stepIndex} typecheck retry ${typecheckRetryCount} widened scope by ${newFiles.length} trusted file(s)`,
+          {
+            index: input.stepIndex,
+            attempt: typecheckRetryCount,
+            newlyAddedFiles: newFiles.sort(),
+            accumulatedScope: sortedScope,
+            implicatedFiles,
+            errorCodes: (tcResult.structuredErrors ?? [])
+              .map((e: TypescriptError) => e.code)
+              .sort(),
+          },
+        );
+      }
+
       this.emit(
         input,
         'step.typecheck.retry',
@@ -580,6 +628,7 @@ export class ImplementStepLoop {
           ...(pickTypecheckPayload(tcResult) !== undefined
             ? { typecheckErrors: pickTypecheckPayload(tcResult) as string | TypescriptError[] }
             : {}),
+          ...(scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : {}),
         },
       );
 
