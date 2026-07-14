@@ -107,12 +107,14 @@ module.exports = {
       name: 'compose-is-only-cross-layer-importer',
       severity: 'error',
       comment:
-        'Only apps/api/src/compose.ts may import both @ai-sdlc/application and ' +
+        'Only apps/api/src/compose.ts (and the repository-scoped ' +
+        'compose-repository-runtime.ts) may import both @ai-sdlc/application and ' +
         '@ai-sdlc/infrastructure. Move wiring there.',
       from: {
         path: '^apps/api/src',
         pathNot: [
           '^apps/api/src/compose\\.ts$',
+          '^apps/api/src/compose-repository-runtime\\.ts$',
           '(^|/)__tests__/',
           '^apps/api/src/port-conformance\\.check\\.ts$',
         ],
