@@ -215,7 +215,12 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     if (status !== undefined) {
       filter.status = status;
     }
-    const { runs, total } = c.runRepository.list(filter);
+    let { runs, total } = await c.runtimeCatalog.listRuns(filter);
+    if (total === 0) {
+      const rootResult = c.runRepository.list(filter);
+      runs = rootResult.runs;
+      total = rootResult.total;
+    }
     return {
       runs: runs.map(serializeRun),
       total,
@@ -228,9 +233,11 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     if (!UUID_RE.test(req.params.runId)) {
       return reply.code(400).send({ error: 'invalid_id' });
     }
-    const run = await guardRead(req, reply, c);
-    if (!run) return;
-    const failure = c.failureRepository.findLatestByRun(req.params.runId);
+    const result = await guardRead(req, reply, c);
+    if (!result) return;
+    const { run, runtime } = result;
+    const failureRepository = runtime?.failureRepository ?? c.failureRepository;
+    const failure = failureRepository.findLatestByRun(req.params.runId);
     return { run: serializeRun(run), failure: failure ? serializeFailure(failure) : null };
   });
 

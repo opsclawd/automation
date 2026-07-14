@@ -12,10 +12,11 @@ export function registerPrReviewRoutes(app: FastifyInstance, c: Container): void
       reply.code(400);
       return { error: 'invalid run uuid' };
     }
-    const run = await guardRead(req, reply, c);
-    if (!run) return;
+    const result = await guardRead(req, reply, c);
+    if (!result) return;
+    const prReviewRepository = result.runtime?.prReviewRepository ?? c.prReviewRepository;
     const runId = RunId(uuid);
-    const comments = c.prReviewRepository.listComments(runId).map((cm) => ({
+    const comments = prReviewRepository.listComments(runId).map((cm) => ({
       commentId: cm.commentId,
       prNumber: cm.prNumber,
       path: cm.path,
@@ -33,8 +34,8 @@ export function registerPrReviewRoutes(app: FastifyInstance, c: Container): void
       blockedReason: cm.blockedReason ?? null,
       lastPoll: cm.lastPoll,
     }));
-    const replies = c.prReviewRepository.listReplies(runId);
-    const pollAttempts = c.prReviewRepository.listPollAttempts(runId).map((p) => ({
+    const replies = prReviewRepository.listReplies(runId);
+    const pollAttempts = prReviewRepository.listPollAttempts(runId).map((p) => ({
       id: p.id,
       pollNumber: p.pollNumber,
       status: p.status,

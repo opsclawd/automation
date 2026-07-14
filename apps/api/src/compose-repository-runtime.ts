@@ -9,6 +9,12 @@ import {
   WorkerLeaseRepository,
   WorkerRegistryRepository,
   RepositoryRuntimeMigrator,
+  EventRepository,
+  PrReviewRepository,
+  LoopRepository,
+  AgentInvocationRepository,
+  ValidationRunRepository,
+  FailureRepository,
 } from '@ai-sdlc/infrastructure';
 import type { Repository, RepositoryId } from '@ai-sdlc/domain';
 import type { LoadedConfig } from '@ai-sdlc/shared';
@@ -103,6 +109,12 @@ export async function composeRepositoryRuntime(
     listEnabled: () => (repository.enabled ? [repository] : []),
   } as RepositoryPort);
   const workerRegistry = new WorkerRegistryRepository(operationalDb);
+  const eventRepository = new EventRepository(operationalDb, repository.id);
+  const prReviewRepository = new PrReviewRepository(operationalDb);
+  const loopRepository = new LoopRepository(operationalDb);
+  const agentInvocationRepository = new AgentInvocationRepository(operationalDb);
+  const validationRunRepository = new ValidationRunRepository(operationalDb);
+  const failureRepository = new FailureRepository(operationalDb);
 
   let closed = false;
   const close = () => {
@@ -125,6 +137,12 @@ export async function composeRepositoryRuntime(
     runRepository,
     workerRegistry,
     workerLeaseRepository,
+    eventRepository,
+    prReviewRepository,
+    loopRepository,
+    agentInvocationRepository,
+    validationRunRepository,
+    failureRepository,
     workerLoopDeps: {
       registry: workerRegistry,
       queue: jobQueue,

@@ -13,11 +13,13 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       if (!UUID_RE.test(req.params.runId)) {
         return reply.code(400).send({ error: 'invalid_id' });
       }
-      const run = await guardRead(req, reply, c);
-      if (!run) return;
+      const result = await guardRead(req, reply, c);
+      if (!result) return;
+      const { run, runtime } = result;
+      const eventRepository = runtime?.eventRepository ?? c.eventRepository;
       let events;
       try {
-        events = c.eventRepository.listByRunSince(req.params.runId, req.query.since);
+        events = eventRepository.listByRunSince(req.params.runId, req.query.since);
       } catch (e) {
         return reply.code(400).send({ error: 'invalid_since', message: (e as Error).message });
       }
@@ -31,8 +33,10 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       if (!UUID_RE.test(req.params.runId)) {
         return reply.code(400).send({ error: 'invalid_id' });
       }
-      const run = await guardRead(req, reply, c);
-      if (!run) return;
+      const result = await guardRead(req, reply, c);
+      if (!result) return;
+      const { run, runtime } = result;
+      const eventRepository = runtime?.eventRepository ?? c.eventRepository;
 
       // Validate `since` parameter before committing to the SSE stream
       // so we can return proper 400 errors instead of sending 200 then ending.
@@ -105,7 +109,7 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
 
       let backfillEvents;
       try {
-        backfillEvents = c.eventRepository.listByRunSince(req.params.runId, req.query.since);
+        backfillEvents = eventRepository.listByRunSince(req.params.runId, req.query.since);
       } catch {
         sseWrite('error', { error: 'invalid_since' });
         unsub();

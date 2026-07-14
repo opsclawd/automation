@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { Container } from '../compose.js';
 import type { RepositoryId, Run } from '@ai-sdlc/domain';
+import type { RepositoryRuntime } from '../repository-runtime-factory.js';
 import {
   RepositoryNotFoundError,
   RepositoryNotApprovedError,
@@ -60,15 +61,10 @@ export async function guardRead(
   req: FastifyRequest<{ Params: { runId?: string; uuid?: string } }>,
   reply: FastifyReply,
   c: Container,
-): Promise<Run | null> {
+): Promise<{ run: Run; runtime?: RepositoryRuntime } | null> {
   const runId = req.params.runId ?? req.params.uuid;
   if (!runId) {
     reply.code(400).send({ error: 'invalid_id' });
-    return null;
-  }
-  const run = c.runRepository.findByUuid(runId);
-  if (!run) {
-    reply.code(404).send({ error: 'not_found' });
     return null;
   }
   const ctx = resolveRepoContext(
@@ -86,6 +82,29 @@ export async function guardRead(
       }
       throw err;
     }
+  }
+  let run: Run | undefined;
+  let runtime: RepositoryRuntime | undefined;
+  if (c.runtimeCatalog) {
+    try {
+      const catalogResult = await c.runtimeCatalog.findRun(
+        runId as import('@ai-sdlc/domain').RunId,
+        resolvedRepoId,
+      );
+      if (catalogResult) {
+        run = catalogResult.run;
+        runtime = catalogResult.runtime;
+      }
+    } catch {
+      // Fall through to root repository lookup
+    }
+  }
+  if (!run && c.runRepository) {
+    run = c.runRepository.findByUuid(runId);
+  }
+  if (!run) {
+    reply.code(404).send({ error: 'not_found' });
+    return null;
   }
   try {
     c.loadRepositoryForRun.execute({
@@ -108,5 +127,5 @@ export async function guardRead(
     }
     throw err;
   }
-  return run;
+  return runtime ? { run, runtime } : { run };
 }

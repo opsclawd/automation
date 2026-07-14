@@ -103,6 +103,14 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
       );
     }
 
+    if (repo.healthStatus === 'unknown') {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'unknown',
+        `Repository ${repo.fullName} has unknown health status: ${repo.healthError ?? 'unknown'}`,
+      );
+    }
+
     const layered = loadLayeredConfig({
       automationRoot: this.opts.automationRoot,
       targetRoot: repo.localBasePath,
@@ -140,12 +148,16 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
     repositoryId?: RepositoryId,
   ): Promise<{ runtime: RepositoryRuntime; run: RunRecord } | undefined> {
     if (repositoryId) {
-      const runtime = await this.resolve(repositoryId, { allowDisabled: true });
-      const run = runtime.runRepository.findByUuid(String(runId));
-      if (run) {
-        return { runtime, run };
+      try {
+        const runtime = await this.resolve(repositoryId, { allowDisabled: true });
+        const run = runtime.runRepository.findByUuid(String(runId));
+        if (run) {
+          return { runtime, run };
+        }
+        return undefined;
+      } catch {
+        return undefined;
       }
-      return undefined;
     }
 
     const enabled = await this.resolveEnabled();
@@ -173,8 +185,12 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
 
   async listRuns(filter: ListRunsFilter): Promise<{ runs: RunRecord[]; total: number }> {
     if (filter.repositoryId) {
-      const runtime = await this.resolve(filter.repositoryId, { allowDisabled: true });
-      return runtime.runRepository.list(filter);
+      try {
+        const runtime = await this.resolve(filter.repositoryId, { allowDisabled: true });
+        return runtime.runRepository.list(filter);
+      } catch {
+        return { runs: [], total: 0 };
+      }
     }
 
     const allResults: Array<{ runs: RunRecord[]; total: number }> = [];

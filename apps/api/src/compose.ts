@@ -62,7 +62,9 @@ import {
   ReapOrphanedTestWorkers,
   SweepWaitingRuns,
   WaitingRunsSweeper,
+  type WaitingRunsSweeperResult,
   OrphanedRunsSweeper,
+  type OrphanedRunsSweeperResult,
   checkPid,
   RunValidation,
   ReadIssueHandler,
@@ -185,6 +187,29 @@ import {
   DefaultRepositoryRuntimeCatalog,
   type RepositoryRuntimeCatalog,
 } from './repository-runtime-catalog.js';
+
+/** Per-Repository outcome of one recovery-sweep pass (#652 Task 6). */
+export interface RepositorySweepResult {
+  repositoryId: string;
+  fullName: string;
+  waiting?: WaitingRunsSweeperResult;
+  orphaned?: OrphanedRunsSweeperResult;
+  error?: string;
+}
+
+export interface RepositorySweepCoordinatorResult {
+  results: RepositorySweepResult[];
+}
+
+/**
+ * Runs the waiting/orphan recovery sweeps against every enabled
+ * Repository's own operational runtime, aggregating per-Repository
+ * outcomes. A resolution or sweep failure for one Repository is recorded
+ * on its own result entry and does not prevent the others from running.
+ */
+export interface RepositorySweepCoordinator {
+  execute(workerId: import('@ai-sdlc/domain').WorkerId): Promise<RepositorySweepCoordinatorResult>;
+}
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -519,8 +544,18 @@ export interface Container {
    */
   workerLoopDeps?: (repoId: RepositoryId) => Omit<WorkerLoopDeps, 'recoverableRunIds'>;
   serveSweepIntervalSeconds: number;
+  /** @deprecated Root-scoped sweeper; use `buildRepositorySweepCoordinator` for multi-Repository recovery sweeps (#652 Task 6). Retained until Task 7 rewires `serve`. */
   buildWaitingRunsSweeper: () => import('@ai-sdlc/application').WaitingRunsSweeper;
+  /** @deprecated Root-scoped sweeper; use `buildRepositorySweepCoordinator` for multi-Repository recovery sweeps (#652 Task 6). Retained until Task 7 rewires `serve`. */
   buildOrphanedRunsSweeper: () => import('@ai-sdlc/application').OrphanedRunsSweeper;
+  /**
+   * Builds a coordinator that resolves every enabled Repository via the
+   * `runtimeCatalog` and runs the waiting/orphan recovery sweeps against
+   * each Repository's own operational runtime (Run/queue/lease/event
+   * ports) rather than the root container's ports. One Repository's
+   * resolution or sweep failure does not block the others (#652 Task 6).
+   */
+  buildRepositorySweepCoordinator: () => RepositorySweepCoordinator;
   /** Exposed for worktree lifecycle management in CLI and tests. */
   git: GitPort;
   /** Context factory for a full run (includes promptsRoot, expectedBranch, cwd). Only present when agent config is loaded. */
@@ -6083,6 +6118,107 @@ export function composeRoot(opts: ComposeOptions): Container {
     registry: registryBackedRepo,
   });
 
+  function buildRepositorySweepCoordinator(): RepositorySweepCoordinator {
+    return {
+      async execute(workerId: import('@ai-sdlc/domain').WorkerId) {
+        const results: RepositorySweepResult[] = [];
+        const enabled = await runtimeCatalog.resolveEnabled();
+
+        for (const { repository, runtime } of enabled) {
+          const entry: RepositorySweepResult = {
+            repositoryId: String(repository.id),
+            fullName: repository.fullName,
+          };
+
+          try {
+            const resolvePrContextForRuntime = async (
+              run: RunRecord,
+            ): Promise<{ repoFullName: string; prNumber: number } | undefined> => {
+              const artifactRoot = run.displayId ?? run.uuid;
+              try {
+                const prUrl = readFileSync(
+                  join(runtime.paths.runsRoot(), artifactRoot, 'phase-artifacts', 'pr-url.txt'),
+                  'utf8',
+                ).trim();
+                const match = prUrl.match(/\/pull\/(\d+)/);
+                if (!match) return undefined;
+                return { repoFullName: repository.fullName, prNumber: parseInt(match[1]!, 10) };
+              } catch {
+                return undefined;
+              }
+            };
+
+            const waitingSweeper = new WaitingRunsSweeper({
+              sweep: new SweepWaitingRuns({
+                runRepository: runtime.runRepository,
+                prReviewRepo: runtime.prReviewRepository,
+                github: getGhAdapterForSweep(),
+                eventBus,
+                now: () => new Date(),
+                readyMaxDays,
+                applyReactivation: (
+                  run: RunRecord,
+                  decision: { action: string; reason: string },
+                ) => {
+                  // Mirrors the root-scoped sweeper's finalization-vs-reactivation
+                  // split so a per-runtime sweep applies the same semantics: only
+                  // a genuine reactivation is deferred to the worker loop, while
+                  // merge/close finalization applies immediately.
+                  const isFinalization =
+                    decision.action === 'reactivate' &&
+                    (decision.reason.includes('PR merged') ||
+                      decision.reason.includes('PR closed'));
+                  const isGenuineReactivation = decision.action === 'reactivate' && !isFinalization;
+                  if (!isGenuineReactivation) {
+                    applyReactivation(run as never, decision as never, {
+                      runRepository: runtime.runRepository,
+                      eventBus,
+                      now: () => new Date(),
+                    });
+                  }
+                },
+                resolvePrContext: resolvePrContextForRuntime,
+              }),
+              runRepository: runtime.runRepository,
+              leases: runtime.workerLeaseRepository,
+              queue: runtime.jobQueue,
+              eventBus,
+              now: () => new Date(),
+              logger: sweepLogger,
+            });
+
+            const orphanedRunsSweeper = new OrphanedRunsSweeper({
+              runRepository: runtime.runRepository,
+              leases: runtime.workerLeaseRepository,
+              queue: runtime.jobQueue,
+              eventBus,
+              now: () => new Date(),
+              logger: sweepLogger,
+            });
+
+            const orphanScan = new SweepOrphanedRuns({
+              runRepository: runtime.runRepository,
+              isProcessAlive: checkPid,
+              now: () => new Date(),
+            }).execute();
+
+            entry.orphaned = await orphanedRunsSweeper.execute(orphanScan.orphanedRuns);
+            entry.waiting = await waitingSweeper.execute(workerId);
+          } catch (err) {
+            entry.error = err instanceof Error ? err.message : String(err);
+            sweepLogger.error(
+              `RepositorySweepCoordinator: sweep failed for repository ${repository.fullName}: ${entry.error}`,
+            );
+          }
+
+          results.push(entry);
+        }
+
+        return { results };
+      },
+    };
+  }
+
   return {
     runRepository,
     phaseRepository,
@@ -6140,6 +6276,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     serveSweepIntervalSeconds,
     buildWaitingRunsSweeper,
     buildOrphanedRunsSweeper,
+    buildRepositorySweepCoordinator,
   };
 }
 

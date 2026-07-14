@@ -12,10 +12,11 @@ export function registerReviewFixRoutes(app: FastifyInstance, c: Container): voi
       reply.code(400);
       return { error: 'invalid run uuid' };
     }
-    const run = await guardRead(req, reply, c);
-    if (!run) return;
+    const result = await guardRead(req, reply, c);
+    if (!result) return;
+    const loopRepository = result.runtime?.loopRepository ?? c.loopRepository;
     const runId = RunId(uuid);
-    const loops = c.loopRepository.listForRun(runId).map((l) => ({
+    const loops = loopRepository.listForRun(runId).map((l) => ({
       id: l.id,
       phaseId: l.phaseId,
       type: l.type,

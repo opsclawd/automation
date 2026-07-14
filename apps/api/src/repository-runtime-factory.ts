@@ -5,7 +5,12 @@ import type {
   WorkerLeasePort,
   WorkerRegistryPort,
   RunRepositoryPort,
+  PrReviewRepositoryPort,
+  LoopRepositoryPort,
+  AgentInvocationPort,
+  ValidationRunRepositoryPort,
 } from '@ai-sdlc/application/ports';
+import type { EventRepositoryPort, FailureRepositoryPort } from '@ai-sdlc/application';
 import { RepositoryRuntimePaths } from './repository-runtime-paths.js';
 import type { LoadedConfig } from '@ai-sdlc/shared';
 
@@ -49,6 +54,19 @@ export interface RepositoryRuntime {
   readonly workerRegistry: WorkerRegistryPort;
   readonly workerLeaseRepository: WorkerLeasePort;
   readonly workerLoopDeps: RepositoryRuntimeLoopDeps;
+  /**
+   * Repository-scoped read ports for control-plane routes (#652 Task 6).
+   * Backed by the same per-repository operational database as
+   * `runRepository`, so route handlers that resolve a run via this runtime
+   * must read associated events/artifacts/invocations/etc. through these
+   * ports rather than falling back to the root container's ports.
+   */
+  readonly eventRepository: EventRepositoryPort;
+  readonly prReviewRepository: PrReviewRepositoryPort;
+  readonly loopRepository: LoopRepositoryPort;
+  readonly agentInvocationRepository: AgentInvocationPort;
+  readonly validationRunRepository: ValidationRunRepositoryPort;
+  readonly failureRepository: FailureRepositoryPort;
   close(): void;
 }
 
