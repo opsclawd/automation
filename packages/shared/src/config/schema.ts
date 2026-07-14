@@ -178,6 +178,13 @@ const timeoutsSchema = z.object({
   invocationMaxMinutes: z.number().int().positive(),
 });
 
+export const schedulerConfigSchema = z
+  .strictObject({
+    globalConcurrency: z.number().int().positive().default(1),
+    pollIntervalMs: z.number().int().positive().default(2_000),
+  })
+  .default({ globalConcurrency: 1, pollIntervalMs: 2_000 });
+
 // Keep in sync with AgentRuntimeKind in @ai-sdlc/domain/agent-types.ts
 const agentRuntime = z.enum(['opencode', 'pi', 'antigravity', 'claude-code', 'codex']);
 
@@ -415,6 +422,7 @@ export const orchestratorConfigSchema = z
         sweepIntervalSeconds: z.number().int().nonnegative().default(0),
       })
       .default({ sweepIntervalSeconds: 0 }),
+    scheduler: schedulerConfigSchema,
   })
   .superRefine((config, ctx) => {
     const judgmentAgent = config.phases.planReview?.judgmentAgent;
