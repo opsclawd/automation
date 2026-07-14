@@ -196,6 +196,7 @@ import {
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { deriveTrustedImplicatedFiles } from './typecheck-implicated-files.js';
+import { renderImplementRetryScopePrompt } from './implement-retry-scope.js';
 import {
   buildArbiterPrompt,
   buildImplementStepFinalReviewArbiterPrompt,
@@ -341,6 +342,7 @@ export function buildImplementPrompt(
   taskContext: string,
   branchName: string,
   typecheckErrors?: TypescriptError[] | string,
+  additionalEditableFiles?: string[],
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
@@ -384,6 +386,8 @@ export function buildImplementPrompt(
     '',
     'You may READ files associated with later tasks for context, but you must',
     'not write, modify, stage, or commit them in this run.',
+    '',
+    ...renderImplementRetryScopePrompt(additionalEditableFiles),
     '',
     ...(structuredErrors !== undefined && structuredErrors.length > 0
       ? renderStructuredTypecheckErrors(structuredErrors)
