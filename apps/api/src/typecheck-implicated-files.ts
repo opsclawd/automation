@@ -43,14 +43,14 @@ function resolveAndCheckContainment(worktreeRoot: string, candidate: string): st
 
     if (
       normalizedCandidate.startsWith('/') &&
-      !normalizedCandidate.startsWith(resolve(worktreeRoot))
+      !normalizedCandidate.startsWith(resolve(worktreeRoot) + '/')
     ) {
       return null;
     }
 
     if (normalizedCandidate.includes('..')) {
       const resolved = resolve(worktreeRoot, normalizedCandidate);
-      if (!resolved.startsWith(resolve(worktreeRoot))) {
+      if (!resolved.startsWith(resolve(worktreeRoot) + '/')) {
         return null;
       }
     }
@@ -80,7 +80,15 @@ function resolveAndCheckContainment(worktreeRoot: string, candidate: string): st
       return null;
     }
 
-    const relativePath = normalizeSeparators(fullPath).replace(rootNormalized + '/', '');
+    const normalizedFullPath = normalizeSeparators(fullPath);
+    const resolvedWorktreeRoot = normalizeSeparators(resolve(worktreeRoot));
+
+    let relativePath: string;
+    if (normalizedFullPath.startsWith(resolvedWorktreeRoot + '/')) {
+      relativePath = normalizedFullPath.replace(resolvedWorktreeRoot + '/', '');
+    } else {
+      relativePath = realpathNormalized.replace(rootNormalized + '/', '');
+    }
 
     return relativePath;
   } catch {
