@@ -698,6 +698,38 @@ export class ImplementStepLoop {
       if (iterationIndex > 1) {
         tcResult = await deps.runTypecheck(baseCtx);
         if (tcResult.outcome === 'fail') {
+          const implicatedFiles = tcResult.implicatedFiles ?? [];
+          const outOfScopeFiles = implicatedFiles.filter(
+            (f: string) => !declaredFiles.includes(f.replace(/\\/g, '/')),
+          );
+          const newFiles: string[] = [];
+          for (const file of outOfScopeFiles) {
+            const normalized = file.replace(/\\/g, '/');
+            if (!scopeSet.has(normalized)) {
+              scopeSet.add(normalized);
+              newFiles.push(normalized);
+            }
+          }
+          if (newFiles.length > 0) {
+            const sortedScope = [...scopeSet].sort();
+            this.emit(
+              input,
+              'step.typecheck.scope_widened',
+              'warn',
+              `step ${input.stepIndex} review-fix iteration ${iterationIndex} widened scope by ${newFiles.length} trusted file(s)`,
+              {
+                index: input.stepIndex,
+                iteration: iterationIndex,
+                newlyAddedFiles: newFiles.sort(),
+                accumulatedScope: sortedScope,
+                implicatedFiles,
+                errorCodes: (tcResult.structuredErrors ?? [])
+                  .map((e: TypescriptError) => e.code)
+                  .sort(),
+              },
+            );
+          }
+
           // Try to revert the build-breaking fix if a previous fix exists with
           // a known-passing headBeforeFix captured.
           // On the trailing re-review pass, never invoke revertFix — it
@@ -1368,6 +1400,7 @@ export class ImplementStepLoop {
                   : {}),
                 reconciliationContext: pendingReconciliationContext,
                 ...(bonusHolisticFindings ? { holisticFindings: bonusHolisticFindings } : {}),
+                ...(scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : {}),
               },
             );
             pendingReconciliationContext = undefined;
@@ -1536,6 +1569,7 @@ export class ImplementStepLoop {
             ? { previousInvocationId: lastFixInvocationId }
             : {}),
           ...(holisticFindings ? { holisticFindings } : {}),
+          ...(scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : {}),
         },
       );
       pendingReconciliationContext = undefined;
@@ -2081,6 +2115,7 @@ export class ImplementStepLoop {
           ...(terminalDeterministicFailures !== undefined ? { terminalDeterministicFailures } : {}),
           ...(historyContext !== undefined ? { historyContext } : {}),
           ...(terminalHolisticFindings ? { holisticFindings: terminalHolisticFindings } : {}),
+          ...(scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : {}),
         },
       );
 
