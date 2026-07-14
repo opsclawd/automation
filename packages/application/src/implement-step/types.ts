@@ -45,6 +45,7 @@ export interface TypecheckResult {
   outcome: 'pass' | 'fail';
   output: string;
   structuredErrors?: TypescriptError[];
+  implicatedFiles?: string[];
 }
 
 export type ReviewMode = 'initial_full' | 'intermediate_delta' | 'final_full';

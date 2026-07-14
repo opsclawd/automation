@@ -195,6 +195,7 @@ import {
   createSignatureReferenceAnalyzer,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
+import { deriveTrustedImplicatedFiles } from './typecheck-implicated-files.js';
 import {
   buildArbiterPrompt,
   buildImplementStepFinalReviewArbiterPrompt,
@@ -3347,10 +3348,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             encoding: 'utf-8',
           });
           if (buildError) {
+            const structuredErrors = parseTypescriptErrors(buildError);
             return {
               outcome: 'fail',
               output: buildError,
-              structuredErrors: parseTypescriptErrors(buildError),
+              structuredErrors,
+              implicatedFiles: deriveTrustedImplicatedFiles(ctx.cwd, structuredErrors),
             };
           }
           return { outcome: 'pass', output: '' };
@@ -3361,10 +3364,13 @@ export function composeRoot(opts: ComposeOptions): Container {
               : String(err);
           const lines = raw.split('\n');
           const truncated = lines.length > 100 ? lines.slice(-100).join('\n') : raw;
+          const truncatedOutput = truncated.slice(0, 3000);
+          const structuredErrors = parseTypescriptErrors(truncatedOutput);
           return {
             outcome: 'fail',
-            output: truncated.slice(0, 3000),
-            structuredErrors: parseTypescriptErrors(truncated.slice(0, 3000)),
+            output: truncatedOutput,
+            structuredErrors,
+            implicatedFiles: deriveTrustedImplicatedFiles(ctx.cwd, structuredErrors),
           };
         }
       };
