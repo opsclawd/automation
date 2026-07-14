@@ -100,10 +100,11 @@ export function deriveTrustedImplicatedFiles(
   worktreeRoot: string,
   errors: readonly TypescriptError[],
 ): string[] {
-  const worktreeRootResolved = resolve(worktreeRoot);
+  const worktreeRootResolved = normalizeSeparators(resolve(worktreeRoot));
   const rootRealpath = realpathSync(worktreeRootResolved);
   const rootRealpathNormalized = normalizeSeparators(rootRealpath);
   const seen = new Set<string>();
+  const seenCandidatePaths = new Set<string>();
   const result: string[] = [];
 
   for (const error of errors) {
@@ -115,6 +116,8 @@ export function deriveTrustedImplicatedFiles(
     if (isExcludedPath(normalizedFile)) continue;
     if (isGeneratedFile(normalizedFile)) continue;
     if (!hasSupportedExtension(normalizedFile)) continue;
+    if (seenCandidatePaths.has(normalizedFile)) continue;
+    seenCandidatePaths.add(normalizedFile);
 
     const contained = resolveAndCheckContainment(
       worktreeRootResolved,
