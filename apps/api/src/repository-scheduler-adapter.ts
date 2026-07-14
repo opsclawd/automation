@@ -21,7 +21,7 @@ export class RepositorySchedulerAdapter
   implements RepositoryWorkSourcePort, RepositoryDispatchPort
 {
   private readonly deps: RepositorySchedulerAdapterDeps;
-  private cachedRuntime: RepositoryRuntime | null = null;
+  private cachedRuntimes = new Map<RepositoryId, RepositoryRuntime>();
 
   constructor(deps: RepositorySchedulerAdapterDeps) {
     this.deps = deps;
@@ -62,8 +62,10 @@ export class RepositorySchedulerAdapter
 
     let runtime: RepositoryRuntime;
     try {
-      runtime = await this.deps.runtimeFactory(repo);
-      this.cachedRuntime = runtime;
+      runtime = this.cachedRuntimes.get(repo.id) ?? (await this.deps.runtimeFactory(repo));
+      if (!this.cachedRuntimes.has(repo.id)) {
+        this.cachedRuntimes.set(repo.id, runtime);
+      }
     } catch (err) {
       return {
         available: false,
@@ -90,8 +92,11 @@ export class RepositorySchedulerAdapter
   }): Promise<'completed' | 'no_work'> {
     const { repository, workerId } = input;
 
-    const runtime = this.cachedRuntime ?? (await this.deps.runtimeFactory(repository));
-    this.cachedRuntime = runtime;
+    let runtime = this.cachedRuntimes.get(repository.id);
+    if (!runtime) {
+      runtime = await this.deps.runtimeFactory(repository);
+      this.cachedRuntimes.set(repository.id, runtime);
+    }
 
     const hostname = 'scheduler';
     const processId = 0;
@@ -133,8 +138,10 @@ export class RepositorySchedulerAdapter
   }
 
   close(): void {
-    this.cachedRuntime?.close();
-    this.cachedRuntime = null;
+    for (const runtime of this.cachedRuntimes.values()) {
+      runtime.close();
+    }
+    this.cachedRuntimes.clear();
   }
 }
 

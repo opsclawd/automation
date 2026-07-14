@@ -41,6 +41,7 @@ export class DefaultSchedulerTelemetry implements SchedulerTelemetryPort {
         return false;
       case 'scheduler.repository.queue_depth':
         this.repositoryQueueDepth.set(r.repository_id, r.depth);
+        this.lastUnavailableWarning.delete(String(r.repository_id));
         return false;
       case 'scheduler.repository.skipped':
         if (r.reason === 'unavailable' || r.reason === 'unhealthy') {
@@ -54,6 +55,7 @@ export class DefaultSchedulerTelemetry implements SchedulerTelemetryPort {
         this.repositorySkipTotal++;
         return false;
       case 'scheduler.dispatch.started':
+        this.lastUnavailableWarning.delete(String(r.repository_id));
         return false;
       case 'scheduler.dispatch.completed':
         return false;

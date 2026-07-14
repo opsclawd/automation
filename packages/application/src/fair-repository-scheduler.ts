@@ -153,24 +153,26 @@ export class FairRepositoryScheduler {
     const abortAwareSleep = (ms: number): Promise<void> => {
       return new Promise((resolve) => {
         const timeout = setTimeout(() => resolve(), ms);
-        signal.addEventListener(
-          'abort',
-          () => {
-            clearTimeout(timeout);
-            resolve();
-          },
-          { once: true },
-        );
+        const onAbort = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        signal.addEventListener('abort', onAbort);
+        setTimeout(() => {
+          signal.removeEventListener('abort', onAbort);
+        }, ms);
       });
     };
 
     while (!signal.aborted) {
+      let listenerRef: ((repoId: RepositoryId) => void) | undefined;
       const nextCompletion = (): Promise<(repoId: RepositoryId) => void> => {
         return new Promise((resolve) => {
           const listener = (_repoId: RepositoryId) => {
             this.removeCompletionListener(listener);
             resolve(listener);
           };
+          listenerRef = listener;
           this.addCompletionListener(listener);
         });
       };
@@ -188,10 +190,8 @@ export class FairRepositoryScheduler {
         completionPromise,
       ]);
 
-      if (raceResult === undefined) {
-        completionPromise.then((listener) => {
-          this.removeCompletionListener(listener);
-        });
+      if (raceResult === undefined && listenerRef) {
+        this.removeCompletionListener(listenerRef);
       }
     }
   }
