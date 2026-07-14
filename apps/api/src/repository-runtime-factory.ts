@@ -179,37 +179,6 @@ export class RepositoryRuntimeFactory {
     }
   }
 
-  private validateRepositoryState(repo: Repository): void {
-    if (!repo.enabled) {
-      throw new RepositoryResolutionError(
-        repo.id,
-        'disabled',
-        `Repository ${repo.fullName} is disabled`,
-      );
-    }
-    if (repo.healthStatus === 'degraded') {
-      throw new RepositoryResolutionError(
-        repo.id,
-        'degraded',
-        `Repository ${repo.fullName} is in degraded health state: ${repo.healthError ?? 'unknown'}`,
-      );
-    }
-    if (repo.healthStatus === 'unreachable') {
-      throw new RepositoryResolutionError(
-        repo.id,
-        'unreachable',
-        `Repository ${repo.fullName} is unreachable: ${repo.healthError ?? 'unknown'}`,
-      );
-    }
-    if (repo.healthStatus === 'unknown') {
-      throw new RepositoryResolutionError(
-        repo.id,
-        'unknown',
-        `Repository ${repo.fullName} has unknown health status: ${repo.healthError ?? 'unknown'}`,
-      );
-    }
-  }
-
   async getRuntime(
     repo: Repository,
     loadedConfig: LoadedConfig,
