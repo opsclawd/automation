@@ -295,3 +295,21 @@ export type {
   SignatureReferenceKind,
   DeclaredSignatureChange,
 } from './ports/signature-reference-analyzer-port.js';
+
+export type {
+  RepositoryWorkSourcePort,
+  RepositoryWorkInspection,
+  RepositoryDispatchPort,
+  SchedulerTelemetryPort,
+  SchedulerTelemetryRecord,
+  SchedulerDispatchStartedRecord,
+  SchedulerDispatchCompletedRecord,
+  SchedulerDispatchFailedRecord,
+  SchedulerRepositorySkippedRecord,
+  SchedulerTickFailedRecord,
+  SchedulerPoolActiveRecord,
+  SchedulerRepositoryActiveRecord,
+  SchedulerRepositoryQueueDepthRecord,
+  SchedulerDispatchTotalRecord,
+  SchedulerRepositorySkipTotalRecord,
+} from './ports/repository-scheduler-port.js';

@@ -103,3 +103,12 @@ export type {
 
 export type { ProcessInfo } from '../ports.js';
 export * from './review-state-repository-port.js';
+
+export type { LoggerPort } from './logger-port.js';
+export type {
+  RepositoryWorkSourcePort,
+  RepositoryWorkInspection,
+  RepositoryDispatchPort,
+  SchedulerTelemetryPort,
+  SchedulerTelemetryRecord,
+} from './repository-scheduler-port.js';
