@@ -198,6 +198,107 @@ describe('signature-blast-radius', () => {
       });
     });
 
+    it('passes when the declaration file is a new file owned by the changing task and not yet created', () => {
+      // Regression: plan-review runs before implement, so a task introducing
+      // a brand-new port/file legitimately has no such file in the worktree
+      // yet. The analyzer reports "Declaration file not found" for every new
+      // file every time — that's expected, not a defect, and a symbol in a
+      // file that doesn't exist has zero existing callers by construction.
+      // (issue #652, run 2d8537cf)
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['packages/application/src/ports/repository-scheduler-port.ts'],
+        signature_changes: [
+          {
+            declaration_file: 'packages/application/src/ports/repository-scheduler-port.ts',
+            symbol: 'SchedulerTelemetryPort',
+          },
+        ],
+      });
+
+      const analyses = makeAnalysis(
+        [
+          {
+            declarationFile: 'packages/application/src/ports/repository-scheduler-port.ts',
+            symbol: 'SchedulerTelemetryPort',
+          },
+        ],
+        [[]],
+        ['Declaration file not found: packages/application/src/ports/repository-scheduler-port.ts'],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(true);
+      expect(result.failures).toEqual([]);
+    });
+
+    it('passes when the declaration file is a new file owned by a later task', () => {
+      const manifest = makeManifest(
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['apps/api/src/repository-scheduler.ts'],
+          signature_changes: [
+            {
+              declaration_file: 'apps/api/src/repository-runtime-catalog.ts',
+              symbol: 'RepositoryRuntimeCatalog',
+            },
+          ],
+        },
+        {
+          n: 2,
+          title: 'Task 2',
+          expected_files: ['apps/api/src/repository-runtime-catalog.ts'],
+        },
+      );
+
+      const analyses = makeAnalysis(
+        [
+          {
+            declarationFile: 'apps/api/src/repository-runtime-catalog.ts',
+            symbol: 'RepositoryRuntimeCatalog',
+          },
+        ],
+        [[]],
+        ['Declaration file not found: apps/api/src/repository-runtime-catalog.ts'],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(true);
+      expect(result.failures).toEqual([]);
+    });
+
+    it('still fails when the missing declaration file is not owned by the changing or a later task', () => {
+      // A genuine plan defect: the change cites a declaration file that no
+      // task (current or later) is going to create — a typo'd path, or a
+      // file that was supposed to come from a task that got removed.
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['apps/api/src/cli.ts'],
+        signature_changes: [
+          { declaration_file: 'apps/api/src/nonexistent-typo.ts', symbol: 'Foo' },
+        ],
+      });
+
+      const analyses = makeAnalysis(
+        [{ declarationFile: 'apps/api/src/nonexistent-typo.ts', symbol: 'Foo' }],
+        [[]],
+        ['Declaration file not found: apps/api/src/nonexistent-typo.ts'],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(false);
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toMatchObject({
+        taskN: 1,
+        symbol: 'Foo',
+        declarationFile: 'apps/api/src/nonexistent-typo.ts',
+        unresolvedDiagnostic: 'Declaration file not found: apps/api/src/nonexistent-typo.ts',
+      });
+    });
+
     it('groups and sorts failures by task symbol file and location', () => {
       const manifest = makeManifest({
         n: 1,

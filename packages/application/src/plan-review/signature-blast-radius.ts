@@ -133,7 +133,20 @@ export function evaluateSignatureBlastRadius(
     }
 
     if (analysis.unresolvedDiagnostic) {
-      entry.unresolvedDiagnostic = analysis.unresolvedDiagnostic;
+      // A "declaration file not found" diagnostic is expected, not an error,
+      // when the declaration file is itself owned by the changing task or a
+      // later task: plan-review runs before implement, so a brand-new file a
+      // task is about to create legitimately does not exist in the worktree
+      // yet. A symbol in a file that doesn't exist yet has zero existing
+      // callers by construction — there is nothing for the blast-radius
+      // check to find, and no plan edit can "resolve" this diagnostic.
+      const isMissingOwnNewDeclarationFile =
+        analysis.unresolvedDiagnostic.startsWith('Declaration file not found:') &&
+        isFileOwnedByChangingOrLaterTask(change.declarationFile, changeInfo.n, manifest);
+
+      if (!isMissingOwnNewDeclarationFile) {
+        entry.unresolvedDiagnostic = analysis.unresolvedDiagnostic;
+      }
     } else {
       for (const ref of analysis.references) {
         if (!isFileOwnedByChangingOrLaterTask(ref.file, changeInfo.n, manifest)) {
