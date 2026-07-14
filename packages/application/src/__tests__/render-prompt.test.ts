@@ -61,6 +61,24 @@ describe('renderPrompt', () => {
     }
   });
 
+  it('resolves optional artifact placeholder to content when present', async () => {
+    const out = await renderPrompt('findings:\n{{artifact?:findings.md}}', {
+      runId: 'run-1',
+      vars: {},
+      artifacts: fakeArtifacts({ 'findings.md': 'FINDINGS BODY' }),
+    });
+    expect(out).toBe('findings:\nFINDINGS BODY');
+  });
+
+  it('resolves optional artifact placeholder to empty string instead of throwing when missing', async () => {
+    const out = await renderPrompt('findings:\n{{artifact?:findings.md}}end', {
+      runId: 'run-1',
+      vars: {},
+      artifacts: fakeArtifacts({}),
+    });
+    expect(out).toBe('findings:\nend');
+  });
+
   it('throws TemplateError on missing artifact', async () => {
     try {
       await renderPrompt('{{artifact:nope.md}}', {

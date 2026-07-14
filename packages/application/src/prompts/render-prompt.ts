@@ -10,7 +10,11 @@ export interface PromptContext {
 }
 
 // /g flag required for matchAll — do NOT use with .test() or .exec()
-const PLACEHOLDER_RE = /\{\{(var|artifact):([^}]+)\}\}/g;
+// `artifact?:` is the optional variant: resolves to '' instead of throwing
+// when the artifact doesn't exist yet (e.g. a fix prompt referencing review
+// findings that only exist after at least one semantic review pass has run —
+// a deterministic-check-triggered fix on iteration 1 has none).
+const PLACEHOLDER_RE = /\{\{(var|artifact\??):([^}]+)\}\}/g;
 
 function isArtifactNotFoundError(err: unknown): boolean {
   if (err instanceof ArtifactNotFoundError) return true;
@@ -37,13 +41,19 @@ export async function renderPrompt(template: string, ctx: PromptContext): Promis
       }
       value = v;
     } else {
+      const optional = kind === 'artifact?';
       try {
         value = await ctx.artifacts.read(ctx.runId, key!.trim());
       } catch (err) {
         if (isArtifactNotFoundError(err)) {
-          throw new TemplateError(`missing artifact: ${key!}`, key!, { cause: err });
+          if (optional) {
+            value = '';
+          } else {
+            throw new TemplateError(`missing artifact: ${key!}`, key!, { cause: err });
+          }
+        } else {
+          throw err;
         }
-        throw err;
       }
     }
     replacements.push({ start, end, value });
