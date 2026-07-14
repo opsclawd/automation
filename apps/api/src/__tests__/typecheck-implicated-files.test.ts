@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { TypescriptError } from '@ai-sdlc/application';
 import { deriveTrustedImplicatedFiles } from '../typecheck-implicated-files.js';
 
-const WORKTREE_ROOT = process.cwd();
+const WORKTREE_ROOT = join(process.cwd(), '../../');
 
 describe('deriveTrustedImplicatedFiles', () => {
   describe('normalizes existing in-worktree TypeScript diagnostic paths', () => {
