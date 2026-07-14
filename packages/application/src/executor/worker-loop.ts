@@ -98,6 +98,12 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
       continue;
     }
 
+    const repo = deps.repos.findById(deps.repoId);
+    if (!repo || !repo.enabled) {
+      queue.releaseClaim(job.id);
+      return;
+    }
+
     let started = false;
     let acquired = false;
 
