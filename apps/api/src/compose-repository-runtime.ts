@@ -1,4 +1,5 @@
-import { access, constants } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type { Db } from '@ai-sdlc/infrastructure';
 import {
   openDatabase,
@@ -12,9 +13,11 @@ import {
 import type { Repository, RepositoryId } from '@ai-sdlc/domain';
 import type { LoadedConfig } from '@ai-sdlc/shared';
 import type { RepositoryPort } from '@ai-sdlc/application/ports';
-import type { WorkerLoopDeps } from '@ai-sdlc/application';
 import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
-import type { RepositoryRuntime } from './repository-runtime-factory.js';
+import {
+  type RepositoryRuntime,
+  type RepositoryRuntimeLoopDeps,
+} from './repository-runtime-factory.js';
 import { RepositoryResolutionError } from './repository-runtime-factory.js';
 
 export interface ComposeRepositoryRuntimeInput {
@@ -32,15 +35,7 @@ export async function composeRepositoryRuntime(
 ): Promise<RepositoryRuntime> {
   const { repository, paths, loadedConfig, controlPlaneDb, listEnabledRepositories } = input;
 
-  try {
-    await access(paths.database(), constants.R_OK);
-  } catch {
-    throw new RepositoryResolutionError(
-      repository.id,
-      'unreachable',
-      `Cannot read database at ${paths.database()} for repository ${repository.fullName}`,
-    );
-  }
+  await mkdir(dirname(paths.database()), { recursive: true });
 
   const operationalDb = openDatabase(paths.database());
 
@@ -144,7 +139,7 @@ export async function composeRepositoryRuntime(
         listEnabled: () => (repository.enabled ? [repository] : []),
       },
       repoId: repository.id,
-    } as unknown as Omit<WorkerLoopDeps, 'recoverableRunIds'>,
+    } as RepositoryRuntimeLoopDeps,
     close,
   };
 

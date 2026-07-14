@@ -347,7 +347,7 @@ describe('repository-operational-runtime', () => {
       }
     });
 
-    it('a missing or unreadable localBasePath fails runtime resolution without consulting another Repository', async () => {
+    it('a missing or unreadable localBasePath does not prevent database creation in stateRoot', async () => {
       const stateRoot = join(tmpdir(), `repo-unreadable-${Date.now()}-${Math.random()}`);
       tempDirs.push(stateRoot);
       mkdirSync(stateRoot, { recursive: true });
@@ -370,18 +370,21 @@ describe('repository-operational-runtime', () => {
         config: { phases: {} },
       };
 
-      await expect(
-        composeRepositoryRuntime({
-          automationRoot: stateRoot,
-          stateRoot,
-          repository: repo,
-          paths,
-          loadedConfig,
-          controlPlaneDb: db,
-          listEnabledRepositories: listEnabledRepos,
-        }),
-      ).rejects.toThrow(RepositoryResolutionError);
+      const runtime = await composeRepositoryRuntime({
+        automationRoot: stateRoot,
+        stateRoot,
+        repository: repo,
+        paths,
+        loadedConfig,
+        controlPlaneDb: db,
+        listEnabledRepositories: listEnabledRepos,
+      });
 
+      expect(runtime).toBeDefined();
+      expect(runtime.repository).toBe(repo);
+      expect(runtime.workerLoopDeps.repoId).toBe(repo.id);
+
+      runtime.close();
       db.close();
     });
   });

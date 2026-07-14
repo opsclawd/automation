@@ -6,7 +6,6 @@ import type {
   WorkerRegistryPort,
   RunRepositoryPort,
 } from '@ai-sdlc/application/ports';
-import type { WorkerLoopDeps } from '@ai-sdlc/application';
 import { RepositoryRuntimePaths } from './repository-runtime-paths.js';
 import type { LoadedConfig } from '@ai-sdlc/shared';
 
@@ -25,6 +24,20 @@ export class RepositoryResolutionError extends Error {
   }
 }
 
+export interface RepositoryRuntimeLoopDeps {
+  registry: WorkerRegistryPort;
+  queue: JobQueuePort;
+  leases: WorkerLeasePort;
+  repos: {
+    findById: (id: RepositoryId) => Repository | undefined;
+    findByFullName: (fullName: string) => Repository | undefined;
+    findByLocalPath: (localBasePath: string) => Repository | undefined;
+    listAll: () => Array<Repository>;
+    listEnabled: () => Array<Repository>;
+  };
+  repoId: RepositoryId;
+}
+
 export interface RepositoryRuntime {
   readonly repository: Repository;
   readonly paths: RepositoryRuntimePaths;
@@ -35,7 +48,7 @@ export interface RepositoryRuntime {
   readonly runRepository: RunRepositoryPort;
   readonly workerRegistry: WorkerRegistryPort;
   readonly workerLeaseRepository: WorkerLeasePort;
-  readonly workerLoopDeps: Omit<WorkerLoopDeps, 'recoverableRunIds'>;
+  readonly workerLoopDeps: RepositoryRuntimeLoopDeps;
   close(): void;
 }
 
@@ -109,6 +122,11 @@ export class RepositoryRuntimeFactory {
       const entry = this.cache.get(key);
       if (!entry) {
         this.staleRuntimes.delete(key);
+        continue;
+      }
+
+      if (entry.buildPromise) {
+        needsRetry = true;
         continue;
       }
 
