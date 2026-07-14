@@ -19,12 +19,7 @@ function normalizeSeparators(path: string): string {
 
 function isExcludedPath(path: string): boolean {
   const normalized = normalizeSeparators(path);
-  for (const excluded of EXCLUDED_PATH_SEGMENTS) {
-    if (normalized === excluded || normalized.startsWith(excluded + '/')) {
-      return true;
-    }
-  }
-  return false;
+  return normalized.split('/').some((seg) => EXCLUDED_PATH_SEGMENTS.has(seg));
 }
 
 function hasSupportedExtension(path: string): boolean {
@@ -39,7 +34,7 @@ function hasSupportedExtension(path: string): boolean {
 
 function isGeneratedFile(path: string): boolean {
   const normalized = normalizeSeparators(path);
-  return /\.(?:d\.ts|\.d\.tsx|\.d\.mts|\.d\.cts)$/.test(normalized);
+  return /\.(?:d\.ts|d\.tsx|d\.mts|d\.cts)$/.test(normalized);
 }
 
 function resolveAndCheckContainment(worktreeRoot: string, candidate: string): string | null {
@@ -85,9 +80,7 @@ function resolveAndCheckContainment(worktreeRoot: string, candidate: string): st
       return null;
     }
 
-    const relativePath = isAbsolute(normalizedCandidate)
-      ? normalizeSeparators(fullPath).replace(rootNormalized + '/', '')
-      : normalizedCandidate;
+    const relativePath = normalizeSeparators(fullPath).replace(rootNormalized + '/', '');
 
     return relativePath;
   } catch {

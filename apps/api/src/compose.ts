@@ -3365,12 +3365,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           const lines = raw.split('\n');
           const truncated = lines.length > 100 ? lines.slice(-100).join('\n') : raw;
           const truncatedOutput = truncated.slice(0, 3000);
+          const allErrors = parseTypescriptErrors(raw);
           const structuredErrors = parseTypescriptErrors(truncatedOutput);
           return {
             outcome: 'fail',
             output: truncatedOutput,
             structuredErrors,
-            implicatedFiles: deriveTrustedImplicatedFiles(ctx.cwd, structuredErrors),
+            implicatedFiles: deriveTrustedImplicatedFiles(ctx.cwd, allErrors),
           };
         }
       };
