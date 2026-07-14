@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { writeFileSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { TypescriptError } from '@ai-sdlc/application';
 import { deriveTrustedImplicatedFiles } from '../typecheck-implicated-files.js';
 
-const WORKTREE_ROOT = join(process.cwd(), '../../');
+// Resolved from this file's own location rather than process.cwd(), which
+// varies depending on how vitest is invoked (root-level `pnpm test` vs. a
+// per-package filtered run vs. a nested worktree) and previously produced a
+// path outside the repo entirely when run from a top-level checkout.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const WORKTREE_ROOT = join(__dirname, '../../../../');
 
 describe('deriveTrustedImplicatedFiles', () => {
   describe('normalizes existing in-worktree TypeScript diagnostic paths', () => {
