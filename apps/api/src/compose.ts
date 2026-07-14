@@ -172,6 +172,11 @@ import {
   PHASE_FALLBACKS,
   type AgentConfig,
 } from '@ai-sdlc/shared';
+
+interface SchedulerConfig {
+  globalConcurrency: number;
+  pollIntervalMs: number;
+}
 import {
   AgentProfileName,
   AgentInvocationId,
@@ -544,6 +549,7 @@ export interface Container {
    */
   workerLoopDeps?: (repoId: RepositoryId) => Omit<WorkerLoopDeps, 'recoverableRunIds'>;
   serveSweepIntervalSeconds: number;
+  schedulerConfig: SchedulerConfig;
   /** @deprecated Root-scoped sweeper; use `buildRepositorySweepCoordinator` for multi-Repository recovery sweeps (#652 Task 6). Retained until Task 7 rewires `serve`. */
   buildWaitingRunsSweeper: () => import('@ai-sdlc/application').WaitingRunsSweeper;
   /** @deprecated Root-scoped sweeper; use `buildRepositorySweepCoordinator` for multi-Repository recovery sweeps (#652 Task 6). Retained until Task 7 rewires `serve`. */
@@ -1838,6 +1844,22 @@ export function composeRoot(opts: ComposeOptions): Container {
     serveSweepIntervalSeconds = sweepLayered.config.serve.sweepIntervalSeconds;
   } catch {
     // Fallback to default 7 / disabled.
+  }
+
+  let schedulerConfig = { globalConcurrency: 1, pollIntervalMs: 2000 };
+  try {
+    const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
+    let sweepLayered = layeredConfigCache.get(cacheKey);
+    if (!sweepLayered) {
+      sweepLayered = loadLayeredConfig({
+        automationRoot: opts.repoRoot,
+        ...(opts.targetRepoRoot !== undefined ? { targetRoot: opts.targetRepoRoot } : {}),
+      });
+      layeredConfigCache.set(cacheKey, sweepLayered);
+    }
+    schedulerConfig = sweepLayered.config.scheduler;
+  } catch {
+    // Fallback to defaults.
   }
 
   let ghAdapterForSweep: GhCliAdapter | undefined;
@@ -6274,6 +6296,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     removeRepository,
     runtimeCatalog,
     serveSweepIntervalSeconds,
+    schedulerConfig,
     buildWaitingRunsSweeper,
     buildOrphanedRunsSweeper,
     buildRepositorySweepCoordinator,
