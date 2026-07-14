@@ -77,6 +77,7 @@ export class RepositoryRuntimeFactory {
   private readonly staleRuntimes = new Set<string>();
   private readonly activeFingerprint = new Map<string, string>();
   private reapScheduled = false;
+  private reapTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly opts: RepositoryRuntimeFactoryOptions;
 
   constructor(opts: RepositoryRuntimeFactoryOptions) {
@@ -110,8 +111,9 @@ export class RepositoryRuntimeFactory {
   private scheduleReap(): void {
     if (this.reapScheduled) return;
     this.reapScheduled = true;
-    setTimeout(() => {
+    this.reapTimer = setTimeout(() => {
       this.reapScheduled = false;
+      this.reapTimer = null;
       this.reapStaleRuntimes();
     }, 5000);
   }
@@ -303,6 +305,10 @@ export class RepositoryRuntimeFactory {
   }
 
   close(): void {
+    if (this.reapTimer !== null) {
+      clearTimeout(this.reapTimer);
+      this.reapTimer = null;
+    }
     for (const entry of this.cache.values()) {
       if (entry.buildPromise) {
         entry.buildPromise.then((r) => r.close()).catch(() => {});
