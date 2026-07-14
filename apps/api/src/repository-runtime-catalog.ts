@@ -108,7 +108,12 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
       targetRoot: repo.localBasePath,
     });
 
-    const runtime = await this.factory.getRuntime(repo, layered);
+    const runtime = await this.factory.getRuntime(
+      repo,
+      layered,
+      options?.allowDisabled !== undefined ? { allowDisabled: options.allowDisabled } : {},
+    );
+    this.cache.set(String(repo.id), { runtime, loadedConfig: layered });
     return runtime;
   }
 
@@ -181,13 +186,19 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
     }
 
     const disabledRepos = this.opts.registry.listAll().filter((r) => !r.enabled);
-    for (const repo of disabledRepos) {
-      try {
-        const runtime = await this.resolve(repo.id, { allowDisabled: true });
-        const result = runtime.runRepository.list(filter);
+    const disabledResults = await Promise.all(
+      disabledRepos.map(async (repo) => {
+        try {
+          const runtime = await this.resolve(repo.id, { allowDisabled: true });
+          return runtime.runRepository.list(filter);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const result of disabledResults) {
+      if (result) {
         allResults.push(result);
-      } catch {
-        // Skip repos that fail to resolve
       }
     }
 
