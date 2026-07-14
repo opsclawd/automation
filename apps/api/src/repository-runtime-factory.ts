@@ -110,11 +110,13 @@ export class RepositoryRuntimeFactory {
   private scheduleReap(): void {
     if (this.reapScheduled) return;
     this.reapScheduled = true;
-    setImmediate(() => this.reapStaleRuntimes());
+    setTimeout(() => {
+      this.reapScheduled = false;
+      this.reapStaleRuntimes();
+    }, 5000);
   }
 
   private reapStaleRuntimes(): void {
-    this.reapScheduled = false;
     const now = this.opts.now?.() ?? new Date();
     let needsRetry = false;
 
@@ -302,8 +304,11 @@ export class RepositoryRuntimeFactory {
 
   close(): void {
     for (const entry of this.cache.values()) {
+      if (entry.buildPromise) {
+        entry.buildPromise.then((r) => r.close()).catch(() => {});
+      }
       try {
-        entry.runtime.close();
+        entry.runtime?.close();
       } catch {
         // Best-effort: shutdown must not throw
       }
@@ -318,7 +323,7 @@ export class RepositoryRuntimeFactory {
     for (const [repoIdStr, activeFp] of this.activeFingerprint.entries()) {
       const key = this.cacheKey(repoIdStr as RepositoryId, activeFp);
       const entry = this.cache.get(key);
-      if (entry && !entry.isStale) {
+      if (entry && !entry.isStale && entry.runtime) {
         result.set(key, entry.runtime);
       }
     }
