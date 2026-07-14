@@ -37,20 +37,25 @@ function isGeneratedFile(path: string): boolean {
   return /\.(?:d\.ts|d\.tsx|d\.mts|d\.cts)$/.test(normalized);
 }
 
-function resolveAndCheckContainment(worktreeRoot: string, candidate: string): string | null {
+function resolveAndCheckContainment(
+  worktreeRootResolved: string,
+  rootRealpathNormalized: string,
+  candidate: string,
+): string | null {
   try {
     const normalizedCandidate = normalizeSeparators(candidate);
 
     if (
       normalizedCandidate.startsWith('/') &&
-      !normalizedCandidate.startsWith(resolve(worktreeRoot) + '/')
+      !normalizedCandidate.startsWith(worktreeRootResolved + '/')
     ) {
       return null;
     }
 
     if (normalizedCandidate.includes('..')) {
-      const resolved = resolve(worktreeRoot, normalizedCandidate);
-      if (!resolved.startsWith(resolve(worktreeRoot) + '/')) {
+      const resolved = resolve(worktreeRootResolved, normalizedCandidate);
+      const normalizedResolved = normalizeSeparators(resolved);
+      if (!normalizedResolved.startsWith(worktreeRootResolved + '/')) {
         return null;
       }
     }
@@ -59,19 +64,15 @@ function resolveAndCheckContainment(worktreeRoot: string, candidate: string): st
     if (isAbsolute(normalizedCandidate)) {
       fullPath = normalizeSeparators(normalizedCandidate);
     } else {
-      fullPath = normalizeSeparators(resolve(worktreeRoot, normalizedCandidate));
+      fullPath = normalizeSeparators(resolve(worktreeRootResolved, normalizedCandidate));
     }
 
     const realpath = realpathSync(fullPath);
     const realpathNormalized = normalizeSeparators(realpath);
 
-    const rootResolved = resolve(worktreeRoot);
-    const rootRealpath = realpathSync(rootResolved);
-    const rootNormalized = normalizeSeparators(rootRealpath);
-
     if (
-      !realpathNormalized.startsWith(rootNormalized + '/') &&
-      realpathNormalized !== rootNormalized
+      !realpathNormalized.startsWith(rootRealpathNormalized + '/') &&
+      realpathNormalized !== rootRealpathNormalized
     ) {
       return null;
     }
@@ -81,13 +82,12 @@ function resolveAndCheckContainment(worktreeRoot: string, candidate: string): st
     }
 
     const normalizedFullPath = normalizeSeparators(fullPath);
-    const resolvedWorktreeRoot = normalizeSeparators(resolve(worktreeRoot));
 
     let relativePath: string;
-    if (normalizedFullPath.startsWith(resolvedWorktreeRoot + '/')) {
-      relativePath = normalizedFullPath.replace(resolvedWorktreeRoot + '/', '');
+    if (normalizedFullPath.startsWith(worktreeRootResolved + '/')) {
+      relativePath = normalizedFullPath.replace(worktreeRootResolved + '/', '');
     } else {
-      relativePath = realpathNormalized.replace(rootNormalized + '/', '');
+      relativePath = realpathNormalized.replace(rootRealpathNormalized + '/', '');
     }
 
     return relativePath;
@@ -101,6 +101,8 @@ export function deriveTrustedImplicatedFiles(
   errors: readonly TypescriptError[],
 ): string[] {
   const worktreeRootResolved = resolve(worktreeRoot);
+  const rootRealpath = realpathSync(worktreeRootResolved);
+  const rootRealpathNormalized = normalizeSeparators(rootRealpath);
   const seen = new Set<string>();
   const result: string[] = [];
 
@@ -114,7 +116,11 @@ export function deriveTrustedImplicatedFiles(
     if (isGeneratedFile(normalizedFile)) continue;
     if (!hasSupportedExtension(normalizedFile)) continue;
 
-    const contained = resolveAndCheckContainment(worktreeRootResolved, normalizedFile);
+    const contained = resolveAndCheckContainment(
+      worktreeRootResolved,
+      rootRealpathNormalized,
+      normalizedFile,
+    );
     if (!contained) continue;
 
     const normalizedContained = normalizeSeparators(contained);
