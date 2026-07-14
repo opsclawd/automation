@@ -21,10 +21,23 @@ export class RepositorySchedulerAdapter
   implements RepositoryWorkSourcePort, RepositoryDispatchPort
 {
   private readonly deps: RepositorySchedulerAdapterDeps;
+  private cachedRuntimePromises = new Map<RepositoryId, Promise<RepositoryRuntime>>();
   private cachedRuntimes = new Map<RepositoryId, RepositoryRuntime>();
 
   constructor(deps: RepositorySchedulerAdapterDeps) {
     this.deps = deps;
+  }
+
+  private getOrCreateRuntimePromise(repo: Repository): Promise<RepositoryRuntime> {
+    const existing = this.cachedRuntimePromises.get(repo.id);
+    if (existing) return existing;
+
+    const promise = this.deps.runtimeFactory(repo).then((runtime) => {
+      this.cachedRuntimes.set(repo.id, runtime);
+      return runtime;
+    });
+    this.cachedRuntimePromises.set(repo.id, promise);
+    return promise;
   }
 
   async inspect(repo: Repository): Promise<RepositoryWorkInspection> {
@@ -62,10 +75,7 @@ export class RepositorySchedulerAdapter
 
     let runtime: RepositoryRuntime;
     try {
-      runtime = this.cachedRuntimes.get(repo.id) ?? (await this.deps.runtimeFactory(repo));
-      if (!this.cachedRuntimes.has(repo.id)) {
-        this.cachedRuntimes.set(repo.id, runtime);
-      }
+      runtime = await this.getOrCreateRuntimePromise(repo);
     } catch (err) {
       return {
         available: false,
@@ -92,11 +102,8 @@ export class RepositorySchedulerAdapter
   }): Promise<'completed' | 'no_work'> {
     const { repository, workerId } = input;
 
-    let runtime = this.cachedRuntimes.get(repository.id);
-    if (!runtime) {
-      runtime = await this.deps.runtimeFactory(repository);
-      this.cachedRuntimes.set(repository.id, runtime);
-    }
+    const runtimePromise = this.getOrCreateRuntimePromise(repository);
+    const runtime = await runtimePromise;
 
     const hostname = 'scheduler';
     const processId = 0;
@@ -119,20 +126,18 @@ export class RepositorySchedulerAdapter
     }, 30_000);
 
     try {
-      const jobs = runtime.jobQueue.listForRepo(repository.id);
-      const queuedJobs = jobs.filter((j) => j.status === 'queued');
+      const claimedJob = runtime.jobQueue.claimNext({
+        workerId,
+        repoId: repository.id,
+        ttlMs: 120_000,
+      });
 
-      if (queuedJobs.length === 0) {
-        return 'no_work';
-      }
-
-      const firstJob = queuedJobs[0];
-      if (!firstJob) {
+      if (!claimedJob) {
         return 'no_work';
       }
 
       const workerLoopFn = this.deps.workerLoop ?? defaultWorkerLoop;
-      await workerLoopFn(runtime, { workerId, runId: firstJob.runId });
+      await workerLoopFn(runtime, { workerId, runId: claimedJob.runId });
 
       return 'completed';
     } finally {
@@ -146,6 +151,7 @@ export class RepositorySchedulerAdapter
       runtime.close();
     }
     this.cachedRuntimes.clear();
+    this.cachedRuntimePromises.clear();
   }
 }
 

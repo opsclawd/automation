@@ -156,6 +156,13 @@ export class FairRepositoryScheduler {
         });
       };
 
+      let abortListener: (() => void) | undefined;
+      const abortPromise = new Promise<void>((resolve) => {
+        if (signal.aborted) return resolve();
+        abortListener = () => resolve();
+        signal.addEventListener('abort', abortListener);
+      });
+
       const completionPromise = nextCompletion();
 
       try {
@@ -164,20 +171,23 @@ export class FairRepositoryScheduler {
         this.recordTickFailed(String((err as Error).message));
       }
 
-      let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
       const cleanup = () => {
-        if (cleanupTimer !== undefined) {
-          clearTimeout(cleanupTimer);
-          cleanupTimer = undefined;
-        }
         if (listenerRef) {
           this.removeCompletionListener(listenerRef);
           listenerRef = undefined;
         }
+        if (abortListener) {
+          signal.removeEventListener('abort', abortListener);
+          abortListener = undefined;
+        }
       };
 
       try {
-        await Promise.race([this.deps.sleep(this.deps.pollIntervalMs), completionPromise]);
+        await Promise.race([
+          this.deps.sleep(this.deps.pollIntervalMs),
+          abortPromise,
+          completionPromise,
+        ]);
       } finally {
         cleanup();
       }
