@@ -18,6 +18,8 @@ function isUnsafeSegment(value: string): boolean {
 
 export interface RepositoryRuntimePaths {
   readonly repositoryId: RepositoryId;
+  runsRoot(): string;
+  tmpRoot(): string;
   worktree(issueNumber: number): string;
   run(displayId: string): string;
   database(): string;
@@ -57,6 +59,14 @@ export const RepositoryRuntimePaths = {
 
     return {
       repositoryId: repository.id,
+
+      runsRoot(): string {
+        return runsRoot;
+      },
+
+      tmpRoot(): string {
+        return tmpRoot;
+      },
 
       worktree(issueNumber: number): string {
         return join(worktreesRoot, `issue-${issueNumber}`);

@@ -1,7 +1,14 @@
 import type { RepositoryId } from '@ai-sdlc/domain';
 import type { Repository } from '@ai-sdlc/domain';
-import type { WorkerLeasePort } from '@ai-sdlc/application';
+import type {
+  JobQueuePort,
+  WorkerLeasePort,
+  WorkerRegistryPort,
+  RunRepositoryPort,
+} from '@ai-sdlc/application/ports';
+import type { WorkerLoopDeps } from '@ai-sdlc/application';
 import { RepositoryRuntimePaths } from './repository-runtime-paths.js';
+import type { LoadedConfig } from '@ai-sdlc/shared';
 
 export class RepositoryResolutionError extends Error {
   readonly repositoryId: RepositoryId;
@@ -24,6 +31,11 @@ export interface RepositoryRuntime {
   readonly configFingerprint: string;
   readonly defaultBranch: string;
   readonly fullName: string;
+  readonly jobQueue: JobQueuePort;
+  readonly runRepository: RunRepositoryPort;
+  readonly workerRegistry: WorkerRegistryPort;
+  readonly workerLeaseRepository: WorkerLeasePort;
+  readonly workerLoopDeps: Omit<WorkerLoopDeps, 'recoverableRunIds'>;
   close(): void;
 }
 
@@ -32,12 +44,17 @@ interface CacheEntry {
   fingerprint: string;
   isStale: boolean;
   markedStaleAt?: Date;
+  buildPromise?: Promise<RepositoryRuntime>;
 }
 
 export interface RepositoryRuntimeFactoryOptions {
   stateRoot: string;
-  workerLeasePort: WorkerLeasePort;
   now?: () => Date;
+  buildRuntime: (input: {
+    repository: Repository;
+    paths: RepositoryRuntimePaths;
+    loadedConfig: LoadedConfig;
+  }) => Promise<RepositoryRuntime>;
 }
 
 export class RepositoryRuntimeFactory {
@@ -103,14 +120,11 @@ export class RepositoryRuntimeFactory {
 
       let hasActiveLease: boolean;
       try {
-        hasActiveLease = this.opts.workerLeasePort.checkActiveLease(
+        hasActiveLease = entry.runtime.workerLeaseRepository.checkActiveLease(
           entry.runtime.repository.id,
           now,
         );
       } catch {
-        // Lease state is unknown: assume active so we don't evict a runtime
-        // that's actually in use, but always retry so the entry can't get
-        // permanently stranded by a persistently-throwing lease port.
         hasActiveLease = true;
         needsRetry = true;
       }
@@ -121,10 +135,6 @@ export class RepositoryRuntimeFactory {
       }
 
       if (hasActiveLease && !exceededMaxAge) {
-        // Historical (non-active-fingerprint) runtime: the repository is
-        // still busy under a different fingerprint. Keep it cached for now
-        // rather than evict, but keep retrying so it isn't stuck here
-        // forever if the repository never goes idle.
         needsRetry = true;
         continue;
       }
@@ -178,59 +188,66 @@ export class RepositoryRuntimeFactory {
     }
   }
 
-  private resolveGitMetadata(repo: Repository): { defaultBranch: string } {
-    return { defaultBranch: repo.defaultBranch };
-  }
-
-  private createRuntime(repo: Repository, fingerprint: string): RepositoryRuntime {
-    const paths = RepositoryRuntimePaths.create({
-      stateRoot: this.opts.stateRoot,
-      repository: repo,
-    });
-    const { defaultBranch } = this.resolveGitMetadata(repo);
-
-    return {
-      repository: repo,
-      paths,
-      configFingerprint: fingerprint,
-      defaultBranch,
-      fullName: repo.fullName,
-      close() {
-        // Runtime cleanup - actual implementation would close DB connections,
-        // release file handles, etc.
-      },
-    };
-  }
-
-  getRuntime(repo: Repository, fingerprint: string): RepositoryRuntime {
+  async getRuntime(repo: Repository, loadedConfig: LoadedConfig): Promise<RepositoryRuntime> {
     this.validateRepositoryState(repo);
 
-    const key = this.cacheKey(repo.id, fingerprint);
+    const key = this.cacheKey(repo.id, loadedConfig.fingerprint);
     const existingEntry = this.cache.get(key);
 
     if (existingEntry) {
+      if (existingEntry.buildPromise) {
+        return existingEntry.buildPromise;
+      }
       const previousActiveFingerprint = this.activeFingerprint.get(String(repo.id));
-      if (previousActiveFingerprint && previousActiveFingerprint !== fingerprint) {
+      if (previousActiveFingerprint && previousActiveFingerprint !== loadedConfig.fingerprint) {
         const previousKey = this.cacheKey(repo.id, previousActiveFingerprint);
         this.markStale(previousKey);
       }
-      this.activeFingerprint.set(String(repo.id), fingerprint);
+      this.activeFingerprint.set(String(repo.id), loadedConfig.fingerprint);
       this.unmarkStale(key);
       return existingEntry.runtime;
     }
 
     const previousActiveFingerprint = this.activeFingerprint.get(String(repo.id));
-    if (previousActiveFingerprint && previousActiveFingerprint !== fingerprint) {
+    if (previousActiveFingerprint && previousActiveFingerprint !== loadedConfig.fingerprint) {
       const previousKey = this.cacheKey(repo.id, previousActiveFingerprint);
       this.markStale(previousKey);
     }
 
-    this.activeFingerprint.set(String(repo.id), fingerprint);
+    this.activeFingerprint.set(String(repo.id), loadedConfig.fingerprint);
 
-    const runtime = this.createRuntime(repo, fingerprint);
-    this.cache.set(key, { runtime, fingerprint, isStale: false });
+    const paths = RepositoryRuntimePaths.create({
+      stateRoot: this.opts.stateRoot,
+      repository: repo,
+    });
 
-    return runtime;
+    const buildPromise = this.opts.buildRuntime({
+      repository: repo,
+      paths,
+      loadedConfig,
+    });
+
+    const placeholderEntry: CacheEntry = {
+      runtime: null as unknown as RepositoryRuntime,
+      fingerprint: loadedConfig.fingerprint,
+      isStale: false,
+      buildPromise,
+    };
+
+    this.cache.set(key, placeholderEntry);
+
+    try {
+      const runtime = await buildPromise;
+      placeholderEntry.runtime = runtime;
+      delete placeholderEntry.buildPromise;
+      return runtime;
+    } catch (err) {
+      this.cache.delete(key);
+      if (this.activeFingerprint.get(String(repo.id)) === loadedConfig.fingerprint) {
+        this.activeFingerprint.delete(String(repo.id));
+      }
+      throw err;
+    }
   }
 
   onLeaseReleased(repoId: RepositoryId): void {
@@ -241,11 +258,11 @@ export class RepositoryRuntimeFactory {
 
     const activeKey = this.cacheKey(repoId, activeFp);
     const activeEntry = this.cache.get(activeKey);
-    if (!activeEntry) return;
+    if (!activeEntry || !activeEntry.runtime) return;
 
     let hasActiveLease: boolean;
     try {
-      hasActiveLease = this.opts.workerLeasePort.checkActiveLease(repoId, now);
+      hasActiveLease = activeEntry.runtime.workerLeaseRepository.checkActiveLease(repoId, now);
     } catch {
       hasActiveLease = true;
     }
