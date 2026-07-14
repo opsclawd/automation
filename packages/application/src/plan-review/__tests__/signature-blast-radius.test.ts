@@ -272,7 +272,12 @@ describe('signature-blast-radius', () => {
     it('still fails when the missing declaration file is not owned by the changing or a later task', () => {
       // A genuine plan defect: the change cites a declaration file that no
       // task (current or later) is going to create — a typo'd path, or a
-      // file that was supposed to come from a task that got removed.
+      // file that was supposed to come from a task that got removed. In
+      // production task-manifest.json's own schema validation guarantees a
+      // signature_changes entry's declaration_file is always in the
+      // declaring task's own expected_files/files, so this exact shape is
+      // unreachable end-to-end — this is defensive fail-closed coverage of
+      // evaluateSignatureBlastRadius as a pure function taken in isolation.
       const manifest = makeManifest({
         n: 1,
         title: 'Task 1',
@@ -296,6 +301,68 @@ describe('signature-blast-radius', () => {
         symbol: 'Foo',
         declarationFile: 'apps/api/src/nonexistent-typo.ts',
         unresolvedDiagnostic: 'Declaration file not found: apps/api/src/nonexistent-typo.ts',
+      });
+    });
+
+    it('passes when the symbol is a new export not yet added to an existing, owned file', () => {
+      // Regression: one level more granular than the "new file" case above —
+      // the declaration file already exists (e.g. a shared schema.ts), but
+      // the specific symbol the task is adding to it does not exist yet.
+      // Same root cause: plan-review runs before implement, so a brand-new
+      // export has zero existing callers by construction. (issue #652, run
+      // 2d8537cf, second occurrence after the #788 file-level fix)
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['packages/shared/src/config/schema.ts'],
+        signature_changes: [
+          {
+            declaration_file: 'packages/shared/src/config/schema.ts',
+            symbol: 'schedulerConfigSchema',
+          },
+        ],
+      });
+
+      const analyses = makeAnalysis(
+        [
+          {
+            declarationFile: 'packages/shared/src/config/schema.ts',
+            symbol: 'schedulerConfigSchema',
+          },
+        ],
+        [[]],
+        [
+          "Could not resolve symbol 'schedulerConfigSchema' in: packages/shared/src/config/schema.ts",
+        ],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(true);
+      expect(result.failures).toEqual([]);
+    });
+
+    it('still fails when the unresolved symbol is in a file not owned by the changing or a later task', () => {
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['apps/api/src/cli.ts'],
+        signature_changes: [{ declaration_file: 'apps/api/src/compose.ts', symbol: 'Foo' }],
+      });
+
+      const analyses = makeAnalysis(
+        [{ declarationFile: 'apps/api/src/compose.ts', symbol: 'Foo' }],
+        [[]],
+        ["Could not resolve symbol 'Foo' in: apps/api/src/compose.ts"],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(false);
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toMatchObject({
+        taskN: 1,
+        symbol: 'Foo',
+        declarationFile: 'apps/api/src/compose.ts',
+        unresolvedDiagnostic: "Could not resolve symbol 'Foo' in: apps/api/src/compose.ts",
       });
     });
 

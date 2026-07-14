@@ -217,7 +217,7 @@ describe('createDeterministicPlanCheck', () => {
       },
       {
         change: { declarationFile: 'src/foo.ts', symbol: 'fooFunc' },
-        unresolvedDiagnostic: 'Could not resolve symbol fooFunc',
+        unresolvedDiagnostic: 'Could not create TypeScript program',
         references: [],
       },
     ];
@@ -242,7 +242,7 @@ describe('createDeterministicPlanCheck', () => {
 
     expect(result.diagnostic).toContain('Task 1 changes barFunc');
     expect(result.diagnostic).toContain('src/external.ts:12:1');
-    expect(result.diagnostic).toContain('unresolved: Could not resolve symbol fooFunc');
+    expect(result.diagnostic).toContain('unresolved: Could not create TypeScript program');
   });
 
   it('combines structural and blast-radius diagnostics stably', async () => {
@@ -255,6 +255,9 @@ describe('createDeterministicPlanCheck', () => {
           n: 1,
           title: 'task 1',
           expected_files: ['src/foo.ts'],
+          // fooFunc's declaration file is NOT in any task's expected_files,
+          // so its unresolved diagnostic stays a genuine failure under the
+          // ownership-based exemption (see the other test in this file).
           signature_changes: [{ declaration_file: 'src/foo.ts', symbol: 'fooFunc' }],
         },
       ],
@@ -268,7 +271,7 @@ describe('createDeterministicPlanCheck', () => {
     const mockAnalyses: SignatureReferenceAnalysis[] = [
       {
         change: { declarationFile: 'src/foo.ts', symbol: 'fooFunc' },
-        unresolvedDiagnostic: 'Could not resolve symbol fooFunc',
+        unresolvedDiagnostic: 'Could not create TypeScript program',
         references: [],
       },
     ];
@@ -286,7 +289,7 @@ describe('createDeterministicPlanCheck', () => {
 
     const result = await check(dummyCtx);
     expect(result.diagnostic).toBe(
-      'structural mismatch error\n\nTask 1 changes fooFunc, but these reference files are not declared by Task 1 or a later task:\n  (unresolved: Could not resolve symbol fooFunc)',
+      'structural mismatch error\n\nTask 1 changes fooFunc, but these reference files are not declared by Task 1 or a later task:\n  (unresolved: Could not create TypeScript program)',
     );
   });
 });
