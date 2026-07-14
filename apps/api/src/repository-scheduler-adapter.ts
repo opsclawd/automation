@@ -23,6 +23,7 @@ export class RepositorySchedulerAdapter
   private readonly deps: RepositorySchedulerAdapterDeps;
   private cachedRuntimePromises = new Map<RepositoryId, Promise<RepositoryRuntime>>();
   private cachedRuntimes = new Map<RepositoryId, RepositoryRuntime>();
+  private closed = false;
 
   constructor(deps: RepositorySchedulerAdapterDeps) {
     this.deps = deps;
@@ -33,9 +34,22 @@ export class RepositorySchedulerAdapter
     if (existing) return existing;
 
     const promise = this.deps.runtimeFactory(repo).then((runtime) => {
+      if (this.closed) {
+        runtime.close();
+        throw new Error(
+          `repository scheduler adapter closed while constructing runtime for ${repo.id}`,
+        );
+      }
       this.cachedRuntimes.set(repo.id, runtime);
       return runtime;
     });
+
+    promise.catch(() => {
+      if (this.cachedRuntimePromises.get(repo.id) === promise) {
+        this.cachedRuntimePromises.delete(repo.id);
+      }
+    });
+
     this.cachedRuntimePromises.set(repo.id, promise);
     return promise;
   }
@@ -147,6 +161,7 @@ export class RepositorySchedulerAdapter
   }
 
   close(): void {
+    this.closed = true;
     for (const runtime of this.cachedRuntimes.values()) {
       runtime.close();
     }

@@ -26,7 +26,13 @@ export interface FairRepositorySchedulerDeps {
   dispatch: RepositoryDispatchPort;
   telemetry: SchedulerTelemetryPort;
   workerIdFactory: (repository: Repository, sequence: number) => WorkerId;
-  sleep: (ms: number) => Promise<void>;
+  /**
+   * Resolves after `ms` milliseconds. When `signal` is provided and supported,
+   * implementations should settle early (and clear their internal timer) once
+   * the signal aborts, so the run loop can shut down promptly without leaking
+   * timers.
+   */
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   now: () => Date;
   logger: LoggerPort;
 }
@@ -90,7 +96,7 @@ export class FairRepositoryScheduler {
       const inspection = await this.inspectRepository(repo);
 
       if (!inspection.available) {
-        this.recordRepositorySkipped(repo, inspection.reason!, inspection.detail ?? '');
+        this.recordRepositorySkipped(repo, inspection.reason!, inspection.detail);
         this.recordQueueDepth(repo, 0);
         continue;
       }
@@ -99,14 +105,14 @@ export class FairRepositoryScheduler {
       const cap = Math.min(repo.maxConcurrentRuns, this.deps.globalConcurrency);
 
       if (usage >= cap) {
-        this.recordRepositorySkipped(repo, 'at_cap', '');
+        this.recordRepositorySkipped(repo, 'at_cap');
         this.recordQueueDepth(repo, inspection.queueDepth ?? 0);
         this.recordActive(repo, usage);
         continue;
       }
 
       if (inspection.queueDepth === 0) {
-        this.recordRepositorySkipped(repo, 'no_work', '');
+        this.recordRepositorySkipped(repo, 'no_work');
         this.recordQueueDepth(repo, 0);
         continue;
       }
@@ -124,11 +130,16 @@ export class FairRepositoryScheduler {
           this.notifyCompletion(repo.id);
         });
 
-      dispatchPromise
-        .then(() => this.recordDispatchCompleted(repo, workerId))
-        .catch((err) => {
+      dispatchPromise.then(
+        (outcome) => {
+          if (outcome === 'completed') {
+            this.recordDispatchCompleted(repo, workerId);
+          }
+        },
+        (err) => {
           this.recordDispatchFailed(repo, workerId, String((err as Error).message));
-        });
+        },
+      );
 
       this.cursorId = repo.id;
       admitted++;
@@ -145,25 +156,15 @@ export class FairRepositoryScheduler {
   async run(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       let listenerRef: ((repoId: RepositoryId) => void) | undefined;
-      const nextCompletion = (): Promise<(repoId: RepositoryId) => void> => {
-        return new Promise((resolve) => {
-          const listener = (_repoId: RepositoryId) => {
-            this.removeCompletionListener(listener);
-            resolve(listener);
-          };
-          listenerRef = listener;
-          this.addCompletionListener(listener);
-        });
-      };
-
-      let abortListener: (() => void) | undefined;
-      const abortPromise = new Promise<void>((resolve) => {
-        if (signal.aborted) return resolve();
-        abortListener = () => resolve();
-        signal.addEventListener('abort', abortListener);
+      const completionPromise = new Promise<void>((resolve) => {
+        const listener = (_repoId: RepositoryId) => {
+          this.removeCompletionListener(listener);
+          listenerRef = undefined;
+          resolve();
+        };
+        listenerRef = listener;
+        this.addCompletionListener(listener);
       });
-
-      const completionPromise = nextCompletion();
 
       try {
         await this.scheduleOnce(signal);
@@ -171,25 +172,13 @@ export class FairRepositoryScheduler {
         this.recordTickFailed(String((err as Error).message));
       }
 
-      const cleanup = () => {
+      try {
+        await Promise.race([this.deps.sleep(this.deps.pollIntervalMs, signal), completionPromise]);
+      } finally {
         if (listenerRef) {
           this.removeCompletionListener(listenerRef);
           listenerRef = undefined;
         }
-        if (abortListener) {
-          signal.removeEventListener('abort', abortListener);
-          abortListener = undefined;
-        }
-      };
-
-      try {
-        await Promise.race([
-          this.deps.sleep(this.deps.pollIntervalMs),
-          abortPromise,
-          completionPromise,
-        ]);
-      } finally {
-        cleanup();
       }
     }
   }
@@ -307,15 +296,33 @@ export class FairRepositoryScheduler {
   private recordRepositorySkipped(
     repo: Repository,
     reason: 'disabled' | 'unhealthy' | 'unavailable' | 'at_cap' | 'no_work',
-    detail: string,
+    detail?: string,
   ): void {
-    const record: SchedulerRepositorySkippedRecord = {
-      type: 'scheduler.repository.skipped',
-      repository_id: repo.id,
-      repository_name: repo.name,
-      reason,
-      ...(detail ? { detail } : {}),
-    } as SchedulerRepositorySkippedRecord;
+    const repository_id = repo.id;
+    const repository_name = repo.name;
+    let record: SchedulerRepositorySkippedRecord;
+    switch (reason) {
+      case 'unhealthy':
+      case 'unavailable':
+        record = {
+          type: 'scheduler.repository.skipped',
+          repository_id,
+          repository_name,
+          reason,
+          detail: detail ?? '',
+        };
+        break;
+      case 'disabled':
+      case 'at_cap':
+      case 'no_work':
+        record = {
+          type: 'scheduler.repository.skipped',
+          repository_id,
+          repository_name,
+          reason,
+        };
+        break;
+    }
     this.safeRecord(record);
   }
 

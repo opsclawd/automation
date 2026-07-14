@@ -163,15 +163,9 @@ describe('RepositorySchedulerAdapter', () => {
       const runtime = {
         repository: repo,
         workerRegistry: {
-          register: vi.fn(
-            async (input: {
-              workerId: import('@ai-sdlc/domain').WorkerId;
-              repoId: import('@ai-sdlc/domain').RepositoryId;
-            }) => {
-              registeredWorkerIds.push(input.workerId);
-              return { status: 'ok' as const };
-            },
-          ),
+          register: vi.fn((worker: { id: import('@ai-sdlc/domain').WorkerId }) => {
+            registeredWorkerIds.push(worker.id);
+          }),
           heartbeat: vi.fn(
             async (input: {
               workerId: import('@ai-sdlc/domain').WorkerId;
@@ -180,8 +174,8 @@ describe('RepositorySchedulerAdapter', () => {
               heartbeatCalls.push(input);
             },
           ),
-          markIdle: vi.fn(async (input: { workerId: import('@ai-sdlc/domain').WorkerId }) => {
-            deregisteredWorkerIds.push(input.workerId);
+          deregister: vi.fn((workerId: import('@ai-sdlc/domain').WorkerId) => {
+            deregisteredWorkerIds.push(workerId);
           }),
         },
         workerLeaseRepository: {
@@ -189,6 +183,12 @@ describe('RepositorySchedulerAdapter', () => {
         },
         jobQueue: {
           listForRepo: vi.fn(() => []),
+          claimNext: vi.fn(() => ({
+            id: 'j1',
+            runId: 'run-1' as import('@ai-sdlc/domain').RunId,
+            repoId: repo.id,
+            status: 'claimed',
+          })),
         },
         close: vi.fn(),
       };
@@ -212,10 +212,9 @@ describe('RepositorySchedulerAdapter', () => {
 
       const registeredWorkerId = registeredWorkerIds[0];
       expect(registeredWorkerId).toBe(workerId);
-      expect(runtime.workerRegistry.register).toHaveBeenCalledWith({
-        workerId,
-        repoId: repo.id,
-      });
+      expect(runtime.workerRegistry.register).toHaveBeenCalledWith(
+        expect.objectContaining({ id: workerId, repoId: repo.id }),
+      );
     });
 
     it('returns no_work when there are no queued jobs', async () => {
@@ -235,13 +234,14 @@ describe('RepositorySchedulerAdapter', () => {
         workerRegistry: {
           register: vi.fn(),
           heartbeat: vi.fn(),
-          markIdle: vi.fn(),
+          deregister: vi.fn(),
         },
         workerLeaseRepository: {
           checkActiveLease: vi.fn(() => false),
         },
         jobQueue: {
           listForRepo: vi.fn(() => []),
+          claimNext: vi.fn(() => undefined),
         },
         close: vi.fn(),
       };
@@ -282,8 +282,8 @@ describe('RepositorySchedulerAdapter', () => {
         workerRegistry: {
           register: vi.fn(),
           heartbeat: vi.fn(),
-          markIdle: vi.fn(async (input: { workerId: import('@ai-sdlc/domain').WorkerId }) => {
-            deregisteredWorkerIds.push(input.workerId);
+          deregister: vi.fn((workerId: import('@ai-sdlc/domain').WorkerId) => {
+            deregisteredWorkerIds.push(workerId);
           }),
         },
         workerLeaseRepository: {
@@ -291,6 +291,12 @@ describe('RepositorySchedulerAdapter', () => {
         },
         jobQueue: {
           listForRepo: vi.fn(() => [{ id: 'j1', status: 'queued' }]),
+          claimNext: vi.fn(() => ({
+            id: 'j1',
+            runId: 'run-1' as import('@ai-sdlc/domain').RunId,
+            repoId: repo.id,
+            status: 'claimed',
+          })),
         },
         close: vi.fn(),
       };
@@ -330,8 +336,8 @@ describe('RepositorySchedulerAdapter', () => {
         workerRegistry: {
           register: vi.fn(),
           heartbeat: vi.fn(),
-          markIdle: vi.fn(async (input: { workerId: import('@ai-sdlc/domain').WorkerId }) => {
-            deregisteredWorkerIds.push(input.workerId);
+          deregister: vi.fn((workerId: import('@ai-sdlc/domain').WorkerId) => {
+            deregisteredWorkerIds.push(workerId);
           }),
         },
         workerLeaseRepository: {
@@ -339,6 +345,12 @@ describe('RepositorySchedulerAdapter', () => {
         },
         jobQueue: {
           listForRepo: vi.fn(() => [{ id: 'j1', status: 'queued' }]),
+          claimNext: vi.fn(() => ({
+            id: 'j1',
+            runId: 'run-1' as import('@ai-sdlc/domain').RunId,
+            repoId: repo.id,
+            status: 'claimed',
+          })),
         },
         close: vi.fn(),
       };
@@ -380,8 +392,8 @@ describe('RepositorySchedulerAdapter', () => {
         workerRegistry: {
           register: vi.fn(),
           heartbeat: vi.fn(),
-          markIdle: vi.fn(async (input: { workerId: import('@ai-sdlc/domain').WorkerId }) => {
-            deregisteredWorkerIds.push(input.workerId);
+          deregister: vi.fn((workerId: import('@ai-sdlc/domain').WorkerId) => {
+            deregisteredWorkerIds.push(workerId);
           }),
         },
         workerLeaseRepository: {
@@ -389,6 +401,7 @@ describe('RepositorySchedulerAdapter', () => {
         },
         jobQueue: {
           listForRepo: vi.fn(() => []),
+          claimNext: vi.fn(() => undefined),
         },
         close: vi.fn(),
       };

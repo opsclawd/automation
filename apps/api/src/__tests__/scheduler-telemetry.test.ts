@@ -75,6 +75,14 @@ describe('DefaultSchedulerTelemetry', () => {
 
     const repoId = 'owner/repo' as RepositoryId;
 
+    const skippedWarnCount = () =>
+      warnLogs.filter(
+        (l) =>
+          l.msg === 'scheduler.telemetry' &&
+          (l.meta as { record: SchedulerTelemetryRecord }).record.type ===
+            'scheduler.repository.skipped',
+      ).length;
+
     const skip1: SchedulerTelemetryRecord = {
       type: 'scheduler.repository.skipped',
       repository_id: repoId,
@@ -86,7 +94,7 @@ describe('DefaultSchedulerTelemetry', () => {
     telemetry.record(skip1);
     telemetry.record(skip1);
 
-    expect(warnLogs.filter((l) => l.msg === 'scheduler.repository.skipped')).toHaveLength(1);
+    expect(skippedWarnCount()).toBe(1);
 
     const skip2: SchedulerTelemetryRecord = {
       type: 'scheduler.repository.skipped',
@@ -97,7 +105,7 @@ describe('DefaultSchedulerTelemetry', () => {
     };
     telemetry.record(skip2);
 
-    expect(warnLogs.filter((l) => l.msg === 'scheduler.repository.skipped')).toHaveLength(2);
+    expect(skippedWarnCount()).toBe(2);
 
     const skip3: SchedulerTelemetryRecord = {
       type: 'scheduler.repository.skipped',
@@ -108,7 +116,7 @@ describe('DefaultSchedulerTelemetry', () => {
     };
     telemetry.record(skip3);
 
-    expect(warnLogs.filter((l) => l.msg === 'scheduler.repository.skipped')).toHaveLength(3);
+    expect(skippedWarnCount()).toBe(3);
 
     const skip4: SchedulerTelemetryRecord = {
       type: 'scheduler.repository.skipped',
@@ -120,7 +128,9 @@ describe('DefaultSchedulerTelemetry', () => {
     telemetry.record(skip4);
     telemetry.record(skip4);
 
-    expect(warnLogs.filter((l) => l.msg === 'scheduler.repository.skipped')).toHaveLength(3);
+    // reason changed back from 'unhealthy' to 'unavailable', so the first skip4 warns;
+    // the identical repeat is suppressed.
+    expect(skippedWarnCount()).toBe(4);
 
     telemetry.record({
       type: 'scheduler.repository.skipped',
@@ -136,7 +146,9 @@ describe('DefaultSchedulerTelemetry', () => {
       detail: 'different error',
     });
 
-    expect(warnLogs.filter((l) => l.msg === 'scheduler.repository.skipped')).toHaveLength(5);
+    // 'no_work' logs at info level (not warn), and the trailing repeat of
+    // reason/detail 'unavailable'/'different error' is still suppressed.
+    expect(skippedWarnCount()).toBe(4);
   });
 
   it('stores and returns gauge values', async () => {

@@ -1814,14 +1814,10 @@ export function composeRoot(opts: ComposeOptions): Container {
     warn: (message: string, ...args: unknown[]) => void;
     error: (message: string, ...args: unknown[]) => void;
   } = {
-     
-    debug: (msg, ...args) => {
-      console.debug(msg, ...args);
-    },
-     
-    info: (msg, ...args) => {
-      console.info(msg, ...args);
-    },
+    // eslint-disable-next-line no-console
+    debug: (msg, ...args) => console.debug(msg, ...args),
+    // eslint-disable-next-line no-console
+    info: (msg, ...args) => console.info(msg, ...args),
     warn: (msg, ...args) => console.warn(msg, ...args),
     error: (msg, ...args) => console.error(msg, ...args),
   };
