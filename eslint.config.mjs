@@ -9,6 +9,22 @@ export default [
       '**/coverage/**',
       '**/node_modules/**',
       'apps/web/next-env.d.ts',
+      // Operational scratch/state directories (see .gitignore). These are
+      // gitignored but not excluded from eslint's own file scan by default —
+      // a stale fixture in ai/ (merge-conflict-marker test data) broke
+      // `pnpm lint` with a parse error despite never being tracked by git.
+      'ai/**',
+      '.ai-runs/**',
+      '.ai-tmp/**',
+      '.ai-worktrees/**',
+      '.claude/**',
+      '.context/**',
+      '.review-context/**',
+      '.antigravitycli/**',
+      'cache/**',
+      'test-results/**',
+      'changes/**',
+      'review-reports/**',
     ],
   },
   {
