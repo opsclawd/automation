@@ -196,7 +196,10 @@ import {
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { deriveTrustedImplicatedFiles } from './typecheck-implicated-files.js';
-import { renderImplementRetryScopePrompt } from './implement-retry-scope.js';
+import {
+  renderImplementRetryScopePrompt,
+  buildImplementRetryScopeMetadata,
+} from './implement-retry-scope.js';
 import {
   buildArbiterPrompt,
   buildImplementStepFinalReviewArbiterPrompt,
@@ -3081,11 +3084,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           taskContext,
           branchName,
           opts?.typecheckErrors,
+          opts?.additionalEditableFiles,
         );
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         const isDeterministic = !!opts?.typecheckErrors;
         const isSemanticRetry = ctx.iterationIndex > 1 && !opts?.useFallback && !isDeterministic;
+        const retryScopeMetadata = buildImplementRetryScopeMetadata(opts?.additionalEditableFiles);
         let result;
         try {
           result = await artifactAgent.invoke({
@@ -3105,6 +3110,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                     implementation_task_number: ctx.stepIndex,
                     iteration: ctx.iterationIndex,
                     invocation_type: 'fallback',
+                    ...retryScopeMetadata,
                   },
                 }
               : {
@@ -3116,6 +3122,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                       : isSemanticRetry
                         ? 'semantic_retry'
                         : 'initial',
+                    ...retryScopeMetadata,
                   },
                   ...(isSemanticRetry
                     ? {
