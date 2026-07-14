@@ -45,14 +45,33 @@ export interface ScheduleOnceResult {
 type Reservation = {
   repoId: RepositoryId;
   workerId: WorkerId;
+  seq: number;
 };
 
 export class FairRepositoryScheduler {
   private readonly deps: FairRepositorySchedulerDeps;
   private cursorId: RepositoryId | null = null;
   private inFlight = new Map<WorkerId, Reservation>();
-  private nextSeqByRepoId = new Map<RepositoryId, number>();
   private completionListeners: Array<(repoId: RepositoryId) => void> = [];
+  // Capacity claimed by scheduleOnce() calls currently making admission
+  // decisions, on top of `inFlight`. Two properties are both required and
+  // pull in opposite directions, which is why this needs its own counter
+  // rather than just re-reading inFlight.size live:
+  //  1. Claims happen one at a time, synchronously, immediately before each
+  //     candidate repo's `await inspectRepository`. Two concurrent
+  //     scheduleOnce() calls never truly run in parallel — interleaving only
+  //     happens at await points — so claiming per-candidate (not the whole
+  //     quota up front) lets a second concurrently-started call see this
+  //     call's claim and get a fair turn at whatever capacity remains,
+  //     instead of the first call grabbing the entire budget before the
+  //     second one gets to run at all.
+  //  2. A committed claim (one that became a real dispatch) is only released
+  //     when the WHOLE scheduleOnce() call finishes, not when the individual
+  //     dispatch settles. Dispatches can resolve near-instantly; if a claim
+  //     were released as soon as its dispatch's `.finally` ran, `inFlight`
+  //     could shrink mid-loop and let this SAME call cascade past its own
+  //     fair share by re-claiming the capacity it just freed.
+  private claimedSlots = 0;
 
   constructor(deps: FairRepositorySchedulerDeps) {
     this.deps = deps;
@@ -63,94 +82,117 @@ export class FairRepositoryScheduler {
       return { admitted: 0, cursorId: this.cursorId };
     }
 
-    const availableSlots = this.deps.globalConcurrency - this.inFlight.size;
-    if (availableSlots <= 0) {
-      return { admitted: 0, cursorId: this.cursorId };
-    }
+    let committedByMe = 0;
 
-    let repos: Repository[];
     try {
-      repos = this.deps.repos.listEnabled();
-    } catch (err) {
-      this.recordTickFailed(String((err as Error).message));
-      return { admitted: 0, cursorId: this.cursorId };
-    }
-
-    if (repos.length === 0) {
-      return { admitted: 0, cursorId: this.cursorId };
-    }
-
-    const sorted = [...repos].sort((a, b) => String(a.id).localeCompare(String(b.id)));
-
-    const startIndex = this.findStartIndex(sorted);
-    let admitted = 0;
-
-    for (let i = 0; i < sorted.length; i++) {
-      if (signal?.aborted) break;
-      if (admitted >= availableSlots) break;
-
-      const index = (startIndex + i) % sorted.length;
-      const repo = sorted[index];
-      if (!repo) continue;
-
-      const inspection = await this.inspectRepository(repo);
-
-      if (!inspection.available) {
-        this.recordRepositorySkipped(repo, inspection.reason!, inspection.detail);
-        this.recordQueueDepth(repo, 0);
-        continue;
+      let repos: Repository[];
+      try {
+        repos = this.deps.repos.listEnabled();
+      } catch (err) {
+        this.recordTickFailed(String((err as Error).message));
+        return { admitted: 0, cursorId: this.cursorId };
       }
 
-      const usage = Math.max(inspection.activeCount ?? 0, this.countReservedForRepo(repo.id));
-      const cap = Math.min(repo.maxConcurrentRuns, this.deps.globalConcurrency);
-
-      if (usage >= cap) {
-        this.recordRepositorySkipped(repo, 'at_cap');
-        this.recordQueueDepth(repo, inspection.queueDepth ?? 0);
-        this.recordActive(repo, usage);
-        continue;
+      if (repos.length === 0) {
+        return { admitted: 0, cursorId: this.cursorId };
       }
 
-      if (inspection.queueDepth === 0) {
-        this.recordRepositorySkipped(repo, 'no_work');
-        this.recordQueueDepth(repo, 0);
-        continue;
-      }
+      const sorted = [...repos].sort((a, b) => String(a.id).localeCompare(String(b.id)));
 
-      const workerSeq = this.getNextSeq(repo.id);
-      const workerId = this.deps.workerIdFactory(repo, workerSeq);
+      const startIndex = this.findStartIndex(sorted);
+      let admitted = 0;
 
-      this.inFlight.set(workerId, { repoId: repo.id, workerId });
-      this.recordDispatchStarted(repo, workerId);
+      for (let i = 0; i < sorted.length; i++) {
+        if (signal?.aborted) break;
 
-      const dispatchPromise = this.deps.dispatch
-        .runOne({ repository: repo, workerId })
-        .finally(() => {
-          this.inFlight.delete(workerId);
-          this.notifyCompletion(repo.id);
-        });
-
-      dispatchPromise.then(
-        (outcome) => {
-          if (outcome === 'completed') {
-            this.recordDispatchCompleted(repo, workerId);
+        // Claim one slot synchronously, before this iteration's await, so a
+        // concurrently-started scheduleOnce() call sees it immediately (see
+        // the claimedSlots field comment).
+        if (this.inFlight.size + this.claimedSlots >= this.deps.globalConcurrency) break;
+        this.claimedSlots++;
+        let claimReleased = false;
+        const releaseClaim = () => {
+          if (!claimReleased) {
+            claimReleased = true;
+            this.claimedSlots--;
           }
-        },
-        (err) => {
-          this.recordDispatchFailed(repo, workerId, String((err as Error).message));
-        },
-      );
+        };
 
-      this.cursorId = repo.id;
-      admitted++;
+        const index = (startIndex + i) % sorted.length;
+        const repo = sorted[index];
+        if (!repo) {
+          releaseClaim();
+          continue;
+        }
 
-      if (admitted >= availableSlots) break;
+        const inspection = await this.inspectRepository(repo);
+
+        if (!inspection.available) {
+          releaseClaim();
+          this.recordRepositorySkipped(repo, inspection.reason!, inspection.detail);
+          this.recordQueueDepth(repo, 0);
+          continue;
+        }
+
+        const usage = Math.max(inspection.activeCount ?? 0, this.countReservedForRepo(repo.id));
+        const cap = Math.min(repo.maxConcurrentRuns, this.deps.globalConcurrency);
+
+        if (usage >= cap) {
+          releaseClaim();
+          this.recordRepositorySkipped(repo, 'at_cap');
+          this.recordQueueDepth(repo, inspection.queueDepth ?? 0);
+          this.recordActive(repo, usage);
+          continue;
+        }
+
+        if (inspection.queueDepth === 0) {
+          releaseClaim();
+          this.recordRepositorySkipped(repo, 'no_work');
+          this.recordQueueDepth(repo, 0);
+          continue;
+        }
+
+        const workerSeq = this.getNextSeq(repo.id);
+        const workerId = this.deps.workerIdFactory(repo, workerSeq);
+
+        // Commit: keep the claim held (do not releaseClaim here) until this
+        // whole scheduleOnce() call finishes, per the claimedSlots field
+        // comment — inFlight is updated now for cross-call accounting, but
+        // this call's own budget must not be affected by how fast the
+        // dispatch settles.
+        committedByMe++;
+        this.inFlight.set(workerId, { repoId: repo.id, workerId, seq: workerSeq });
+        this.recordDispatchStarted(repo, workerId);
+
+        const dispatchPromise = this.deps.dispatch
+          .runOne({ repository: repo, workerId })
+          .finally(() => {
+            this.inFlight.delete(workerId);
+            this.notifyCompletion(repo.id);
+          });
+
+        dispatchPromise.then(
+          (outcome) => {
+            if (outcome === 'completed') {
+              this.recordDispatchCompleted(repo, workerId);
+            }
+          },
+          (err) => {
+            this.recordDispatchFailed(repo, workerId, String((err as Error).message));
+          },
+        );
+
+        this.cursorId = repo.id;
+        admitted++;
+      }
+
+      this.recordPoolActive(this.inFlight.size);
+      this.recordDispatchTotal(admitted);
+
+      return { admitted, cursorId: this.cursorId };
+    } finally {
+      this.claimedSlots -= committedByMe;
     }
-
-    this.recordPoolActive(this.inFlight.size);
-    this.recordDispatchTotal(admitted);
-
-    return { admitted, cursorId: this.cursorId };
   }
 
   async run(signal: AbortSignal): Promise<void> {
@@ -224,10 +266,21 @@ export class FairRepositoryScheduler {
     return count;
   }
 
+  // Worker identity is repository-immutable for the worker's active
+  // lifetime, but stable *across* dispatch lifetimes too: once a repo's
+  // worker slot fully completes and is freed, the next dispatch to that
+  // repo reuses the same sequence number (and therefore the same
+  // workerIdFactory output), rather than minting a new one forever. Finds
+  // the lowest sequence number not currently held by an in-flight
+  // reservation for this repo.
   private getNextSeq(repoId: RepositoryId): number {
-    const current = this.nextSeqByRepoId.get(repoId) ?? 0;
-    this.nextSeqByRepoId.set(repoId, current + 1);
-    return current;
+    const usedSeqs = new Set<number>();
+    for (const res of this.inFlight.values()) {
+      if (res.repoId === repoId) usedSeqs.add(res.seq);
+    }
+    let seq = 0;
+    while (usedSeqs.has(seq)) seq++;
+    return seq;
   }
 
   private addCompletionListener(listener: (repoId: RepositoryId) => void): void {

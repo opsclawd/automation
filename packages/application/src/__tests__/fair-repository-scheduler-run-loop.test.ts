@@ -250,6 +250,14 @@ describe('FairRepositoryScheduler run loop', () => {
         },
       };
 
+      let runLoopWakeCount = 0;
+      const mockSleep = async (ms: number) => {
+        if (ms === 10000) {
+          runLoopWakeCount++;
+        }
+        return sleep(ms);
+      };
+
       const scheduler = new FairRepositoryScheduler({
         globalConcurrency: 1,
         pollIntervalMs: 10000,
@@ -258,33 +266,35 @@ describe('FairRepositoryScheduler run loop', () => {
         dispatch,
         telemetry,
         workerIdFactory: makeWorkerIdFactory(),
-        sleep,
+        sleep: mockSleep,
         now: () => new Date(),
         logger: { error: () => {} },
       });
-
-      let runLoopWakeCount = 0;
-      const _originalSleep = sleep;
-      const _mockSleep = async (ms: number) => {
-        if (ms === 10000) {
-          runLoopWakeCount++;
-        }
-        return _originalSleep(ms);
-      };
 
       dispatch.setResult('r1', 'completed');
       dispatch.setResult('r2', 'completed');
 
       const pendingR1 = dispatch.pendingResult('r1');
 
-      scheduler.run(new AbortController().signal);
+      // Regression: this AbortController must be aborted before the test
+      // ends. Previously it was a throwaway that was never aborted, so
+      // run()'s `while (!signal.aborted)` loop never terminated — it kept
+      // ticking in the background for the rest of the process's lifetime,
+      // leaking a promise + listener on every iteration and eventually
+      // OOM-crashing the whole test file.
+      const runController = new AbortController();
+      try {
+        scheduler.run(runController.signal);
 
-      dispatch.resolvePending('r1', 'completed');
-      await pendingR1.promise;
+        dispatch.resolvePending('r1', 'completed');
+        await pendingR1.promise;
 
-      await scheduler.scheduleOnce();
+        await scheduler.scheduleOnce();
 
-      expect(runLoopWakeCount).toBe(0);
+        expect(runLoopWakeCount).toBe(0);
+      } finally {
+        runController.abort();
+      }
     });
   });
 

@@ -49,6 +49,17 @@ class FakeRepositoryWorkSourcePort {
     this.results.set(repoId, result);
   }
 
+  // Simulates a real work queue's queueDepth dropping after dispatched work
+  // is consumed — setResult alone models a static snapshot, which is fine
+  // for single-dispatch scenarios but wrongly implies infinite queued work
+  // is available forever once a test dispatches from it more than once.
+  decrementQueueDepth(repoId: string) {
+    const result = this.results.get(repoId);
+    if (result && result.available && result.queueDepth > 0) {
+      this.results.set(repoId, { ...result, queueDepth: result.queueDepth - 1 });
+    }
+  }
+
   async inspect(repo: Repository): Promise<RepositoryWorkInspection> {
     const result = this.results.get(String(repo.id));
     if (!result) {
@@ -111,8 +122,14 @@ class FakeSchedulerTelemetryPort {
   }
 
   record(r: TelemetryEntry): void | Promise<void> {
-    if (this.shouldThrow) throw new Error('telemetry error');
+    // Record locally first — this array is the test's only window into what
+    // the scheduler attempted to report, independent of whether the
+    // downstream telemetry sink (simulated by the throw below) succeeds.
+    // "Best effort AND identified" means the attempt is still observable
+    // even when reporting fails; the scheduler must not let that failure
+    // affect scheduling itself (see the try/catch around every call site).
     this.records.push({ ...r });
+    if (this.shouldThrow) throw new Error('telemetry error');
   }
 
   clear() {
@@ -330,6 +347,15 @@ describe('FairRepositoryScheduler admission', () => {
       pending.resolve('completed');
 
       await p1;
+
+      // Both r1 and r2 were dispatched and completed during p1 (globalConcurrency
+      // is 10, so both fit in one pass). A real work source's queueDepth would
+      // reflect that this queued work has now been consumed; simulate that
+      // before the second scheduleOnce() call, or the static fixture would
+      // wrongly imply both repos still have a fresh, undispatched item queued.
+      source.decrementQueueDepth('r1');
+      source.decrementQueueDepth('r2');
+
       await scheduler.scheduleOnce();
 
       const calls = dispatch.getCalls();
