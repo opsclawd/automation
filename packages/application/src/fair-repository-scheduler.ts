@@ -130,9 +130,11 @@ export class FairRepositoryScheduler {
           this.notifyCompletion(repo.id);
         });
 
-      dispatchPromise.catch(() => {
-        this.recordDispatchFailed(repo, workerId, String((arguments[0] as Error).message));
-      });
+      dispatchPromise
+        .then(() => this.recordDispatchCompleted(repo, workerId))
+        .catch((err) => {
+          this.recordDispatchFailed(repo, workerId, String((err as Error).message));
+        });
 
       this.cursorId = repo.id;
       admitted++;
@@ -162,30 +164,39 @@ export class FairRepositoryScheduler {
       });
     };
 
-    const nextCompletion = (): Promise<void> => {
-      return new Promise((resolve) => {
-        const listener = (_repoId: RepositoryId) => {
-          this.removeCompletionListener(listener);
-          resolve();
-        };
-        this.addCompletionListener(listener);
-      });
-    };
-
     while (!signal.aborted) {
+      const nextCompletion = (): Promise<(repoId: RepositoryId) => void> => {
+        return new Promise((resolve) => {
+          const listener = (_repoId: RepositoryId) => {
+            this.removeCompletionListener(listener);
+            resolve(listener);
+          };
+          this.addCompletionListener(listener);
+        });
+      };
+
+      const completionPromise = nextCompletion();
+
       try {
         await this.scheduleOnce(signal);
       } catch (err) {
         this.recordTickFailed(String((err as Error).message));
       }
 
-      await Promise.race([abortAwareSleep(this.deps.pollIntervalMs), nextCompletion()]);
+      const raceResult = await Promise.race([
+        abortAwareSleep(this.deps.pollIntervalMs),
+        completionPromise,
+      ]);
+
+      if (raceResult === undefined) {
+        completionPromise.then((listener) => {
+          this.removeCompletionListener(listener);
+        });
+      }
     }
   }
 
-  private async inspectRepository(
-    repo: Repository,
-  ): Promise<{
+  private async inspectRepository(repo: Repository): Promise<{
     available: boolean;
     reason?: 'disabled' | 'unhealthy' | 'unavailable';
     detail?: string;

@@ -1808,7 +1808,21 @@ export function composeRoot(opts: ComposeOptions): Container {
     return ghAdapterForSweep;
   };
 
-  const sweepLogger: { error: (message: string, ...args: unknown[]) => void } = {
+  const sweepLogger: {
+    debug: (message: string, ...args: unknown[]) => void;
+    info: (message: string, ...args: unknown[]) => void;
+    warn: (message: string, ...args: unknown[]) => void;
+    error: (message: string, ...args: unknown[]) => void;
+  } = {
+     
+    debug: (msg, ...args) => {
+      console.debug(msg, ...args);
+    },
+     
+    info: (msg, ...args) => {
+      console.info(msg, ...args);
+    },
+    warn: (msg, ...args) => console.warn(msg, ...args),
     error: (msg, ...args) => console.error(msg, ...args),
   };
 
@@ -1980,7 +1994,17 @@ export function composeRoot(opts: ComposeOptions): Container {
   }) satisfies ResolveRefShaFn;
   const startIssueRun = new StartIssueRun(deps);
   const checkMergeReadiness = new CheckMergeReadiness({ prReviewRepo: prReviewRepository });
-  const logger: { error: (message: string, ...args: unknown[]) => void } = {
+  const logger: {
+    debug: (message: string, ...args: unknown[]) => void;
+    info: (message: string, ...args: unknown[]) => void;
+    warn: (message: string, ...args: unknown[]) => void;
+    error: (message: string, ...args: unknown[]) => void;
+  } = {
+    // eslint-disable-next-line no-console
+    debug: (msg, ...args) => console.debug(msg, ...args),
+    // eslint-disable-next-line no-console
+    info: (msg, ...args) => console.info(msg, ...args),
+    warn: (msg, ...args) => console.warn(msg, ...args),
     error: (msg, ...args) => console.error(msg, ...args),
   };
 

@@ -67,7 +67,11 @@ export class DefaultSchedulerTelemetry implements SchedulerTelemetryPort {
   }
 
   private log(r: SchedulerTelemetryRecord): void {
-    this.logger.error('scheduler.telemetry', { record: r });
+    if (r.type === 'scheduler.repository.skipped') {
+      this.logger.warn('scheduler.telemetry', { record: r });
+    } else {
+      this.logger.info('scheduler.telemetry', { record: r });
+    }
   }
 
   getPoolActive(): number {
