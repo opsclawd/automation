@@ -78,8 +78,6 @@ export class FairRepositoryScheduler {
 
     const startIndex = this.findStartIndex(sorted);
     let admitted = 0;
-    let wrapped = false;
-    const visited = new Set<RepositoryId>();
 
     for (let i = 0; i < sorted.length; i++) {
       if (signal?.aborted) break;
@@ -88,10 +86,6 @@ export class FairRepositoryScheduler {
       const index = (startIndex + i) % sorted.length;
       const repo = sorted[index];
       if (!repo) continue;
-
-      if (visited.has(repo.id)) continue;
-      if (wrapped && index <= startIndex) break;
-      visited.add(repo.id);
 
       const inspection = await this.inspectRepository(repo);
 
@@ -140,7 +134,6 @@ export class FairRepositoryScheduler {
       admitted++;
 
       if (admitted >= availableSlots) break;
-      if (wrapped && index >= startIndex) break;
     }
 
     this.recordPoolActive(this.inFlight.size);
@@ -150,20 +143,6 @@ export class FairRepositoryScheduler {
   }
 
   async run(signal: AbortSignal): Promise<void> {
-    const abortAwareSleep = (ms: number): Promise<void> => {
-      return new Promise((resolve) => {
-        const timeout = setTimeout(() => resolve(), ms);
-        const onAbort = () => {
-          clearTimeout(timeout);
-          resolve();
-        };
-        signal.addEventListener('abort', onAbort);
-        setTimeout(() => {
-          signal.removeEventListener('abort', onAbort);
-        }, ms);
-      });
-    };
-
     while (!signal.aborted) {
       let listenerRef: ((repoId: RepositoryId) => void) | undefined;
       const nextCompletion = (): Promise<(repoId: RepositoryId) => void> => {
@@ -185,13 +164,22 @@ export class FairRepositoryScheduler {
         this.recordTickFailed(String((err as Error).message));
       }
 
-      const raceResult = await Promise.race([
-        abortAwareSleep(this.deps.pollIntervalMs),
-        completionPromise,
-      ]);
+      let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => {
+        if (cleanupTimer !== undefined) {
+          clearTimeout(cleanupTimer);
+          cleanupTimer = undefined;
+        }
+        if (listenerRef) {
+          this.removeCompletionListener(listenerRef);
+          listenerRef = undefined;
+        }
+      };
 
-      if (raceResult === undefined && listenerRef) {
-        this.removeCompletionListener(listenerRef);
+      try {
+        await Promise.race([this.deps.sleep(this.deps.pollIntervalMs), completionPromise]);
+      } finally {
+        cleanup();
       }
     }
   }

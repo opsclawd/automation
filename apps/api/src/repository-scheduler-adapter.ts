@@ -111,7 +111,11 @@ export class RepositorySchedulerAdapter
     runtime.workerRegistry.register(worker);
 
     const heartbeatInterval = setInterval(() => {
-      runtime.workerRegistry.heartbeat(workerId, repository.id, new Date());
+      try {
+        runtime.workerRegistry.heartbeat(workerId, repository.id, new Date());
+      } catch (err) {
+        this.deps.logger.error('worker heartbeat failed', { err });
+      }
     }, 30_000);
 
     try {
@@ -133,7 +137,7 @@ export class RepositorySchedulerAdapter
       return 'completed';
     } finally {
       clearInterval(heartbeatInterval);
-      runtime.workerRegistry.markIdle(workerId, repository.id);
+      runtime.workerRegistry.deregister(workerId);
     }
   }
 
