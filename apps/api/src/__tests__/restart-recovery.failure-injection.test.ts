@@ -169,7 +169,7 @@ describe('restart-recovery.failure-injection', () => {
       const repoId = RepositoryId('owner/repo');
       const workerId = WorkerId(`worker-${Date.now()}`);
       const runId = RunId(`run-${Date.now()}`);
-      const jobId = JobId(`job-${Date.now()}`);
+      const jobId = JobId(`job-${runId}-1`);
 
       const child = spawnRecoveryChild(dbPath, repoId, workerId, runId, true);
       await child.ready;
@@ -198,12 +198,8 @@ describe('restart-recovery.failure-injection', () => {
 
       expect(action.action).toBe('reclaim');
 
-      const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as
-        | { status: string }
-        | undefined;
-      if (job) {
-        expect(job.status).toBe('queued');
-      }
+      const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as { status: string };
+      expect(job.status).toBe('queued');
 
       db.close();
     });
