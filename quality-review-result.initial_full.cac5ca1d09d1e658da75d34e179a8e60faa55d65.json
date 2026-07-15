@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "The worker loop and repository scheduler adapter call leases.release() in a finally block without catching exceptions, causing the worker daemon process to crash with an unhandled LeaseOwnershipLostError when a run is cancelled or a lease is lost.",
+      "file": "packages/application/src/executor/worker-loop.ts",
+      "suggested_fix": "Wrap leases.release({ ... }) in a try-catch block inside the finally blocks of both runClaimedJob (worker-loop.ts) and defaultWorkerLoop (repository-scheduler-adapter.ts) to safely ignore or log expected LeaseOwnershipLostErrors."
+    },
+    {
+      "severity": "P2",
+      "summary": "ResumeRun calls leases.release() in its catch block without a nested try-catch, which will mask the original error with a LeaseOwnershipLostError if the lease was lost.",
+      "file": "packages/application/src/resume-run.ts",
+      "suggested_fix": "Wrap leases.release() in a try-catch block to prevent it from throwing and masking the original error."
+    }
+  ]
+}

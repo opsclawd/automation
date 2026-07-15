@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P2",
+      "summary": "`_moveToQuarantine` incorrectly derives `baseRepoPath` using `dirname(gitCommonDir)`, which evaluates to a non-git directory for bare repositories and breaks the move command.",
+      "file": "packages/infrastructure/src/git/worktree-recovery-adapter.ts",
+      "suggested_fix": "Execute the move command directly from the worktree directory without looking up the base repository: `await git(from, [\"worktree\", \"move\", from, to]);`."
+    },
+    {
+      "severity": "P3",
+      "summary": "`_computeQuarantinePath` extracts the worktree name using `.split('/').pop()`, which is fragile on Windows and fails if the path has a trailing slash.",
+      "file": "packages/infrastructure/src/git/worktree-recovery-adapter.ts",
+      "suggested_fix": "Use `basename(worktreePath)` from the `node:path` module instead of `.split('/').pop()`."
+    }
+  ]
+}

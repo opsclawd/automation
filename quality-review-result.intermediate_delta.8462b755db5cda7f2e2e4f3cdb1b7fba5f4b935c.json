@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "Mutating `operationalRuntime.runRepository.update` in place causes infinite method chaining and memory leaks.",
+      "file": "apps/api/src/compose-repository-runtime.ts",
+      "suggested_fix": "Do not mutate the shared `operationalRuntime.runRepository`. Instead, create a wrapper or proxy for `runRepository` specific to the execution runtime."
+    },
+    {
+      "severity": "P1",
+      "summary": "Reaping a stale execution runtime closes the shared operational runtime, breaking active execution runtimes.",
+      "file": "apps/api/src/compose-repository-runtime.ts",
+      "suggested_fix": "Override `close` in the returned `RepositoryExecutionRuntime` to be a no-op, as it does not own the lifecycle of the shared operational resources."
+    },
+    {
+      "severity": "P2",
+      "summary": "`findRun` and `listRuns` aggressively initialize operational runtimes for all disabled repositories via `resolveAllOperational()`, which can cause resource exhaustion (too many open files).",
+      "file": "apps/api/src/repository-runtime-catalog.ts",
+      "suggested_fix": "For `findRun`, revert to only checking already-cached operational runtimes for disabled repositories instead of initializing them all. For `listRuns`, consider optimizing to not proactively open databases for disabled repositories unless necessary."
+    }
+  ]
+}

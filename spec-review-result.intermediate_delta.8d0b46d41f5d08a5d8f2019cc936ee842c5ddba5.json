@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "The repository recovery coordinator never executes safe worktree recovery because `getWorktreePath` and `getQuarantineRoot` are not provided to its constructor in `startWorkerDrainLoop`, causing a permanent fallback to the unsafe `resetWorktree`.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Add `getWorktreePath` and `getQuarantineRoot` to `WorkerLoopDeps` (or pass them directly) and provide them to the `RepositoryRecoveryCoordinator` in `startWorkerDrainLoop`."
+    },
+    {
+      "severity": "P0",
+      "summary": "Waiting runs will never be reactivated because `listRunsForRepo` is not provided to the `RepositoryRecoveryCoordinator` constructor in `startWorkerDrainLoop`, rendering the `waiting-reactivate` recovery action unreachable.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Add `listRunsForRepo` to `WorkerLoopDeps` and provide it to the `RepositoryRecoveryCoordinator` constructor in `startWorkerDrainLoop`."
+    }
+  ]
+}

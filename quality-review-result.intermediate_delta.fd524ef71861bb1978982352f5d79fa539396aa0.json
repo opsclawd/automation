@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "RepositoryRecoveryCoordinator is instantiated in worker-drain-loop.ts without providing checkPid, registryWorkerHostname, worktreeRecovery, or operationalRecovery, leaving the newly centralized recovery features unreachable and preventing explicit lease reclamation.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Update the startWorkerDrainLoop constructor to inject checkPid, registryWorkerHostname, worktreeRecovery, and operationalRecovery into RepositoryRecoveryCoordinator."
+    },
+    {
+      "severity": "P2",
+      "summary": "In startWorkerDrainLoop, coordinator.execute is called in a loop over enabledRepos without a per-iteration try/catch. If recovery fails for one repository, the loop aborts and prevents workerLoop from executing.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Wrap await coordinator.execute({ repoId: repo.id }) in a try/catch block to ensure a failure in one repository does not stall the worker loop."
+    },
+    {
+      "severity": "P2",
+      "summary": "The onOrphan callback in worker-drain-loop.ts casts deps.queue to an intersection type with an optional resetToQueued method instead of adding the method to the JobQueuePort contract, bypassing application layer boundaries.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Add resetToQueued to the JobQueuePort interface in packages/application/src/ports.ts and remove the unsafe cast in onOrphan."
+    }
+  ]
+}

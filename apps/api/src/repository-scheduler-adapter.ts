@@ -28,7 +28,7 @@ export class RepositorySchedulerAdapter
   private cachedRuntimePromises = new Map<RepositoryId, Promise<RepositoryRuntime>>();
   private cachedRuntimes = new Map<RepositoryId, RepositoryRuntime>();
   private closed = false;
-  private activeDispatches = new Set<RepositoryId>();
+  private activeDispatches = new Set<WorkerId>();
 
   constructor(deps: RepositorySchedulerAdapterDeps) {
     this.deps = deps;
@@ -125,7 +125,7 @@ export class RepositorySchedulerAdapter
     const runtimePromise = this.getOrCreateRuntimePromise(repository);
     const runtime = await runtimePromise;
 
-    this.activeDispatches.add(repository.id);
+    this.activeDispatches.add(workerId);
 
     const hostname = 'scheduler';
     const processId = 0;
@@ -172,7 +172,7 @@ export class RepositorySchedulerAdapter
     } finally {
       clearInterval(heartbeatInterval);
       runtime.workerRegistry.deregister(workerId);
-      this.activeDispatches.delete(repository.id);
+      this.activeDispatches.delete(workerId);
       if (this.closed && this.activeDispatches.size === 0) {
         for (const rt of this.cachedRuntimes.values()) {
           rt.close();

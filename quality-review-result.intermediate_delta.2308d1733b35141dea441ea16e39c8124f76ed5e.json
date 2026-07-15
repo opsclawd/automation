@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P2",
+      "summary": "The newly added updateRun method in WorkerLoopDeps is not mocked in the test files, and stale runRepository properties were left behind, which creates a coverage hole and risk of runtime crashes in tests if updateRun is triggered.",
+      "file": "apps/api/src/__tests__/worker-drain-loop.test.ts",
+      "suggested_fix": "Remove the stale runRepository mock property and add updateRun: vi.fn() to the base WorkerLoopDeps mock objects in both apps/api/src/__tests__/worker-drain-loop.test.ts and packages/application/src/executor/__tests__/worker-loop.test.ts."
+    }
+  ]
+}

@@ -135,6 +135,11 @@ export class FairRepositoryScheduler {
 
         const inspection = await this.inspectRepository(repo);
 
+        if (this.stopped) {
+          releaseClaim();
+          break;
+        }
+
         if (!inspection.available) {
           releaseClaim();
           this.recordRepositorySkipped(repo, inspection.reason!, inspection.detail);
@@ -173,12 +178,12 @@ export class FairRepositoryScheduler {
         this.inFlight.set(workerId, { repoId: repo.id, workerId, seq: workerSeq, abortController });
         this.recordDispatchStarted(repo, workerId);
 
-        const dispatchPromise = this.deps.dispatch
-          .runOne({ repository: repo, workerId, signal: abortController.signal })
-          .finally(() => {
-            this.inFlight.delete(workerId);
-            this.notifyCompletion(repo.id);
-          });
+        const dispatchPromise = Promise.resolve(
+          this.deps.dispatch.runOne({ repository: repo, workerId, signal: abortController.signal }),
+        ).finally(() => {
+          this.inFlight.delete(workerId);
+          this.notifyCompletion(repo.id);
+        });
         this.inFlight.get(workerId)!.dispatchPromise = dispatchPromise;
 
         dispatchPromise.then(
@@ -260,7 +265,11 @@ export class FairRepositoryScheduler {
         await this.deps.sleep(100);
         continue;
       }
-      await Promise.race([reservation.dispatchPromise, this.deps.sleep(100)]);
+      try {
+        await Promise.race([reservation.dispatchPromise, this.deps.sleep(100)]);
+      } catch {
+        // ignore and continue draining
+      }
     }
 
     return { drained: true, remainingWorkerIds: [] };

@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P2",
+      "summary": "Requeuing a running job in reclaimExpiredClaim and commitLeaseReclamation fails to set started_at to NULL, leaking the previous start time into the domain object when it enters the queued state.",
+      "file": "packages/infrastructure/src/sqlite/operational-recovery-repository.ts",
+      "suggested_fix": "Add `started_at = NULL,` to the UPDATE jobs queries in both commitLeaseReclamation and reclaimExpiredClaim."
+    }
+  ]
+}

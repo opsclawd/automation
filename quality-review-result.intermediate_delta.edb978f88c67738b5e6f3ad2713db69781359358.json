@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "DefaultRepositoryRuntimeCatalog.listRuns and findRun only query getActiveRuntimes(), which only returns active execution runtimes, silently ignoring run history for inactive or disabled repositories.",
+      "file": "apps/api/src/repository-runtime-catalog.ts",
+      "suggested_fix": "Query all operational runtimes (e.g., using resolveAllOperational or a dedicated factory method) instead of relying solely on the active execution cache."
+    },
+    {
+      "severity": "P2",
+      "summary": "The wrappedRunRepository in composeRepositoryRuntime overrides `update` to inject configuration fingerprints but fails to override `atomicUpdateByUuid`, causing updates via CAS to silently omit configuration metadata.",
+      "file": "apps/api/src/compose-repository-runtime.ts",
+      "suggested_fix": "Override `atomicUpdateByUuid` on the wrappedRunRepository to inject `configFingerprint` and `configSourcesJson` identically to `update`."
+    }
+  ]
+}

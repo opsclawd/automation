@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "Missing required test: 'startup waits for failed repository result before admission'.",
+      "file": "apps/api/src/__tests__/cli-serve-sweep-wiring.test.ts",
+      "suggested_fix": "Add the missing test to verify that the startup barrier waits for all repository results even if one fails."
+    },
+    {
+      "severity": "P0",
+      "summary": "The 'worker start' command does not perform the initial recovery barrier before starting the scheduler.",
+      "file": "apps/api/src/cli.ts",
+      "suggested_fix": "Add 'await c.buildRepositorySweepCoordinator().execute(...)' before 'await scheduler.run(...)' in the 'worker start' command handler."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "In workerLoop's onReclaimed callback, JobOwnership is generated using fresh.claimToken but the outdated job.claimedBy, which will cause SQLite to throw JobOwnershipLostError. It also incorrectly resets claims that may have been acquired by other workers.",
+      "file": "packages/application/src/executor/worker-loop.ts",
+      "suggested_fix": "Check `if (fresh && fresh.claimToken && fresh.claimedBy === info.previousWorkerId)` before resetting, use `fresh.claimedBy` to generate ownership, and wrap `resetToQueued` in a try/catch for JobOwnershipLostError."
+    },
+    {
+      "severity": "P2",
+      "summary": "Unhandled JobOwnershipLostError in runClaimedJob's catch block can bubble up and crash the worker loop if a job loses ownership while executing.",
+      "file": "packages/application/src/executor/worker-loop.ts",
+      "suggested_fix": "Wrap `queue.markFailed` and `queue.releaseClaim` in the `runClaimedJob` catch block with a try/catch that ignores JobOwnershipLostError."
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "In `listRuns`, the explicit `filter.repositoryId` path still calls `resolveExecution`, which returns 0 runs if the execution config is invalid, causing an inconsistency with the omitted `repositoryId` path that correctly uses `resolveAllOperational`.",
+      "file": "apps/api/src/repository-runtime-catalog.ts",
+      "suggested_fix": "Change the `filter.repositoryId` branch in `listRuns` to use `const runtime = await this.resolveOperational(filter.repositoryId);` instead of `resolveExecution`."
+    },
+    {
+      "severity": "P2",
+      "summary": "In `findRun`, the explicit `repositoryId` path still calls `resolveExecution` before checking if the run exists, missing the performance benefit of checking the operational runtime first.",
+      "file": "apps/api/src/repository-runtime-catalog.ts",
+      "suggested_fix": "Update the `repositoryId` branch in `findRun` to first call `resolveOperational` to find the run, and only if found, call `resolveExecution`."
+    },
+    {
+      "severity": "P3",
+      "summary": "In `compose-repository-runtime.ts`, the ternary expressions for `configFingerprint` and `configSourcesJson` in `atomicUpdateByUuid` are logically redundant and always evaluate to adding the fields to the patch.",
+      "file": "apps/api/src/compose-repository-runtime.ts",
+      "suggested_fix": "Replace the ternary expressions with conditional property assignments (e.g., adding them to the patch only if they differ from the existing values)."
+    }
+  ]
+}

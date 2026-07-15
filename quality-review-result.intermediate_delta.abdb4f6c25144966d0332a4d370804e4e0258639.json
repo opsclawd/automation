@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "WorkerLease acquisition no longer reclaims expired leases or allows re-acquisition by the same worker due to the removal of the UPSERT DO UPDATE logic, breaking system recovery.",
+      "file": "packages/infrastructure/src/sqlite/worker-lease-repository.ts",
+      "suggested_fix": "Restore the `ON CONFLICT(repo_id) DO UPDATE SET ... WHERE worker_leases.expires_at <= @acquired_at OR (worker_leases.worker_id = @worker_id AND worker_leases.run_id = @run_id)` logic in `acquire()` instead of `ON CONFLICT(repo_id) DO NOTHING`. Make sure to include `lease_token = excluded.lease_token` in the update. Update `FakeWorkerLeasePort` and the related tests to correctly expect expired leases to be reclaimable."
+    },
+    {
+      "severity": "P3",
+      "summary": "cli.ts `startLeaseHeartbeat` retry loop does not explicitly handle `LeaseOwnershipLostError`, leading to useless retries and an unhandled exception when `release()` is called after max failures.",
+      "file": "apps/api/src/cli.ts",
+      "suggested_fix": "Catch `LeaseOwnershipLostError` from `heartbeat()` to exit immediately without retries, and wrap the fallback `leaseRepo.release()` call in a try/catch to ensure `process.exit()` executes cleanly."
+    }
+  ]
+}

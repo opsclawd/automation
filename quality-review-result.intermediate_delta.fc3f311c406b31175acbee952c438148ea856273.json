@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "The test 'repeat quarantine preparation is idempotent' asserts a 'blocked' result instead of 'quarantined', revealing that the adapter fails to handle missing worktrees on retry and blocks recovery.",
+      "file": "packages/infrastructure/src/git/worktree-recovery-adapter.ts",
+      "suggested_fix": "Check if the worktreePath exists before calling resetWorktreeIfClean (e.g. using fs.access). If it does not exist, return { safe: true, action: 'quarantined', path: worktreePath } to be truly idempotent, and update the test to expect safe: true."
+    },
+    {
+      "severity": "P3",
+      "summary": "Internal helper methods _computeQuarantinePath and _moveToQuarantine are exposed as public methods because they lack the 'private' access modifier.",
+      "file": "packages/infrastructure/src/git/worktree-recovery-adapter.ts",
+      "suggested_fix": "Add the 'private' keyword to both methods."
+    }
+  ]
+}

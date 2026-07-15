@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "RepositoryRecoveryCoordinator is implemented and tested but never instantiated or called in production code.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Instantiate RepositoryRecoveryCoordinator in the worker drain/scheduler loops and call its execute() method to actively run the recovery policy."
+    },
+    {
+      "severity": "P2",
+      "summary": "recoverableRunIds is computed in worker-drain-loop.ts and worker-scheduler.ts, passed to WorkerLoopDeps, but never actually used in worker-loop.ts.",
+      "file": "packages/application/src/executor/worker-loop.ts",
+      "suggested_fix": "Remove the recoverableRunIds property from WorkerLoopDeps and its computation from the loops, as it is obsolete dead code."
+    }
+  ]
+}

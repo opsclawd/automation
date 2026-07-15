@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "Using fs.rename to quarantine a git worktree corrupts git state, causing future git worktree add commands at the same path to fail.",
+      "file": "packages/infrastructure/src/git/worktree-recovery-adapter.ts",
+      "suggested_fix": "Use `git worktree move <old> <new>` instead of `fs.rename`. You can run this from the main repository using `git(baseRepoPath, ['worktree', 'move', from, to])` where `baseRepoPath` is derived via `git rev-parse --git-common-dir`."
+    },
+    {
+      "severity": "P1",
+      "summary": "The idempotency test passes 'quarantineRoot' as 'worktreePath' on the second call, failing to actually test idempotency and instead accidentally resetting the main repository.",
+      "file": "packages/infrastructure/src/git/__tests__/worktree-recovery-adapter.test.ts",
+      "suggested_fix": "Fix the test to call prepare with the original `worktreePath` on the second call. You will need to handle the fact that if the original path no longer exists (due to rename/move), `prepare` will return `blocked` because `git status` throws ENOENT, meaning true idempotency requires checking if it's already quarantined."
+    }
+  ]
+}

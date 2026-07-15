@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "ResumeRun's success path calls leases.release() without catching LeaseOwnershipLostError, causing successful resumes to throw an error if the lease is lost.",
+      "file": "packages/application/src/resume-run.ts",
+      "suggested_fix": "Wrap the success-path release() call in a try/catch for LeaseOwnershipLostError (or refactor using a finally block) so that losing the lease during processing doesn't fail the operation."
+    },
+    {
+      "severity": "P3",
+      "summary": "CancelRun, OrphanedRunsSweeper, and WaitingRunsSweeper log LeaseOwnershipLostError as an unexpected error during lease release.",
+      "file": "packages/application/src/cancel-run.ts",
+      "suggested_fix": "Update the catch blocks around leases.release() in these classes to ignore LeaseOwnershipLostError, preventing unnecessary error log noise during concurrent operations."
+    }
+  ]
+}
