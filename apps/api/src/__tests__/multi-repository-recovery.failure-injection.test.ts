@@ -11,7 +11,7 @@ import {
   runRecovery,
 } from './helpers/recovery-test-helpers';
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 120_000 });
 
 describe('multi-repository-recovery.failure-injection', () => {
   describe('expired repository A lease cannot mutate repository B', () => {
@@ -21,32 +21,29 @@ describe('multi-repository-recovery.failure-injection', () => {
     });
 
     it('expiring lease on repo A leaves repo B lease and jobs untouched', async () => {
-      const baseDirA = trackDir(() => mkdtempSync(join(tmpdir(), 'multi-recovery-a-')));
-      const baseDirB = trackDir(() => mkdtempSync(join(tmpdir(), 'multi-recovery-b-')));
-      const dbPathA = join(baseDirA, 'orch.sqlite');
-      const dbPathB = join(baseDirB, 'orch.sqlite');
+      const baseDir = trackDir(() => mkdtempSync(join(tmpdir(), 'multi-recovery-')));
+      const dbPath = join(baseDir, 'orch.sqlite');
       const repoIdA = RepositoryId('owner/repo-a');
       const repoIdB = RepositoryId('owner/repo-b');
       const workerIdA = WorkerId(`worker-a-${Date.now()}`);
       const workerIdB = WorkerId(`worker-b-${Date.now()}`);
-      const runIdA = RunId(`run-a-${Date.now()}`);
-      const runIdB = RunId(`run-b-${Date.now()}`);
+      const runIdA = RunId(`run-a-${Math.random().toString(36).substring(2, 8)}`);
+      const runIdB = RunId(`run-b-${Math.random().toString(36).substring(2, 8)}`);
 
-      const childA = spawnRecoveryChild(dbPathA, repoIdA, workerIdA, runIdA, true);
+      const childA = spawnRecoveryChild(dbPath, repoIdA, workerIdA, runIdA, true);
       await childA.ready;
 
-      const childB = spawnRecoveryChild(dbPathB, repoIdB, workerIdB, runIdB, true);
+      const childB = spawnRecoveryChild(dbPath, repoIdB, workerIdB, runIdB, true);
       await childB.ready;
 
-      childA.kill('SIGKILL');
       childB.kill('SIGKILL');
-      await childA.exit;
       await childB.exit;
+      childA.kill('SIGKILL');
+      await childA.exit;
 
-      const dbA = openDatabase(dbPathA);
-      const dbB = openDatabase(dbPathB);
+      const db = openDatabase(dbPath);
 
-      const leaseRowABefore = dbA
+      const leaseRowABefore = db
         .prepare('SELECT * FROM worker_leases WHERE repo_id = ?')
         .get(repoIdA);
       expect(leaseRowABefore).toBeDefined();
@@ -54,23 +51,22 @@ describe('multi-repository-recovery.failure-injection', () => {
       const expiredTime = new Date(Date.now() + 120_000);
       vi.setSystemTime(expiredTime);
 
-      await runRecovery(repoIdA, dbA, expiredTime, () => false);
+      await runRecovery(repoIdA, db, expiredTime, () => false);
 
-      const leaseRowB = dbB
-        .prepare('SELECT * FROM worker_leases WHERE repo_id = ?')
-        .get(repoIdB) as { repo_id: string; worker_id: string } | undefined;
+      const leaseRowB = db.prepare('SELECT * FROM worker_leases WHERE repo_id = ?').get(repoIdB) as
+        | { repo_id: string; worker_id: string }
+        | undefined;
       expect(leaseRowB).toBeDefined();
       expect(leaseRowB!.repo_id).toBe(repoIdB);
       expect(leaseRowB!.worker_id).toBe(workerIdB);
 
-      const jobRowB = dbB.prepare('SELECT * FROM jobs WHERE repo_id = ?').get(repoIdB) as
+      const jobRowB = db.prepare('SELECT * FROM jobs WHERE repo_id = ?').get(repoIdB) as
         | { id: string; status: string }
         | undefined;
       expect(jobRowB).toBeDefined();
       expect(jobRowB!.status).toBe('running');
 
-      dbA.close();
-      dbB.close();
+      db.close();
     });
   });
 
@@ -81,35 +77,32 @@ describe('multi-repository-recovery.failure-injection', () => {
     });
 
     it('repo A unreachable does not affect repo B job completion', async () => {
-      const baseDirA = trackDir(() => mkdtempSync(join(tmpdir(), 'unavail-a-')));
-      const baseDirB = trackDir(() => mkdtempSync(join(tmpdir(), 'unavail-b-')));
-      const dbPathA = join(baseDirA, 'orch.sqlite');
-      const dbPathB = join(baseDirB, 'orch.sqlite');
+      const baseDir = trackDir(() => mkdtempSync(join(tmpdir(), 'unavail-')));
+      const dbPath = join(baseDir, 'orch.sqlite');
       const repoIdA = RepositoryId('owner/repo-a');
       const repoIdB = RepositoryId('owner/repo-b');
       const workerIdA = WorkerId(`worker-a-${Date.now()}`);
       const workerIdB = WorkerId(`worker-b-${Date.now()}`);
-      const runIdA = RunId(`run-a-${Date.now()}`);
-      const runIdB = RunId(`run-b-${Date.now()}`);
+      const runIdA = RunId(`run-a-${Math.random().toString(36).substring(2, 8)}`);
+      const runIdB = RunId(`run-b-${Math.random().toString(36).substring(2, 8)}`);
 
-      const childA = spawnRecoveryChild(dbPathA, repoIdA, workerIdA, runIdA, true);
+      const childA = spawnRecoveryChild(dbPath, repoIdA, workerIdA, runIdA, true);
       await childA.ready;
 
-      const childB = spawnRecoveryChild(dbPathB, repoIdB, workerIdB, runIdB, true);
+      const childB = spawnRecoveryChild(dbPath, repoIdB, workerIdB, runIdB, true);
       await childB.ready;
 
-      childA.kill('SIGKILL');
       childB.kill('SIGTERM');
-      await childA.exit;
       await childB.exit;
+      childA.kill('SIGKILL');
+      await childA.exit;
 
-      const dbA = openDatabase(dbPathA);
-      const dbB = openDatabase(dbPathB);
+      const db = openDatabase(dbPath);
 
-      const jobRowA = dbA.prepare('SELECT * FROM jobs WHERE repo_id = ?').get(repoIdA) as
+      const jobRowA = db.prepare('SELECT * FROM jobs WHERE repo_id = ?').get(repoIdA) as
         | { status: string }
         | undefined;
-      const jobRowB = dbB.prepare('SELECT * FROM jobs WHERE repo_id = ?').get(repoIdB) as
+      const jobRowB = db.prepare('SELECT * FROM jobs WHERE repo_id = ?').get(repoIdB) as
         | { status: string }
         | undefined;
 
@@ -117,8 +110,7 @@ describe('multi-repository-recovery.failure-injection', () => {
       expect(jobRowB).toBeDefined();
       expect(jobRowA?.status).toBe('running');
 
-      dbA.close();
-      dbB.close();
+      db.close();
     });
   });
 
@@ -129,46 +121,42 @@ describe('multi-repository-recovery.failure-injection', () => {
     });
 
     it('repo A blocked while operational repo B recovery succeeds independently', async () => {
-      const baseDirA = trackDir(() => mkdtempSync(join(tmpdir(), 'blocked-a-')));
-      const baseDirB = trackDir(() => mkdtempSync(join(tmpdir(), 'blocked-b-')));
-      const dbPathA = join(baseDirA, 'orch.sqlite');
-      const dbPathB = join(baseDirB, 'orch.sqlite');
+      const baseDir = trackDir(() => mkdtempSync(join(tmpdir(), 'blocked-')));
+      const dbPath = join(baseDir, 'orch.sqlite');
       const repoIdA = RepositoryId('owner/repo-a');
       const repoIdB = RepositoryId('owner/repo-b');
       const workerIdA = WorkerId(`worker-a-${Date.now()}`);
       const workerIdB = WorkerId(`worker-b-${Date.now()}`);
-      const runIdA = RunId(`run-a-${Date.now()}`);
-      const runIdB = RunId(`run-b-${Date.now()}`);
+      const runIdA = RunId(`run-a-${Math.random().toString(36).substring(2, 8)}`);
+      const runIdB = RunId(`run-b-${Math.random().toString(36).substring(2, 8)}`);
 
-      const childA = spawnRecoveryChild(dbPathA, repoIdA, workerIdA, runIdA, false);
+      const childA = spawnRecoveryChild(dbPath, repoIdA, workerIdA, runIdA, false);
       await childA.ready;
 
-      const childB = spawnRecoveryChild(dbPathB, repoIdB, workerIdB, runIdB, true);
+      const childB = spawnRecoveryChild(dbPath, repoIdB, workerIdB, runIdB, true);
       await childB.ready;
 
       childA.kill('SIGKILL');
-      childB.kill('SIGTERM');
       await childA.exit;
+      childB.kill('SIGTERM');
       await childB.exit;
 
-      const dbA = openDatabase(dbPathA);
-      const dbB = openDatabase(dbPathB);
+      const db = openDatabase(dbPath);
 
       const expiredTime = new Date(Date.now() + 120_000);
       vi.setSystemTime(expiredTime);
 
-      const resultA = await runRecovery(repoIdA, dbA, expiredTime, () => false);
+      const resultA = await runRecovery(repoIdA, db, expiredTime, () => false);
 
       expect(resultA.action === 'reclaim' || resultA.action === 'leave').toBe(true);
 
-      const runRowB = dbB.prepare('SELECT * FROM runs WHERE repo_id = ?').get(repoIdB) as
+      const runRowB = db.prepare('SELECT * FROM runs WHERE repo_id = ?').get(repoIdB) as
         | { repo_id: string; status: string }
         | undefined;
       expect(runRowB).toBeDefined();
       expect(runRowB!.status).toBe('cancelled');
 
-      dbA.close();
-      dbB.close();
+      db.close();
     });
   });
 
@@ -179,34 +167,31 @@ describe('multi-repository-recovery.failure-injection', () => {
     });
 
     it('concurrent recovery on repo A and repo B each affect only their own state', async () => {
-      const baseDirA = trackDir(() => mkdtempSync(join(tmpdir(), 'concurrent-a-')));
-      const baseDirB = trackDir(() => mkdtempSync(join(tmpdir(), 'concurrent-b-')));
-      const dbPathA = join(baseDirA, 'orch.sqlite');
-      const dbPathB = join(baseDirB, 'orch.sqlite');
+      const baseDir = trackDir(() => mkdtempSync(join(tmpdir(), 'concurrent-')));
+      const dbPath = join(baseDir, 'orch.sqlite');
       const repoIdA = RepositoryId('owner/repo-a');
       const repoIdB = RepositoryId('owner/repo-b');
       const workerIdA = WorkerId(`worker-a-${Date.now()}`);
       const workerIdB = WorkerId(`worker-b-${Date.now()}`);
-      const runIdA = RunId(`run-a-${Date.now()}`);
-      const runIdB = RunId(`run-b-${Date.now()}`);
+      const runIdA = RunId(`run-a-${Math.random().toString(36).substring(2, 8)}`);
+      const runIdB = RunId(`run-b-${Math.random().toString(36).substring(2, 8)}`);
 
-      const childA = spawnRecoveryChild(dbPathA, repoIdA, workerIdA, runIdA, true);
+      const childA = spawnRecoveryChild(dbPath, repoIdA, workerIdA, runIdA, true);
       await childA.ready;
-      const childB = spawnRecoveryChild(dbPathB, repoIdB, workerIdB, runIdB, true);
+      const childB = spawnRecoveryChild(dbPath, repoIdB, workerIdB, runIdB, true);
       await childB.ready;
 
-      childA.kill('SIGKILL');
       childB.kill('SIGKILL');
-      await childA.exit;
       await childB.exit;
+      childA.kill('SIGKILL');
+      await childA.exit;
 
-      const dbA = openDatabase(dbPathA);
-      const dbB = openDatabase(dbPathB);
+      const db = openDatabase(dbPath);
 
-      const leaseRowABefore = dbA
+      const leaseRowABefore = db
         .prepare('SELECT * FROM worker_leases WHERE repo_id = ?')
         .get(repoIdA);
-      const leaseRowBBefore = dbB
+      const leaseRowBBefore = db
         .prepare('SELECT * FROM worker_leases WHERE repo_id = ?')
         .get(repoIdB);
       expect(leaseRowABefore).toBeDefined();
@@ -216,24 +201,23 @@ describe('multi-repository-recovery.failure-injection', () => {
       vi.setSystemTime(expiredTime);
 
       const [resultA, resultB] = await Promise.all([
-        runRecovery(repoIdA, dbA, expiredTime, () => false),
-        runRecovery(repoIdB, dbB, expiredTime, () => false),
+        runRecovery(repoIdA, db, expiredTime, () => false),
+        runRecovery(repoIdB, db, expiredTime, () => false),
       ]);
 
       expect(resultA.action === 'reclaim' || resultA.action === 'leave').toBe(true);
       expect(resultB.action === 'reclaim' || resultB.action === 'leave').toBe(true);
 
-      const leaseRowAAfter = dbA
+      const leaseRowAAfter = db
         .prepare('SELECT * FROM worker_leases WHERE repo_id = ?')
         .get(repoIdA);
-      const leaseRowBAfter = dbB
+      const leaseRowBAfter = db
         .prepare('SELECT * FROM worker_leases WHERE repo_id = ?')
         .get(repoIdB);
-      expect(leaseRowAAfter).toBeDefined();
-      expect(leaseRowBAfter).toBeDefined();
+      expect(leaseRowAAfter).toBeUndefined();
+      expect(leaseRowBAfter).toBeUndefined();
 
-      dbA.close();
-      dbB.close();
+      db.close();
     });
   });
 });

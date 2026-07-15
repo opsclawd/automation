@@ -95,18 +95,29 @@ export async function runRecovery(
     WorkerRegistryRepository,
     JobQueueRepository,
     RepositoryRegistryRepository,
+    OperationalRecoveryRepository,
+    EventRepository,
   } = await import('@ai-sdlc/infrastructure');
 
   const leases = new WorkerLeaseRepository(db);
   const registry = new WorkerRegistryRepository(db);
   const repos = new RepositoryRegistryRepository(db);
   const queue = new JobQueueRepository(db, repos);
+  const events = new EventRepository(db, repoId);
+
+  const operationalRecovery = new OperationalRecoveryRepository(db, {
+    leaseRepo: leases,
+    workerRepo: registry,
+    jobQueueRepo: queue,
+    eventRepo: events,
+  });
 
   const coordinator = new RepositoryRecoveryCoordinator({
     leases,
     queue,
     registry,
     repos,
+    operationalRecovery,
     findRun: (runId) => {
       const row = db.prepare('SELECT * FROM runs WHERE uuid = ?').get(runId) as
         | {
@@ -162,5 +173,9 @@ export async function runRecovery(
     now: () => now,
   });
 
-  return coordinator.execute({ repoId });
+  const firstAction = await coordinator.execute({ repoId });
+  if (firstAction.action === 'reclaim') {
+    await coordinator.execute({ repoId });
+  }
+  return firstAction;
 }

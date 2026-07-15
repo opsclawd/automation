@@ -107,6 +107,18 @@ function applyMinimalSchema(db: Database.Database): void {
       expires_at TEXT NOT NULL,
       lease_token TEXT NOT NULL DEFAULT (lower(hex(randomblob(16))))
     );
+
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_uuid TEXT NOT NULL REFERENCES runs(uuid) ON DELETE CASCADE,
+      repo_id TEXT,
+      phase TEXT,
+      level TEXT NOT NULL,
+      type TEXT NOT NULL,
+      message TEXT NOT NULL,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      timestamp TEXT NOT NULL
+    );
   `);
 }
 

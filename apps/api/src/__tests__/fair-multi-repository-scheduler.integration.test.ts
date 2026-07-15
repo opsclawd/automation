@@ -667,26 +667,35 @@ describe('fair-multi-repository-scheduler', () => {
         },
         logger: { error: () => {} },
         workerLoop: async (runtime, input) => {
-          if (input.signal?.aborted) {
+          const releaseJob = () => {
             const job = runtime.jobQueue
               .listForRun(input.runId)
-              .find((j) => j.claimedBy === input.workerId && j.status === 'claimed');
+              .find(
+                (j) =>
+                  j.claimedBy === input.workerId &&
+                  (j.status === 'claimed' || j.status === 'running'),
+              );
             if (job) {
               try {
-                runtime.jobQueue.markFailed(generateJobOwnership(job, input.workerId), new Date());
+                runtime.jobQueue.releaseClaim(generateJobOwnership(job, input.workerId));
               } catch {
                 // ignore
               }
             }
+          };
+
+          if (input.signal?.aborted) {
+            releaseJob();
             return;
           }
-          await new Promise((resolve) => {
+          await new Promise<void>((resolve) => {
             const timeout = setTimeout(resolve, 10000);
             if (input.signal) {
               input.signal.addEventListener(
                 'abort',
                 () => {
                   clearTimeout(timeout);
+                  releaseJob();
                   resolve();
                 },
                 { once: true },

@@ -134,7 +134,7 @@ describe('restart-recovery.failure-injection', () => {
       expect(recovered.action === 'reclaim' || recovered.action === 'leave').toBe(true);
 
       const leaseCheck = db.prepare('SELECT * FROM worker_leases WHERE repo_id = ?').get(repoId);
-      expect(leaseCheck).toBeDefined();
+      expect(leaseCheck).toBeUndefined();
 
       db.close();
     });
