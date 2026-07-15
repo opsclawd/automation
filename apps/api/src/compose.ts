@@ -6138,6 +6138,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     stateRoot: baseTmpDir,
     controlPlaneDb: db,
     registry: registryBackedRepo,
+    logger,
   });
 
   function buildRepositorySweepCoordinator(): RepositorySweepCoordinator {

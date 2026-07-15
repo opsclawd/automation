@@ -21,6 +21,15 @@ export interface RepositoryRuntimeCatalogOptions {
     listAll(): Array<Repository>;
     listEnabled(): Array<Repository>;
   };
+  /**
+   * Optional — defaults to a no-op. resolveEnabled() and listRuns() skip any
+   * repository whose runtime fails to resolve (so one broken repository
+   * doesn't block aggregate reads across the rest); without a logger that
+   * skip is completely silent, with no trace of which repository or why.
+   */
+  logger?: {
+    error(message: string, ...args: unknown[]): void;
+  };
 }
 
 export interface RepositoryRuntimeCatalog {
@@ -134,8 +143,14 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
         try {
           const runtime = await this.resolve(repo.id, { allowDisabled: false });
           results.push({ repository: repo, runtime });
-        } catch {
-          // Skip repos that fail to resolve
+        } catch (err) {
+          // Skip repos that fail to resolve — logged so a repository silently
+          // dropping out of aggregate reads (e.g. GET /api/runs) is
+          // diagnosable instead of just appearing as missing data.
+          this.opts.logger?.error(
+            `RepositoryRuntimeCatalog.resolveEnabled: failed to resolve runtime for ${repo.id}`,
+            err,
+          );
         }
       }),
     );
@@ -207,7 +222,11 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
         try {
           const runtime = await this.resolve(repo.id, { allowDisabled: true });
           return runtime.runRepository.list(filter);
-        } catch {
+        } catch (err) {
+          this.opts.logger?.error(
+            `RepositoryRuntimeCatalog.listRuns: failed to resolve disabled repository runtime for ${repo.id}`,
+            err,
+          );
           return null;
         }
       }),
