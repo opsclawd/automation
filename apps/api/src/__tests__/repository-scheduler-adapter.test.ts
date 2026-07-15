@@ -40,7 +40,6 @@ describe('RepositorySchedulerAdapter', () => {
       const factory = vi.fn(() => Promise.resolve(runtime));
 
       const adapter = new RepositorySchedulerAdapter({
-        repoId: repo.id,
         runtimeFactory: factory,
         logger: mockLogger,
       });
@@ -70,7 +69,6 @@ describe('RepositorySchedulerAdapter', () => {
       const factory = vi.fn(() => Promise.reject(new Error('runtime unavailable')));
 
       const adapter = new RepositorySchedulerAdapter({
-        repoId: repo.id,
         runtimeFactory: factory,
         logger: mockLogger,
       });
@@ -97,7 +95,6 @@ describe('RepositorySchedulerAdapter', () => {
       };
 
       const adapter = new RepositorySchedulerAdapter({
-        repoId: repo.id,
         runtimeFactory: vi.fn(),
         logger: mockLogger,
       });
@@ -125,7 +122,6 @@ describe('RepositorySchedulerAdapter', () => {
       };
 
       const adapter = new RepositorySchedulerAdapter({
-        repoId: repo.id,
         runtimeFactory: vi.fn(),
         logger: mockLogger,
       });
@@ -198,7 +194,6 @@ describe('RepositorySchedulerAdapter', () => {
       const workerLoop = vi.fn().mockResolvedValue(undefined);
 
       const adapter = new RepositorySchedulerAdapter({
-        repoId: repo.id,
         runtimeFactory: factory,
         logger: mockLogger,
         workerLoop,
@@ -250,7 +245,6 @@ describe('RepositorySchedulerAdapter', () => {
       const workerLoop = vi.fn().mockResolvedValue(undefined);
 
       const adapter = new RepositorySchedulerAdapter({
-        repoId: repo.id,
         runtimeFactory: factory,
         logger: mockLogger,
         workerLoop,
@@ -305,7 +299,6 @@ describe('RepositorySchedulerAdapter', () => {
       const workerLoop = vi.fn().mockResolvedValue(undefined);
 
       const adapter = new RepositorySchedulerAdapter({
-        repoId: repo.id,
         runtimeFactory: factory,
         logger: mockLogger,
         workerLoop,
@@ -359,7 +352,6 @@ describe('RepositorySchedulerAdapter', () => {
       const workerLoop = vi.fn().mockRejectedValue(new Error('worker loop failed'));
 
       const adapter = new RepositorySchedulerAdapter({
-        repoId: repo.id,
         runtimeFactory: factory,
         logger: mockLogger,
         workerLoop,
@@ -410,7 +402,6 @@ describe('RepositorySchedulerAdapter', () => {
       const workerLoop = vi.fn();
 
       const adapter = new RepositorySchedulerAdapter({
-        repoId: repo.id,
         runtimeFactory: factory,
         logger: mockLogger,
         workerLoop,

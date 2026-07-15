@@ -8,7 +8,6 @@ import type { Repository, RepositoryId, WorkerId, RunId, Worker } from '@ai-sdlc
 import type { RepositoryRuntime } from './repository-runtime-factory.js';
 
 export interface RepositorySchedulerAdapterDeps {
-  repoId: RepositoryId;
   runtimeFactory: (repo: Repository) => Promise<RepositoryRuntime>;
   logger: LoggerPort;
   workerLoop?: (
