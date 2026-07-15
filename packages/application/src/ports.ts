@@ -326,3 +326,4 @@ export type {
   LeaseReclamationResult,
   OperationalRecoveryConflictReason,
 } from './ports/operational-recovery-port.js';
+export type { RepositoryAvailabilityPort } from './ports/repository-availability-port.js';

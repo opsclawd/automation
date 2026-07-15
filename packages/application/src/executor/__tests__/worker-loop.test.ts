@@ -694,7 +694,6 @@ describe('workerLoop', () => {
       repos: s.repos,
       repoId: RepositoryId('r1'),
       executeRun: async () => {
-        // Wait for heartbeat to fire
         await new Promise((resolve) => setTimeout(resolve, 150));
         return { ok: true };
       },
@@ -711,7 +710,163 @@ describe('workerLoop', () => {
     });
 
     expect(onProgress).toHaveBeenCalled();
-    // 1 call at start of loop + at least 1 call during heartbeat
     expect(onProgress.mock.calls.length).toBeGreaterThanOrEqual(2);
   }, 10_000);
+
+  it('cooperative shutdown requeues resumable job and releases exact lease', async () => {
+    const s = setup();
+    const abortController = new AbortController();
+    let abortReason: string | undefined = 'shutdown';
+
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    const executeRun = async ({
+      signal,
+    }: {
+      run: Run;
+      workerId: WorkerId;
+      cwd: string;
+      signal: AbortSignal;
+    }) => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (signal.aborted) return { ok: false };
+      return { ok: true };
+    };
+
+    const runPromise = workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun,
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
+      outerSignal: abortController.signal,
+      getAbortReason: () => abortReason,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    abortController.abort();
+
+    await runPromise;
+
+    const job = s.queue.findById(JobId('j1'));
+    expect(job!.status).toBe('queued');
+    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+  });
+
+  it('user cancellation remains terminal', async () => {
+    const s = setup();
+    const abortController = new AbortController();
+    let abortReason: string | undefined = 'user_cancelled';
+
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    const executeRun = async ({
+      signal,
+    }: {
+      run: Run;
+      workerId: WorkerId;
+      cwd: string;
+      signal: AbortSignal;
+    }) => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (signal.aborted) return { ok: false };
+      return { ok: true };
+    };
+
+    const runPromise = workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun,
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
+      outerSignal: abortController.signal,
+      getAbortReason: () => abortReason,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    abortController.abort();
+
+    await runPromise;
+
+    const job = s.queue.findById(JobId('j1'));
+    expect(job!.status).toBe('cancelled');
+  });
+
+  it('non-cooperative shutdown preserves lease', async () => {
+    const s = setup();
+    let abortReason: string | undefined = 'lease_lost';
+
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    vi.spyOn(s.leases, 'heartbeat').mockImplementation(() => {
+      throw new Error('heartbeat failed');
+    });
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun: async () => await new Promise<never>(() => {}),
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 10,
+      executeRunGraceMs: 50,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
+      getAbortReason: () => abortReason,
+    });
+
+    const job = s.queue.findById(JobId('j1'));
+    expect(job!.status).toBe('failed');
+    const lease = s.leases.current(RepositoryId('r1'));
+    expect(lease?.workerId).toBe('w1');
+    expect(lease?.runId).toBe('run-1');
+  });
 });

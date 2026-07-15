@@ -5,6 +5,7 @@ import type {
   WorkerLeasePort,
   RepositoryPort,
   RunRepositoryUpdatePatch,
+  RepositoryAvailabilityPort,
 } from '../ports.js';
 import {
   WorkerLeaseConflictError,
@@ -12,6 +13,8 @@ import {
   JobOwnershipLostError,
   generateJobOwnership,
 } from '@ai-sdlc/domain';
+
+export type AbortReason = 'shutdown' | 'user_cancelled' | 'lease_lost' | 'repository_unavailable';
 
 export interface WorkerLoopDeps {
   registry: WorkerRegistryPort;
@@ -47,6 +50,9 @@ export interface WorkerLoopDeps {
   getWorktreePath?(repoId: RepositoryId): string;
   getQuarantineRoot?(repoId: RepositoryId): string;
   listRunsForRepo?(repoId: RepositoryId): Run[];
+  repoAvailability?: RepositoryAvailabilityPort;
+  markStopping?: () => void;
+  getAbortReason?(): AbortReason | undefined;
 }
 
 function isRunnable(status: string): boolean {
@@ -81,6 +87,8 @@ export async function runClaimedJob(
   let started = false;
   let acquired = false;
   let acquiredLease;
+  const abortReason =
+    deps.getAbortReason?.() ?? (deps.outerSignal?.aborted ? 'user_cancelled' : undefined);
 
   try {
     registry.markBusy(workerId, deps.repoId);
@@ -95,6 +103,16 @@ export async function runClaimedJob(
     acquired = true;
 
     const abortController = new AbortController();
+
+    if (deps.outerSignal) {
+      deps.outerSignal.addEventListener(
+        'abort',
+        () => {
+          abortController.abort(abortReason ?? 'user_cancelled');
+        },
+        { once: true },
+      );
+    }
 
     const heartbeatInterval = setInterval(
       () => {
@@ -111,7 +129,7 @@ export async function runClaimedJob(
           deps.onProgress?.();
         } catch {
           clearInterval(heartbeatInterval);
-          abortController.abort();
+          abortController.abort('lease_lost');
         }
       },
       Math.max(Math.floor(deps.ttlMs / 2), deps.heartbeatIntervalMs ?? 1_000),
@@ -129,12 +147,12 @@ export async function runClaimedJob(
         }),
         new Promise<never>((_, reject) => {
           if (abortController.signal.aborted) {
-            reject(new Error('heartbeat failed during worktree preparation'));
+            reject(new Error('aborted during worktree preparation'));
             return;
           }
           abortController.signal.addEventListener(
             'abort',
-            () => reject(new Error('heartbeat failed during worktree preparation')),
+            () => reject(new Error('aborted during worktree preparation')),
             { once: true },
           );
         }),
@@ -154,41 +172,74 @@ export async function runClaimedJob(
 
       const result = await new Promise<{ ok: boolean }>((resolve, reject) => {
         let graceTimer: ReturnType<typeof setTimeout> | undefined;
+        let settled = false;
 
-        const onAbort = () => {
-          graceTimer = setTimeout(
-            () => reject(new Error('heartbeat failed during job execution')),
-            deps.executeRunGraceMs ?? 10_000,
-          );
-          void executeRunPromise.then(
-            () => {
-              clearTimeout(graceTimer);
-              reject(new Error('heartbeat failed during job execution'));
-            },
-            (err) => {
-              clearTimeout(graceTimer);
-              reject(new Error(`heartbeat failed during job execution: ${(err as Error).message}`));
-            },
-          );
+        const onAbort = (reason: unknown) => {
+          const abortReasonStr = typeof reason === 'string' ? reason : 'unknown';
+          if (abortReasonStr === 'shutdown') {
+            graceTimer = setTimeout(
+              () => reject(new Error('grace expired during shutdown')),
+              deps.executeRunGraceMs ?? 10_000,
+            );
+            void executeRunPromise.then(
+              () => {
+                if (!settled) {
+                  settled = true;
+                  clearTimeout(graceTimer);
+                  reject(new Error('cooperative shutdown: execution settled'));
+                }
+              },
+              (err) => {
+                if (!settled) {
+                  settled = true;
+                  clearTimeout(graceTimer);
+                  reject(
+                    new Error(`cooperative shutdown: execution failed - ${(err as Error).message}`),
+                  );
+                }
+              },
+            );
+          } else {
+            graceTimer = setTimeout(
+              () => reject(new Error('grace expired')),
+              deps.executeRunGraceMs ?? 10_000,
+            );
+            void executeRunPromise.then(
+              () => {
+                clearTimeout(graceTimer);
+                reject(new Error('heartbeat failed during job execution'));
+              },
+              (err) => {
+                clearTimeout(graceTimer);
+                reject(
+                  new Error(`heartbeat failed during job execution: ${(err as Error).message}`),
+                );
+              },
+            );
+          }
         };
 
         if (abortController.signal.aborted) {
-          onAbort();
+          onAbort(abortController.signal.reason);
           return;
         }
 
-        abortController.signal.addEventListener('abort', onAbort, { once: true });
+        abortController.signal.addEventListener(
+          'abort',
+          () => onAbort(abortController.signal.reason),
+          { once: true },
+        );
 
         void executeRunPromise.then(
           (r) => {
             if (!abortController.signal.aborted) {
-              abortController.signal.removeEventListener('abort', onAbort);
+              abortController.signal.removeEventListener('abort', onAbort as () => void);
               resolve(r);
             }
           },
           (err) => {
             if (!abortController.signal.aborted) {
-              abortController.signal.removeEventListener('abort', onAbort);
+              abortController.signal.removeEventListener('abort', onAbort as () => void);
               reject(err as Error);
             }
           },
@@ -205,6 +256,9 @@ export async function runClaimedJob(
       clearInterval(heartbeatInterval);
     }
   } catch (err) {
+    const reason =
+      deps.getAbortReason?.() ?? (deps.outerSignal?.aborted ? 'user_cancelled' : undefined);
+
     if (err instanceof JobOwnershipLostError) {
       return 'settled';
     }
@@ -218,7 +272,13 @@ export async function runClaimedJob(
       return 'lease_conflict';
     }
     if (started) {
-      if (deps.outerSignal?.aborted) {
+      if (reason === 'shutdown') {
+        try {
+          queue.resetToQueued(ownership);
+        } catch {
+          /* already terminal */
+        }
+      } else if (reason === 'user_cancelled') {
         try {
           queue.markCancelled(ownership, deps.now());
         } catch {
@@ -240,20 +300,30 @@ export async function runClaimedJob(
     }
     return 'settled';
   } finally {
+    const reason =
+      deps.getAbortReason?.() ?? (deps.outerSignal?.aborted ? 'user_cancelled' : undefined);
+
     if (acquired && acquiredLease) {
-      try {
-        leases.release({
-          repoId: job.repoId,
-          workerId,
-          runId: job.runId,
-          leaseToken: acquiredLease.leaseToken,
-        });
-      } catch (err) {
-        if (!(err instanceof LeaseOwnershipLostError)) throw err;
+      if (reason === 'lease_lost') {
+        // For lease_lost (non-cooperative shutdown), preserve the lease for startup recovery
+      } else {
+        try {
+          leases.release({
+            repoId: job.repoId,
+            workerId,
+            runId: job.runId,
+            leaseToken: acquiredLease.leaseToken,
+          });
+        } catch (err) {
+          if (!(err instanceof LeaseOwnershipLostError)) throw err;
+        }
       }
     }
     const afterRelease = registry.findById(workerId, deps.repoId);
     if (afterRelease && isRunnable(afterRelease.status)) {
+      if (reason === 'shutdown') {
+        deps.markStopping?.();
+      }
       registry.markIdle(workerId, deps.repoId);
     }
   }

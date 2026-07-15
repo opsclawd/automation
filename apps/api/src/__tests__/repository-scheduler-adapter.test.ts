@@ -9,6 +9,76 @@ const mockLogger: LoggerPort = {
 };
 
 describe('RepositorySchedulerAdapter', () => {
+  describe('repository unavailable', () => {
+    it('repository unavailable leaves foreign repository untouched', async () => {
+      const { RepositorySchedulerAdapter } = await import('../repository-scheduler-adapter.js');
+
+      const repo1 = {
+        id: 'owner/repo1' as import('@ai-sdlc/domain').RepositoryId,
+        name: 'repo1',
+        fullName: 'owner/repo1',
+        enabled: true,
+        healthStatus: 'unreachable' as const,
+        healthError: 'disk I/O error',
+        maxConcurrentRuns: 2,
+      };
+
+      const repo2 = {
+        id: 'owner/repo2' as import('@ai-sdlc/domain').RepositoryId,
+        name: 'repo2',
+        fullName: 'owner/repo2',
+        enabled: true,
+        healthStatus: 'healthy' as const,
+        maxConcurrentRuns: 2,
+      };
+
+      const runtime2 = {
+        repository: repo2,
+        workerRegistry: {
+          register: vi.fn(),
+          heartbeat: vi.fn(),
+          deregister: vi.fn(),
+        },
+        workerLeaseRepository: {
+          checkActiveLease: vi.fn(() => false),
+        },
+        jobQueue: {
+          listForRepo: vi.fn(() => [{ id: 'j2', status: 'queued', repoId: repo2.id }]),
+          claimNext: vi.fn(() => undefined),
+        },
+        close: vi.fn(),
+      };
+
+      const factory = vi.fn((repo: typeof repo1 | typeof repo2) => {
+        if (repo.id === 'owner/repo1') {
+          return Promise.reject(new Error('repo1 unavailable'));
+        }
+        return Promise.resolve(runtime2);
+      });
+
+      const adapter = new RepositorySchedulerAdapter({
+        runtimeFactory: factory,
+        logger: mockLogger,
+      });
+
+      const result1 = await adapter.inspect(repo1);
+
+      expect(result1).toEqual({
+        available: false,
+        reason: 'unavailable',
+        detail: 'disk I/O error',
+      });
+
+      const result2 = await adapter.inspect(repo2);
+
+      expect(result2).toEqual({
+        available: true,
+        queueDepth: 1,
+        activeCount: 0,
+      });
+    });
+  });
+
   describe('inspect', () => {
     it('resolves the runtime, counts queued jobs for queueDepth, and active jobs for activeCount', async () => {
       const { RepositorySchedulerAdapter } = await import('../repository-scheduler-adapter.js');

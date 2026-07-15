@@ -125,3 +125,4 @@ export type {
   SchedulerTelemetryPort,
   SchedulerTelemetryRecord,
 } from './repository-scheduler-port.js';
+export type { RepositoryAvailabilityPort } from './repository-availability-port.js';

@@ -161,6 +161,7 @@ import {
   TaskContextGenerator,
   type HolisticFile,
   fingerprintFinding,
+  type RepositoryAvailabilityPort,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -5692,6 +5693,15 @@ export function composeRoot(opts: ComposeOptions): Container {
             return result.runs as unknown as import('@ai-sdlc/domain').Run[];
           },
           updateRun: (runId, patch) => runRepository.update(String(runId), patch),
+          repoAvailability: {
+            markUnreachable: (repoId: RepositoryId, reason: string) => {
+              repositoryRegistry.update(
+                repoId,
+                { healthStatus: 'unreachable', healthError: reason },
+                new Date(),
+              );
+            },
+          } as RepositoryAvailabilityPort,
         })
       : undefined;
 
