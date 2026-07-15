@@ -177,6 +177,7 @@ import {
 interface SchedulerConfig {
   globalConcurrency: number;
   pollIntervalMs: number;
+  shutdownGraceMs: number;
 }
 import {
   AgentProfileName,
@@ -1847,7 +1848,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     // Fallback to default 7 / disabled.
   }
 
-  let schedulerConfig = { globalConcurrency: 1, pollIntervalMs: 2000 };
+  let schedulerConfig = { globalConcurrency: 1, pollIntervalMs: 2000, shutdownGraceMs: 30_000 };
   try {
     const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
     let sweepLayered = layeredConfigCache.get(cacheKey);

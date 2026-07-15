@@ -182,8 +182,9 @@ export const schedulerConfigSchema = z
   .strictObject({
     globalConcurrency: z.number().int().positive().default(1),
     pollIntervalMs: z.number().int().positive().default(2_000),
+    shutdownGraceMs: z.number().int().positive().default(30_000),
   })
-  .default({ globalConcurrency: 1, pollIntervalMs: 2_000 });
+  .default({ globalConcurrency: 1, pollIntervalMs: 2_000, shutdownGraceMs: 30_000 });
 
 // Keep in sync with AgentRuntimeKind in @ai-sdlc/domain/agent-types.ts
 const agentRuntime = z.enum(['opencode', 'pi', 'antigravity', 'claude-code', 'codex']);

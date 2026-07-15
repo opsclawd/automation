@@ -42,10 +42,12 @@ import { EXIT_USER_ERROR, EXIT_INTERNAL_ERROR } from './cli/exit-codes.js';
 import { schedulerConfigSchema } from '@ai-sdlc/shared';
 import { RepositorySchedulerAdapter } from './repository-scheduler-adapter.js';
 import type { RepositoryRuntime } from './repository-runtime-factory.js';
+import { ShutdownCoordinator } from './shutdown-coordinator.js';
 
 export interface SchedulerConfig {
   globalConcurrency: number;
   pollIntervalMs: number;
+  shutdownGraceMs: number;
 }
 
 export interface LeaseConfig {
@@ -1005,20 +1007,22 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       const workerSweepWorkerId = WorkerId(`worker-sweep-${process.pid}`);
       const sweepCoordinator = c.buildRepositorySweepCoordinator();
 
+      const shutdownCoordinator = new ShutdownCoordinator({
+        scheduler,
+        runtimeCatalog: c.runtimeCatalog,
+        auxiliaryTimers: [],
+        shutdownGraceMs: parsed.data.shutdownGraceMs,
+      });
+
       const shutdown = async () => {
         abortController.abort();
-        scheduler.stopAdmission('shutdown');
-        const drainResult = await scheduler.drain(30000);
-        if (!drainResult.drained) {
+        const result = await shutdownCoordinator.shutdown(abortController.signal);
+        if (!result.ok) {
           console.error(
-            `drain timed out, ${drainResult.remainingWorkerIds.length} workers still active`,
+            `drain timed out, ${result.remainingWorkerIds?.length ?? 0} workers still active`,
           );
         }
-        try {
-          await c.runtimeCatalog.close();
-        } finally {
-          process.exit(0);
-        }
+        process.exit(0);
       };
 
       process.on('SIGINT', shutdown);
@@ -1115,6 +1119,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         let server: { stop: () => Promise<void>; address: unknown } | undefined;
         let testWorkerReaper: { stop: () => void } | undefined;
 
+        const shutdownCoordinator = new ShutdownCoordinator({
+          scheduler,
+          runtimeCatalog: c.runtimeCatalog,
+          auxiliaryTimers: () => [sweepTimer, testWorkerReaper],
+          shutdownGraceMs: c.schedulerConfig.shutdownGraceMs,
+        });
+
         const logSweepResult = (
           label: string,
           result: Awaited<ReturnType<typeof sweepCoordinator.execute>>,
@@ -1145,22 +1156,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         const shutdown = async () => {
           if (isShuttingDown) return;
           isShuttingDown = true;
-          sweepTimer?.stop();
           abortController.abort();
-          scheduler.stopAdmission('shutdown');
-          const drainResult = await scheduler.drain(30000);
-          if (!drainResult.drained) {
+          const result = await shutdownCoordinator.shutdown(abortController.signal);
+          if (!result.ok) {
             console.error(
-              `drain timed out, ${drainResult.remainingWorkerIds.length} workers still active`,
+              `drain timed out, ${result.remainingWorkerIds?.length ?? 0} workers still active`,
             );
           }
-          try {
-            await c.runtimeCatalog.close();
-          } finally {
-            testWorkerReaper?.stop();
-            await server?.stop();
-            process.exit(0);
-          }
+          await server?.stop();
+          process.exit(0);
         };
         process.on('SIGINT', shutdown);
         process.on('SIGTERM', shutdown);
