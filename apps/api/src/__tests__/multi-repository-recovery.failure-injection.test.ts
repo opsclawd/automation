@@ -108,9 +108,7 @@ describe('multi-repository-recovery.failure-injection', () => {
       ]);
 
       expect(resultA.action === 'reclaim' || resultA.action === 'leave').toBe(true);
-      expect(
-        resultB.action === 'reclaim' || resultB.action === 'requeue' || resultB.action === 'leave',
-      ).toBe(true);
+      expect(resultB.action === 'leave').toBe(true);
 
       const jobRowA = db.prepare('SELECT * FROM jobs WHERE repo_id = ?').get(repoIdA) as
         | { status: string }
@@ -122,6 +120,7 @@ describe('multi-repository-recovery.failure-injection', () => {
       expect(jobRowA).toBeDefined();
       expect(jobRowA!.status).toBe('queued');
       expect(jobRowB).toBeDefined();
+      expect(jobRowB!.status).toBe('cancelled');
 
       db.close();
     });

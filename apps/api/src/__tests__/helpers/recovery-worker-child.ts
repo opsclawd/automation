@@ -195,53 +195,68 @@ async function main(): Promise<void> {
   `,
   ).run(repoId, workerId, runId, nowIso, nowIso, expiresIso, leaseToken);
 
-  process.stdout.write(READY_MARKER);
-
+  // Arm the SIGTERM handling *before* announcing readiness. A bare
+  // `process.on('SIGTERM', ...)` registers zero active libuv handles, so without
+  // a timer the process would exit immediately once the event loop drains --
+  // and if the READY marker were written before this registration, a parent
+  // that reacts fast enough could send SIGTERM before any handler exists,
+  // falling through to the OS default (immediate death, no cleanup). Both the
+  // timer and the listener must be in place first (see #653 shutdown-recovery
+  // flake history).
   if (!cooperative) {
+    // Swallow SIGTERM to simulate a worker that ignores the shutdown signal;
+    // the fenced lease must survive until the grace timer forces a close below.
     process.on('SIGTERM', () => {});
-  }
 
-  let terminated = false;
-  const terminationPromise = new Promise<void>((resolve) => {
-    process.on('SIGTERM', () => {
-      if (cooperative && !terminated) {
-        terminated = true;
-        const releaseNow = new Date();
-        const releaseNowIso = releaseNow.toISOString();
-        db.prepare(
-          'DELETE FROM worker_leases WHERE repo_id = ? AND worker_id = ? AND lease_token = ?',
-        ).run(repoId, workerId, leaseToken);
-        db.prepare("UPDATE jobs SET status = 'cancelled', completed_at = ? WHERE id = ?").run(
-          releaseNowIso,
-          jobId,
-        );
-        db.prepare(
-          "UPDATE runs SET status = 'cancelled', failure_reason = 'interrupted by SIGTERM', completed_at = ? WHERE uuid = ?",
-        ).run(releaseNowIso, runId);
-        db.prepare("UPDATE workers SET status = 'idle' WHERE id = ? AND repo_id = ?").run(
-          workerId,
-          repoId,
-        );
+    const nonCooperativeDone = new Promise<void>((resolve) => {
+      setTimeout(() => {
         db.close();
         resolve();
-      }
+      }, 10_000);
+    });
+    process.stdout.write(READY_MARKER);
+    await nonCooperativeDone;
+    return;
+  }
+
+  let handled = false;
+  const fallbackTimer = setTimeout(() => {
+    if (!handled) {
+      handled = true;
+      db.close();
+      process.exit(0);
+    }
+  }, 10_000);
+
+  const cooperativeDone = new Promise<void>((resolve) => {
+    process.on('SIGTERM', () => {
+      if (handled) return;
+      handled = true;
+      clearTimeout(fallbackTimer);
+      const releaseNow = new Date();
+      const releaseNowIso = releaseNow.toISOString();
+      db.prepare(
+        'DELETE FROM worker_leases WHERE repo_id = ? AND worker_id = ? AND lease_token = ?',
+      ).run(repoId, workerId, leaseToken);
+      db.prepare("UPDATE jobs SET status = 'cancelled', completed_at = ? WHERE id = ?").run(
+        releaseNowIso,
+        jobId,
+      );
+      db.prepare(
+        "UPDATE runs SET status = 'cancelled', failure_reason = 'interrupted by SIGTERM', completed_at = ? WHERE uuid = ?",
+      ).run(releaseNowIso, runId);
+      db.prepare("UPDATE workers SET status = 'idle' WHERE id = ? AND repo_id = ?").run(
+        workerId,
+        repoId,
+      );
+      db.close();
+      resolve();
+      process.exit(0);
     });
   });
 
-  const graceMs = cooperative ? 500 : 10_000;
-  const timeoutPromise = new Promise<void>((resolve) => {
-    setTimeout(() => {
-      if (!terminated) {
-        terminated = true;
-        if (!cooperative) {
-          db.close();
-        }
-        resolve();
-      }
-    }, graceMs);
-  });
-
-  await Promise.race([terminationPromise, timeoutPromise]);
+  process.stdout.write(READY_MARKER);
+  await cooperativeDone;
 }
 
 main().catch((err) => {
