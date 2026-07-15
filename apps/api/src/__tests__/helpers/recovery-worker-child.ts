@@ -1,0 +1,203 @@
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { hostname } from 'node:os';
+import { randomBytes } from 'node:crypto';
+import Database from 'better-sqlite3';
+
+const READY_MARKER = 'READY\n';
+const ARGV_ERROR = 'ERROR_MISSING_ARGS\n';
+
+interface Args {
+  dbPath: string;
+  repoId: string;
+  workerId: string;
+  runId: string;
+  cooperative: boolean;
+}
+
+function parseArgs(argv: string[]): Args | null {
+  if (argv.length < 6) return null;
+  return {
+    dbPath: argv[2],
+    repoId: argv[3],
+    workerId: argv[4],
+    runId: argv[5],
+    cooperative: argv[6] === 'true',
+  };
+}
+
+function hexToken(): string {
+  return randomBytes(16).toString('hex');
+}
+
+function applyMinimalSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS repositories (
+      id TEXT PRIMARY KEY,
+      full_name TEXT NOT NULL,
+      owner TEXT NOT NULL,
+      name TEXT NOT NULL,
+      local_base_path TEXT NOT NULL,
+      default_branch TEXT NOT NULL,
+      remote_url TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      max_concurrent_runs INTEGER NOT NULL DEFAULT 1,
+      config_metadata TEXT NOT NULL DEFAULT '{}',
+      health_status TEXT NOT NULL DEFAULT 'healthy',
+      health_error TEXT,
+      last_health_check_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS runs (
+      uuid TEXT PRIMARY KEY,
+      display_id TEXT NOT NULL UNIQUE,
+      repo_id TEXT,
+      issue_number INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      current_phase TEXT,
+      completed_phases TEXT NOT NULL DEFAULT '[]',
+      skipped_phases TEXT NOT NULL DEFAULT '[]',
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      failure_reason TEXT,
+      exit_code INTEGER,
+      duration_ms INTEGER,
+      pid INTEGER,
+      start_commit_sha TEXT,
+      base_branch TEXT,
+      config_fingerprint TEXT,
+      config_sources_json TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS jobs (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      repo_id TEXT NOT NULL,
+      issue_number INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      priority INTEGER NOT NULL DEFAULT 0,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      claimed_by TEXT,
+      claim_token TEXT,
+      created_at TEXT NOT NULL,
+      claimed_at TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      claim_expires_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS workers (
+      id TEXT PRIMARY KEY,
+      repo_id TEXT NOT NULL DEFAULT '',
+      hostname TEXT NOT NULL,
+      process_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      heartbeat_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS worker_leases (
+      repo_id TEXT PRIMARY KEY,
+      worker_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      acquired_at TEXT NOT NULL,
+      heartbeat_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      lease_token TEXT NOT NULL DEFAULT (lower(hex(randomblob(16))))
+    );
+  `);
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv);
+  if (!args) {
+    process.stdout.write(ARGV_ERROR);
+    process.exit(1);
+  }
+
+  const { dbPath, repoId, workerId, runId, cooperative } = args;
+
+  mkdirSync(dirname(dbPath), { recursive: true });
+
+  const db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+
+  applyMinimalSchema(db);
+
+  const now = new Date();
+  const host = hostname();
+  const pid = process.pid;
+  const jobId = `job-${runId}-1`;
+  const leaseToken = hexToken();
+  const claimToken = hexToken();
+  const ttlMs = 60_000;
+  const nowIso = now.toISOString();
+  const expiresIso = new Date(now.getTime() + ttlMs).toISOString();
+  const displayId = `issue-1-${runId.slice(-6)}`;
+
+  const [owner, name] = repoId.split('/');
+  db.exec(`
+    INSERT INTO repositories (id, full_name, owner, name, local_base_path, default_branch, remote_url, enabled, max_concurrent_runs, config_metadata, health_status, health_error, last_health_check_at, created_at, updated_at)
+    VALUES ('${repoId}', '${repoId}', '${owner}', '${name}', '/tmp/repos/${repoId}', 'main', 'git@github.com:${repoId}.git', 1, 1, '{}', 'healthy', NULL, NULL, '${nowIso}', '${nowIso}');
+
+    INSERT INTO workers (id, repo_id, hostname, process_id, status, heartbeat_at)
+    VALUES ('${workerId}', '${repoId}', '${host}', ${pid}, 'busy', '${nowIso}');
+
+    INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, skipped_phases, started_at, pid)
+    VALUES ('${runId}', '${displayId}', '${repoId}', 1, 'issue_to_pr', 'running', '[]', '[]', '${nowIso}', ${pid});
+
+    INSERT INTO jobs (id, run_id, repo_id, issue_number, status, priority, attempts, claimed_by, claim_token, created_at, claimed_at, started_at, claim_expires_at)
+    VALUES ('${jobId}', '${runId}', '${repoId}', 1, 'running', 0, 1, '${workerId}', '${claimToken}', '${nowIso}', '${nowIso}', '${nowIso}', '${expiresIso}');
+
+    INSERT INTO worker_leases (repo_id, worker_id, run_id, acquired_at, heartbeat_at, expires_at, lease_token)
+    VALUES ('${repoId}', '${workerId}', '${runId}', '${nowIso}', '${nowIso}', '${expiresIso}', '${leaseToken}');
+  `);
+
+  process.stdout.write(READY_MARKER);
+
+  if (!cooperative) {
+    process.on('SIGTERM', () => {});
+  }
+
+  let terminated = false;
+  const terminationPromise = new Promise<void>((resolve) => {
+    process.on('SIGTERM', () => {
+      if (cooperative && !terminated) {
+        terminated = true;
+        const releaseNow = new Date();
+        const releaseNowIso = releaseNow.toISOString();
+        db.exec(`
+          DELETE FROM worker_leases WHERE repo_id = '${repoId}' AND worker_id = '${workerId}' AND lease_token = '${leaseToken}';
+          UPDATE jobs SET status = 'cancelled', completed_at = '${releaseNowIso}' WHERE id = '${jobId}';
+          UPDATE runs SET status = 'cancelled', failure_reason = 'interrupted by SIGTERM', completed_at = '${releaseNowIso}' WHERE uuid = '${runId}';
+          UPDATE workers SET status = 'idle' WHERE id = '${workerId}' AND repo_id = '${repoId}';
+        `);
+        db.close();
+        resolve();
+      }
+    });
+  });
+
+  const graceMs = cooperative ? 500 : 10_000;
+  const timeoutPromise = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      if (!terminated) {
+        terminated = true;
+        if (!cooperative) {
+          db.close();
+        }
+        resolve();
+      }
+    }, graceMs);
+  });
+
+  await Promise.race([terminationPromise, timeoutPromise]);
+}
+
+main().catch((err) => {
+  console.error('recovery-worker-child error:', err);
+  process.exit(1);
+});
