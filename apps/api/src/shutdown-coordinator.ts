@@ -54,13 +54,21 @@ export class ShutdownCoordinator {
       typeof this.deps.auxiliaryTimers === 'function'
         ? this.deps.auxiliaryTimers()
         : this.deps.auxiliaryTimers;
-    (timers as Array<{ stop: () => void } | undefined | null>).forEach((timer) => timer?.stop());
-    if (this.deps.server) {
-      const server = this.deps.server();
-      if (server) {
-        await server.stop();
-      }
-    }
+
+    await Promise.allSettled([
+      Promise.allSettled(
+        (timers as Array<{ stop: () => void } | undefined | null>).map((timer) =>
+          timer ? Promise.resolve(timer.stop()) : Promise.resolve(),
+        ),
+      ),
+      this.deps.server
+        ? (async () => {
+            const s = this.deps.server!();
+            if (s) await s.stop();
+          })()
+        : Promise.resolve(),
+    ]);
+
     await this.deps.runtimeCatalog.close();
   }
 }
