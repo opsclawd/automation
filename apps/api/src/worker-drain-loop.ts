@@ -56,20 +56,15 @@ export function startWorkerDrainLoop(
             }
           }
         },
-        onWaitingReactivation: ({ repoId, runId }) => {
+        onWaitingReactivation: ({ repoId: _repoId, runId }) => {
           const run = deps.findRun(runId as RunId);
           if (!run) return;
           if (run.status !== 'waiting') return;
           const next = reactivate(run);
-          if ('update' in deps.repos && typeof deps.repos.update === 'function') {
-            try {
-              (deps.repos as { update(id: string, patch: { status: string }): void }).update(
-                String(repoId),
-                { status: next.status },
-              );
-            } catch {
-              /* ignore */
-            }
+          try {
+            deps.updateRun(runId as RunId, { status: next.status });
+          } catch {
+            /* ignore */
           }
         },
       });

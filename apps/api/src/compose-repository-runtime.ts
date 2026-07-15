@@ -157,6 +157,7 @@ export async function composeRepositoryRuntime(
         listEnabled: () => (repository.enabled ? [repository] : []),
       },
       repoId: repository.id,
+      updateRun: (runId, patch) => runRepository.update(String(runId), patch),
     } as RepositoryRuntimeLoopDeps,
     close,
   };

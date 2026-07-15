@@ -5691,6 +5691,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             const result = runRepository.list({ repositoryId: repoId });
             return result.runs as unknown as import('@ai-sdlc/domain').Run[];
           },
+          updateRun: (runId, patch) => runRepository.update(String(runId), patch),
         })
       : undefined;
 

@@ -4,6 +4,7 @@ import type {
   JobQueuePort,
   WorkerLeasePort,
   RepositoryPort,
+  RunRepositoryUpdatePatch,
 } from '../ports.js';
 import {
   WorkerLeaseConflictError,
@@ -35,6 +36,7 @@ export interface WorkerLoopDeps {
   ttlMs: number;
   executeRunGraceMs?: number;
   findRun: (runId: RunId) => Run | undefined;
+  updateRun(runId: RunId, patch: RunRepositoryUpdatePatch): void;
   onProgress?: () => void;
   outerSignal?: AbortSignal;
   heartbeatIntervalMs?: number;

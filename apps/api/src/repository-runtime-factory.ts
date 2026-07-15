@@ -5,6 +5,7 @@ import type {
   WorkerLeasePort,
   WorkerRegistryPort,
   RunRepositoryPort,
+  RunRepositoryUpdatePatch,
   PrReviewRepositoryPort,
   LoopRepositoryPort,
   AgentInvocationPort,
@@ -41,6 +42,7 @@ export interface RepositoryRuntimeLoopDeps {
     listEnabled: () => Array<Repository>;
   };
   repoId: RepositoryId;
+  updateRun(runId: import('@ai-sdlc/domain').RunId, patch: RunRepositoryUpdatePatch): void;
 }
 
 export interface RepositoryRuntime {
