@@ -5,7 +5,11 @@ import type {
   LoggerPort,
 } from '@ai-sdlc/application/ports';
 import type { Repository, RepositoryId, WorkerId, RunId, Worker } from '@ai-sdlc/domain';
-import { LeaseOwnershipLostError, generateJobOwnership } from '@ai-sdlc/domain';
+import {
+  LeaseOwnershipLostError,
+  JobOwnershipLostError,
+  generateJobOwnership,
+} from '@ai-sdlc/domain';
 import type { RepositoryRuntime } from './repository-runtime-factory.js';
 
 export interface RepositorySchedulerAdapterDeps {
@@ -187,7 +191,11 @@ async function defaultWorkerLoop(
   const run = runRepository.findByUuid(String(runId));
   if (!run) {
     if (job.claimedBy && job.claimToken) {
-      jobQueue.markFailed(generateJobOwnership(job, job.claimedBy), new Date());
+      try {
+        jobQueue.markFailed(generateJobOwnership(job, job.claimedBy), new Date());
+      } catch (err) {
+        if (!(err instanceof JobOwnershipLostError)) throw err;
+      }
     }
     return;
   }
@@ -203,7 +211,11 @@ async function defaultWorkerLoop(
 
   try {
     if (job.claimedBy && job.claimToken) {
-      jobQueue.markRunning(generateJobOwnership(job, job.claimedBy), now);
+      try {
+        jobQueue.markRunning(generateJobOwnership(job, job.claimedBy), now);
+      } catch (err) {
+        if (!(err instanceof JobOwnershipLostError)) throw err;
+      }
     }
   } finally {
     try {

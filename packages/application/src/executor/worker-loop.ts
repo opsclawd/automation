@@ -208,7 +208,11 @@ export async function runClaimedJob(
       return 'settled';
     }
     if (err instanceof WorkerLeaseConflictError) {
-      queue.releaseClaim(ownership);
+      try {
+        queue.releaseClaim(ownership);
+      } catch (e) {
+        if (!(e instanceof JobOwnershipLostError)) throw e;
+      }
       skippedJobIds?.add(job.id);
       return 'lease_conflict';
     }
@@ -220,10 +224,18 @@ export async function runClaimedJob(
           /* already terminal */
         }
       } else {
-        queue.markFailed(ownership, deps.now());
+        try {
+          queue.markFailed(ownership, deps.now());
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
       }
     } else {
-      queue.releaseClaim(ownership);
+      try {
+        queue.releaseClaim(ownership);
+      } catch (e) {
+        if (!(e instanceof JobOwnershipLostError)) throw e;
+      }
     }
     return 'settled';
   } finally {

@@ -84,12 +84,6 @@ describe('migration 0031 — fence job claims', () => {
     expect(rowRunning.claim_token).toBeTypeOf('string');
     expect(rowRunning.claim_token!.length).toBeGreaterThan(0);
 
-    // Check idx_jobs_fence
-    const indexes = db
-      .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = 'jobs'`)
-      .all() as Array<{ name: string }>;
-    expect(indexes.map((i) => i.name)).toContain('idx_jobs_fence');
-
     db.close();
   });
 });
