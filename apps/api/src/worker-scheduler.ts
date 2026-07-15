@@ -1,14 +1,6 @@
 import { workerLoop, type WorkerLoopDeps } from '@ai-sdlc/application';
-import type { JobQueuePort, RepositoryPort } from '@ai-sdlc/application/ports';
-import type { Job, WorkerId, JobId, RunId } from '@ai-sdlc/domain';
+import type { Job, WorkerId, JobId } from '@ai-sdlc/domain';
 import { generateJobOwnership, JobOwnershipLostError } from '@ai-sdlc/domain';
-
-function buildRecoverableRunIds(queue: JobQueuePort, repos: RepositoryPort): ReadonlySet<RunId> {
-  const allJobs = repos.listEnabled().flatMap((r) => queue.listForRepo(r.id));
-  return new Set(
-    allJobs.filter((j) => j.status === 'claimed' || j.status === 'running').map((j) => j.runId),
-  );
-}
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -46,11 +38,6 @@ export class WorkerScheduler {
       if (!job) throw new Error(`Job ${jobId} not found`);
       if (isTerminal(job.status)) return;
 
-      const recoverableRunIds = buildRecoverableRunIds(this.baseDeps.queue, this.baseDeps.repos);
-
-      // workerLoop runs the real executor (prepareWorktree/executeRun), which can
-      // legitimately take minutes, so this timeout guards only against a truly
-      // hung worker and must not be tied to the (much shorter) tick interval.
       const timeoutMs = this.workerTimeoutMs;
       const results = await Promise.allSettled(
         this.workerIds.map((wid) => {
@@ -77,11 +64,7 @@ export class WorkerScheduler {
           return Promise.race([
             workerLoop(wid, {
               ...this.baseDeps,
-              recoverableRunIds,
               outerSignal: signal,
-              // The worker loop calls onProgress during its lease heartbeat.
-              // We refresh the watchdog timer to allow the run to continue
-              // as long as heartbeats are being maintained.
               onProgress: () => t?.refresh(),
             }),
             timeoutPromise,

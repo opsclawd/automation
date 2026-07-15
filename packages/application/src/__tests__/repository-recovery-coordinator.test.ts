@@ -132,7 +132,7 @@ function createCoordinatorDeps(state: TestState): RepositoryRecoveryCoordinatorD
 
 describe('RepositoryRecoveryCoordinator', () => {
   describe('recovery state matrix is deterministic', () => {
-    it('queued job remains queued', () => {
+    it('queued job remains queued', async () => {
       const state: TestState = {
         leases: [],
         jobs: [{ ...makeJob(JOB_ID_1, RUN_ID_1), status: 'queued' as const }],
@@ -144,14 +144,14 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('leave');
       expect(deps.onOrphan).not.toHaveBeenCalled();
       expect(deps.onWaitingReactivation).not.toHaveBeenCalled();
     });
 
-    it('live claimed job remains owned', () => {
+    it('live claimed job remains owned', async () => {
       const state: TestState = {
         leases: [
           {
@@ -181,12 +181,12 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('leave');
     });
 
-    it('expired claim without lease requeues', () => {
+    it('expired claim without lease requeues', async () => {
       const state: TestState = {
         leases: [],
         jobs: [
@@ -206,12 +206,12 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('requeue');
     });
 
-    it('live running job remains owned', () => {
+    it('live running job remains owned', async () => {
       const state: TestState = {
         leases: [
           {
@@ -241,12 +241,12 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('leave');
     });
 
-    it('safe stale lease reclaims and preserves resumable run', () => {
+    it('safe stale lease reclaims and preserves resumable run', async () => {
       const expiredTime = Date.now() - 120_000;
       const state: TestState = {
         leases: [
@@ -277,13 +277,13 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('reclaim');
       expect(deps.resetWorktree).toHaveBeenCalledWith(REPO_ID);
     });
 
-    it('live worker blocks reclamation', () => {
+    it('live worker blocks reclamation', async () => {
       const expiredTime = Date.now() - 120_000;
       const state: TestState = {
         leases: [
@@ -314,12 +314,12 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('leave');
     });
 
-    it('unexpired worker heartbeat blocks reclamation', () => {
+    it('unexpired worker heartbeat blocks reclamation', async () => {
       const recentTime = Date.now() - 30_000;
       const state: TestState = {
         leases: [
@@ -350,12 +350,12 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('leave');
     });
 
-    it('nonrecoverable run blocks reclamation', () => {
+    it('nonrecoverable run blocks reclamation', async () => {
       const expiredTime = Date.now() - 120_000;
       const state: TestState = {
         leases: [
@@ -386,12 +386,12 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('leave');
     });
 
-    it('failed worktree preparation preserves ownership', () => {
+    it('failed worktree preparation preserves ownership', async () => {
       const expiredTime = Date.now() - 120_000;
       const state: TestState = {
         leases: [
@@ -422,12 +422,12 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('reclaim');
     });
 
-    it('concurrent ownership change defers recovery', () => {
+    it('concurrent ownership change defers recovery', async () => {
       const expiredTime = Date.now() - 120_000;
       const state: TestState = {
         leases: [
@@ -470,12 +470,12 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('leave');
     });
 
-    it('active run without active job enqueues exactly once', () => {
+    it('active run without active job enqueues exactly once', async () => {
       const expiredTime = Date.now() - 120_000;
       const state: TestState = {
         leases: [
@@ -498,13 +498,13 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('orphan-enqueue');
       expect(deps.onOrphan).toHaveBeenCalledTimes(1);
     });
 
-    it('waiting run reactivates once when execution ready', () => {
+    it('waiting run reactivates once when execution ready', async () => {
       const state: TestState = {
         leases: [],
         jobs: [],
@@ -516,13 +516,13 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('waiting-reactivate');
       expect(deps.onWaitingReactivation).toHaveBeenCalledTimes(1);
     });
 
-    it('disabled repository cleans stale ownership but parks work', () => {
+    it('disabled repository cleans stale ownership but parks work', async () => {
       const expiredTime = Date.now() - 120_000;
       const state: TestState = {
         leases: [
@@ -553,13 +553,13 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('reclaim');
       expect(deps.onOrphan).not.toHaveBeenCalled();
     });
 
-    it('unavailable repository skips execution reactivation', () => {
+    it('unavailable repository skips execution reactivation', async () => {
       const state: TestState = {
         leases: [],
         jobs: [],
@@ -571,7 +571,7 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('leave');
       expect(deps.onWaitingReactivation).not.toHaveBeenCalled();
@@ -579,7 +579,7 @@ describe('RepositoryRecoveryCoordinator', () => {
   });
 
   describe('ambiguous stale lease evidence preserves ownership', () => {
-    it('ambiguous stale lease evidence preserves ownership', () => {
+    it('ambiguous stale lease evidence preserves ownership', async () => {
       const expiredTime = Date.now() - 120_000;
       const state: TestState = {
         leases: [
@@ -610,14 +610,14 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('leave');
     });
   });
 
   describe('disabled and unavailable repositories do not admit work', () => {
-    it('disabled repository cleans stale ownership but parks work', () => {
+    it('disabled repository cleans stale ownership but parks work', async () => {
       const expiredTime = Date.now() - 120_000;
       const state: TestState = {
         leases: [
@@ -648,7 +648,7 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       const deps = createCoordinatorDeps(state);
       const coord = new RepositoryRecoveryCoordinator(deps);
-      const result = coord.execute({ repoId: REPO_ID });
+      const result = await coord.execute({ repoId: REPO_ID });
 
       expect(result.action).toBe('reclaim');
       expect(deps.onOrphan).not.toHaveBeenCalled();

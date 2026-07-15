@@ -1,35 +1,17 @@
-import { workerLoop, type WorkerLoopDeps } from '@ai-sdlc/application';
-import type { RunRepositoryPort, WorkerLeasePort, JobQueuePort } from '@ai-sdlc/application/ports';
-import type { WorkerId, RunId } from '@ai-sdlc/domain';
+import {
+  workerLoop,
+  type WorkerLoopDeps,
+  RepositoryRecoveryCoordinator,
+} from '@ai-sdlc/application';
+import type { WorkerId } from '@ai-sdlc/domain';
+import type { JobQueuePort } from '@ai-sdlc/application/ports';
+import { generateJobOwnership } from '@ai-sdlc/domain';
 
 const DEFAULT_DRAIN_INTERVAL_MS = 5_000;
 
-function buildRecoverableRunIds(
-  runRepo: RunRepositoryPort,
-  leases: WorkerLeasePort,
-  queue: JobQueuePort,
-  now: Date,
-): ReadonlySet<RunId> {
-  const activeRuns = runRepo.findActiveRuns();
-  const ids = new Set<RunId>();
-  const activeRunIdsFromJobs = new Set(
-    queue
-      .listActive()
-      .filter((j) => j.status === 'queued')
-      .map((j) => j.runId),
-  );
-  for (const r of activeRuns) {
-    if (activeRunIdsFromJobs.has(r.uuid as RunId)) continue;
-    if (!leases.checkActiveLease(r.repoId, now)) {
-      ids.add(r.uuid as RunId);
-    }
-  }
-  return ids;
-}
-
 export function startWorkerDrainLoop(
   workerId: WorkerId,
-  deps: Omit<WorkerLoopDeps, 'recoverableRunIds'> & { runRepository: RunRepositoryPort },
+  deps: Omit<WorkerLoopDeps, 'recoverableRunIds'>,
   intervalMs: number = DEFAULT_DRAIN_INTERVAL_MS,
   onError: (err: unknown) => void = (err) => console.error('worker-drain-loop tick failed:', err),
 ): { stop: () => void } {
@@ -38,13 +20,44 @@ export function startWorkerDrainLoop(
     if (isRunning) return;
     isRunning = true;
     try {
-      const recoverableRunIds = buildRecoverableRunIds(
-        deps.runRepository,
-        deps.leases,
-        deps.queue,
-        deps.now(),
-      );
-      await workerLoop(workerId, { ...deps, recoverableRunIds });
+      const coordinator = new RepositoryRecoveryCoordinator({
+        leases: deps.leases,
+        queue: deps.queue,
+        registry: deps.registry,
+        repos: deps.repos,
+        findRun: deps.findRun,
+        isWorkerAlive: deps.isWorkerAlive,
+        resetWorktree: deps.resetWorktree,
+        now: deps.now,
+        onOrphan: ({ runId }) => {
+          const jobs = deps.queue.listForRun(runId);
+          for (const job of jobs) {
+            if (job.status === 'claimed' || job.status === 'running') {
+              if (job.claimedBy && job.claimToken) {
+                try {
+                  (
+                    deps.queue as JobQueuePort & {
+                      resetToQueued?: (ownership: {
+                        jobId: unknown;
+                        workerId: unknown;
+                        claimToken: unknown;
+                      }) => void;
+                    }
+                  ).resetToQueued?.(generateJobOwnership(job, job.claimedBy));
+                } catch {
+                  /* ignore */
+                }
+              }
+            }
+          }
+        },
+        onWaitingReactivation: () => {},
+      });
+      const enabledRepos = deps.repos.listEnabled();
+      for (const repo of enabledRepos) {
+        await coordinator.execute({ repoId: repo.id });
+      }
+      await workerLoop(workerId, deps);
     } catch (err) {
       onError(err);
     } finally {

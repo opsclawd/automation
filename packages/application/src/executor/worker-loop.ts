@@ -31,7 +31,6 @@ export interface WorkerLoopDeps {
   }) => Promise<{ cwd: string }>;
   resetWorktree: (repoId: RepositoryId) => void;
   isWorkerAlive: (workerId: WorkerId) => boolean;
-  recoverableRunIds: ReadonlySet<RunId>;
   now: () => Date;
   ttlMs: number;
   executeRunGraceMs?: number;

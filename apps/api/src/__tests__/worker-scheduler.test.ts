@@ -130,14 +130,8 @@ describe('WorkerScheduler', () => {
     );
     await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
     expect(vi.mocked(workerLoop)).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(workerLoop)).toHaveBeenCalledWith(
-      WorkerId('w1'),
-      expect.objectContaining({ recoverableRunIds: expect.any(Set) }),
-    );
-    expect(vi.mocked(workerLoop)).toHaveBeenCalledWith(
-      WorkerId('w2'),
-      expect.objectContaining({ recoverableRunIds: expect.any(Set) }),
-    );
+    expect(vi.mocked(workerLoop)).toHaveBeenCalledWith(WorkerId('w1'), expect.any(Object));
+    expect(vi.mocked(workerLoop)).toHaveBeenCalledWith(WorkerId('w2'), expect.any(Object));
   });
 
   it('stops ticking when signal is aborted', async () => {
@@ -179,7 +173,7 @@ describe('WorkerScheduler', () => {
     ).rejects.toThrow(/not found/);
   });
 
-  it('passes recoverableRunIds built from non-terminal jobs', async () => {
+  it('does not pass recoverableRunIds (removed from WorkerLoopDeps)', async () => {
     let tick = 0;
     const queue: JobQueuePort = {
       findById: vi.fn(
@@ -229,10 +223,7 @@ describe('WorkerScheduler', () => {
     };
     const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
-    const callArgs = vi.mocked(workerLoop).mock.calls[0];
-    const deps = callArgs?.[1] as WorkerLoopDeps;
-    expect(deps.recoverableRunIds.has(RunId('run-2'))).toBe(true);
-    expect(deps.recoverableRunIds.has(RunId('run-3'))).toBe(false);
+    expect(vi.mocked(workerLoop)).toHaveBeenCalledTimes(1);
   });
 
   it('throws error when a worker loop rejects', async () => {

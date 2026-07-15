@@ -435,7 +435,6 @@ function buildSchedulerDeps(
         return checkPid(w.processId);
       },
       findRun: (rId) => runtime.runRepository.findByUuid(rId) ?? undefined,
-      recoverableRunIds: new Set(),
       now: () => new Date(),
       ttlMs: DEFAULT_LEASE_TTL_MS,
     };
