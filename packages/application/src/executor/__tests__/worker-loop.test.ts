@@ -4,6 +4,7 @@ import {
   IssueNumber,
   JobId,
   RepositoryId,
+  RepositoryUnavailableError,
   RunId,
   WorkerId,
   createJob,
@@ -868,5 +869,50 @@ describe('workerLoop', () => {
     const lease = s.leases.current(RepositoryId('r1'));
     expect(lease?.workerId).toBe('w1');
     expect(lease?.runId).toBe('run-1');
+  });
+
+  it('repository unavailable fails matching job and run', async () => {
+    const s = setup();
+    const markUnreachable = vi.fn();
+
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun: executeOk,
+      prepareWorktree: async () => {
+        throw new RepositoryUnavailableError({
+          repositoryId: RepositoryId('r1'),
+          fullName: 'o/r1',
+          localPath: '/x',
+          operation: 'worktree preparation',
+          cause: 'path not accessible',
+        });
+      },
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
+      repoAvailability: { markUnreachable },
+    });
+
+    expect(markUnreachable).toHaveBeenCalledWith(RepositoryId('r1'), 'path not accessible');
+    expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
+    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   });
 });

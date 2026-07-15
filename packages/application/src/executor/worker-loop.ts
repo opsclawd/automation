@@ -11,6 +11,7 @@ import {
   WorkerLeaseConflictError,
   LeaseOwnershipLostError,
   JobOwnershipLostError,
+  RepositoryUnavailableError,
   generateJobOwnership,
 } from '@ai-sdlc/domain';
 
@@ -87,8 +88,6 @@ export async function runClaimedJob(
   let started = false;
   let acquired = false;
   let acquiredLease;
-  const abortReason =
-    deps.getAbortReason?.() ?? (deps.outerSignal?.aborted ? 'user_cancelled' : undefined);
 
   try {
     registry.markBusy(workerId, deps.repoId);
@@ -108,7 +107,8 @@ export async function runClaimedJob(
       deps.outerSignal.addEventListener(
         'abort',
         () => {
-          abortController.abort(abortReason ?? 'user_cancelled');
+          const currentReason = deps.getAbortReason?.() ?? 'user_cancelled';
+          abortController.abort(currentReason);
         },
         { once: true },
       );
@@ -270,6 +270,23 @@ export async function runClaimedJob(
       }
       skippedJobIds?.add(job.id);
       return 'lease_conflict';
+    }
+    if (err instanceof RepositoryUnavailableError) {
+      deps.repoAvailability?.markUnreachable(deps.repoId, err.cause);
+      if (started) {
+        try {
+          queue.markFailed(ownership, deps.now());
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
+      } else {
+        try {
+          queue.releaseClaim(ownership);
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
+      }
+      return 'settled';
     }
     if (started) {
       if (reason === 'shutdown') {
