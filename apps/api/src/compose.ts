@@ -6342,7 +6342,17 @@ export function composeRoot(opts: ComposeOptions): Container {
 
             try {
               const action = await coordinator.execute({ repoId: repository.id });
-              if (action.action === 'requeue') {
+              if (action.action === 'reclaim') {
+                const lease = runtime.workerLeaseRepository.current(repository.id);
+                if (lease) {
+                  const r = runtime.runRepository.findByUuid(lease.runId);
+                  if (r) {
+                    const worktreePath = runtime.paths.worktree(r.issueNumber);
+                    const baseBranch = r.baseBranch ?? repository.defaultBranch;
+                    gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
+                  }
+                }
+              } else if (action.action === 'requeue') {
                 const jobs = runtime.jobQueue.listForRepo(repository.id);
                 for (const job of jobs) {
                   if (
