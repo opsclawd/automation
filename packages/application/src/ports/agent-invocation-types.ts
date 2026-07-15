@@ -24,6 +24,8 @@ export interface AgentInvocationRequest {
   profile: AgentProfileName;
   promptPath: string;
   expectedArtifacts: string[];
+  /** Expected artifacts that must remain available as editable agent inputs. */
+  preserveExpectedArtifacts?: string[];
   cwd: string;
   runId: string;
   repoId: string;

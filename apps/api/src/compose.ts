@@ -4558,6 +4558,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             expectedArtifacts: opts.isTerminalFix
               ? ['plan.md']
               : [PLAN_FIX_RESULT_ARTIFACT, 'plan.md'],
+            preserveExpectedArtifacts: ['plan.md'],
             cwd: ctx.cwd,
             runId: String(ctx.runId),
             repoId: ctx.repoId,

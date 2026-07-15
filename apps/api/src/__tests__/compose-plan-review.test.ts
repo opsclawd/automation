@@ -97,6 +97,16 @@ describe('plan-review compose wiring', () => {
     expect(fixFnMatch![0]).toContain('deterministic_fix');
   });
 
+  it('keeps plan.md available to the plan fixer while clearing fresh outputs', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixFnMatch = composeSrc.match(/const planReviewRunFix[\s\S]*?(?=const planReviewLoop)/);
+    expect(fixFnMatch).toBeTruthy();
+    expect(fixFnMatch![0]).toContain("preserveExpectedArtifacts: ['plan.md']");
+  });
+
   it('validateTerminalFix executes validation checks and cleans up snapshots Map', async () => {
     const ctx = {
       runId: 'test-run-123',

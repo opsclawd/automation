@@ -87,11 +87,12 @@ export class RunExecutor {
         run.displayId,
         run.uuid,
         undefined,
-        'warn',
+        'error',
         'run.worktree_hydration_failed',
         `failed to hydrate worktree from durable artifacts: ${err instanceof Error ? err.message : String(err)}`,
         now(),
       );
+      return this.failOnWorktreeHydrationFailure(currentRun, err, now(), phases);
     }
 
     // When resuming with completedPhases, verify that declared outputs
@@ -615,6 +616,41 @@ export class RunExecutor {
       completedAt: at,
     };
     return this.failRun(currentRun, phaseDef, phase, failure, at, phases);
+  }
+
+  private failOnWorktreeHydrationFailure(
+    currentRun: Run,
+    error: unknown,
+    at: Date,
+    phases: PhaseRecord[],
+  ): ExecuteRunOutput {
+    const cancelled = this.deps.runRepository.findByUuid(currentRun.uuid);
+    if (cancelled && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelled.status)) {
+      return { run: cancelled, phases };
+    }
+
+    const message = `failed to hydrate worktree from durable artifacts: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+    const failure: Failure = {
+      runUuid: currentRun.uuid,
+      kind: 'setup_failed',
+      message,
+      canRetry: true,
+      suggestedAction: 'Restore durable artifact-store access, then retry the run.',
+      artifacts: [],
+      detectedAt: at,
+    };
+    const run = failRun(currentRun, failure.message, at);
+    this.deps.failureRepository.insert(failure);
+    this.deps.runRepository.update(run.uuid, {
+      status: 'failed',
+      currentPhase: null,
+      completedAt: at,
+      failureReason: failure.message,
+    });
+    this.emit(run.displayId, run.uuid, undefined, 'error', 'run.failed', failure.message, at);
+    return { run, phases };
   }
 
   private failOnMissingInput(

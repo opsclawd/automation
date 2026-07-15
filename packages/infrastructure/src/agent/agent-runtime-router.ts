@@ -334,6 +334,7 @@ export class AgentRuntimeRouter implements AgentPort {
     // agent, so a file left over from a prior execution cannot mask a no-op or
     // failed run (#517).
     if (request.expectedArtifacts?.length) {
+      const preservedArtifacts = new Set(request.preserveExpectedArtifacts ?? []);
       for (const artifact of request.expectedArtifacts) {
         const resolvedPath = join(request.cwd, artifact);
         const rel = relative(request.cwd, resolvedPath);
@@ -346,6 +347,7 @@ export class AgentRuntimeRouter implements AgentPort {
         ) {
           throw new Error(`Invalid artifact path (traversal detected): ${artifact}`);
         }
+        if (preservedArtifacts.has(artifact)) continue;
         rmSync(resolvedPath, { recursive: true, force: true });
       }
     }

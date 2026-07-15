@@ -184,6 +184,7 @@ describe('RunExecutor durable resume', () => {
           read: artifacts.read.bind(artifacts),
           write: artifacts.write.bind(artifacts),
           list: async () => artifacts.list(run.uuid),
+          hydrateWorktree: async () => artifacts.hydrateWorktree(run.uuid),
         },
         github: {} as never,
         git: {} as never,
@@ -283,6 +284,7 @@ describe('RunExecutor durable resume', () => {
           read: artifacts.read.bind(artifacts),
           write: artifacts.write.bind(artifacts),
           list: async () => artifacts.list(run.uuid),
+          hydrateWorktree: async () => artifacts.hydrateWorktree(run.uuid),
         },
         github: {} as never,
         git: {} as never,
@@ -345,6 +347,44 @@ describe('RunExecutor durable resume', () => {
     });
 
     expect(hydrateSpy).toHaveBeenCalledWith(run.uuid);
+  });
+
+  it('fails before running any phase when durable artifact hydration fails', async () => {
+    const hydrateError = new Error('durable store unavailable');
+    const artifacts = {
+      hydrateWorktree: vi.fn().mockRejectedValue(hydrateError),
+      list: vi.fn().mockResolvedValue([]),
+    } as unknown as FakeArtifactStore;
+    const run = makeRun();
+    const handlerSpy = vi.fn();
+    const registry = new PhaseHandlerRegistry();
+    registerPassThroughHandlers(registry, handlerSpy);
+    const publish = vi.fn();
+    const deps = makeDeps({
+      registry,
+      events: { publish },
+      contextFactory: () =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          artifacts,
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const executor = new RunExecutor(deps);
+    const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
+
+    expect(result.run.status).toBe('failed');
+    expect(result.phases).toEqual([]);
+    expect(handlerSpy).not.toHaveBeenCalled();
+    expect(publish).toHaveBeenCalledWith(
+      run.uuid,
+      expect.objectContaining({
+        type: 'run.worktree_hydration_failed',
+        level: 'error',
+      }),
+    );
   });
 
   it('re-materializes missing worktree artifacts from durable store on resume', async () => {
