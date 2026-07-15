@@ -203,7 +203,11 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
       try {
         const runtime = await this.resolve(filter.repositoryId, { allowDisabled: true });
         return runtime.runRepository.list(filter);
-      } catch {
+      } catch (err) {
+        this.opts.logger?.error(
+          `RepositoryRuntimeCatalog.listRuns: failed to resolve runtime for explicit repositoryId ${filter.repositoryId}`,
+          err,
+        );
         return { runs: [], total: 0 };
       }
     }

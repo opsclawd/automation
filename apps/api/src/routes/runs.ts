@@ -187,7 +187,18 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
 
     let repositoryId: RepositoryId | undefined;
     try {
-      const ctx = resolveRepoContext({ headers: req.headers, query: req.query }, c);
+      // Do NOT fall back to c.repoFullName here: an omitted repositoryId on
+      // an unscoped list request means "aggregate across every registered
+      // repository" (runtimeCatalog.listRuns() with no repositoryId filter
+      // does exactly that). Falling back to the ambient/legacy repo silently
+      // narrows what looks like an unscoped request to one repository —
+      // and in CI, where GITHUB_REPOSITORY is always set, that legacy repo
+      // has healthStatus 'unknown' and fails to resolve, so the "unscoped"
+      // list silently returned zero runs instead of aggregating. Same
+      // rationale as the POST /api/runs handler above.
+      const ctx = resolveRepoContext({ headers: req.headers, query: req.query }, c, {
+        allowFallback: false,
+      });
       if (ctx.repositoryId || ctx.fullName) {
         repositoryId = canonicalizeRepoContext(ctx, c);
       }

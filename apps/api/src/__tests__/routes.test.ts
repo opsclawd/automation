@@ -210,11 +210,15 @@ describe('routes', () => {
     const body1 = (await res1.json()) as { runs: unknown[] };
     expect(body1.runs.length).toBe(0);
 
-    // 2. Filter by status 'passed'
+    // 2. Filter by status 'passed' — unscoped by repository, so this
+    // aggregates across both the fixture's default run (owner/repo) and the
+    // run just created for the newly-registered repo (some/other-repo): 2,
+    // not 1. An unscoped request must not silently narrow to one repository
+    // (see GET /api/runs's allowFallback: false).
     const res2 = await fetch(`${baseUrl}/api/runs?status=passed`);
     expect(res2.status).toBe(200);
     const body2 = (await res2.json()) as { runs: unknown[] };
-    expect(body2.runs.length).toBe(1);
+    expect(body2.runs.length).toBe(2);
 
     // 3. Filter by repo sha256 id
     const res3 = await fetch(
