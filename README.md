@@ -199,6 +199,38 @@ See [`docs/quickstart.md`](./docs/quickstart.md) for installation, starting the 
 
 For multi-repository installations, see [Cross-repository configuration](docs/quickstart.md#cross-repository-configuration) in the quickstart.
 
+## Multi-Repository Scheduling
+
+The scheduler drives work across multiple registered repositories using a single process-local coordinator with the following properties:
+
+### Process-Local Coordinator
+
+One `FairRepositoryScheduler` instance runs per process. It maintains a sorted cursor across all enabled repositories and makes admission decisions in a single-threaded pass. Global capacity (`globalConcurrency`) is enforced via a process-local counter; multiple processes can exceed the global limit since there is no cross-process coordination.
+
+### Stable-ID Round Robin
+
+The scheduler visits repositories in sorted order (by repository ID string) and uses a stable cursor to prevent starvation. After each admission pass, the cursor advances to the next repository so that no single repository monopolizes the queue.
+
+### Global Limit
+
+`globalConcurrency` bounds how many dispatches may be in-flight across ALL repositories simultaneously. When `globalConcurrency=1`, only one repository dispatch is active at a time, regardless of how many repositories are registered. The counter is process-local; concurrent coordinator processes each enforce their own limit independently.
+
+### One-Lease Repository Limit
+
+Within a single repository, `WorkerLease` enforces that only ONE worker holds the lease at any moment. This prevents concurrent runs within the same repository even when `globalConcurrency > 1` or multiple coordinator processes are running. Repository-scoped claim and lease acquisition are successive safety barriers that ensure correct serialization at the repository level.
+
+### Disable Policy
+
+Disabling a repository (`enabled=false`) drains already-admitted work but blocks new job admission. In-flight dispatches complete normally; subsequent schedule passes skip the disabled repository until it is re-enabled.
+
+### Unavailable Policy
+
+A repository with `healthStatus` of `unreachable`, `unknown`, or `degraded` is marked unavailable. The scheduler skips unavailable repositories without blocking healthy ones. Missing local paths or runtime construction failures are treated as unavailable.
+
+### Telemetry Identity
+
+Every scheduler event includes `repository_id` (stable repository identifier) and `repository_name` (current full name). Telemetry records are emitted for dispatch start/complete/fail, repository skip, pool active count, and queue depth.
+
 ## Documentation
 
 - [`CONTEXT.md`](./CONTEXT.md) — project language, core domain model, relationships, outcome rules, and lifecycle states.

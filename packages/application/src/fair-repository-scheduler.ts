@@ -319,7 +319,7 @@ export class FairRepositoryScheduler {
     const record: SchedulerDispatchStartedRecord = {
       type: 'scheduler.dispatch.started',
       repository_id: repo.id,
-      repository_name: repo.name,
+      repository_name: repo.fullName,
       worker_id: workerId,
     };
     this.safeRecord(record);
@@ -329,7 +329,7 @@ export class FairRepositoryScheduler {
     const record: SchedulerDispatchCompletedRecord = {
       type: 'scheduler.dispatch.completed',
       repository_id: repo.id,
-      repository_name: repo.name,
+      repository_name: repo.fullName,
       worker_id: workerId,
     };
     this.safeRecord(record);
@@ -339,7 +339,7 @@ export class FairRepositoryScheduler {
     const record: SchedulerDispatchFailedRecord = {
       type: 'scheduler.dispatch.failed',
       repository_id: repo.id,
-      repository_name: repo.name,
+      repository_name: repo.fullName,
       worker_id: workerId,
       error,
     };
@@ -352,7 +352,7 @@ export class FairRepositoryScheduler {
     detail?: string,
   ): void {
     const repository_id = repo.id;
-    const repository_name = repo.name;
+    const repository_name = repo.fullName;
     let record: SchedulerRepositorySkippedRecord;
     switch (reason) {
       case 'unhealthy':
@@ -399,7 +399,7 @@ export class FairRepositoryScheduler {
     const record: SchedulerRepositoryActiveRecord = {
       type: 'scheduler.repository.active',
       repository_id: repo.id,
-      repository_name: repo.name,
+      repository_name: repo.fullName,
       count,
     };
     this.safeRecord(record);
@@ -409,7 +409,7 @@ export class FairRepositoryScheduler {
     const record: SchedulerRepositoryQueueDepthRecord = {
       type: 'scheduler.repository.queue_depth',
       repository_id: repo.id,
-      repository_name: repo.name,
+      repository_name: repo.fullName,
       depth,
     };
     this.safeRecord(record);
