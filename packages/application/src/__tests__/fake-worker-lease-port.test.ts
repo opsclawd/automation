@@ -290,7 +290,7 @@ describe('FakeWorkerLeasePort', () => {
     expect(reclaimed).toHaveLength(1);
   });
 
-  it('lease acquisition refuses an expired foreign generation', () => {
+  it('lease acquisition allows an expired foreign generation to be replaced', () => {
     const { leases } = makePorts();
     leases.acquire({
       repoId: RepositoryId('r'),
@@ -300,15 +300,15 @@ describe('FakeWorkerLeasePort', () => {
       ttlMs: 60_000,
     });
     const atExpiry = new Date(now0.getTime() + 60_000);
-    expect(() =>
-      leases.acquire({
-        repoId: RepositoryId('r'),
-        workerId: WorkerId('w2'),
-        runId: RunId('run-2'),
-        now: atExpiry,
-        ttlMs: 60_000,
-      }),
-    ).toThrow(WorkerLeaseConflictError);
+    const newLease = leases.acquire({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w2'),
+      runId: RunId('run-2'),
+      now: atExpiry,
+      ttlMs: 60_000,
+    });
+    expect(newLease.workerId).toBe('w2');
+    expect(newLease.runId).toBe('run-2');
   });
 
   it('acquire still throws WorkerLeaseConflictError when existing lease is unexpired', () => {

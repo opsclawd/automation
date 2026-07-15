@@ -56,7 +56,14 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
       .prepare(
         `INSERT INTO worker_leases (repo_id, worker_id, run_id, acquired_at, heartbeat_at, expires_at, lease_token)
          VALUES (@repo_id, @worker_id, @run_id, @acquired_at, @heartbeat_at, @expires_at, @lease_token)
-         ON CONFLICT(repo_id) DO NOTHING`,
+         ON CONFLICT(repo_id) DO UPDATE SET
+           worker_id = excluded.worker_id,
+           run_id = excluded.run_id,
+           acquired_at = excluded.acquired_at,
+           heartbeat_at = excluded.heartbeat_at,
+           expires_at = excluded.expires_at,
+           lease_token = excluded.lease_token
+         WHERE worker_leases.expires_at <= @acquired_at OR (worker_leases.worker_id = @worker_id AND worker_leases.run_id = @run_id)`,
       )
       .run({
         repo_id: input.repoId,

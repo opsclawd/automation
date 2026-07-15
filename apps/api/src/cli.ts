@@ -14,6 +14,7 @@ import {
   RepositoryId,
   Repository,
   WorkerLeaseConflictError,
+  LeaseOwnershipLostError,
   JobId,
   IssueNumber,
   createJob,
@@ -115,11 +116,21 @@ function startLeaseHeartbeat(
       });
       heartbeatFailures = 0;
     } catch (err) {
+      if (err instanceof LeaseOwnershipLostError) {
+        console.error(`Fatal: lease ownership lost, exiting.`);
+        clearInterval(timer);
+        try {
+          leaseRepo.release({ repoId, workerId, runId, leaseToken });
+        } catch {}
+        process.exit(EXIT_INTERNAL_ERROR);
+      }
       heartbeatFailures++;
       if (heartbeatFailures >= maxHeartbeatFailures) {
         console.error(`Fatal: heartbeat failed ${heartbeatFailures}x, aborting run.`);
         clearInterval(timer);
-        leaseRepo.release({ repoId, workerId, runId, leaseToken });
+        try {
+          leaseRepo.release({ repoId, workerId, runId, leaseToken });
+        } catch {}
         process.exit(EXIT_INTERNAL_ERROR);
       }
       console.error(

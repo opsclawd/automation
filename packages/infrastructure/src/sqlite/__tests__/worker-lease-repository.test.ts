@@ -394,7 +394,7 @@ describe('WorkerLeaseRepository', () => {
     db.close();
   });
 
-  it('lease acquisition refuses an expired foreign generation', () => {
+  it('lease acquisition allows an expired foreign generation to be replaced', () => {
     const db = freshDb();
     const repo = new WorkerLeaseRepository(db);
     repo.acquire({
@@ -405,15 +405,16 @@ describe('WorkerLeaseRepository', () => {
       ttlMs: 60_000,
     });
     const atExpiry = new Date(now0.getTime() + 60_000);
-    expect(() =>
-      repo.acquire({
-        repoId: RepositoryId('repo-a'),
-        workerId: WorkerId('w2'),
-        runId: RunId('run-2'),
-        now: atExpiry,
-        ttlMs: 60_000,
-      }),
-    ).toThrow(WorkerLeaseConflictError);
+    const newLease = repo.acquire({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w2'),
+      runId: RunId('run-2'),
+      now: atExpiry,
+      ttlMs: 60_000,
+    });
+    expect(newLease.workerId).toBe('w2');
+    expect(newLease.runId).toBe('run-2');
+    expect(newLease.leaseToken).toBeDefined();
     db.close();
   });
 
