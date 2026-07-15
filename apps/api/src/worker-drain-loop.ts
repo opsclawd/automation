@@ -4,7 +4,6 @@ import {
   RepositoryRecoveryCoordinator,
 } from '@ai-sdlc/application';
 import type { WorkerId } from '@ai-sdlc/domain';
-import type { JobQueuePort } from '@ai-sdlc/application/ports';
 import { generateJobOwnership } from '@ai-sdlc/domain';
 
 const DEFAULT_DRAIN_INTERVAL_MS = 5_000;
@@ -29,21 +28,21 @@ export function startWorkerDrainLoop(
         isWorkerAlive: deps.isWorkerAlive,
         resetWorktree: deps.resetWorktree,
         now: deps.now,
+        ...(deps.checkPid !== undefined ? { checkPid: deps.checkPid } : {}),
+        ...(deps.registryWorkerHostname !== undefined
+          ? { registryWorkerHostname: deps.registryWorkerHostname }
+          : {}),
+        ...(deps.worktreeRecovery !== undefined ? { worktreeRecovery: deps.worktreeRecovery } : {}),
+        ...(deps.operationalRecovery !== undefined
+          ? { operationalRecovery: deps.operationalRecovery }
+          : {}),
         onOrphan: ({ runId }) => {
           const jobs = deps.queue.listForRun(runId);
           for (const job of jobs) {
             if (job.status === 'claimed' || job.status === 'running') {
               if (job.claimedBy && job.claimToken) {
                 try {
-                  (
-                    deps.queue as JobQueuePort & {
-                      resetToQueued?: (ownership: {
-                        jobId: unknown;
-                        workerId: unknown;
-                        claimToken: unknown;
-                      }) => void;
-                    }
-                  ).resetToQueued?.(generateJobOwnership(job, job.claimedBy));
+                  deps.queue.resetToQueued(generateJobOwnership(job, job.claimedBy));
                 } catch {
                   /* ignore */
                 }
@@ -55,7 +54,11 @@ export function startWorkerDrainLoop(
       });
       const enabledRepos = deps.repos.listEnabled();
       for (const repo of enabledRepos) {
-        await coordinator.execute({ repoId: repo.id });
+        try {
+          await coordinator.execute({ repoId: repo.id });
+        } catch {
+          /* ignore - one repo recovery failure should not block others */
+        }
       }
       await workerLoop(workerId, deps);
     } catch (err) {

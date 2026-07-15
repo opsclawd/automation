@@ -30,7 +30,7 @@ export interface WorkerLoopDeps {
     signal: AbortSignal;
   }) => Promise<{ cwd: string }>;
   resetWorktree: (repoId: RepositoryId) => void;
-  isWorkerAlive: (workerId: WorkerId) => boolean;
+  isWorkerAlive(workerId: WorkerId): boolean;
   now: () => Date;
   ttlMs: number;
   executeRunGraceMs?: number;
@@ -38,6 +38,10 @@ export interface WorkerLoopDeps {
   onProgress?: () => void;
   outerSignal?: AbortSignal;
   heartbeatIntervalMs?: number;
+  checkPid?(pid: number): boolean;
+  registryWorkerHostname?(workerId: WorkerId, repoId: RepositoryId): string | undefined;
+  worktreeRecovery?: import('../ports/worktree-recovery-port.js').WorktreeRecoveryPort;
+  operationalRecovery?: import('../ports/operational-recovery-port.js').OperationalRecoveryPort;
 }
 
 function isRunnable(status: string): boolean {
