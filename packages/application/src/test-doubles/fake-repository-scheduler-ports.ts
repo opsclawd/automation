@@ -45,7 +45,7 @@ function defer<T>(): Deferred<T> {
 
 export class FakeRepositoryDispatchPort implements RepositoryDispatchPort {
   private results = new Map<string, 'completed' | 'no_work'>();
-  private calls: Array<{ repository: Repository; workerId: WorkerId }> = [];
+  private calls: Array<{ repository: Repository; workerId: WorkerId; signal?: AbortSignal }> = [];
   private deferredResults = new Map<string, Deferred<'completed' | 'no_work'>>();
 
   setResult(repoId: string, result: 'completed' | 'no_work') {
@@ -55,6 +55,7 @@ export class FakeRepositoryDispatchPort implements RepositoryDispatchPort {
   async runOne(input: {
     repository: Repository;
     workerId: WorkerId;
+    signal?: AbortSignal;
   }): Promise<'completed' | 'no_work'> {
     this.calls.push(input);
     const deferred = this.deferredResults.get(String(input.repository.id));

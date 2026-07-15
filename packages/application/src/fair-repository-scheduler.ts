@@ -46,6 +46,8 @@ type Reservation = {
   repoId: RepositoryId;
   workerId: WorkerId;
   seq: number;
+  abortController: AbortController;
+  dispatchPromise?: Promise<'completed' | 'no_work'>;
 };
 
 export class FairRepositoryScheduler {
@@ -72,6 +74,8 @@ export class FairRepositoryScheduler {
   //     could shrink mid-loop and let this SAME call cascade past its own
   //     fair share by re-claiming the capacity it just freed.
   private claimedSlots = 0;
+  private stopped = false;
+  private stopReason: string = 'shutdown';
 
   constructor(deps: FairRepositorySchedulerDeps) {
     this.deps = deps;
@@ -79,6 +83,10 @@ export class FairRepositoryScheduler {
 
   async scheduleOnce(signal?: AbortSignal): Promise<ScheduleOnceResult> {
     if (signal?.aborted) {
+      return { admitted: 0, cursorId: this.cursorId };
+    }
+
+    if (this.stopped) {
       return { admitted: 0, cursorId: this.cursorId };
     }
 
@@ -161,15 +169,17 @@ export class FairRepositoryScheduler {
         // this call's own budget must not be affected by how fast the
         // dispatch settles.
         committedByMe++;
-        this.inFlight.set(workerId, { repoId: repo.id, workerId, seq: workerSeq });
+        const abortController = new AbortController();
+        this.inFlight.set(workerId, { repoId: repo.id, workerId, seq: workerSeq, abortController });
         this.recordDispatchStarted(repo, workerId);
 
         const dispatchPromise = this.deps.dispatch
-          .runOne({ repository: repo, workerId })
+          .runOne({ repository: repo, workerId, signal: abortController.signal })
           .finally(() => {
             this.inFlight.delete(workerId);
             this.notifyCompletion(repo.id);
           });
+        this.inFlight.get(workerId)!.dispatchPromise = dispatchPromise;
 
         dispatchPromise.then(
           (outcome) => {
@@ -223,6 +233,37 @@ export class FairRepositoryScheduler {
         }
       }
     }
+  }
+
+  stopAdmission(reason: string = 'shutdown'): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.stopReason = reason;
+    for (const reservation of this.inFlight.values()) {
+      reservation.abortController.abort(reason);
+    }
+  }
+
+  async drain(timeoutMs: number): Promise<{ drained: boolean; remainingWorkerIds: WorkerId[] }> {
+    const startTime = this.deps.now();
+    const checkTimeout = () => this.deps.now().getTime() - startTime.getTime() >= timeoutMs;
+
+    while (this.inFlight.size > 0) {
+      if (checkTimeout()) {
+        return {
+          drained: false,
+          remainingWorkerIds: [...this.inFlight.keys()],
+        };
+      }
+      const reservation = [...this.inFlight.values()][0];
+      if (!reservation || !reservation.dispatchPromise) {
+        await this.deps.sleep(100);
+        continue;
+      }
+      await Promise.race([reservation.dispatchPromise, this.deps.sleep(100)]);
+    }
+
+    return { drained: true, remainingWorkerIds: [] };
   }
 
   private async inspectRepository(repo: Repository): Promise<{

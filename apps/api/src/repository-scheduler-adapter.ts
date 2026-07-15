@@ -17,7 +17,7 @@ export interface RepositorySchedulerAdapterDeps {
   logger: LoggerPort;
   workerLoop?: (
     deps: RepositoryRuntime,
-    input: { workerId: WorkerId; runId: RunId },
+    input: { workerId: WorkerId; runId: RunId; signal?: AbortSignal },
   ) => Promise<void>;
 }
 
@@ -28,6 +28,7 @@ export class RepositorySchedulerAdapter
   private cachedRuntimePromises = new Map<RepositoryId, Promise<RepositoryRuntime>>();
   private cachedRuntimes = new Map<RepositoryId, RepositoryRuntime>();
   private closed = false;
+  private activeDispatches = new Set<RepositoryId>();
 
   constructor(deps: RepositorySchedulerAdapterDeps) {
     this.deps = deps;
@@ -117,11 +118,14 @@ export class RepositorySchedulerAdapter
   async runOne(input: {
     repository: Repository;
     workerId: WorkerId;
+    signal?: AbortSignal;
   }): Promise<'completed' | 'no_work'> {
-    const { repository, workerId } = input;
+    const { repository, workerId, signal } = input;
 
     const runtimePromise = this.getOrCreateRuntimePromise(repository);
     const runtime = await runtimePromise;
+
+    this.activeDispatches.add(repository.id);
 
     const hostname = 'scheduler';
     const processId = 0;
@@ -154,32 +158,53 @@ export class RepositorySchedulerAdapter
         return 'no_work';
       }
 
+      const workerLoopInput: { workerId: WorkerId; runId: RunId; signal?: AbortSignal } = {
+        workerId,
+        runId: claimedJob.runId,
+      };
+      if (signal) {
+        workerLoopInput.signal = signal;
+      }
       const workerLoopFn = this.deps.workerLoop ?? defaultWorkerLoop;
-      await workerLoopFn(runtime, { workerId, runId: claimedJob.runId });
+      await workerLoopFn(runtime, workerLoopInput);
 
       return 'completed';
     } finally {
       clearInterval(heartbeatInterval);
       runtime.workerRegistry.deregister(workerId);
+      this.activeDispatches.delete(repository.id);
+      if (this.closed && this.activeDispatches.size === 0) {
+        for (const rt of this.cachedRuntimes.values()) {
+          rt.close();
+        }
+        this.cachedRuntimes.clear();
+        this.cachedRuntimePromises.clear();
+      }
     }
   }
 
   close(): void {
     this.closed = true;
-    for (const runtime of this.cachedRuntimes.values()) {
-      runtime.close();
+    if (this.activeDispatches.size === 0) {
+      for (const runtime of this.cachedRuntimes.values()) {
+        runtime.close();
+      }
+      this.cachedRuntimes.clear();
+      this.cachedRuntimePromises.clear();
     }
-    this.cachedRuntimes.clear();
-    this.cachedRuntimePromises.clear();
   }
 }
 
 async function defaultWorkerLoop(
   runtime: RepositoryRuntime,
-  input: { workerId: WorkerId; runId: RunId },
+  input: { workerId: WorkerId; runId: RunId; signal?: AbortSignal },
 ): Promise<void> {
   const { runRepository, jobQueue, workerLeaseRepository } = runtime;
-  const { workerId, runId } = input;
+  const { workerId, runId, signal } = input;
+
+  if (signal?.aborted) {
+    throw new Error(`worker loop aborted: ${signal.reason}`);
+  }
 
   const job = jobQueue
     .listForRun(runId)

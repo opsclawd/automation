@@ -9,7 +9,11 @@ export interface RepositoryWorkSourcePort {
 }
 
 export interface RepositoryDispatchPort {
-  runOne(input: { repository: Repository; workerId: WorkerId }): Promise<'completed' | 'no_work'>;
+  runOne(input: {
+    repository: Repository;
+    workerId: WorkerId;
+    signal?: AbortSignal;
+  }): Promise<'completed' | 'no_work'>;
 }
 
 export type WorkerId = import('@ai-sdlc/domain').WorkerId;
