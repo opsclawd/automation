@@ -119,9 +119,6 @@ function startLeaseHeartbeat(
       if (err instanceof LeaseOwnershipLostError) {
         console.error(`Fatal: lease ownership lost, exiting.`);
         clearInterval(timer);
-        try {
-          leaseRepo.release({ repoId, workerId, runId, leaseToken });
-        } catch {}
         process.exit(EXIT_INTERNAL_ERROR);
       }
       heartbeatFailures++;
