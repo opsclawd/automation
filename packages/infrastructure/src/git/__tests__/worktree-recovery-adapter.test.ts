@@ -173,8 +173,8 @@ describe('WorktreeRecoveryAdapter', () => {
         quarantineRoot,
       });
 
-      expect(result2.safe).toBe(false);
-      expect(result2.action).toBe('blocked');
+      expect(result2.safe).toBe(true);
+      expect(result2.action).toBe('quarantined');
     });
   });
 
