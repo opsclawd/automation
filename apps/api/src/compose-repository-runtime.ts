@@ -40,14 +40,14 @@ export async function composeRepositoryRuntime(
       listEnabledRepositories,
     }));
 
-  const runRepository = operationalRuntime.runRepository;
-  const originalUpdate = runRepository.update.bind(runRepository);
-  runRepository.update = (uuid: string, patch: RunRepositoryUpdatePatch) => {
-    const existing = runRepository.findByUuid(uuid);
+  const originalRunRepository = operationalRuntime.runRepository;
+  const wrappedRunRepository = Object.create(originalRunRepository);
+  wrappedRunRepository.update = (uuid: string, patch: RunRepositoryUpdatePatch) => {
+    const existing = originalRunRepository.findByUuid(uuid);
     if (!existing) return;
     const currentFingerprint = (existing as { configFingerprint?: string }).configFingerprint ?? '';
     const currentSources = (existing as { configSourcesJson?: string }).configSourcesJson ?? '';
-    originalUpdate(uuid, {
+    originalRunRepository.update(uuid, {
       ...patch,
       configFingerprint:
         currentFingerprint !== loadedConfig.fingerprint
@@ -62,9 +62,13 @@ export async function composeRepositoryRuntime(
 
   const executionRuntime: RepositoryExecutionRuntime = {
     ...operationalRuntime,
+    runRepository: wrappedRunRepository,
     configFingerprint: loadedConfig.fingerprint,
     defaultBranch: repository.defaultBranch,
     fullName: repository.fullName,
+    close: () => {
+      // no-op: execution runtime does not own the lifecycle of shared operational resources
+    },
   };
 
   return executionRuntime;
