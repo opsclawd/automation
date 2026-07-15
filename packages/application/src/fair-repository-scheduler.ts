@@ -264,7 +264,13 @@ export class FairRepositoryScheduler {
       const remaining = timeoutMs - elapsed;
       const dispatchPromises = [...this.inFlight.values()].map((r) => r.dispatchPromise!);
 
-      await Promise.race([Promise.allSettled(dispatchPromises), this.deps.sleep(remaining)]);
+      const abortController = new AbortController();
+      const settlePromise = Promise.allSettled(dispatchPromises);
+      const sleepPromise = this.deps.sleep(remaining, abortController.signal);
+
+      await Promise.race([settlePromise, sleepPromise]);
+
+      abortController.abort();
     }
 
     return { drained: true, remainingWorkerIds: [] };

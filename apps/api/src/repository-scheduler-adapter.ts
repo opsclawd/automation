@@ -123,63 +123,72 @@ export class RepositorySchedulerAdapter
     const { repository, workerId, signal } = input;
 
     const runtimePromise = this.getOrCreateRuntimePromise(repository);
-    const runtime = await runtimePromise;
 
     this.activeDispatches.add(workerId);
-
-    const hostname = 'scheduler';
-    const processId = 0;
-    const worker: Worker = {
-      id: workerId,
-      repoId: repository.id,
-      hostname,
-      processId,
-      status: 'idle',
-      heartbeatAt: new Date(),
-    };
-    runtime.workerRegistry.register(worker);
-
-    const heartbeatInterval = setInterval(() => {
-      try {
-        runtime.workerRegistry.heartbeat(workerId, repository.id, new Date());
-      } catch (err) {
-        this.deps.logger.error('worker heartbeat failed', { err });
-      }
-    }, 30_000);
-
     try {
-      const claimedJob = runtime.jobQueue.claimNext({
-        workerId,
+      const runtime = await runtimePromise;
+
+      const hostname = 'scheduler';
+      const processId = 0;
+      const worker: Worker = {
+        id: workerId,
         repoId: repository.id,
-        ttlMs: 120_000,
-      });
-
-      if (!claimedJob) {
-        return 'no_work';
-      }
-
-      const workerLoopInput: { workerId: WorkerId; runId: RunId; signal?: AbortSignal } = {
-        workerId,
-        runId: claimedJob.runId,
+        hostname,
+        processId,
+        status: 'idle',
+        heartbeatAt: new Date(),
       };
-      if (signal) {
-        workerLoopInput.signal = signal;
-      }
-      const workerLoopFn = this.deps.workerLoop ?? defaultWorkerLoop;
-      await workerLoopFn(runtime, workerLoopInput);
+      runtime.workerRegistry.register(worker);
 
-      return 'completed';
-    } finally {
-      clearInterval(heartbeatInterval);
-      runtime.workerRegistry.deregister(workerId);
-      this.activeDispatches.delete(workerId);
-      if (this.closed && this.activeDispatches.size === 0) {
-        for (const rt of this.cachedRuntimes.values()) {
-          rt.close();
+      const heartbeatInterval = setInterval(() => {
+        try {
+          runtime.workerRegistry.heartbeat(workerId, repository.id, new Date());
+        } catch (err) {
+          this.deps.logger.error('worker heartbeat failed', { err });
         }
-        this.cachedRuntimes.clear();
-        this.cachedRuntimePromises.clear();
+      }, 30_000);
+
+      try {
+        const claimedJob = runtime.jobQueue.claimNext({
+          workerId,
+          repoId: repository.id,
+          ttlMs: 120_000,
+        });
+
+        if (!claimedJob) {
+          return 'no_work';
+        }
+
+        const workerLoopInput: { workerId: WorkerId; runId: RunId; signal?: AbortSignal } = {
+          workerId,
+          runId: claimedJob.runId,
+        };
+        if (signal) {
+          workerLoopInput.signal = signal;
+        }
+        const workerLoopFn = this.deps.workerLoop ?? defaultWorkerLoop;
+        await workerLoopFn(runtime, workerLoopInput);
+
+        return 'completed';
+      } finally {
+        clearInterval(heartbeatInterval);
+        this.activeDispatches.delete(workerId);
+        try {
+          runtime.workerRegistry.deregister(workerId);
+        } catch {
+          // ignore
+        }
+        if (this.closed && this.activeDispatches.size === 0) {
+          for (const rt of this.cachedRuntimes.values()) {
+            rt.close();
+          }
+          this.cachedRuntimes.clear();
+          this.cachedRuntimePromises.clear();
+        }
       }
+    } catch (err) {
+      this.activeDispatches.delete(workerId);
+      throw err;
     }
   }
 
@@ -202,14 +211,14 @@ async function defaultWorkerLoop(
   const { runRepository, jobQueue, workerLeaseRepository } = runtime;
   const { workerId, runId, signal } = input;
 
-  if (signal?.aborted) {
-    throw new Error(`worker loop aborted: ${signal.reason}`);
-  }
-
   const job = jobQueue
     .listForRun(runId)
     .find((j) => j.claimedBy === workerId && j.status === 'claimed');
   if (!job) {
+    return;
+  }
+
+  if (signal?.aborted) {
     return;
   }
 
