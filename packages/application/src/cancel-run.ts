@@ -1,4 +1,4 @@
-import { cancelRun } from '@ai-sdlc/domain';
+import { cancelRun, LeaseOwnershipLostError } from '@ai-sdlc/domain';
 import type { RunId } from '@ai-sdlc/domain';
 import type {
   RunRepositoryPort,
@@ -100,7 +100,9 @@ export class CancelRun implements CancelRunUseCase {
           }
         }
       } catch (err) {
-        this.deps.logger.error(`CancelRun: lease release failed for ${input.runId}`, err);
+        if (!(err instanceof LeaseOwnershipLostError)) {
+          this.deps.logger.error(`CancelRun: lease release failed for ${input.runId}`, err);
+        }
       }
     }
   }

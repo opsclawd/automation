@@ -2,6 +2,7 @@ import {
   createJob,
   resumeRun,
   WorkerLeaseConflictError,
+  LeaseOwnershipLostError,
   type IssueNumber,
   type JobId,
   type RunId,
@@ -176,10 +177,12 @@ export class OrphanedRunsSweeper {
               leaseToken: acquiredLease.leaseToken,
             });
           } catch (relErr) {
-            this.deps.logger.error(
-              `OrphanedRunsSweeper: Failed to release lease on completion for ${run.uuid}:`,
-              relErr,
-            );
+            if (!(relErr instanceof LeaseOwnershipLostError)) {
+              this.deps.logger.error(
+                `OrphanedRunsSweeper: Failed to release lease on completion for ${run.uuid}:`,
+                relErr,
+              );
+            }
           }
         }
       }

@@ -1,4 +1,9 @@
-import { createJob, reactivate, WorkerLeaseConflictError } from '@ai-sdlc/domain';
+import {
+  createJob,
+  reactivate,
+  WorkerLeaseConflictError,
+  LeaseOwnershipLostError,
+} from '@ai-sdlc/domain';
 import type { WorkerId, JobId, RunId, IssueNumber, Run } from '@ai-sdlc/domain';
 import type { SweepWaitingRuns, SweepWaitingRunsResult } from './sweep-waiting-runs.js';
 import type { JobQueuePort, WorkerLeasePort } from './ports/index.js';
@@ -147,10 +152,12 @@ export class WaitingRunsSweeper {
               leaseToken: acquiredLease.leaseToken,
             });
           } catch (relErr) {
-            this.deps.logger.error(
-              `WaitingRunsSweeper: Failed to release lease on failure for ${run.uuid}:`,
-              relErr,
-            );
+            if (!(relErr instanceof LeaseOwnershipLostError)) {
+              this.deps.logger.error(
+                `WaitingRunsSweeper: Failed to release lease on failure for ${run.uuid}:`,
+                relErr,
+              );
+            }
           }
         }
       }
