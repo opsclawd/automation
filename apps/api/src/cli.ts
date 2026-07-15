@@ -24,7 +24,7 @@ import {
   planRunRecoveryAction,
   ReapOrphanedTestWorkers,
   FairRepositoryScheduler,
-  workerLoop as actualWorkerLoop,
+  runClaimedJob,
   checkPid,
   type ArtifactGuardPort,
 } from '@ai-sdlc/application';
@@ -336,9 +336,26 @@ function buildSchedulerDeps(
     input: { workerId: WorkerId; runId: RunId },
   ) => {
     const { workerId, runId } = input;
+
+    // The scheduler (RepositorySchedulerAdapter.runOne) has already claimed a
+    // job for this run before invoking this callback. Look it up so the job
+    // claim is always explicitly settled, never silently leaked, even if we
+    // bail out below before actual execution.
+    const job = runtime.jobQueue
+      .listForRun(runId)
+      .find((j) => j.claimedBy === workerId && j.status === 'claimed');
+
     const runExecutor = c.runExecutor;
     if (!runExecutor) {
       logger.warn(`No runExecutor available in container to run job ${String(runId)}`);
+      if (job) {
+        runtime.jobQueue.markFailed(job.id, new Date());
+      }
+      return;
+    }
+
+    if (!job) {
+      logger.warn(`No claimed job found for run ${String(runId)} claimed by ${String(workerId)}`);
       return;
     }
 
@@ -405,7 +422,7 @@ function buildSchedulerDeps(
       },
     };
 
-    await actualWorkerLoop(workerId, fullDeps);
+    await runClaimedJob(workerId, job, fullDeps);
   };
 
   const dispatchAdapter = new RepositorySchedulerAdapter({

@@ -174,15 +174,18 @@ async function defaultWorkerLoop(
   input: { workerId: WorkerId; runId: RunId },
 ): Promise<void> {
   const { runRepository, jobQueue, workerLeaseRepository } = runtime;
-  const { runId } = input;
+  const { workerId, runId } = input;
 
-  const run = runRepository.findByUuid(String(runId));
-  if (!run) {
+  const job = jobQueue
+    .listForRun(runId)
+    .find((j) => j.claimedBy === workerId && j.status === 'claimed');
+  if (!job) {
     return;
   }
 
-  const job = jobQueue.findById(runId as unknown as import('@ai-sdlc/domain').JobId);
-  if (!job) {
+  const run = runRepository.findByUuid(String(runId));
+  if (!run) {
+    jobQueue.markFailed(job.id, new Date());
     return;
   }
 
