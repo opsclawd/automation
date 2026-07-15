@@ -66,6 +66,7 @@ import {
   OrphanedRunsSweeper,
   type OrphanedRunsSweeperResult,
   checkPid,
+  RepositoryRecoveryCoordinator,
   RunValidation,
   ReadIssueHandler,
   PlanDesignHandler,
@@ -187,6 +188,7 @@ import {
   Run,
   RunId,
   RepositoryId,
+  generateJobOwnership,
 } from '@ai-sdlc/domain';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- forward reference for Task 5 runtime factory
 import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
@@ -6286,6 +6288,93 @@ export function composeRoot(opts: ComposeOptions): Container {
 
             entry.orphaned = await orphanedRunsSweeper.execute(orphanScan.orphanedRuns);
             entry.waiting = await waitingSweeper.execute(workerId);
+
+            const coordinator = new RepositoryRecoveryCoordinator({
+              leases: runtime.workerLeaseRepository,
+              queue: runtime.jobQueue,
+              registry: runtime.workerRegistry,
+              repos: runtime.workerLoopDeps.repos,
+              findRun: (runId) => runtime.runRepository.findByUuid(runId) ?? undefined,
+              isWorkerAlive: (workerId) => {
+                const w = runtime.workerRegistry.findById(workerId, repository.id);
+                if (!w) return false;
+                if (w.hostname !== os.hostname()) {
+                  return Date.now() - w.heartbeatAt.getTime() < DEFAULT_LEASE_TTL_MS;
+                }
+                return checkPid(w.processId);
+              },
+              resetWorktree: (repoId) => {
+                const lease = runtime.workerLeaseRepository.current(repoId);
+                if (!lease) return;
+                const r = runtime.runRepository.findByUuid(lease.runId);
+                if (!r) return;
+                const worktreePath = runtime.paths.worktree(r.issueNumber);
+                const baseBranch = r.baseBranch ?? repository.defaultBranch;
+                gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
+              },
+              now: () => new Date(),
+              checkPid,
+              registryWorkerHostname: (workerId) => {
+                const w = runtime.workerRegistry.findById(workerId, repository.id);
+                return w?.hostname;
+              },
+              getWorktreePath: (repoId) => {
+                const lease = runtime.workerLeaseRepository.current(repoId);
+                if (!lease) return '';
+                const r = runtime.runRepository.findByUuid(lease.runId);
+                if (!r) return '';
+                return runtime.paths.worktree(r.issueNumber);
+              },
+              getQuarantineRoot: (_repoId) => {
+                return join(runtime.paths.tmpRoot(), 'quarantine');
+              },
+              listRunsForRepo: (repoId) => {
+                const result = runtime.runRepository.list({ repositoryId: repoId });
+                return result.runs as unknown as import('@ai-sdlc/domain').Run[];
+              },
+              onOrphan: () => {
+                /* Already handled by orphanedRunsSweeper above */
+              },
+              onWaitingReactivation: () => {
+                /* Already handled by waitingSweeper above */
+              },
+            });
+
+            for (const repo of runtime.workerLoopDeps.repos.listEnabled()) {
+              try {
+                const action = await coordinator.execute({ repoId: repo.id });
+                if (action.action === 'reclaim') {
+                  const lease = runtime.workerLeaseRepository.current(repo.id);
+                  if (lease) {
+                    const r = runtime.runRepository.findByUuid(lease.runId);
+                    if (r) {
+                      const worktreePath = runtime.paths.worktree(r.issueNumber);
+                      const baseBranch = r.baseBranch ?? repository.defaultBranch;
+                      gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
+                    }
+                  }
+                } else if (action.action === 'requeue') {
+                  const jobs = runtime.jobQueue.listForRepo(repo.id);
+                  for (const job of jobs) {
+                    if (
+                      job.status === 'claimed' &&
+                      job.claimExpiresAt &&
+                      job.claimExpiresAt.getTime() < Date.now()
+                    ) {
+                      if (job.claimedBy && job.claimToken) {
+                        try {
+                          runtime.jobQueue.resetToQueued(generateJobOwnership(job, job.claimedBy));
+                        } catch {
+                          /* ignore */
+                        }
+                      }
+                    }
+                  }
+                }
+              } catch {
+                /* one repo recovery failure should not block others */
+              }
+            }
           } catch (err) {
             entry.error = err instanceof Error ? err.message : String(err);
             sweepLogger.error(
