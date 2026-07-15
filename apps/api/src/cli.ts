@@ -15,6 +15,7 @@ import {
   Repository,
   WorkerLeaseConflictError,
   LeaseOwnershipLostError,
+  JobOwnershipLostError,
   JobId,
   IssueNumber,
   createJob,
@@ -367,7 +368,11 @@ function buildSchedulerDeps(
       logger.warn(`No runExecutor available in container to run job ${String(runId)}`);
       if (job && job.claimedBy && job.claimToken) {
         const ownership = generateJobOwnership(job, job.claimedBy);
-        runtime.jobQueue.markFailed(ownership, new Date());
+        try {
+          runtime.jobQueue.markFailed(ownership, new Date());
+        } catch (err) {
+          if (!(err instanceof JobOwnershipLostError)) throw err;
+        }
       }
       return;
     }

@@ -8,6 +8,7 @@ import type {
 import {
   WorkerLeaseConflictError,
   LeaseOwnershipLostError,
+  JobOwnershipLostError,
   generateJobOwnership,
 } from '@ai-sdlc/domain';
 
@@ -203,6 +204,9 @@ export async function runClaimedJob(
       clearInterval(heartbeatInterval);
     }
   } catch (err) {
+    if (err instanceof JobOwnershipLostError) {
+      return 'settled';
+    }
     if (err instanceof WorkerLeaseConflictError) {
       queue.releaseClaim(ownership);
       skippedJobIds?.add(job.id);
@@ -265,8 +269,17 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
       for (const job of jobs) {
         if (job.status === 'claimed' || job.status === 'running') {
           const fresh = queue.findById(job.id);
-          if (fresh && fresh.claimToken) {
-            queue.resetToQueued(generateJobOwnership(fresh, job.claimedBy!));
+          if (
+            fresh &&
+            fresh.claimToken &&
+            fresh.claimedBy === info.previousWorkerId &&
+            fresh.claimToken === job.claimToken
+          ) {
+            try {
+              queue.resetToQueued(generateJobOwnership(fresh, fresh.claimedBy));
+            } catch (err) {
+              if (!(err instanceof JobOwnershipLostError)) throw err;
+            }
           }
         }
       }
