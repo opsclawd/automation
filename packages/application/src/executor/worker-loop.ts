@@ -109,7 +109,11 @@ export async function runClaimedJob(
     acquired = true;
 
     if (deps.outerSignal) {
-      deps.outerSignal.addEventListener('abort', onOuterAbort);
+      if (deps.outerSignal.aborted) {
+        onOuterAbort();
+      } else {
+        deps.outerSignal.addEventListener('abort', onOuterAbort);
+      }
     }
 
     const heartbeatInterval = setInterval(
@@ -348,7 +352,7 @@ export async function runClaimedJob(
     if (afterRelease && isRunnable(afterRelease.status)) {
       if (reason === 'shutdown' && !graceExpiredDuringShutdown) {
         deps.markStopping?.();
-        registry.markIdle(workerId, deps.repoId);
+        registry.markStopping(workerId, deps.repoId);
       } else if (!graceExpiredDuringShutdown) {
         registry.markIdle(workerId, deps.repoId);
       }
