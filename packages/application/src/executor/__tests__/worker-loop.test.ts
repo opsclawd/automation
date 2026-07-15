@@ -775,6 +775,7 @@ describe('workerLoop', () => {
     const s = setup();
     const abortController = new AbortController();
     let abortReason: string | undefined = 'user_cancelled';
+    const updateRun = vi.fn();
 
     s.queue.enqueue({
       job: createJob({
@@ -813,7 +814,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
-      updateRun: () => {},
+      updateRun,
       outerSignal: abortController.signal,
       getAbortReason: () => abortReason,
     });
@@ -823,6 +824,7 @@ describe('workerLoop', () => {
 
     await runPromise;
 
+    expect(updateRun).toHaveBeenCalledWith(RunId('run-1'), { status: 'cancelled' });
     const job = s.queue.findById(JobId('j1'));
     expect(job!.status).toBe('cancelled');
   });
@@ -874,6 +876,7 @@ describe('workerLoop', () => {
   it('repository unavailable fails matching job and run', async () => {
     const s = setup();
     const markUnreachable = vi.fn();
+    const updateRun = vi.fn();
 
     s.queue.enqueue({
       job: createJob({
@@ -907,11 +910,15 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
-      updateRun: () => {},
+      updateRun,
       repoAvailability: { markUnreachable },
     });
 
     expect(markUnreachable).toHaveBeenCalledWith(RepositoryId('r1'), 'path not accessible');
+    expect(updateRun).toHaveBeenCalledWith(RunId('run-1'), {
+      status: 'failed',
+      failureReason: 'path not accessible',
+    });
     expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   });

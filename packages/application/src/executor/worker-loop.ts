@@ -88,6 +88,13 @@ export async function runClaimedJob(
   let started = false;
   let acquired = false;
   let acquiredLease;
+  let graceExpiredDuringShutdown = false;
+
+  const abortController = new AbortController();
+  const onOuterAbort = () => {
+    const currentReason = deps.getAbortReason?.() ?? 'user_cancelled';
+    abortController.abort(currentReason);
+  };
 
   try {
     registry.markBusy(workerId, deps.repoId);
@@ -101,17 +108,8 @@ export async function runClaimedJob(
     });
     acquired = true;
 
-    const abortController = new AbortController();
-
     if (deps.outerSignal) {
-      deps.outerSignal.addEventListener(
-        'abort',
-        () => {
-          const currentReason = deps.getAbortReason?.() ?? 'user_cancelled';
-          abortController.abort(currentReason);
-        },
-        { once: true },
-      );
+      deps.outerSignal.addEventListener('abort', onOuterAbort);
     }
 
     const heartbeatInterval = setInterval(
@@ -219,27 +217,25 @@ export async function runClaimedJob(
           }
         };
 
+        const onSignalAbort = () => onAbort(abortController.signal.reason);
+
         if (abortController.signal.aborted) {
           onAbort(abortController.signal.reason);
           return;
         }
 
-        abortController.signal.addEventListener(
-          'abort',
-          () => onAbort(abortController.signal.reason),
-          { once: true },
-        );
+        abortController.signal.addEventListener('abort', onSignalAbort, { once: true });
 
         void executeRunPromise.then(
           (r) => {
             if (!abortController.signal.aborted) {
-              abortController.signal.removeEventListener('abort', onAbort as () => void);
+              abortController.signal.removeEventListener('abort', onSignalAbort);
               resolve(r);
             }
           },
           (err) => {
             if (!abortController.signal.aborted) {
-              abortController.signal.removeEventListener('abort', onAbort as () => void);
+              abortController.signal.removeEventListener('abort', onSignalAbort);
               reject(err as Error);
             }
           },
@@ -273,6 +269,7 @@ export async function runClaimedJob(
     }
     if (err instanceof RepositoryUnavailableError) {
       deps.repoAvailability?.markUnreachable(deps.repoId, err.cause);
+      deps.updateRun(job.runId, { status: 'failed', failureReason: err.cause });
       if (started) {
         try {
           queue.markFailed(ownership, deps.now());
@@ -288,14 +285,23 @@ export async function runClaimedJob(
       }
       return 'settled';
     }
+    graceExpiredDuringShutdown =
+      err instanceof Error && err.message === 'grace expired during shutdown';
     if (started) {
-      if (reason === 'shutdown') {
+      if (graceExpiredDuringShutdown) {
+        try {
+          queue.markFailed(ownership, deps.now());
+        } catch {
+          /* already terminal */
+        }
+      } else if (reason === 'shutdown') {
         try {
           queue.resetToQueued(ownership);
         } catch {
           /* already terminal */
         }
       } else if (reason === 'user_cancelled') {
+        deps.updateRun(job.runId, { status: 'cancelled' });
         try {
           queue.markCancelled(ownership, deps.now());
         } catch {
@@ -317,12 +323,14 @@ export async function runClaimedJob(
     }
     return 'settled';
   } finally {
+    deps.outerSignal?.removeEventListener('abort', onOuterAbort);
+
     const reason =
       deps.getAbortReason?.() ?? (deps.outerSignal?.aborted ? 'user_cancelled' : undefined);
 
     if (acquired && acquiredLease) {
-      if (reason === 'lease_lost') {
-        // For lease_lost (non-cooperative shutdown), preserve the lease for startup recovery
+      if (reason === 'lease_lost' || graceExpiredDuringShutdown) {
+        // For lease_lost and grace-expired-during-shutdown, preserve the lease for startup recovery
       } else {
         try {
           leases.release({
@@ -338,10 +346,12 @@ export async function runClaimedJob(
     }
     const afterRelease = registry.findById(workerId, deps.repoId);
     if (afterRelease && isRunnable(afterRelease.status)) {
-      if (reason === 'shutdown') {
+      if (reason === 'shutdown' && !graceExpiredDuringShutdown) {
         deps.markStopping?.();
+        registry.markIdle(workerId, deps.repoId);
+      } else if (!graceExpiredDuringShutdown) {
+        registry.markIdle(workerId, deps.repoId);
       }
-      registry.markIdle(workerId, deps.repoId);
     }
   }
 }
