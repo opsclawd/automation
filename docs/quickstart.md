@@ -55,7 +55,7 @@ pnpm --filter @ai-sdlc/api dev worker start
 pnpm --filter @ai-sdlc/api dev worker start --global-concurrency 4
 ```
 
-Workers poll the API for available jobs. Multiple workers can run on the same machine or across multiple machines (VPS) as long as they share access to the same SQLite database.
+Workers poll the API for available jobs. Multiple worker processes can run concurrently on the **same machine** as long as they share access to the same SQLite database and control plane. Running workers across multiple machines is not supported — the scheduler uses local PID checks and hostname comparison for liveness detection, which are ambiguous across hosts.
 
 ## Start a run
 
@@ -273,3 +273,7 @@ Every scheduler event includes stable identity fields:
 | `worker_id`       | Per-repo sequence                 | `w-acme/api-0` |
 
 Events: `scheduler.dispatch.started`, `scheduler.dispatch.completed`, `scheduler.dispatch.failed`, `scheduler.repository.skipped`, `scheduler.pool.active`, `scheduler.repository.queue_depth`.
+
+## Recovery Operations
+
+For details on scheduler recovery behavior, lease/claim token fencing, startup barriers, shutdown/grace fallback, and operator procedures for restoring a moved or deleted checkout, see [`docs/operations/scheduler-recovery.md`](../operations/scheduler-recovery.md).

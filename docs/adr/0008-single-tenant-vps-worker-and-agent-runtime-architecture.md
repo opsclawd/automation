@@ -39,9 +39,30 @@ The seams (Repository, Job, Worker, WorkerLease, AgentPort, AgentProfile, AgentR
 
 Domain language uses `WorkerLease`. In persistence the active-lease invariant must be enforced atomically — implementations must use a database-level uniqueness constraint or an equivalent transaction around `repoId` for active leases. A Worker that observes "no active lease for repoId X" and then writes a new lease row must do so inside the same atomic step; two Workers attempting to acquire concurrently must result in exactly one success and one well-typed conflict error. Domain code uses `WorkerLease`; persistence may use locks/transactions internally to acquire the lease safely. The in-memory fake used in M3 mirrors this behaviour with a serialised `acquire`. The one-Worker-per-Repository rule must be enforced by persistence, not convention.
 
+### Generation Fencing
+
+Each `WorkerLease` carries two independent ownership tokens:
+
+- `leaseToken` — a randomly generated token issued at lease acquisition; the holder must present this exact token for any mutation (heartbeat, release, or reclamation)
+- `(workerId, runId)` — the **generation** of the lease; the combination acts as a generation fence
+
+The generation fence prevents a late-surviving old process from mutating a lease after it has been reissued. When `commitLeaseReclamation` is called, it atomically verifies that `workerId`, `runId`, and `leaseToken` all match the expected values. If any have changed (because a new worker reclaimed the lease), the reclamation rolls back and reports `lease_generation_changed`.
+
+Similarly, when a job is claimed, a `claimToken` is issued and the `(workerId, jobId)` pair is the job's ownership generation. All mutations require the exact `claimToken`; a `claim_generation_changed` result rolls back the mutation.
+
+### Coordinator-Only Reclamation
+
+Lease reclamation is performed **only by the recovery coordinator** (`RepositoryRecoveryCoordinator`), not by arbitrary workers. The coordinator runs inside the scheduler's schedule loop. This ensures:
+
+- reclamation is ordered and serialised per repository
+- competing reclamation attempts from concurrent coordinators are prevented by the generation fence
+- audit events (`lease.reclaimed`) are emitted with a consistent `reclaimedByWorkerId`
+
+Workers that lose a lease conflict (through `WorkerLeaseConflictError`) do not attempt to reclaim; they simply skip the conflicting job and retry on the next schedule pass.
+
 ### Stale lease recovery — minimum safety checks
 
-A `WorkerLease` may be reclaimed by another Worker only after **all** of the following hold:
+A `WorkerLease` may be reclaimed by the coordinator only after **all** of the following hold:
 
 - the lease's `heartbeatAt` is past `expiresAt`;
 - the owning Worker's heartbeat is itself stale (or the Worker is marked `unhealthy` / `stopping`);
@@ -51,6 +72,14 @@ A `WorkerLease` may be reclaimed by another Worker only after **all** of the fol
 - a `lease.reclaimed` event is emitted carrying `{ repoId, previousWorkerId, previousRunId, reclaimedByWorkerId, reason }` for auditability.
 
 This list is the documented minimum; concrete adapter implementations may add stricter checks. The fake `WorkerLeasePort` in M3 enforces these checks for tests.
+
+### Crash-Equivalent Non-Cooperative Shutdown Fallback
+
+When a worker receives SIGTERM, it attempts cooperative drain: stopping new dispatches, waiting for in-flight work up to `shutdownGraceMs`, then releasing leases and claims. If the child process is still running when `shutdownGraceMs` elapses, the worker falls through to the crash-equivalent path: it does **not** release ownership, the lease simply expires naturally, and recovery kicks in on the next schedule pass as if the worker had died unexpectedly.
+
+This means a graceful-shutdown-timeout is semantically identical to a crash from the perspective of the recovery coordinator. The distinction is recorded in the `lease.reclaimed` audit event's `reason` field (`stale lease recovery` vs `coordinator shutdown`).
+
+The single-machine invariant is load-bearing here: without a shared host PID table, a worker cannot distinguish a living remote process from a PID-reused zombie, so cross-host lease recovery is blocked.
 
 ## Filesystem layout (VPS)
 
