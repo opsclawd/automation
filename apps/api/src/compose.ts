@@ -6345,12 +6345,12 @@ export function composeRoot(opts: ComposeOptions): Container {
               if (action.action === 'reclaim') {
                 const lease = runtime.workerLeaseRepository.current(repository.id);
                 if (lease) {
-                  const r = runtime.runRepository.findByUuid(lease.runId);
-                  if (r) {
-                    const worktreePath = runtime.paths.worktree(r.issueNumber);
-                    const baseBranch = r.baseBranch ?? repository.defaultBranch;
-                    gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
-                  }
+                  runtime.workerLeaseRepository.release({
+                    repoId: repository.id,
+                    workerId: lease.workerId,
+                    runId: lease.runId,
+                    leaseToken: lease.leaseToken,
+                  });
                 }
               } else if (action.action === 'requeue') {
                 const jobs = runtime.jobQueue.listForRepo(repository.id);
