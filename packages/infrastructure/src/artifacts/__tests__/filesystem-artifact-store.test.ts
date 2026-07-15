@@ -235,4 +235,39 @@ describe('createFilesystemArtifactStore', () => {
       rmSync(baseDir, { recursive: true, force: true });
     }
   });
+
+  it('hydrates the worktree from the durable root', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(worktreeRoot, { recursive: true });
+
+      const planPath = 'plan.md';
+      const manifestPath = 'task-manifest.json';
+      const planContent = '# Plan\n';
+      const manifestContent = '{"tasks": []}';
+
+      writeFileSync(join(durableRoot, planPath), planContent, 'utf8');
+      writeFileSync(join(durableRoot, manifestPath), manifestContent, 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+
+      // Initially worktree is empty
+      expect(existsSync(join(worktreeRoot, planPath))).toBe(false);
+      expect(existsSync(join(worktreeRoot, manifestPath))).toBe(false);
+
+      await store.hydrateWorktree('run-1');
+
+      // Now artifacts should be in worktree
+      expect(readFileSync(join(worktreeRoot, planPath), 'utf8')).toBe(planContent);
+      expect(readFileSync(join(worktreeRoot, manifestPath), 'utf8')).toBe(manifestContent);
+
+      // Verify it overwrites different content
+      writeFileSync(join(worktreeRoot, planPath), 'stale content', 'utf8');
+      await store.hydrateWorktree('run-1');
+      expect(readFileSync(join(worktreeRoot, planPath), 'utf8')).toBe(planContent);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
 });

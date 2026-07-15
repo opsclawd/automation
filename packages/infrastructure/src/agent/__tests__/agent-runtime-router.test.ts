@@ -732,6 +732,53 @@ describe('AgentRuntimeRouter', () => {
       rmSync(tmp, { recursive: true, force: true });
     });
 
+    it('preserves an editable expected artifact while clearing fresh outputs', async () => {
+      const tmp = join(tmpdir(), `__tmp_cleanup_preserved_${Date.now()}`);
+      const { mkdirSync, writeFileSync, existsSync, rmSync } = await import('node:fs');
+      mkdirSync(tmp, { recursive: true });
+      writeFileSync(`${tmp}/plan.md`, '# durable plan\n', 'utf-8');
+      writeFileSync(`${tmp}/plan-fix-result.json`, '{"stale":true}\n', 'utf-8');
+
+      const seenArtifacts: string[] = [];
+      const adapter = {
+        async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
+          for (const artifact of request.expectedArtifacts) {
+            if (existsSync(`${request.cwd}/${artifact}`)) seenArtifacts.push(artifact);
+          }
+          return {
+            runtime: 'opencode',
+            provider: 'a',
+            model: 'm',
+            exitCode: 0,
+            durationMs: 1,
+            stdoutPath: '/s',
+            stderrPath: '/e',
+            contractViolations: [],
+            outcome: 'success',
+          };
+        },
+      } satisfies AgentPort;
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: adapter },
+        invocationRepository: new FakeAgentInvocationPort(),
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-preserved',
+        readPromptChars: () => 0,
+      });
+
+      await router.invoke(
+        req({
+          cwd: tmp,
+          expectedArtifacts: ['plan.md', 'plan-fix-result.json'],
+          preserveExpectedArtifacts: ['plan.md'],
+        }),
+      );
+
+      expect(seenArtifacts).toEqual(['plan.md']);
+      rmSync(tmp, { recursive: true, force: true });
+    });
+
     it('deletes all expected artifacts when multiple are listed', async () => {
       const tmp = join(tmpdir(), `__tmp_cleanup_multi_${Date.now()}`);
       const { mkdirSync, writeFileSync, existsSync, rmSync } = await import('node:fs');

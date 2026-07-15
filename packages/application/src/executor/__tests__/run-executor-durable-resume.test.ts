@@ -184,6 +184,7 @@ describe('RunExecutor durable resume', () => {
           read: artifacts.read.bind(artifacts),
           write: artifacts.write.bind(artifacts),
           list: async () => artifacts.list(run.uuid),
+          hydrateWorktree: async () => artifacts.hydrateWorktree(run.uuid),
         },
         github: {} as never,
         git: {} as never,
@@ -283,6 +284,7 @@ describe('RunExecutor durable resume', () => {
           read: artifacts.read.bind(artifacts),
           write: artifacts.write.bind(artifacts),
           list: async () => artifacts.list(run.uuid),
+          hydrateWorktree: async () => artifacts.hydrateWorktree(run.uuid),
         },
         github: {} as never,
         git: {} as never,
@@ -314,5 +316,135 @@ describe('RunExecutor durable resume', () => {
     expect(failedImplement?.failure?.message).toContain(
       "phase 'implement' completed per DB but its output 'implementation-log.md' is missing from the artifact store",
     );
+  });
+
+  it('calls hydrateWorktree at the start of execute', async () => {
+    const hydrateSpy = vi.fn();
+    const artifacts = {
+      hydrateWorktree: hydrateSpy,
+      list: vi.fn().mockResolvedValue([]),
+    } as unknown as FakeArtifactStore;
+    const run = makeRun();
+    const registry = new PhaseHandlerRegistry();
+    registerPassThroughHandlers(registry, vi.fn());
+
+    const deps = makeDeps({
+      registry,
+      contextFactory: () =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          artifacts,
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const executor = new RunExecutor(deps);
+    await executor.execute({
+      run,
+      skip: [makePhaseName('plan-review'), makePhaseName('compound')],
+      presentArtifacts: [],
+    });
+
+    expect(hydrateSpy).toHaveBeenCalledWith(run.uuid);
+  });
+
+  it('fails before running any phase when durable artifact hydration fails', async () => {
+    const hydrateError = new Error('durable store unavailable');
+    const artifacts = {
+      hydrateWorktree: vi.fn().mockRejectedValue(hydrateError),
+      list: vi.fn().mockResolvedValue([]),
+    } as unknown as FakeArtifactStore;
+    const run = makeRun();
+    const handlerSpy = vi.fn();
+    const registry = new PhaseHandlerRegistry();
+    registerPassThroughHandlers(registry, handlerSpy);
+    const publish = vi.fn();
+    const deps = makeDeps({
+      registry,
+      events: { publish },
+      contextFactory: () =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          artifacts,
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const executor = new RunExecutor(deps);
+    const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
+
+    expect(result.run.status).toBe('failed');
+    expect(result.phases).toEqual([]);
+    expect(handlerSpy).not.toHaveBeenCalled();
+    expect(publish).toHaveBeenCalledWith(
+      run.uuid,
+      expect.objectContaining({
+        type: 'run.worktree_hydration_failed',
+        level: 'error',
+      }),
+    );
+  });
+
+  it('re-materializes missing worktree artifacts from durable store on resume', async () => {
+    const artifacts = new FakeArtifactStore();
+    const run = makeRun({
+      completedPhases: ['read_issue'],
+    });
+
+    const planPath = 'plan.md';
+    const planContent = '# Plan\n';
+
+    // 1. Write to durable store (which also mirrors to worktree in FakeArtifactStore by default)
+    await artifacts.write({
+      runId: run.uuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue.md',
+      contents: '# Issue\n',
+    });
+    await artifacts.write({
+      runId: run.uuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue-comments.md',
+      contents: '[]\n',
+    });
+    // plan.md exists durably
+    await artifacts.write({
+      runId: run.uuid,
+      phaseId: 'plan-write',
+      relativePath: planPath,
+      contents: planContent,
+    });
+
+    // 2. Simulate worktree wipe (e.g. CancelRun)
+    artifacts.deleteFromWorktree(run.uuid, planPath);
+    expect(artifacts.existsInWorktree(run.uuid, planPath)).toBe(false);
+
+    const registry = new PhaseHandlerRegistry();
+    registerPassThroughHandlers(registry, vi.fn());
+
+    const deps = makeDeps({
+      registry,
+      contextFactory: (_run) =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          artifacts,
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const executor = new RunExecutor(deps);
+    // 3. Resume run
+    await executor.execute({
+      run,
+      skip: [makePhaseName('plan-review'), makePhaseName('compound')],
+      presentArtifacts: [],
+    });
+
+    // 4. Verify hydration re-materialized the file
+    expect(artifacts.existsInWorktree(run.uuid, planPath)).toBe(true);
+    expect(await artifacts.read(run.uuid, planPath)).toBe(planContent);
   });
 });
