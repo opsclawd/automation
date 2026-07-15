@@ -6158,14 +6158,52 @@ export function composeRoot(opts: ComposeOptions): Container {
   function buildRepositorySweepCoordinator(): RepositorySweepCoordinator {
     return {
       async execute(workerId: import('@ai-sdlc/domain').WorkerId) {
-        const results: RepositorySweepResult[] = [];
-        const enabled = await runtimeCatalog.resolveEnabled();
+        const allOperational = await runtimeCatalog.resolveAllOperational();
 
-        for (const { repository, runtime } of enabled) {
+        const sweepOne = async ({
+          repository,
+          runtime,
+          error,
+        }: {
+          repository: import('@ai-sdlc/domain').Repository;
+          runtime?: import('./repository-runtime-factory.js').RepositoryOperationalRuntime;
+          error?: import('./repository-runtime-factory.js').RepositoryResolutionError;
+        }): Promise<RepositorySweepResult> => {
           const entry: RepositorySweepResult = {
             repositoryId: String(repository.id),
             fullName: repository.fullName,
           };
+
+          if (error || !runtime) {
+            entry.error =
+              error?.message ??
+              (runtime ? 'resolution error occurred' : 'no operational runtime available');
+            sweepLogger.error(
+              `RepositorySweepCoordinator: cannot sweep ${repository.fullName}: ${entry.error}`,
+            );
+            return entry;
+          }
+
+          if (!repository.enabled) {
+            entry.waiting = {
+              scanned: 0,
+              reactivated: 0,
+              reactivatedRuns: [],
+              timedOut: 0,
+              passedOnMergedPr: 0,
+              cancelledOnClosedPr: 0,
+              stayedReady: 0,
+              skipped: 0,
+              errors: [],
+              enqueued: 0,
+              skippedLeaseConflict: 0,
+              enqueueErrors: [],
+            };
+            sweepLogger.debug(
+              `RepositorySweepCoordinator: skipping disabled repository ${repository.fullName}`,
+            );
+            return entry;
+          }
 
           try {
             const resolvePrContextForRuntime = async (
@@ -6197,10 +6235,6 @@ export function composeRoot(opts: ComposeOptions): Container {
                   run: RunRecord,
                   decision: { action: string; reason: string },
                 ) => {
-                  // Mirrors the root-scoped sweeper's finalization-vs-reactivation
-                  // split so a per-runtime sweep applies the same semantics: only
-                  // a genuine reactivation is deferred to the worker loop, while
-                  // merge/close finalization applies immediately.
                   const isFinalization =
                     decision.action === 'reactivate' &&
                     (decision.reason.includes('PR merged') ||
@@ -6248,10 +6282,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             );
           }
 
-          results.push(entry);
-        }
+          return entry;
+        };
 
-        return { results };
+        const settled = await Promise.all(allOperational.map((op) => sweepOne(op)));
+
+        return { results: settled };
       },
     };
   }

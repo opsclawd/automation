@@ -1077,19 +1077,43 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         const abortController = new AbortController();
         const serveSweepWorkerId = WorkerId(`serve-sweep-${process.pid}`);
 
+        let sweepTimer: { stop: () => void } | undefined;
+        let isShuttingDown = false;
+
+        const sweepCoordinator = c.buildRepositorySweepCoordinator();
+
+        try {
+          const initialResult = await sweepCoordinator.execute(serveSweepWorkerId);
+          for (const repoResult of initialResult.results) {
+            if (repoResult.error) {
+              console.error(`Initial sweep error for ${repoResult.fullName}: ${repoResult.error}`);
+            }
+            if (repoResult.orphaned) {
+              const o = repoResult.orphaned;
+              if (o.enqueued > 0 || o.skippedLeaseConflict > 0 || o.enqueueErrors.length > 0) {
+                console.error(
+                  `Orphan recovery: ${o.enqueued} enqueued, ${o.skippedLeaseConflict} skipped (lease), ${o.enqueueErrors.length} errors`,
+                );
+              }
+            }
+            if (repoResult.waiting) {
+              const w = repoResult.waiting;
+              if (w.reactivated > 0 || w.errors.length > 0 || w.enqueueErrors.length > 0) {
+                console.error(
+                  `Reactivation sweep: ${w.reactivated} reactivated, ${w.errors.length} errors, ${w.enqueueErrors.length} enqueue errors`,
+                );
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Initial sweep error:', err instanceof Error ? err.message : String(err));
+        }
+
         scheduler.run(abortController.signal).catch((err) => {
           console.error('Scheduler run error:', err instanceof Error ? err.message : String(err));
         });
 
-        let sweepTimer: { stop: () => void } | undefined;
-        let isShuttingDown = false;
         if (scheduler) {
-          const sweepCoordinator = c.buildRepositorySweepCoordinator();
-
-          void sweepCoordinator.execute(serveSweepWorkerId)?.catch((err) => {
-            console.error('Initial sweep error:', err);
-          });
-
           if (c.serveSweepIntervalSeconds > 0 && !isShuttingDown) {
             const MIN_SWEEP_INTERVAL_MS = 30_000;
             const intervalMs = Math.max(c.serveSweepIntervalSeconds * 1000, MIN_SWEEP_INTERVAL_MS);

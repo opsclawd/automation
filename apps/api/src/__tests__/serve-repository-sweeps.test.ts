@@ -147,11 +147,80 @@ describe('buildRepositorySweepCoordinator (#652 Task 6)', () => {
     const coordinator = c.buildRepositorySweepCoordinator();
     const result = await coordinator.execute(WorkerId('sweep-worker'));
 
-    // repo B is skipped by resolveEnabled() (unresolvable) and simply absent
-    // from the results, while repo A still gets a full, successful sweep.
-    expect(result.results.some((r) => r.repositoryId === String(repoB.id))).toBe(false);
+    // resolveAllOperational returns an entry for every registered repository,
+    // even when resolution fails. repo B appears with an error while repo A
+    // still gets a full, successful sweep.
+    const entryB = result.results.find((r) => r.repositoryId === String(repoB.id));
+    expect(entryB).toBeDefined();
+    expect(entryB?.error).toBeDefined();
     const entryA = result.results.find((r) => r.repositoryId === String(repoA.id));
     expect(entryA?.orphaned?.enqueued).toBe(1);
     expect(entryA?.error).toBeUndefined();
+  });
+
+  it('repository_recovery_failures_are_isolated: one repository sweep failure does not suppress other repositories', async () => {
+    const c = buildContainer();
+    const repoA = c.registerRepository.execute({ localPath: tmpRepoDir('a') });
+    const repoB = c.registerRepository.execute({ localPath: tmpRepoDir('b') });
+
+    const orphanUuid = '66666666-6666-6666-6666-666666666666';
+    const runtimeA = await c.runtimeCatalog.resolve(repoA.id, { allowDisabled: true });
+    runtimeA.runRepository.insert(makeRun(orphanUuid, repoA.id), 424242);
+    // repo B has a valid runtime but no orphaned runs
+
+    const coordinator = c.buildRepositorySweepCoordinator();
+    const result = await coordinator.execute(WorkerId('sweep-worker'));
+
+    // Both repos appear in results
+    expect(result.results).toHaveLength(2);
+    const entryA = result.results.find((r) => r.repositoryId === String(repoA.id));
+    const entryB = result.results.find((r) => r.repositoryId === String(repoB.id));
+    expect(entryA).toBeDefined();
+    expect(entryB).toBeDefined();
+    // repo A recovered successfully
+    expect(entryA?.orphaned?.enqueued).toBe(1);
+    expect(entryA?.error).toBeUndefined();
+    // repo B scanned zero runs but had no failure
+    expect(entryB?.orphaned?.scanned).toBe(0);
+    expect(entryB?.error).toBeUndefined();
+  });
+
+  it('resolveAllOperational_includes_disabled_repository: disabled repo appears in results but does not reactivate waiting work', async () => {
+    const c = buildContainer();
+    const repoA = c.registerRepository.execute({ localPath: tmpRepoDir('a') });
+    const repoB = c.registerRepository.execute({ localPath: tmpRepoDir('b') });
+
+    const runtimeA = await c.runtimeCatalog.resolve(repoA.id, { allowDisabled: true });
+    await c.runtimeCatalog.resolve(repoB.id, { allowDisabled: true });
+
+    // Add a waiting run to both repos
+    const waitingUuidA = 'aaaaaaa1-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    runtimeA.runRepository.insert(
+      makeRun(waitingUuidA, repoA.id, { status: 'waiting', completedAt: new Date() }),
+    );
+    const waitingUuidB = 'aaaaaaa2-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    const runtimeB = await c.runtimeCatalog.resolve(repoB.id, { allowDisabled: true });
+    runtimeB.runRepository.insert(
+      makeRun(waitingUuidB, repoB.id, { status: 'waiting', completedAt: new Date() }),
+    );
+
+    // Disable repo B
+    c.disableRepository.execute(repoB.id);
+
+    const coordinator = c.buildRepositorySweepCoordinator();
+    const result = await coordinator.execute(WorkerId('sweep-worker'));
+
+    // Both repos appear in results
+    expect(result.results).toHaveLength(2);
+    const entryA = result.results.find((r) => r.repositoryId === String(repoA.id));
+    const entryB = result.results.find((r) => r.repositoryId === String(repoB.id));
+    expect(entryA).toBeDefined();
+    expect(entryB).toBeDefined();
+    // repo A (enabled) scanned its waiting run
+    expect(entryA?.waiting?.scanned).toBe(1);
+    expect(entryA?.error).toBeUndefined();
+    // repo B (disabled) appears but did not reactivate waiting work
+    expect(entryB?.waiting?.scanned).toBe(0);
+    expect(entryB?.error).toBeUndefined();
   });
 });
