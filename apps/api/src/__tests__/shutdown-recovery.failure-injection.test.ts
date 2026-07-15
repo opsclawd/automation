@@ -245,6 +245,7 @@ describe('shutdown-recovery.failure-injection', () => {
       await child.ready;
 
       child.kill('SIGTERM');
+      await child.exit;
 
       const db = openDatabase(dbPath);
       const leaseRow = db.prepare('SELECT * FROM worker_leases WHERE repo_id = ?').get(repoId) as
