@@ -29,6 +29,7 @@ export interface RunValidationInputUC {
   commands: string[];
   timeoutSeconds: number;
   logPathPrefix?: string;
+  env?: Record<string, string>;
 }
 
 export interface RunValidationOutput {
@@ -69,6 +70,7 @@ export class RunValidation {
       timeoutSeconds: input.timeoutSeconds,
       logDir: input.logDir,
       ...(input.logPathPrefix ? { logPathPrefix: input.logPathPrefix } : {}),
+      ...(input.env ? { env: input.env } : {}),
     });
 
     const commands: ValidationCommandRecord[] = results.map((r) => ({
