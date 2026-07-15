@@ -1067,11 +1067,6 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         if (opts.runsDir) composeOpts.runsDir = opts.runsDir;
         if (targetRepoRoot !== undefined) composeOpts.targetRepoRoot = targetRepoRoot;
         const c = composeRoot(composeOpts);
-        const { startServer } = await import('./server.js');
-        const server = await startServer({ container: c, port: opts.port });
-        const addr = server.address as { port: number };
-        console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
-        const testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
 
         const scheduler = getOrCreateScheduler(c, 'serve', {}, buildOpts);
         const abortController = new AbortController();
@@ -1108,6 +1103,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         } catch (err) {
           console.error('Initial sweep error:', err instanceof Error ? err.message : String(err));
         }
+
+        const { startServer } = await import('./server.js');
+        const server = await startServer({ container: c, port: opts.port });
+        const addr = server.address as { port: number };
+        console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
+        const testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
 
         scheduler.run(abortController.signal).catch((err) => {
           console.error('Scheduler run error:', err instanceof Error ? err.message : String(err));
