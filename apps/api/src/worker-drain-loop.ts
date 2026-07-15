@@ -2,9 +2,10 @@ import {
   workerLoop,
   type WorkerLoopDeps,
   RepositoryRecoveryCoordinator,
+  type RepositoryRecoveryAction,
 } from '@ai-sdlc/application';
-import type { WorkerId } from '@ai-sdlc/domain';
-import { generateJobOwnership } from '@ai-sdlc/domain';
+import type { WorkerId, RunId } from '@ai-sdlc/domain';
+import { generateJobOwnership, reactivate } from '@ai-sdlc/domain';
 
 const DEFAULT_DRAIN_INTERVAL_MS = 5_000;
 
@@ -36,6 +37,11 @@ export function startWorkerDrainLoop(
         ...(deps.operationalRecovery !== undefined
           ? { operationalRecovery: deps.operationalRecovery }
           : {}),
+        ...(deps.getWorktreePath !== undefined ? { getWorktreePath: deps.getWorktreePath } : {}),
+        ...(deps.getQuarantineRoot !== undefined
+          ? { getQuarantineRoot: deps.getQuarantineRoot }
+          : {}),
+        ...(deps.listRunsForRepo !== undefined ? { listRunsForRepo: deps.listRunsForRepo } : {}),
         onOrphan: ({ runId }) => {
           const jobs = deps.queue.listForRun(runId);
           for (const job of jobs) {
@@ -50,12 +56,45 @@ export function startWorkerDrainLoop(
             }
           }
         },
-        onWaitingReactivation: () => {},
+        onWaitingReactivation: ({ repoId, runId }) => {
+          const run = deps.findRun(runId as RunId);
+          if (!run) return;
+          if (run.status !== 'waiting') return;
+          const next = reactivate(run);
+          if ('update' in deps.repos && typeof deps.repos.update === 'function') {
+            try {
+              (deps.repos as { update(id: string, patch: { status: string }): void }).update(
+                String(repoId),
+                { status: next.status },
+              );
+            } catch {
+              /* ignore */
+            }
+          }
+        },
       });
       const enabledRepos = deps.repos.listEnabled();
       for (const repo of enabledRepos) {
         try {
-          await coordinator.execute({ repoId: repo.id });
+          const action: RepositoryRecoveryAction = await coordinator.execute({ repoId: repo.id });
+          if (action.action === 'requeue') {
+            const jobs = deps.queue.listForRepo(repo.id);
+            for (const job of jobs) {
+              if (
+                job.status === 'claimed' &&
+                job.claimExpiresAt &&
+                job.claimExpiresAt.getTime() < deps.now().getTime()
+              ) {
+                if (job.claimedBy && job.claimToken) {
+                  try {
+                    deps.queue.resetToQueued(generateJobOwnership(job, job.claimedBy));
+                  } catch {
+                    /* ignore */
+                  }
+                }
+              }
+            }
+          }
         } catch {
           /* ignore - one repo recovery failure should not block others */
         }

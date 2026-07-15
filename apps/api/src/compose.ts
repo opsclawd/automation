@@ -5673,6 +5673,24 @@ export function composeRoot(opts: ComposeOptions): Container {
           findRun: (runId) => runRepository.findByUuid(runId) ?? undefined,
           now: () => new Date(),
           ttlMs: DEFAULT_LEASE_TTL_MS,
+          getWorktreePath: (repoId: RepositoryId) => {
+            const lease = workerLeaseRepository.current(repoId);
+            if (!lease) return '';
+            const r = runRepository.findByUuid(lease.runId);
+            if (!r) return '';
+            const repo = registryBackedRepo.findById(repoId);
+            const repoRootPath = repo ? repo.localBasePath : targetRoot;
+            return join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
+          },
+          getQuarantineRoot: (repoId: RepositoryId) => {
+            const repo = registryBackedRepo.findById(repoId);
+            const repoRootPath = repo ? repo.localBasePath : targetRoot;
+            return join(repoRootPath, '.ai-quarantine');
+          },
+          listRunsForRepo: (repoId: RepositoryId) => {
+            const result = runRepository.list({ repositoryId: repoId });
+            return result.runs as unknown as import('@ai-sdlc/domain').Run[];
+          },
         })
       : undefined;
 

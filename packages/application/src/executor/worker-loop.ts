@@ -42,6 +42,9 @@ export interface WorkerLoopDeps {
   registryWorkerHostname?(workerId: WorkerId, repoId: RepositoryId): string | undefined;
   worktreeRecovery?: import('../ports/worktree-recovery-port.js').WorktreeRecoveryPort;
   operationalRecovery?: import('../ports/operational-recovery-port.js').OperationalRecoveryPort;
+  getWorktreePath?(repoId: RepositoryId): string;
+  getQuarantineRoot?(repoId: RepositoryId): string;
+  listRunsForRepo?(repoId: RepositoryId): Run[];
 }
 
 function isRunnable(status: string): boolean {
