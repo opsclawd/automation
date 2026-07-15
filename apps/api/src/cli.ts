@@ -1048,6 +1048,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         if (scheduler) {
           const sweepCoordinator = c.buildRepositorySweepCoordinator();
 
+          void sweepCoordinator.execute(serveSweepWorkerId)?.catch((err) => {
+            console.error('Initial sweep error:', err);
+          });
+
           if (c.serveSweepIntervalSeconds > 0 && !isShuttingDown) {
             const MIN_SWEEP_INTERVAL_MS = 30_000;
             const intervalMs = Math.max(c.serveSweepIntervalSeconds * 1000, MIN_SWEEP_INTERVAL_MS);
