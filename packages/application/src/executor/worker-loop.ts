@@ -317,7 +317,11 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
 
     if (job.repoId !== deps.repoId) {
       if (job.claimToken) {
-        queue.releaseClaim(generateJobOwnership(job, workerId));
+        try {
+          queue.releaseClaim(generateJobOwnership(job, workerId));
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
       }
       skippedJobIds.add(job.id);
       continue;
@@ -326,7 +330,11 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
     const repo = deps.repos.findById(deps.repoId);
     if (!repo || !repo.enabled) {
       if (job.claimToken) {
-        queue.releaseClaim(generateJobOwnership(job, workerId));
+        try {
+          queue.releaseClaim(generateJobOwnership(job, workerId));
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
       }
       return;
     }
