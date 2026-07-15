@@ -1,5 +1,5 @@
 import { access, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type {
   WorktreeRecoveryPort,
   PrepareWorktreeRecoveryInput,
@@ -61,14 +61,12 @@ export class WorktreeRecoveryAdapter implements WorktreeRecoveryPort {
     worktreePath: string,
     quarantineRoot: string,
   ): Promise<string> {
-    const worktreeName = worktreePath.split('/').pop() ?? worktreePath;
+    const worktreeName = basename(worktreePath) || worktreePath;
     return join(quarantineRoot, `${repoId}/${runId}/${worktreeName}`);
   }
 
   private async _moveToQuarantine(from: string, to: string): Promise<void> {
     await mkdir(dirname(to), { recursive: true });
-    const gitCommonDir = await git(from, ['rev-parse', '--git-common-dir']);
-    const baseRepoPath = dirname(gitCommonDir);
-    await git(baseRepoPath, ['worktree', 'move', from, to]);
+    await git(from, ['worktree', 'move', from, to]);
   }
 }
