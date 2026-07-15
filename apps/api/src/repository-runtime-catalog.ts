@@ -2,12 +2,15 @@ import type { RepositoryId, RunId, Repository } from '@ai-sdlc/domain';
 import type { RunRecord, ListRunsFilter } from '@ai-sdlc/application/ports';
 import { loadLayeredConfig } from '@ai-sdlc/shared';
 import type { LoadedConfig } from '@ai-sdlc/shared';
+import { stat } from 'node:fs/promises';
 import {
   RepositoryRuntimeFactory,
-  RepositoryRuntime,
+  RepositoryExecutionRuntime,
+  RepositoryOperationalRuntime,
   RepositoryResolutionError,
 } from './repository-runtime-factory.js';
 import type { Db } from '@ai-sdlc/infrastructure';
+import { composeRepositoryOperationalRuntime } from './compose-repository-operational-runtime.js';
 import { composeRepositoryRuntime } from './compose-repository-runtime.js';
 
 export interface RepositoryRuntimeCatalogOptions {
@@ -21,46 +24,67 @@ export interface RepositoryRuntimeCatalogOptions {
     listAll(): Array<Repository>;
     listEnabled(): Array<Repository>;
   };
-  /**
-   * Optional — defaults to a no-op. resolveEnabled() and listRuns() skip any
-   * repository whose runtime fails to resolve (so one broken repository
-   * doesn't block aggregate reads across the rest); without a logger that
-   * skip is completely silent, with no trace of which repository or why.
-   */
   logger?: {
     error(message: string, ...args: unknown[]): void;
   };
 }
 
+export interface RepositoryOperationalResolution {
+  repository: Repository;
+  runtime?: RepositoryOperationalRuntime;
+  error?: RepositoryResolutionError;
+}
+
 export interface RepositoryRuntimeCatalog {
+  resolveOperational(repositoryId: RepositoryId): Promise<RepositoryOperationalRuntime>;
   resolve(
     repositoryId: RepositoryId,
     options?: { allowDisabled?: boolean },
-  ): Promise<RepositoryRuntime>;
-  resolveEnabled(): Promise<Array<{ repository: Repository; runtime: RepositoryRuntime }>>;
+  ): Promise<RepositoryExecutionRuntime>;
+  resolveExecution(
+    repositoryId: RepositoryId,
+    options?: { allowDisabled?: boolean },
+  ): Promise<RepositoryExecutionRuntime>;
+  resolveAllOperational(): Promise<RepositoryOperationalResolution[]>;
   findRun(
     runId: RunId,
     repositoryId?: RepositoryId,
-  ): Promise<{ runtime: RepositoryRuntime; run: RunRecord } | undefined>;
+  ): Promise<{ runtime: RepositoryExecutionRuntime; run: RunRecord } | undefined>;
   listRuns(filter: ListRunsFilter): Promise<{ runs: RunRecord[]; total: number }>;
   close(): Promise<void>;
 }
 
-interface RuntimeEntry {
-  runtime: RepositoryRuntime;
+interface OperationalRuntimeEntry {
+  runtime: RepositoryOperationalRuntime;
+}
+
+interface ExecutionRuntimeEntry {
+  runtime: RepositoryExecutionRuntime;
   loadedConfig: LoadedConfig;
 }
 
 export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog {
   private readonly factory: RepositoryRuntimeFactory;
-  private readonly cache = new Map<string, RuntimeEntry>();
+  private readonly operationalCache = new Map<string, OperationalRuntimeEntry>();
+  private readonly executionCache = new Map<string, ExecutionRuntimeEntry>();
   private readonly opts: RepositoryRuntimeCatalogOptions;
 
   constructor(opts: RepositoryRuntimeCatalogOptions) {
     this.opts = opts;
     this.factory = new RepositoryRuntimeFactory({
       stateRoot: opts.stateRoot,
-      buildRuntime: async ({ repository, paths, loadedConfig }) => {
+      buildOperationalRuntime: async ({ repository, paths }) => {
+        return composeRepositoryOperationalRuntime({
+          automationRoot: opts.automationRoot,
+          stateRoot: opts.stateRoot,
+          repository,
+          paths,
+          controlPlaneDb: opts.controlPlaneDb,
+          listEnabledRepositories: () =>
+            opts.registry.listEnabled().map((r) => ({ id: r.id, fullName: r.fullName })),
+        });
+      },
+      buildExecutionRuntime: async ({ repository, paths, loadedConfig }) => {
         return composeRepositoryRuntime({
           automationRoot: opts.automationRoot,
           stateRoot: opts.stateRoot,
@@ -75,10 +99,32 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
     });
   }
 
-  async resolve(
+  async resolveOperational(repositoryId: RepositoryId): Promise<RepositoryOperationalRuntime> {
+    const repo = this.opts.registry.findById(repositoryId);
+    if (!repo) {
+      throw new RepositoryResolutionError(
+        repositoryId,
+        'unknown',
+        `Repository ${repositoryId} not found`,
+      );
+    }
+
+    const existingEntry = this.operationalCache.get(String(repo.id));
+    if (existingEntry) {
+      return existingEntry.runtime;
+    }
+
+    const runtime = await this.factory.getOperationalRuntime(repo);
+    this.operationalCache.set(String(repo.id), { runtime });
+    return runtime;
+  }
+
+  resolve = this.resolveExecution;
+
+  async resolveExecution(
     repositoryId: RepositoryId,
     options?: { allowDisabled?: boolean },
-  ): Promise<RepositoryRuntime> {
+  ): Promise<RepositoryExecutionRuntime> {
     const repo = this.opts.registry.findById(repositoryId);
     if (!repo) {
       throw new RepositoryResolutionError(
@@ -120,6 +166,16 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
       );
     }
 
+    try {
+      await stat(repo.localBasePath);
+    } catch {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'unreachable',
+        `Repository ${repo.fullName} checkout is not available at ${repo.localBasePath}`,
+      );
+    }
+
     const layered = loadLayeredConfig({
       automationRoot: this.opts.automationRoot,
       targetRoot: repo.localBasePath,
@@ -130,27 +186,32 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
       layered,
       options?.allowDisabled !== undefined ? { allowDisabled: options.allowDisabled } : {},
     );
-    this.cache.set(String(repo.id), { runtime, loadedConfig: layered });
+    this.executionCache.set(String(repo.id), { runtime, loadedConfig: layered });
     return runtime;
   }
 
-  async resolveEnabled(): Promise<Array<{ repository: Repository; runtime: RepositoryRuntime }>> {
-    const results: Array<{ repository: Repository; runtime: RepositoryRuntime }> = [];
-    const enabledRepos = this.opts.registry.listEnabled();
+  async resolveAllOperational(): Promise<RepositoryOperationalResolution[]> {
+    const allRepos = this.opts.registry.listAll();
+    const results: RepositoryOperationalResolution[] = [];
 
     await Promise.all(
-      enabledRepos.map(async (repo) => {
+      allRepos.map(async (repo) => {
         try {
-          const runtime = await this.resolve(repo.id, { allowDisabled: false });
+          const runtime = await this.resolveOperational(repo.id);
           results.push({ repository: repo, runtime });
         } catch (err) {
-          // Skip repos that fail to resolve — logged so a repository silently
-          // dropping out of aggregate reads (e.g. GET /api/runs) is
-          // diagnosable instead of just appearing as missing data.
-          this.opts.logger?.error(
-            `RepositoryRuntimeCatalog.resolveEnabled: failed to resolve runtime for ${repo.id}`,
-            err,
-          );
+          if (err instanceof RepositoryResolutionError) {
+            results.push({ repository: repo, error: err });
+          } else {
+            results.push({
+              repository: repo,
+              error: new RepositoryResolutionError(
+                repo.id,
+                'unknown',
+                `Failed to resolve operational runtime: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            });
+          }
         }
       }),
     );
@@ -161,10 +222,10 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
   async findRun(
     runId: RunId,
     repositoryId?: RepositoryId,
-  ): Promise<{ runtime: RepositoryRuntime; run: RunRecord } | undefined> {
+  ): Promise<{ runtime: RepositoryExecutionRuntime; run: RunRecord } | undefined> {
     if (repositoryId) {
       try {
-        const runtime = await this.resolve(repositoryId, { allowDisabled: true });
+        const runtime = await this.resolveExecution(repositoryId, { allowDisabled: true });
         const run = runtime.runRepository.findByUuid(String(runId));
         if (run) {
           return { runtime, run };
@@ -183,29 +244,47 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
       }
     }
 
-    const allRepos = this.opts.registry.listAll();
-    for (const repo of allRepos) {
-      const repoIdStr = String(repo.id);
-      const existingEntry = this.cache.get(repoIdStr);
-      if (existingEntry) {
-        const run = existingEntry.runtime.runRepository.findByUuid(String(runId));
-        if (run) {
-          return { runtime: existingEntry.runtime, run };
-        }
+    for (const entry of this.executionCache.values()) {
+      const run = entry.runtime.runRepository.findByUuid(String(runId));
+      if (run) {
+        return { runtime: entry.runtime, run };
       }
     }
 
     return undefined;
   }
 
+  async resolveEnabled(): Promise<
+    Array<{ repository: Repository; runtime: RepositoryExecutionRuntime }>
+  > {
+    const results: Array<{ repository: Repository; runtime: RepositoryExecutionRuntime }> = [];
+    const enabledRepos = this.opts.registry.listEnabled();
+
+    await Promise.all(
+      enabledRepos.map(async (repo) => {
+        try {
+          const runtime = await this.resolveExecution(repo.id, { allowDisabled: false });
+          results.push({ repository: repo, runtime });
+        } catch (err) {
+          this.opts.logger?.error(
+            `DefaultRepositoryRuntimeCatalog.resolveEnabled: failed to resolve runtime for ${repo.id}`,
+            err,
+          );
+        }
+      }),
+    );
+
+    return results;
+  }
+
   async listRuns(filter: ListRunsFilter): Promise<{ runs: RunRecord[]; total: number }> {
     if (filter.repositoryId) {
       try {
-        const runtime = await this.resolve(filter.repositoryId, { allowDisabled: true });
+        const runtime = await this.resolveExecution(filter.repositoryId, { allowDisabled: true });
         return runtime.runRepository.list(filter);
       } catch (err) {
         this.opts.logger?.error(
-          `RepositoryRuntimeCatalog.listRuns: failed to resolve runtime for explicit repositoryId ${filter.repositoryId}`,
+          `DefaultRepositoryRuntimeCatalog.listRuns: failed to resolve runtime for explicit repositoryId ${filter.repositoryId}`,
           err,
         );
         return { runs: [], total: 0 };
@@ -218,27 +297,6 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
     for (const { runtime } of enabled) {
       const result = runtime.runRepository.list(filter);
       allResults.push(result);
-    }
-
-    const disabledRepos = this.opts.registry.listAll().filter((r) => !r.enabled);
-    const disabledResults = await Promise.all(
-      disabledRepos.map(async (repo) => {
-        try {
-          const runtime = await this.resolve(repo.id, { allowDisabled: true });
-          return runtime.runRepository.list(filter);
-        } catch (err) {
-          this.opts.logger?.error(
-            `RepositoryRuntimeCatalog.listRuns: failed to resolve disabled repository runtime for ${repo.id}`,
-            err,
-          );
-          return null;
-        }
-      }),
-    );
-    for (const result of disabledResults) {
-      if (result) {
-        allResults.push(result);
-      }
     }
 
     const allRuns: RunRecord[] = [];
@@ -259,13 +317,21 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
 
   async close(): Promise<void> {
     this.factory.close();
-    for (const entry of this.cache.values()) {
+    for (const entry of this.operationalCache.values()) {
       try {
         entry.runtime.close();
       } catch {
         // Best-effort close
       }
     }
-    this.cache.clear();
+    for (const entry of this.executionCache.values()) {
+      try {
+        entry.runtime.close();
+      } catch {
+        // Best-effort close
+      }
+    }
+    this.operationalCache.clear();
+    this.executionCache.clear();
   }
 }
