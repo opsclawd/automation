@@ -5,6 +5,7 @@ import type {
   LoggerPort,
 } from '@ai-sdlc/application/ports';
 import type { Repository, RepositoryId, WorkerId, RunId, Worker } from '@ai-sdlc/domain';
+import { LeaseOwnershipLostError } from '@ai-sdlc/domain';
 import type { RepositoryRuntime } from './repository-runtime-factory.js';
 
 export interface RepositorySchedulerAdapterDeps {
@@ -201,11 +202,15 @@ async function defaultWorkerLoop(
   try {
     jobQueue.markRunning(job.id, now);
   } finally {
-    workerLeaseRepository.release({
-      repoId: job.repoId,
-      workerId: input.workerId,
-      runId,
-      leaseToken: acquiredLease.leaseToken,
-    });
+    try {
+      workerLeaseRepository.release({
+        repoId: job.repoId,
+        workerId: input.workerId,
+        runId,
+        leaseToken: acquiredLease.leaseToken,
+      });
+    } catch (err) {
+      if (!(err instanceof LeaseOwnershipLostError)) throw err;
+    }
   }
 }

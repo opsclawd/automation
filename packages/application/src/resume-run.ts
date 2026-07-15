@@ -1,4 +1,10 @@
-import { canResume, resumeRun, createJob, WorkerLeaseConflictError } from '@ai-sdlc/domain';
+import {
+  canResume,
+  resumeRun,
+  createJob,
+  WorkerLeaseConflictError,
+  LeaseOwnershipLostError,
+} from '@ai-sdlc/domain';
 import { IssueNumber } from '@ai-sdlc/domain';
 import type { RunId, WorkerId, JobId, Step, Phase, RunStatus } from '@ai-sdlc/domain';
 import type {
@@ -251,12 +257,16 @@ export class ResumeRun implements ResumeRunUseCase {
       return { jobId: job.id, jobStatus: job.status as 'queued' };
     } catch (err) {
       if (leaseAcquired && acquiredLease) {
-        this.deps.leases.release({
-          repoId: repo.id,
-          workerId: input.workerId,
-          runId: input.runId,
-          leaseToken: acquiredLease.leaseToken,
-        });
+        try {
+          this.deps.leases.release({
+            repoId: repo.id,
+            workerId: input.workerId,
+            runId: input.runId,
+            leaseToken: acquiredLease.leaseToken,
+          });
+        } catch (leaseErr) {
+          if (!(leaseErr instanceof LeaseOwnershipLostError)) throw leaseErr;
+        }
       }
       throw err;
     }

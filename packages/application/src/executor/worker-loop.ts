@@ -5,7 +5,7 @@ import type {
   WorkerLeasePort,
   RepositoryPort,
 } from '../ports.js';
-import { WorkerLeaseConflictError } from '@ai-sdlc/domain';
+import { WorkerLeaseConflictError, LeaseOwnershipLostError } from '@ai-sdlc/domain';
 
 export interface WorkerLoopDeps {
   registry: WorkerRegistryPort;
@@ -214,12 +214,16 @@ export async function runClaimedJob(
     return 'settled';
   } finally {
     if (acquired && acquiredLease) {
-      leases.release({
-        repoId: job.repoId,
-        workerId,
-        runId: job.runId,
-        leaseToken: acquiredLease.leaseToken,
-      });
+      try {
+        leases.release({
+          repoId: job.repoId,
+          workerId,
+          runId: job.runId,
+          leaseToken: acquiredLease.leaseToken,
+        });
+      } catch (err) {
+        if (!(err instanceof LeaseOwnershipLostError)) throw err;
+      }
     }
     const afterRelease = registry.findById(workerId, deps.repoId);
     if (afterRelease && isRunnable(afterRelease.status)) {
