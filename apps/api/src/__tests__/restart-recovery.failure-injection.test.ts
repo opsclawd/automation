@@ -1,166 +1,23 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '@ai-sdlc/infrastructure';
 import { RepositoryId, WorkerId, RunId, JobId } from '@ai-sdlc/domain';
-import { RepositoryRecoveryCoordinator } from '@ai-sdlc/application';
-import { generateJobOwnership } from '@ai-sdlc/domain';
+import {
+  spawnRecoveryChild,
+  trackDir,
+  cleanupTempDirs,
+  runRecovery,
+} from './helpers/recovery-test-helpers';
 
 vi.setConfig({ testTimeout: 30_000 });
-
-interface RecoveryChildResult {
-  dbPath: string;
-  pid: number;
-  ready: Promise<void>;
-  kill: (signal: string) => void;
-  exit: Promise<number | null>;
-}
-
-function spawnRecoveryChild(
-  dbPath: string,
-  repoId: string,
-  workerId: string,
-  runId: string,
-  cooperative: boolean,
-): RecoveryChildResult {
-  const helpersDir = join(__dirname, 'helpers');
-  const child = spawn(
-    'node',
-    [
-      '--import',
-      'tsx/esm',
-      join(helpersDir, 'recovery-worker-child.ts'),
-      dbPath,
-      repoId,
-      workerId,
-      runId,
-      String(cooperative),
-    ],
-    {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, NODE_NO_WARNINGS: '1' },
-    },
-  );
-
-  let readyResolve: () => void;
-  const ready = new Promise<void>((resolve) => {
-    readyResolve = resolve;
-  });
-
-  child.stdout?.on('data', (chunk: Buffer) => {
-    const text = chunk.toString('utf8');
-    if (text.includes('READY')) {
-      readyResolve();
-    }
-  });
-
-  return {
-    dbPath,
-    pid: child.pid!,
-    ready,
-    kill: (signal: string) => child.kill(signal),
-    exit: new Promise((resolve) => child.on('exit', (code) => resolve(code))),
-  };
-}
-
-const tempDirs: string[] = [];
-
-function trackDir<T>(fn: () => T): T {
-  const result = fn();
-  tempDirs.push(result);
-  return result;
-}
-
-async function runRecovery(
-  repoId: RepositoryId,
-  db: ReturnType<typeof openDatabase>,
-  now: Date,
-  isWorkerAlive: (workerId: WorkerId) => boolean,
-) {
-  const {
-    WorkerLeaseRepository,
-    WorkerRegistryRepository,
-    JobQueueRepository,
-    RepositoryRegistryRepository,
-  } = await import('@ai-sdlc/infrastructure');
-
-  const leases = new WorkerLeaseRepository(db);
-  const registry = new WorkerRegistryRepository(db);
-  const repos = new RepositoryRegistryRepository(db);
-  const queue = new JobQueueRepository(db, repos);
-
-  const coordinator = new RepositoryRecoveryCoordinator({
-    leases,
-    queue,
-    registry,
-    repos,
-    findRun: (runId) => {
-      const row = db.prepare('SELECT * FROM runs WHERE uuid = ?').get(runId) as
-        | {
-            uuid: string;
-            status: string;
-            display_id: string;
-            repo_id: string;
-            issue_number: number;
-            type: string;
-            current_phase: string | null;
-            completed_phases: string;
-            skipped_phases: string;
-            started_at: string;
-            completed_at: string | null;
-            failure_reason: string | null;
-          }
-        | undefined;
-      if (!row) return undefined;
-      return {
-        uuid: row.uuid,
-        displayId: row.display_id,
-        repoId: RepositoryId(row.repo_id ?? 'unknown'),
-        issueNumber: row.issue_number,
-        type: row.type as 'issue_to_pr' | 'pr_review' | 'consolidate',
-        status: row.status as
-          | 'queued'
-          | 'running'
-          | 'waiting'
-          | 'passed'
-          | 'failed'
-          | 'cancelled'
-          | 'blocked'
-          | 'needs_human_review',
-        currentPhase: row.current_phase ?? undefined,
-        completedPhases: JSON.parse(row.completed_phases),
-        skippedPhases: JSON.parse(row.skipped_phases),
-        startedAt: new Date(row.started_at),
-        completedAt: row.completed_at ? new Date(row.completed_at) : undefined,
-        failureReason: row.failure_reason ?? undefined,
-      };
-    },
-    isWorkerAlive,
-    resetWorktree: () => {},
-    onOrphan: ({ runId }) => {
-      const jobs = queue.listForRun(runId);
-      for (const job of jobs) {
-        if (job.status === 'claimed' || job.status === 'running') {
-          queue.resetToQueued(generateJobOwnership(job, job.claimedBy!));
-        }
-      }
-    },
-    onWaitingReactivation: () => {},
-    now: () => now,
-  });
-
-  return coordinator.execute({ repoId });
-}
 
 describe('restart-recovery.failure-injection', () => {
   describe('SIGKILL restart requeues only persisted repository ownership', () => {
     afterEach(() => {
-      while (tempDirs.length) {
-        const dir = tempDirs.pop();
-        if (dir) rmSync(dir, { recursive: true, force: true });
-      }
+      cleanupTempDirs();
+      vi.useRealTimers();
     });
 
     it('requeues only persisted repository ownership after SIGKILL', async () => {
@@ -231,36 +88,24 @@ describe('restart-recovery.failure-injection', () => {
       await runRecovery(repoId, db, expiredTime, () => false);
 
       const newOwnerId = WorkerId(`new-worker-${Date.now()}`);
-      let error: Error | null = null;
-      try {
-        leaseRepo.acquire({
+      leaseRepo.acquire({
+        repoId,
+        workerId: newOwnerId,
+        runId,
+        now: expiredTime,
+        ttlMs: 60_000,
+      });
+
+      expect(() =>
+        leaseRepo.heartbeat({
           repoId,
-          workerId: newOwnerId,
+          workerId,
           runId,
           now: expiredTime,
-          ttlMs: 60_000,
-        });
-
-        const lateError = () => {
-          try {
-            leaseRepo.heartbeat({
-              repoId,
-              workerId,
-              runId,
-              now: expiredTime,
-              newExpiresAt: new Date(expiredTime.getTime() + 60_000),
-              leaseToken: lease!.leaseToken,
-            });
-          } catch (e) {
-            throw e;
-          }
-        };
-        expect(lateError).toThrow();
-      } catch (e) {
-        error = e as Error;
-      }
-
-      expect(error).toBeNull();
+          newExpiresAt: new Date(expiredTime.getTime() + 60_000),
+          leaseToken: lease!.leaseToken,
+        }),
+      ).toThrow();
 
       db.close();
     });

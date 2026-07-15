@@ -139,22 +139,49 @@ async function main(): Promise<void> {
   const displayId = `issue-1-${runId.slice(-6)}`;
 
   const [owner, name] = repoId.split('/');
-  db.exec(`
+  db.prepare(
+    `
     INSERT INTO repositories (id, full_name, owner, name, local_base_path, default_branch, remote_url, enabled, max_concurrent_runs, config_metadata, health_status, health_error, last_health_check_at, created_at, updated_at)
-    VALUES ('${repoId}', '${repoId}', '${owner}', '${name}', '/tmp/repos/${repoId}', 'main', 'git@github.com:${repoId}.git', 1, 1, '{}', 'healthy', NULL, NULL, '${nowIso}', '${nowIso}');
+    VALUES (?, ?, ?, ?, ?, 'main', ?, 1, 1, '{}', 'healthy', NULL, NULL, ?, ?)
+  `,
+  ).run(
+    repoId,
+    repoId,
+    owner,
+    name,
+    `/tmp/repos/${repoId}`,
+    `git@github.com:${repoId}.git`,
+    nowIso,
+    nowIso,
+  );
 
+  db.prepare(
+    `
     INSERT INTO workers (id, repo_id, hostname, process_id, status, heartbeat_at)
-    VALUES ('${workerId}', '${repoId}', '${host}', ${pid}, 'busy', '${nowIso}');
+    VALUES (?, ?, ?, ?, 'busy', ?)
+  `,
+  ).run(workerId, repoId, host, pid, nowIso);
 
+  db.prepare(
+    `
     INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, skipped_phases, started_at, pid)
-    VALUES ('${runId}', '${displayId}', '${repoId}', 1, 'issue_to_pr', 'running', '[]', '[]', '${nowIso}', ${pid});
+    VALUES (?, ?, ?, 1, 'issue_to_pr', 'running', '[]', '[]', ?, ?)
+  `,
+  ).run(runId, displayId, repoId, nowIso, pid);
 
+  db.prepare(
+    `
     INSERT INTO jobs (id, run_id, repo_id, issue_number, status, priority, attempts, claimed_by, claim_token, created_at, claimed_at, started_at, claim_expires_at)
-    VALUES ('${jobId}', '${runId}', '${repoId}', 1, 'running', 0, 1, '${workerId}', '${claimToken}', '${nowIso}', '${nowIso}', '${nowIso}', '${expiresIso}');
+    VALUES (?, ?, ?, 1, 'running', 0, 1, ?, ?, ?, ?, ?, ?)
+  `,
+  ).run(jobId, runId, repoId, workerId, claimToken, nowIso, nowIso, nowIso, expiresIso);
 
+  db.prepare(
+    `
     INSERT INTO worker_leases (repo_id, worker_id, run_id, acquired_at, heartbeat_at, expires_at, lease_token)
-    VALUES ('${repoId}', '${workerId}', '${runId}', '${nowIso}', '${nowIso}', '${expiresIso}', '${leaseToken}');
-  `);
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+  ).run(repoId, workerId, runId, nowIso, nowIso, expiresIso, leaseToken);
 
   process.stdout.write(READY_MARKER);
 
@@ -169,12 +196,20 @@ async function main(): Promise<void> {
         terminated = true;
         const releaseNow = new Date();
         const releaseNowIso = releaseNow.toISOString();
-        db.exec(`
-          DELETE FROM worker_leases WHERE repo_id = '${repoId}' AND worker_id = '${workerId}' AND lease_token = '${leaseToken}';
-          UPDATE jobs SET status = 'cancelled', completed_at = '${releaseNowIso}' WHERE id = '${jobId}';
-          UPDATE runs SET status = 'cancelled', failure_reason = 'interrupted by SIGTERM', completed_at = '${releaseNowIso}' WHERE uuid = '${runId}';
-          UPDATE workers SET status = 'idle' WHERE id = '${workerId}' AND repo_id = '${repoId}';
-        `);
+        db.prepare(
+          'DELETE FROM worker_leases WHERE repo_id = ? AND worker_id = ? AND lease_token = ?',
+        ).run(repoId, workerId, leaseToken);
+        db.prepare("UPDATE jobs SET status = 'cancelled', completed_at = ? WHERE id = ?").run(
+          releaseNowIso,
+          jobId,
+        );
+        db.prepare(
+          "UPDATE runs SET status = 'cancelled', failure_reason = 'interrupted by SIGTERM', completed_at = ? WHERE uuid = ?",
+        ).run(releaseNowIso, runId);
+        db.prepare("UPDATE workers SET status = 'idle' WHERE id = ? AND repo_id = ?").run(
+          workerId,
+          repoId,
+        );
         db.close();
         resolve();
       }
