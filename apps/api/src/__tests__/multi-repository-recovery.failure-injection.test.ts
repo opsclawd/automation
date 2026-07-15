@@ -120,6 +120,7 @@ describe('multi-repository-recovery.failure-injection', () => {
         | undefined;
 
       expect(jobRowA).toBeDefined();
+      expect(jobRowA!.status).toBe('queued');
       expect(jobRowB).toBeDefined();
 
       db.close();
@@ -158,15 +159,13 @@ describe('multi-repository-recovery.failure-injection', () => {
       const expiredTime = new Date(Date.now() + 120_000);
       vi.setSystemTime(expiredTime);
 
-      const resultA = await runRecovery(repoIdA, db, expiredTime, () => false);
+      const [resultA, resultB] = await Promise.all([
+        runRecovery(repoIdA, db, expiredTime, () => false),
+        runRecovery(repoIdB, db, expiredTime, () => false),
+      ]);
 
       expect(resultA.action === 'reclaim' || resultA.action === 'leave').toBe(true);
-
-      const resultB = await runRecovery(repoIdB, db, expiredTime, () => false);
-
-      expect(
-        resultB.action === 'reclaim' || resultB.action === 'requeue' || resultB.action === 'leave',
-      ).toBe(true);
+      expect(resultB.action === 'leave').toBe(true);
 
       const runRowB = db.prepare('SELECT * FROM runs WHERE repo_id = ?').get(repoIdB) as
         | { repo_id: string; status: string }
