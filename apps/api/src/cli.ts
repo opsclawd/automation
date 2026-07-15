@@ -1016,12 +1016,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
       const shutdown = async () => {
         abortController.abort();
-        const result = await shutdownCoordinator.shutdown(abortController.signal);
-        if (!result.ok) {
-          console.error(
-            `drain timed out, ${result.remainingWorkerIds?.length ?? 0} workers still active`,
-          );
-        }
+        await shutdownCoordinator.shutdown(abortController.signal);
         process.exit(0);
       };
 
@@ -1122,6 +1117,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         const shutdownCoordinator = new ShutdownCoordinator({
           scheduler,
           runtimeCatalog: c.runtimeCatalog,
+          server: () => server,
           auxiliaryTimers: () => [sweepTimer, testWorkerReaper],
           shutdownGraceMs: c.schedulerConfig.shutdownGraceMs,
         });
@@ -1157,13 +1153,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           if (isShuttingDown) return;
           isShuttingDown = true;
           abortController.abort();
-          const result = await shutdownCoordinator.shutdown(abortController.signal);
-          if (!result.ok) {
-            console.error(
-              `drain timed out, ${result.remainingWorkerIds?.length ?? 0} workers still active`,
-            );
-          }
-          await server?.stop();
+          await shutdownCoordinator.shutdown(abortController.signal);
           process.exit(0);
         };
         process.on('SIGINT', shutdown);

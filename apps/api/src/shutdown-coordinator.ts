@@ -4,7 +4,7 @@ import type { WorkerId } from '@ai-sdlc/domain';
 export interface ShutdownCoordinatorDeps {
   scheduler: FairRepositoryScheduler;
   runtimeCatalog: { close: () => Promise<void> };
-  server?: { stop: () => Promise<void> };
+  server?: () => { stop: () => Promise<void> } | undefined;
   auxiliaryTimers:
     | Array<{ stop: () => void } | undefined | null>
     | (() => Array<{ stop: () => void } | undefined | null>);
@@ -19,7 +19,6 @@ export interface ShutdownResult {
 export class ShutdownCoordinator {
   private readonly deps: ShutdownCoordinatorDeps;
   private shutdownPromise: Promise<ShutdownResult> | null = null;
-  private signalHandlers: Array<() => void> = [];
 
   constructor(deps: ShutdownCoordinatorDeps) {
     this.deps = deps;
@@ -51,41 +50,17 @@ export class ShutdownCoordinator {
   }
 
   private async closeResources(): Promise<void> {
-    try {
-      await this.deps.runtimeCatalog.close();
-    } finally {
-      const timers =
-        typeof this.deps.auxiliaryTimers === 'function'
-          ? this.deps.auxiliaryTimers()
-          : this.deps.auxiliaryTimers;
-      (timers as Array<{ stop: () => void } | undefined | null>).forEach((timer) => timer?.stop());
-      if (this.deps.server) {
-        await this.deps.server.stop();
+    const timers =
+      typeof this.deps.auxiliaryTimers === 'function'
+        ? this.deps.auxiliaryTimers()
+        : this.deps.auxiliaryTimers;
+    (timers as Array<{ stop: () => void } | undefined | null>).forEach((timer) => timer?.stop());
+    if (this.deps.server) {
+      const server = this.deps.server();
+      if (server) {
+        await server.stop();
       }
     }
-  }
-
-  registerSignalHandlers(): void {
-    const sigintHandler = () => {
-      const controller = new AbortController();
-      this.shutdown(controller.signal);
-    };
-    const sigtermHandler = () => {
-      const controller = new AbortController();
-      this.shutdown(controller.signal);
-    };
-
-    process.on('SIGINT', sigintHandler);
-    process.on('SIGTERM', sigtermHandler);
-
-    this.signalHandlers = [
-      () => process.off('SIGINT', sigintHandler),
-      () => process.off('SIGTERM', sigtermHandler),
-    ];
-  }
-
-  unregisterSignalHandlers(): void {
-    this.signalHandlers.forEach((unregister) => unregister());
-    this.signalHandlers = [];
+    await this.deps.runtimeCatalog.close();
   }
 }

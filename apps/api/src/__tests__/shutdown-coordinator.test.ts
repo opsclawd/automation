@@ -22,7 +22,7 @@ describe('ShutdownCoordinator', () => {
       const coordinator = new ShutdownCoordinator({
         scheduler: scheduler as FairRepositoryScheduler,
         runtimeCatalog: runtimeCatalog as { close: () => Promise<void> },
-        server: server as { stop: () => Promise<void> } | undefined,
+        server: () => server,
         auxiliaryTimers,
         shutdownGraceMs: DEFAULT_SHUTDOWN_GRACE_MS,
       });
@@ -49,7 +49,7 @@ describe('ShutdownCoordinator', () => {
       const coordinator = new ShutdownCoordinator({
         scheduler: scheduler as FairRepositoryScheduler,
         runtimeCatalog: runtimeCatalog as { close: () => Promise<void> },
-        server: server as { stop: () => Promise<void> } | undefined,
+        server: () => server,
         auxiliaryTimers,
         shutdownGraceMs: DEFAULT_SHUTDOWN_GRACE_MS,
       });
@@ -75,7 +75,7 @@ describe('ShutdownCoordinator', () => {
       const coordinator = new ShutdownCoordinator({
         scheduler: scheduler as FairRepositoryScheduler,
         runtimeCatalog: runtimeCatalog as { close: () => Promise<void> },
-        server: server as { stop: () => Promise<void> } | undefined,
+        server: () => server,
         auxiliaryTimers,
         shutdownGraceMs: DEFAULT_SHUTDOWN_GRACE_MS,
       });
@@ -103,7 +103,7 @@ describe('ShutdownCoordinator', () => {
       const coordinator = new ShutdownCoordinator({
         scheduler: scheduler as FairRepositoryScheduler,
         runtimeCatalog: runtimeCatalog as { close: () => Promise<void> },
-        server: server as { stop: () => Promise<void> } | undefined,
+        server: () => server,
         auxiliaryTimers,
         shutdownGraceMs: DEFAULT_SHUTDOWN_GRACE_MS,
       });
@@ -136,7 +136,7 @@ describe('ShutdownCoordinator', () => {
       const coordinator = new ShutdownCoordinator({
         scheduler: scheduler as FairRepositoryScheduler,
         runtimeCatalog: runtimeCatalog as { close: () => Promise<void> },
-        server: server as { stop: () => Promise<void> } | undefined,
+        server: () => server,
         auxiliaryTimers,
         shutdownGraceMs: DEFAULT_SHUTDOWN_GRACE_MS,
       });
