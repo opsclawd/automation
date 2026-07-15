@@ -168,13 +168,13 @@ describe('WorktreeRecoveryAdapter', () => {
       const result2 = await adapter.prepare({
         repoId,
         runId,
-        worktreePath: quarantineRoot,
+        worktreePath,
         baseRef: 'main',
         quarantineRoot,
       });
 
-      expect(result2.safe).toBe(true);
-      expect(result2.action).toBe('reset');
+      expect(result2.safe).toBe(false);
+      expect(result2.action).toBe('blocked');
     });
   });
 
@@ -189,15 +189,15 @@ describe('WorktreeRecoveryAdapter', () => {
 
       const { WorktreeRecoveryAdapter } = await import('../worktree-recovery-adapter.js');
 
-      let renameAttempted = false;
-      class FailingRenameAdapter extends WorktreeRecoveryAdapter {
-        async _renameToQuarantine(_from: string, _to: string): Promise<void> {
-          renameAttempted = true;
-          throw new Error('Simulated rename failure');
+      let moveAttempted = false;
+      class FailingMoveAdapter extends WorktreeRecoveryAdapter {
+        async _moveToQuarantine(_from: string, _to: string): Promise<void> {
+          moveAttempted = true;
+          throw new Error('Simulated move failure');
         }
       }
 
-      const adapter = new FailingRenameAdapter();
+      const adapter = new FailingMoveAdapter();
 
       const repoId = RepositoryId('repo-blocked');
       const runId = RunId('run-blocked');
@@ -214,7 +214,7 @@ describe('WorktreeRecoveryAdapter', () => {
       expect(result.safe).toBe(false);
       expect(result.action).toBe('blocked');
       expect(result.error).toBeTruthy();
-      expect(renameAttempted).toBe(true);
+      expect(moveAttempted).toBe(true);
 
       await expect(access(worktreePath)).resolves.not.toThrow();
     });

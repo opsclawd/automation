@@ -1,5 +1,5 @@
-import { mkdir, rename } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type {
   WorktreeRecoveryPort,
   PrepareWorktreeRecoveryInput,
@@ -7,6 +7,7 @@ import type {
 } from '@ai-sdlc/application/ports';
 import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { GitWorktreeAdapter } from './git-worktree-adapter.js';
+import { git } from './git-runner.js';
 
 export class WorktreeRecoveryAdapter implements WorktreeRecoveryPort {
   private readonly gitAdapter = new GitWorktreeAdapter();
@@ -35,7 +36,7 @@ export class WorktreeRecoveryAdapter implements WorktreeRecoveryPort {
       );
 
       try {
-        await this._renameToQuarantine(worktreePath, quarantinePath);
+        await this._moveToQuarantine(worktreePath, quarantinePath);
         return { safe: true, action: 'quarantined', path: worktreePath };
       } catch (quarantineError) {
         return {
@@ -58,8 +59,10 @@ export class WorktreeRecoveryAdapter implements WorktreeRecoveryPort {
     return join(quarantineRoot, `${repoId}/${runId}/${worktreeName}`);
   }
 
-  async _renameToQuarantine(from: string, to: string): Promise<void> {
+  async _moveToQuarantine(from: string, to: string): Promise<void> {
     await mkdir(dirname(to), { recursive: true });
-    await rename(from, to);
+    const gitCommonDir = await git(from, ['rev-parse', '--git-common-dir']);
+    const baseRepoPath = dirname(gitCommonDir);
+    await git(baseRepoPath, ['worktree', 'move', from, to]);
   }
 }
