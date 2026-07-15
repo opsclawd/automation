@@ -332,7 +332,7 @@ describe('RepositoryOperationalRuntime', () => {
         registry,
       });
 
-      const runtime = await catalog.resolve(repo.id);
+      const runtime = await catalog.resolveOperational(repo.id);
 
       const lease = runtime.workerLeaseRepository.acquire({
         repoId: repo.id,

@@ -1039,6 +1039,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             }
           }
         }
+      } catch (err) {
+        console.error('Initial sweep error:', err instanceof Error ? err.message : String(err));
+      }
+
+      try {
         await scheduler.run(abortController.signal);
       } catch (err) {
         console.error('Scheduler run error:', err instanceof Error ? err.message : String(err));
@@ -1095,17 +1100,20 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         const scheduler = getOrCreateScheduler(c, 'serve', {}, buildOpts);
         const abortController = new AbortController();
         const serveSweepWorkerId = WorkerId(`serve-sweep-${process.pid}`);
+        const sweepCoordinator = c.buildRepositorySweepCoordinator();
 
         let sweepTimer: { stop: () => void } | undefined;
         let isShuttingDown = false;
+        let server: { stop: () => Promise<void>; address: unknown } | undefined;
+        let testWorkerReaper: { stop: () => void } | undefined;
 
-        const sweepCoordinator = c.buildRepositorySweepCoordinator();
-
-        try {
-          const initialResult = await sweepCoordinator.execute(serveSweepWorkerId);
-          for (const repoResult of initialResult.results) {
+        const logSweepResult = (
+          label: string,
+          result: Awaited<ReturnType<typeof sweepCoordinator.execute>>,
+        ) => {
+          for (const repoResult of result.results) {
             if (repoResult.error) {
-              console.error(`Initial sweep error for ${repoResult.fullName}: ${repoResult.error}`);
+              console.error(`${label} error for ${repoResult.fullName}: ${repoResult.error}`);
             }
             if (repoResult.orphaned) {
               const o = repoResult.orphaned;
@@ -1124,69 +1132,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               }
             }
           }
-        } catch (err) {
-          console.error('Initial sweep error:', err instanceof Error ? err.message : String(err));
-        }
-
-        const { startServer } = await import('./server.js');
-        const server = await startServer({ container: c, port: opts.port });
-        const addr = server.address as { port: number };
-        console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
-        const testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
-
-        scheduler.run(abortController.signal).catch((err) => {
-          console.error('Scheduler run error:', err instanceof Error ? err.message : String(err));
-        });
-
-        if (scheduler) {
-          if (c.serveSweepIntervalSeconds > 0 && !isShuttingDown) {
-            const MIN_SWEEP_INTERVAL_MS = 30_000;
-            const intervalMs = Math.max(c.serveSweepIntervalSeconds * 1000, MIN_SWEEP_INTERVAL_MS);
-            let isRunning = false;
-            sweepTimer = {
-              stop: () => {
-                isShuttingDown = true;
-              },
-            };
-            const timer = setInterval(async () => {
-              if (isRunning || isShuttingDown) return;
-              isRunning = true;
-              try {
-                const result = await sweepCoordinator.execute(serveSweepWorkerId);
-                for (const repoResult of result.results) {
-                  if (repoResult.error) {
-                    console.error(`Sweep error for ${repoResult.fullName}: ${repoResult.error}`);
-                  }
-                  if (repoResult.orphaned) {
-                    const o = repoResult.orphaned;
-                    if (
-                      o.enqueued > 0 ||
-                      o.skippedLeaseConflict > 0 ||
-                      o.enqueueErrors.length > 0
-                    ) {
-                      console.error(
-                        `Orphan recovery: ${o.enqueued} enqueued, ${o.skippedLeaseConflict} skipped (lease), ${o.enqueueErrors.length} errors`,
-                      );
-                    }
-                  }
-                  if (repoResult.waiting) {
-                    const w = repoResult.waiting;
-                    if (w.reactivated > 0 || w.errors.length > 0 || w.enqueueErrors.length > 0) {
-                      console.error(
-                        `Reactivation sweep: ${w.reactivated} reactivated, ${w.errors.length} errors, ${w.enqueueErrors.length} enqueue errors`,
-                      );
-                    }
-                  }
-                }
-              } catch (err) {
-                console.error('Periodic sweep error:', err);
-              } finally {
-                isRunning = false;
-              }
-            }, intervalMs);
-            sweepTimer = { stop: () => clearInterval(timer) };
-          }
-        }
+        };
 
         const shutdown = async () => {
           if (isShuttingDown) return;
@@ -1196,13 +1142,60 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           try {
             await c.runtimeCatalog.close();
           } finally {
-            testWorkerReaper.stop();
-            await server.stop();
+            testWorkerReaper?.stop();
+            await server?.stop();
             process.exit(0);
           }
         };
         process.on('SIGINT', shutdown);
         process.on('SIGTERM', shutdown);
+
+        // Recovery precedes admission: the initial repository sweep must complete
+        // (successfully or not) before the HTTP API starts serving and the scheduler
+        // begins admitting new work. This runs detached from the command action so
+        // that `serve` returns promptly and shutdown signals registered above can
+        // still be handled while recovery is in flight.
+        void (async () => {
+          try {
+            const initialResult = await sweepCoordinator.execute(serveSweepWorkerId);
+            logSweepResult('Initial sweep', initialResult);
+          } catch (err) {
+            console.error('Initial sweep error:', err instanceof Error ? err.message : String(err));
+          }
+
+          if (isShuttingDown) return;
+
+          const { startServer } = await import('./server.js');
+          server = await startServer({ container: c, port: opts.port });
+          const addr = server.address as { port: number };
+          console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
+          testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
+
+          if (isShuttingDown) return;
+
+          scheduler.run(abortController.signal).catch((err) => {
+            console.error('Scheduler run error:', err instanceof Error ? err.message : String(err));
+          });
+
+          if (c.serveSweepIntervalSeconds > 0 && !isShuttingDown) {
+            const MIN_SWEEP_INTERVAL_MS = 30_000;
+            const intervalMs = Math.max(c.serveSweepIntervalSeconds * 1000, MIN_SWEEP_INTERVAL_MS);
+            let isRunning = false;
+            const timer = setInterval(async () => {
+              if (isRunning || isShuttingDown) return;
+              isRunning = true;
+              try {
+                const result = await sweepCoordinator.execute(serveSweepWorkerId);
+                logSweepResult('Sweep', result);
+              } catch (err) {
+                console.error('Periodic sweep error:', err);
+              } finally {
+                isRunning = false;
+              }
+            }, intervalMs);
+            sweepTimer = { stop: () => clearInterval(timer) };
+          }
+        })();
       },
     );
 

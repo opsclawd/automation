@@ -13,6 +13,7 @@ const {
   registerSpy,
   startDrainSpy,
   getSweepCoordinatorResolve,
+  resetSweepCoordinatorMock,
 } = vi.hoisted(() => {
   const registerSpy = vi.fn();
   const heartbeatSpy = vi.fn();
@@ -43,13 +44,17 @@ const {
   };
   let sweepCoordinatorResolve: (() => void) | undefined;
   const mockSweepCoordinator = {
-    execute: vi.fn().mockImplementation(
+    execute: vi.fn(),
+  };
+  const resetSweepCoordinatorMock = () => {
+    mockSweepCoordinator.execute.mockImplementation(
       () =>
         new Promise<{ results: never[] }>((resolve) => {
           sweepCoordinatorResolve = () => resolve({ results: [] });
         }),
-    ),
+    );
   };
+  resetSweepCoordinatorMock();
   const runtimeCatalogCloseSpy = vi.fn().mockResolvedValue(undefined);
   const mockRuntimeCatalog = {
     resolve: vi.fn(),
@@ -102,6 +107,7 @@ const {
     runtimeCatalogCloseSpy,
     mockRuntimeCatalog,
     getSweepCoordinatorResolve: () => sweepCoordinatorResolve,
+    resetSweepCoordinatorMock,
   };
 });
 
@@ -118,6 +124,7 @@ vi.mock('../server.js', () => ({
 describe('cli serve sweep and worker wiring', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    resetSweepCoordinatorMock();
     vi.spyOn(composeMod, 'composeRoot').mockReturnValue(
       mockContainer as unknown as ReturnType<typeof composeMod.composeRoot>,
     );
@@ -148,6 +155,10 @@ describe('cli serve sweep and worker wiring', () => {
     vi.spyOn(global, 'AbortController').mockImplementation(() => abortController);
 
     await program.parseAsync(['node', 'orchestrator', 'serve', '--port', '0']);
+
+    const resolveSweep1 = getSweepCoordinatorResolve();
+    expect(resolveSweep1).toBeDefined();
+    resolveSweep1!();
 
     await vi.advanceTimersByTimeAsync(100);
 
@@ -185,6 +196,10 @@ describe('cli serve sweep and worker wiring', () => {
     vi.spyOn(global, 'AbortController').mockImplementation(() => abortController);
 
     await program.parseAsync(['node', 'orchestrator', 'serve', '--port', '0']);
+
+    const resolveSweep2 = getSweepCoordinatorResolve();
+    expect(resolveSweep2).toBeDefined();
+    resolveSweep2!();
 
     await vi.advanceTimersByTimeAsync(100);
 
@@ -368,15 +383,16 @@ describe('cli serve sweep and worker wiring', () => {
     // Reset call count after initial sweep
     executeCallCount = 0;
 
-    // Advance timers past the sweep interval (60 seconds = 60000ms, but we use 2000ms poll)
-    // The periodic timer fires every 2000ms based on pollIntervalMs
-    // Wait for first periodic sweep to start
-    await vi.advanceTimersByTimeAsync(2500);
+    // Advance timers past the periodic sweep interval (serveSweepIntervalSeconds=60 -> 60000ms).
+    // Wait for the first periodic sweep to start.
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(executeCallCount).toBe(1);
 
-    // Even if we advance more time, the second call shouldn't happen while first is running
-    // (But current implementation has a bug - it doesn't check isRunning properly in some cases)
-    // This test verifies the fix: isRunning guard prevents overlapping
+    // Even if we advance past a second interval, the second call shouldn't happen while
+    // the first periodic sweep is still running (its promise is never resolved in this test).
+    // This verifies the isRunning guard prevents overlapping sweeps.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(executeCallCount).toBe(1);
 
     const sigintListeners = process.listeners('SIGINT');
     const shutdownHandler = sigintListeners[sigintListeners.length - 1];

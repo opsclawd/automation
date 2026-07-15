@@ -6285,7 +6285,10 @@ export function composeRoot(opts: ComposeOptions): Container {
           return entry;
         };
 
-        const settled = await Promise.all(allOperational.map((op) => sweepOne(op)));
+        const settled: RepositorySweepResult[] = [];
+        for (const op of allOperational) {
+          settled.push(await sweepOne(op));
+        }
 
         return { results: settled };
       },
