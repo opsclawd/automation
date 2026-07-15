@@ -1,4 +1,5 @@
 import type { LoadedConfig } from '@ai-sdlc/shared';
+import type { RunStatus } from '@ai-sdlc/domain';
 import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
 import type {
   RepositoryExecutionRuntime,
@@ -58,6 +59,31 @@ export async function composeRepositoryRuntime(
           ? JSON.stringify(loadedConfig.sources)
           : currentSources,
     });
+  };
+  wrappedRunRepository.atomicUpdateByUuid = (
+    uuid: string,
+    patch: RunRepositoryUpdatePatch,
+    expectedStatus: RunStatus,
+  ) => {
+    const existing = originalRunRepository.findByUuid(uuid);
+    if (!existing) return false;
+    const currentFingerprint = (existing as { configFingerprint?: string }).configFingerprint ?? '';
+    const currentSources = (existing as { configSourcesJson?: string }).configSourcesJson ?? '';
+    return originalRunRepository.atomicUpdateByUuid(
+      uuid,
+      {
+        ...patch,
+        configFingerprint:
+          currentFingerprint !== loadedConfig.fingerprint
+            ? loadedConfig.fingerprint
+            : currentFingerprint,
+        configSourcesJson:
+          currentSources !== JSON.stringify(loadedConfig.sources)
+            ? JSON.stringify(loadedConfig.sources)
+            : currentSources,
+      },
+      expectedStatus,
+    );
   };
 
   const executionRuntime: RepositoryExecutionRuntime = {
