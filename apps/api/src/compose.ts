@@ -6340,40 +6340,28 @@ export function composeRoot(opts: ComposeOptions): Container {
               },
             });
 
-            for (const repo of runtime.workerLoopDeps.repos.listEnabled()) {
-              try {
-                const action = await coordinator.execute({ repoId: repo.id });
-                if (action.action === 'reclaim') {
-                  const lease = runtime.workerLeaseRepository.current(repo.id);
-                  if (lease) {
-                    const r = runtime.runRepository.findByUuid(lease.runId);
-                    if (r) {
-                      const worktreePath = runtime.paths.worktree(r.issueNumber);
-                      const baseBranch = r.baseBranch ?? repository.defaultBranch;
-                      gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
-                    }
-                  }
-                } else if (action.action === 'requeue') {
-                  const jobs = runtime.jobQueue.listForRepo(repo.id);
-                  for (const job of jobs) {
-                    if (
-                      job.status === 'claimed' &&
-                      job.claimExpiresAt &&
-                      job.claimExpiresAt.getTime() < Date.now()
-                    ) {
-                      if (job.claimedBy && job.claimToken) {
-                        try {
-                          runtime.jobQueue.resetToQueued(generateJobOwnership(job, job.claimedBy));
-                        } catch {
-                          /* ignore */
-                        }
+            try {
+              const action = await coordinator.execute({ repoId: repository.id });
+              if (action.action === 'requeue') {
+                const jobs = runtime.jobQueue.listForRepo(repository.id);
+                for (const job of jobs) {
+                  if (
+                    job.status === 'claimed' &&
+                    job.claimExpiresAt &&
+                    job.claimExpiresAt.getTime() < Date.now()
+                  ) {
+                    if (job.claimedBy && job.claimToken) {
+                      try {
+                        runtime.jobQueue.resetToQueued(generateJobOwnership(job, job.claimedBy));
+                      } catch {
+                        /* ignore */
                       }
                     }
                   }
                 }
-              } catch {
-                /* one repo recovery failure should not block others */
               }
+            } catch {
+              /* recovery failure should not block sweep */
             }
           } catch (err) {
             entry.error = err instanceof Error ? err.message : String(err);
