@@ -121,6 +121,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId: import('@ai-sdlc/domain').RunId) => makeRun(runId as string),
+      updateRun: () => {},
     };
 
     await workerLoop(WorkerId('w1'), deps);
@@ -178,6 +179,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId: import('@ai-sdlc/domain').RunId) => makeRun(runId as string),
+      updateRun: () => {},
     };
 
     await Promise.all([
@@ -217,6 +219,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
@@ -268,6 +271,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 10,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
@@ -312,6 +316,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     const job = s.queue.findById(JobId('j1'));
@@ -361,6 +366,7 @@ describe('workerLoop', () => {
       now: () => s.now, // keep the prior lease unexpired
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     // The new job is released back to queued (conflict), and crucially the prior
@@ -420,6 +426,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     // j1 was released back to queued (r1 lease still held by w2)
@@ -451,6 +458,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     const w = s.registry.findById(WorkerId('w1'), RepositoryId('r1'));
@@ -475,6 +483,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(s.registry.findById(WorkerId('w1'), RepositoryId('r1'))!.status).toBe('busy');
@@ -522,6 +531,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 10,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(capturedSignal?.aborted).toBe(true);
@@ -576,6 +586,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 10,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(leaseHeldDuringCleanup).toBe(true);
@@ -613,6 +624,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 10,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     // Microtask ordering: executeRun resolves as a microtask, its .then handler
@@ -654,6 +666,7 @@ describe('workerLoop', () => {
       ttlMs: 10,
       executeRunGraceMs: 50,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
@@ -693,6 +706,7 @@ describe('workerLoop', () => {
       ttlMs: 100,
       heartbeatIntervalMs: 50,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
       onProgress,
     });
 
