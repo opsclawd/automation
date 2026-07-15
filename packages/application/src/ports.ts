@@ -132,7 +132,7 @@ export type {
   RepositoryRegistryPort,
   RepositoryUpdatePatch,
 } from './ports/repository-registry-port.js';
-export type { JobQueuePort, EnqueueJobInput } from './ports/job-queue-port.js';
+export type { JobQueuePort, EnqueueJobInput, ClaimNextInput } from './ports/job-queue-port.js';
 export type { WorkerRegistryPort } from './ports/worker-registry-port.js';
 export type {
   WorkerLeasePort,
@@ -206,7 +206,7 @@ export type {
   FixDiffInspectionResult,
 } from './ports/fix-diff-inspector-port.js';
 
-export type { ClassifyExitInput } from '@ai-sdlc/domain';
+export type { ClassifyExitInput, JobOwnership } from '@ai-sdlc/domain';
 
 export type ClassifyExitFn = (input: ClassifyExitInput) => Failure;
 

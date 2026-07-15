@@ -5,7 +5,11 @@ import type {
   WorkerLeasePort,
   RepositoryPort,
 } from '../ports.js';
-import { WorkerLeaseConflictError, LeaseOwnershipLostError } from '@ai-sdlc/domain';
+import {
+  WorkerLeaseConflictError,
+  LeaseOwnershipLostError,
+  generateJobOwnership,
+} from '@ai-sdlc/domain';
 
 export interface WorkerLoopDeps {
   registry: WorkerRegistryPort;
@@ -66,6 +70,12 @@ export async function runClaimedJob(
 ): Promise<'settled' | 'lease_conflict'> {
   const { registry, queue, leases } = deps;
 
+  if (!job.claimToken) {
+    throw new Error(`job ${job.id} has no claimToken - cannot run without ownership`);
+  }
+
+  const ownership = generateJobOwnership(job, workerId);
+
   let started = false;
   let acquired = false;
   let acquiredLease;
@@ -106,7 +116,7 @@ export async function runClaimedJob(
     );
 
     try {
-      queue.markRunning(job.id, deps.now());
+      queue.markRunning(ownership, deps.now());
       started = true;
 
       const worktree = await Promise.race([
@@ -184,9 +194,9 @@ export async function runClaimedJob(
       });
 
       if (result.ok) {
-        queue.markSucceeded(job.id, deps.now());
+        queue.markSucceeded(ownership, deps.now());
       } else {
-        queue.markFailed(job.id, deps.now());
+        queue.markFailed(ownership, deps.now());
       }
       return 'settled';
     } finally {
@@ -194,22 +204,22 @@ export async function runClaimedJob(
     }
   } catch (err) {
     if (err instanceof WorkerLeaseConflictError) {
-      queue.releaseClaim(job.id);
+      queue.releaseClaim(ownership);
       skippedJobIds?.add(job.id);
       return 'lease_conflict';
     }
     if (started) {
       if (deps.outerSignal?.aborted) {
         try {
-          queue.markCancelled(job.id, deps.now());
+          queue.markCancelled(ownership, deps.now());
         } catch {
           /* already terminal */
         }
       } else {
-        queue.markFailed(job.id, deps.now());
+        queue.markFailed(ownership, deps.now());
       }
     } else {
-      queue.releaseClaim(job.id);
+      queue.releaseClaim(ownership);
     }
     return 'settled';
   } finally {
@@ -254,7 +264,10 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
       const jobs = queue.listForRun(info.previousRunId);
       for (const job of jobs) {
         if (job.status === 'claimed' || job.status === 'running') {
-          queue.resetToQueued(job.id);
+          const fresh = queue.findById(job.id);
+          if (fresh && fresh.claimToken) {
+            queue.resetToQueued(generateJobOwnership(fresh, job.claimedBy!));
+          }
         }
       }
       deps.onLeaseReclaimed?.(info);
@@ -278,14 +291,18 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
     }
 
     if (job.repoId !== deps.repoId) {
-      queue.releaseClaim(job.id);
+      if (job.claimToken) {
+        queue.releaseClaim(generateJobOwnership(job, workerId));
+      }
       skippedJobIds.add(job.id);
       continue;
     }
 
     const repo = deps.repos.findById(deps.repoId);
     if (!repo || !repo.enabled) {
-      queue.releaseClaim(job.id);
+      if (job.claimToken) {
+        queue.releaseClaim(generateJobOwnership(job, workerId));
+      }
       return;
     }
 

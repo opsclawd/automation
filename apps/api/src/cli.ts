@@ -19,6 +19,7 @@ import {
   IssueNumber,
   createJob,
   createWorker,
+  generateJobOwnership,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import {
@@ -364,8 +365,9 @@ function buildSchedulerDeps(
     const runExecutor = c.runExecutor;
     if (!runExecutor) {
       logger.warn(`No runExecutor available in container to run job ${String(runId)}`);
-      if (job) {
-        runtime.jobQueue.markFailed(job.id, new Date());
+      if (job && job.claimedBy && job.claimToken) {
+        const ownership = generateJobOwnership(job, job.claimedBy);
+        runtime.jobQueue.markFailed(ownership, new Date());
       }
       return;
     }
@@ -716,17 +718,27 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 testWorkerReaper?.stop();
                 const currentJob = c.jobQueue.findById(jobId);
                 if (currentJob) {
-                  if (currentJob.status === 'claimed') {
+                  if (
+                    currentJob.status === 'claimed' &&
+                    currentJob.claimedBy &&
+                    currentJob.claimToken
+                  ) {
                     try {
-                      c.jobQueue.releaseClaim(jobId);
+                      const ownership = generateJobOwnership(currentJob, currentJob.claimedBy);
+                      c.jobQueue.releaseClaim(ownership);
                     } catch (err) {
                       console.error(
                         `releaseClaim on signal failed: ${err instanceof Error ? err.message : String(err)}`,
                       );
                     }
-                  } else if (currentJob.status === 'running') {
+                  } else if (
+                    currentJob.status === 'running' &&
+                    currentJob.claimedBy &&
+                    currentJob.claimToken
+                  ) {
                     try {
-                      c.jobQueue.markCancelled(jobId, new Date());
+                      const ownership = generateJobOwnership(currentJob, currentJob.claimedBy);
+                      c.jobQueue.markCancelled(ownership, new Date());
                     } catch (err) {
                       console.error(
                         `markCancelled on signal failed: ${err instanceof Error ? err.message : String(err)}`,

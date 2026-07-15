@@ -6,7 +6,7 @@ export * from './artifact.js';
 export * from './classify-exit.js';
 export * from './ids.js';
 export * from './repository.js';
-export * from './job.js';
+export * from './job.js'; // job definitions & claim tokens
 export * from './worker.js';
 export * from './worker-lease.js';
 export * from './agent-types.js';

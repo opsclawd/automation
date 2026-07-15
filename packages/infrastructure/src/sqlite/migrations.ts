@@ -30,6 +30,7 @@ import * as repoScopedQueue from './migrations/0027-repository-scoped-queue.js';
 import * as workerRepoBinding from './migrations/0028-worker-repository-binding.js';
 import * as eventRepoId from './migrations/0029-operational-event-repository-id.js';
 import * as fenceWorkerLeases from './migrations/0030-fence-worker-leases.js';
+import * as fenceJobClaims from './migrations/0031-fence-job-claims.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -62,6 +63,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: workerRepoBinding.version, sql: workerRepoBinding.sql },
   { version: eventRepoId.version, sql: eventRepoId.sql },
   { version: fenceWorkerLeases.version, sql: fenceWorkerLeases.sql },
+  { version: fenceJobClaims.version, sql: fenceJobClaims.sql },
 ];
 
 export function registerCustomFunctions(db: Db): void {

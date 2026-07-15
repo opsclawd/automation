@@ -100,6 +100,7 @@ function makeDeps(s: ReturnType<typeof setup>, workerId: WorkerId, repoId: Repos
 }
 
 describe('workerLoop repository assignment', () => {
+  // Test repository isolation and worker assignment
   it('worker loop rejects a claimed job outside its repository assignment', async () => {
     const s = setup();
     const prepareWorktree = vi.fn(prepareOk);

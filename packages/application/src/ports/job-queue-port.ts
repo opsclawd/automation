@@ -1,4 +1,4 @@
-import type { Job, JobId, RepositoryId, RunId, WorkerId } from '@ai-sdlc/domain';
+import type { Job, JobId, RepositoryId, RunId, WorkerId, JobOwnership } from '@ai-sdlc/domain';
 
 export interface EnqueueJobInput {
   job: Job;
@@ -14,12 +14,12 @@ export interface ClaimNextInput {
 export interface JobQueuePort {
   enqueue(input: EnqueueJobInput): void;
   claimNext(input: ClaimNextInput): Job | undefined;
-  releaseClaim(jobId: JobId): void;
-  resetToQueued(jobId: JobId): void;
-  markRunning(jobId: JobId, now: Date): void;
-  markSucceeded(jobId: JobId, now: Date): void;
-  markFailed(jobId: JobId, now: Date): void;
-  markCancelled(jobId: JobId, now: Date): void;
+  releaseClaim(owner: JobOwnership): void;
+  resetToQueued(owner: JobOwnership): void;
+  markRunning(owner: JobOwnership, now: Date): void;
+  markSucceeded(owner: JobOwnership, now: Date): void;
+  markFailed(owner: JobOwnership, now: Date): void;
+  markCancelled(owner: JobOwnership, now: Date): void;
   listForRepo(repoId: RepositoryId): Job[];
   listForRun(runId: RunId): Job[];
   findById(jobId: JobId): Job | undefined;

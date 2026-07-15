@@ -22,7 +22,7 @@ import type { ResumeRunUseCase } from './use-cases.js';
 // same run. Tradeoff: a crash between lease acquisition and the CAS orphans
 // the lease for LEASE_TTL_MS. Tuned to 30s as a reasonable recovery bound.
 const LEASE_TTL_MS = 30_000;
-const RESUME_JOB_PRIORITY = 10;
+const RESUME_JOB_PRIORITY = 10; // priority for resumed runs
 
 export interface ResumeRunDeps {
   runRepository: RunRepositoryPort;

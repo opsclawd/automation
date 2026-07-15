@@ -1,5 +1,5 @@
 import { cancelRun, LeaseOwnershipLostError } from '@ai-sdlc/domain';
-import type { RunId } from '@ai-sdlc/domain';
+import type { RunId } from '@ai-sdlc/domain'; // run identification
 import type {
   RunRepositoryPort,
   RunAbortPort,

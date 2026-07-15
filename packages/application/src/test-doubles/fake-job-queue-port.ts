@@ -12,6 +12,8 @@ import {
   markJobCancelled,
   RepositoryNotApprovedError,
   DuplicateJobIdError,
+  type JobOwnership,
+  JobOwnershipLostError,
 } from '@ai-sdlc/domain';
 import type { JobQueuePort, EnqueueJobInput, ClaimNextInput } from '../ports/job-queue-port.js';
 import type { RepositoryPort } from '../ports.js';
@@ -49,25 +51,25 @@ export class FakeJobQueuePort implements JobQueuePort {
     return claimed;
   }
 
-  releaseClaim(jobId: JobId): void {
-    this.update(jobId, (j) => unclaimJob(j));
+  releaseClaim(owner: JobOwnership): void {
+    this.updateWithOwnership(owner, (j) => unclaimJob(j));
   }
 
-  resetToQueued(jobId: JobId): void {
-    this.update(jobId, (j) => resetJobToQueued(j));
+  resetToQueued(owner: JobOwnership): void {
+    this.updateWithOwnership(owner, (j) => resetJobToQueued(j));
   }
 
-  markRunning(jobId: JobId, now: Date): void {
-    this.update(jobId, (j) => markJobRunning(j, now));
+  markRunning(owner: JobOwnership, now: Date): void {
+    this.updateWithOwnership(owner, (j) => markJobRunning(j, now));
   }
-  markSucceeded(jobId: JobId, now: Date): void {
-    this.update(jobId, (j) => markJobSucceeded(j, now));
+  markSucceeded(owner: JobOwnership, now: Date): void {
+    this.updateWithOwnership(owner, (j) => markJobSucceeded(j, now));
   }
-  markFailed(jobId: JobId, now: Date): void {
-    this.update(jobId, (j) => markJobFailed(j, now));
+  markFailed(owner: JobOwnership, now: Date): void {
+    this.updateWithOwnership(owner, (j) => markJobFailed(j, now));
   }
-  markCancelled(jobId: JobId, now: Date): void {
-    this.update(jobId, (j) => markJobCancelled(j, now));
+  markCancelled(owner: JobOwnership, now: Date): void {
+    this.updateWithOwnership(owner, (j) => markJobCancelled(j, now));
   }
 
   listForRepo(repoId: RepositoryId): Job[] {
@@ -92,10 +94,11 @@ export class FakeJobQueuePort implements JobQueuePort {
   reclaimStaleClaims(cutoff: Date): number {
     const expired = this.findExpiredClaims(cutoff);
     for (const j of expired) {
-      const { claimedBy, claimedAt, claimExpiresAt: _ce, ...rest } = j;
+      const { claimedBy, claimedAt, claimExpiresAt: _ce, claimToken: _ct, ...rest } = j;
       void claimedBy;
       void claimedAt;
       void _ce;
+      void _ct;
       this.jobs.set(j.id, { ...rest, status: 'queued' });
     }
     return expired.length;
@@ -107,9 +110,12 @@ export class FakeJobQueuePort implements JobQueuePort {
     );
   }
 
-  private update(jobId: JobId, fn: (j: Job) => Job): void {
-    const existing = this.jobs.get(jobId);
-    if (!existing) throw new Error(`unknown job ${jobId}`);
-    this.jobs.set(jobId, fn(existing));
+  private updateWithOwnership(owner: JobOwnership, fn: (j: Job) => Job): void {
+    const existing = this.jobs.get(owner.jobId);
+    if (!existing) throw new Error(`unknown job ${owner.jobId}`);
+    if (existing.claimToken !== owner.claimToken) {
+      throw new JobOwnershipLostError(owner.jobId);
+    }
+    this.jobs.set(owner.jobId, fn(existing));
   }
 }

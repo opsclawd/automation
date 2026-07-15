@@ -1,5 +1,6 @@
 export type { RepositoryPort } from './repository-port.js';
 export type { JobQueuePort, EnqueueJobInput, ClaimNextInput } from './job-queue-port.js';
+export type { JobOwnership } from '@ai-sdlc/domain';
 export type { WorkerRegistryPort } from './worker-registry-port.js';
 export type {
   WorkerLeasePort,

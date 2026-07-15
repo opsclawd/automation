@@ -10,7 +10,7 @@ import {
   FakeGitHubPort,
   FakeEventBus,
 } from '@ai-sdlc/application/test-doubles';
-import { createJob } from '@ai-sdlc/domain';
+import { createJob, generateJobOwnership } from '@ai-sdlc/domain';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
@@ -181,12 +181,13 @@ describe('repository-runtime-recovery', () => {
         expect(claimedA?.id).toBeDefined();
         expect(claimedB?.id).toBeDefined();
 
-        containerA.queue.markRunning(claimedA!.id, now);
+        const ownerA = generateJobOwnership(claimedA!, workerIdA);
+        containerA.queue.markRunning(ownerA, now);
 
         expect(containerA.queue.findById(claimedA!.id)?.status).toBe('running');
         expect(containerB.queue.findById(claimedB!.id)?.status).toBe('claimed');
 
-        containerA.queue.markCancelled(claimedA!.id, new Date());
+        containerA.queue.markCancelled(ownerA, new Date());
 
         expect(containerA.queue.findById(claimedA!.id)?.status).toBe('cancelled');
         expect(containerB.queue.findById(claimedB!.id)?.status).toBe('claimed');
@@ -332,7 +333,7 @@ describe('repository-runtime-recovery', () => {
         expect(claimedA?.id).toBeDefined();
         expect(claimedB?.id).toBeDefined();
 
-        containerA.queue.markRunning(claimedA!.id, now);
+        containerA.queue.markRunning(generateJobOwnership(claimedA!, workerIdA), now);
 
         containerA.registry.register(
           createWorker({
@@ -418,7 +419,7 @@ describe('repository-runtime-recovery', () => {
           ttlMs: 60000,
         });
 
-        containerA.queue.markRunning(claimedA!.id, now);
+        containerA.queue.markRunning(generateJobOwnership(claimedA!, workerIdA), now);
 
         containerA.registry.register(
           createWorker({
@@ -454,7 +455,7 @@ describe('repository-runtime-recovery', () => {
             const jobs = containerA.queue.listForRun(info.previousRunId);
             for (const job of jobs) {
               if (job.status === 'claimed' || job.status === 'running') {
-                containerA.queue.resetToQueued(job.id);
+                containerA.queue.resetToQueued(generateJobOwnership(job, job.claimedBy!));
               }
             }
           },
@@ -501,8 +502,8 @@ describe('repository-runtime-recovery', () => {
           ttlMs: 60000,
         });
 
-        containerA.queue.markRunning(claimedA!.id, now);
-        containerB.queue.markRunning(claimedB!.id, now);
+        containerA.queue.markRunning(generateJobOwnership(claimedA!, workerIdA), now);
+        containerB.queue.markRunning(generateJobOwnership(claimedB!, workerIdB), now);
 
         containerA.registry.register(
           createWorker({
@@ -554,7 +555,7 @@ describe('repository-runtime-recovery', () => {
         expect(containerB.leases.checkActiveLease(containerB.repo.id, expiredTime)).toBe(true);
         expect(containerB.queue.findById(claimedB!.id)?.status).toBe('running');
 
-        containerB.queue.markSucceeded(claimedB!.id, new Date());
+        containerB.queue.markSucceeded(generateJobOwnership(claimedB!, workerIdB), new Date());
         containerB.leases.release({
           repoId: containerB.repo.id,
           workerId: workerIdB,

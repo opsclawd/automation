@@ -9,6 +9,7 @@ import {
   createJob,
   createRun,
   type Run,
+  generateJobOwnership,
 } from '@ai-sdlc/domain';
 import {
   FakeRepositoryPort,
@@ -450,8 +451,8 @@ describe('workerLoop', () => {
       }),
     });
     // Advance job through claimed→running (w1 crashed after markRunning)
-    s.queue.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') });
-    s.queue.markRunning(JobId('j-old'), s.now);
+    const claimed = s.queue.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })!;
+    s.queue.markRunning(generateJobOwnership(claimed, WorkerId('w1')), s.now);
 
     // Give w1 a lease that expired
     const lease = s.leases.acquire({

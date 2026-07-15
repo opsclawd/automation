@@ -10,6 +10,8 @@ import {
   createRun,
   type Run,
   type Job,
+  newClaimToken,
+  type JobOwnership,
 } from '@ai-sdlc/domain';
 import {
   FakeRepositoryPort,
@@ -54,59 +56,71 @@ class NoCheckJobQueuePort implements JobQueuePort {
     );
     const next = queued[0];
     if (!next) return undefined;
+    const token = newClaimToken();
     const claimed: Job = {
       ...next,
       status: 'claimed',
       claimedBy: input.workerId,
+      claimToken: token,
       claimedAt: new Date(),
-      claimExpiresAt: new Date(Date.now() + input.ttlMs),
+      claimExpiresAt: new Date(Date.now() + (input.ttlMs ?? 60_000)),
     };
     this.jobs.set(claimed.id, claimed);
     return claimed;
   }
 
-  releaseClaim(jobId: JobId): void {
-    const j = this.jobs.get(jobId);
+  releaseClaim(owner: JobOwnership): void {
+    const j = this.jobs.get(owner.jobId);
     if (!j) return;
-    this.jobs.set(jobId, {
+    this.jobs.set(owner.jobId, {
       ...j,
       status: 'queued',
       claimedBy: undefined,
+      claimToken: undefined,
       claimedAt: undefined,
       claimExpiresAt: undefined,
     });
   }
 
-  resetToQueued(jobId: JobId): void {
-    const j = this.jobs.get(jobId);
+  resetToQueued(owner: JobOwnership): void {
+    const j = this.jobs.get(owner.jobId);
     if (!j) return;
-    this.jobs.set(jobId, {
+    this.jobs.set(owner.jobId, {
       ...j,
       status: 'queued',
       claimedBy: undefined,
+      claimToken: undefined,
       claimedAt: undefined,
       claimExpiresAt: undefined,
     });
   }
 
-  markRunning(_jobId: JobId, _now: Date): void {
-    const j = [...this.jobs.values()].find((x) => x.status === 'claimed');
-    if (j) this.jobs.set(j.id, { ...j, status: 'running' });
+  markRunning(owner: JobOwnership, _now: Date): void {
+    const j = this.jobs.get(owner.jobId);
+    if (j && j.claimToken === owner.claimToken) {
+      this.jobs.set(j.id, { ...j, status: 'running' });
+    }
   }
 
-  markSucceeded(jobId: JobId, _now: Date): void {
-    const j = this.jobs.get(jobId);
-    if (j) this.jobs.set(jobId, { ...j, status: 'succeeded' });
+  markSucceeded(owner: JobOwnership, _now: Date): void {
+    const j = this.jobs.get(owner.jobId);
+    if (j && j.claimToken === owner.claimToken) {
+      this.jobs.set(owner.jobId, { ...j, status: 'succeeded' });
+    }
   }
 
-  markFailed(jobId: JobId, _now: Date): void {
-    const j = this.jobs.get(jobId);
-    if (j) this.jobs.set(jobId, { ...j, status: 'failed' });
+  markFailed(owner: JobOwnership, _now: Date): void {
+    const j = this.jobs.get(owner.jobId);
+    if (j && j.claimToken === owner.claimToken) {
+      this.jobs.set(owner.jobId, { ...j, status: 'failed' });
+    }
   }
 
-  markCancelled(jobId: JobId, _now: Date): void {
-    const j = this.jobs.get(jobId);
-    if (j) this.jobs.set(jobId, { ...j, status: 'cancelled' });
+  markCancelled(owner: JobOwnership, _now: Date): void {
+    const j = this.jobs.get(owner.jobId);
+    if (j && j.claimToken === owner.claimToken) {
+      this.jobs.set(owner.jobId, { ...j, status: 'cancelled' });
+    }
   }
 
   listForRepo(_repoId: RepositoryId): Job[] {
@@ -159,12 +173,14 @@ class DisableOnReturnQueue implements JobQueuePort {
     );
     const next = queued[0];
     if (!next) return undefined;
+    const token = newClaimToken();
     const claimed: Job = {
       ...next,
       status: 'claimed',
       claimedBy: input.workerId,
+      claimToken: token,
       claimedAt: new Date(),
-      claimExpiresAt: new Date(Date.now() + input.ttlMs),
+      claimExpiresAt: new Date(Date.now() + (input.ttlMs ?? 60_000)),
     };
     this.jobs.set(claimed.id, claimed);
     if (this._disableAfterClaim) {
@@ -177,48 +193,58 @@ class DisableOnReturnQueue implements JobQueuePort {
     return claimed;
   }
 
-  releaseClaim(jobId: JobId): void {
-    const j = this.jobs.get(jobId);
+  releaseClaim(owner: JobOwnership): void {
+    const j = this.jobs.get(owner.jobId);
     if (!j) return;
-    this.jobs.set(jobId, {
+    this.jobs.set(owner.jobId, {
       ...j,
       status: 'queued',
       claimedBy: undefined,
+      claimToken: undefined,
       claimedAt: undefined,
       claimExpiresAt: undefined,
     });
   }
 
-  resetToQueued(jobId: JobId): void {
-    const j = this.jobs.get(jobId);
+  resetToQueued(owner: JobOwnership): void {
+    const j = this.jobs.get(owner.jobId);
     if (!j) return;
-    this.jobs.set(jobId, {
+    this.jobs.set(owner.jobId, {
       ...j,
       status: 'queued',
       claimedBy: undefined,
+      claimToken: undefined,
       claimedAt: undefined,
       claimExpiresAt: undefined,
     });
   }
 
-  markRunning(_jobId: JobId, _now: Date): void {
-    const j = [...this.jobs.values()].find((x) => x.status === 'claimed');
-    if (j) this.jobs.set(j.id, { ...j, status: 'running' });
+  markRunning(owner: JobOwnership, _now: Date): void {
+    const j = this.jobs.get(owner.jobId);
+    if (j && j.claimToken === owner.claimToken) {
+      this.jobs.set(j.id, { ...j, status: 'running' });
+    }
   }
 
-  markSucceeded(jobId: JobId, _now: Date): void {
-    const j = this.jobs.get(jobId);
-    if (j) this.jobs.set(jobId, { ...j, status: 'succeeded' });
+  markSucceeded(owner: JobOwnership, _now: Date): void {
+    const j = this.jobs.get(owner.jobId);
+    if (j && j.claimToken === owner.claimToken) {
+      this.jobs.set(owner.jobId, { ...j, status: 'succeeded' });
+    }
   }
 
-  markFailed(jobId: JobId, _now: Date): void {
-    const j = this.jobs.get(jobId);
-    if (j) this.jobs.set(jobId, { ...j, status: 'failed' });
+  markFailed(owner: JobOwnership, _now: Date): void {
+    const j = this.jobs.get(owner.jobId);
+    if (j && j.claimToken === owner.claimToken) {
+      this.jobs.set(owner.jobId, { ...j, status: 'failed' });
+    }
   }
 
-  markCancelled(jobId: JobId, _now: Date): void {
-    const j = this.jobs.get(jobId);
-    if (j) this.jobs.set(jobId, { ...j, status: 'cancelled' });
+  markCancelled(owner: JobOwnership, _now: Date): void {
+    const j = this.jobs.get(owner.jobId);
+    if (j && j.claimToken === owner.claimToken) {
+      this.jobs.set(owner.jobId, { ...j, status: 'cancelled' });
+    }
   }
 
   listForRepo(_repoId: RepositoryId): Job[] {
@@ -366,7 +392,9 @@ describe('workerLoop disable policy', () => {
         findRun: (runId: import('@ai-sdlc/domain').RunId) => makeRun(runId as string, REPO_ID),
       });
 
-      expect(releaseClaim).toHaveBeenCalledWith(JobId('j1'));
+      expect(releaseClaim).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: JobId('j1'), workerId: WorkerId('w1') }),
+      );
       expect(markBusy).not.toHaveBeenCalled();
       expect(acquire).not.toHaveBeenCalled();
       expect(prepareWorktree).not.toHaveBeenCalled();

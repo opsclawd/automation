@@ -2,7 +2,14 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { WorkerScheduler } from '../worker-scheduler.js';
 import { workerLoop } from '@ai-sdlc/application';
 import type { WorkerLoopDeps } from '@ai-sdlc/application';
-import { WorkerId, JobId, RunId, RepositoryId, IssueNumber } from '@ai-sdlc/domain';
+import {
+  WorkerId,
+  JobId,
+  RunId,
+  RepositoryId,
+  IssueNumber,
+  type ClaimToken,
+} from '@ai-sdlc/domain';
 import type { JobQueuePort } from '@ai-sdlc/application/ports';
 import type { RepositoryPort } from '@ai-sdlc/application/ports';
 
@@ -280,7 +287,12 @@ describe('WorkerScheduler', () => {
     const releaseSpy = vi.fn();
     const queue: JobQueuePort = {
       ...makeQueue({}),
-      findById: vi.fn(() => makeJob('job-1', 'claimed')),
+      findById: vi.fn(() =>
+        makeJob('job-1', 'claimed', {
+          claimedBy: WorkerId('w1'),
+          claimToken: 'token-1' as ClaimToken,
+        }),
+      ),
       releaseClaim: releaseSpy,
     };
     const controller = new AbortController();
@@ -289,14 +301,23 @@ describe('WorkerScheduler', () => {
     });
     const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     await scheduler.runUntilComplete(JobId('job-1'), controller.signal);
-    expect(releaseSpy).toHaveBeenCalledWith(JobId('job-1'));
+    expect(releaseSpy).toHaveBeenCalledWith({
+      jobId: JobId('job-1'),
+      workerId: WorkerId('w1'),
+      claimToken: 'token-1',
+    });
   });
 
   it('marks cancelled when signal aborts while job is running', async () => {
     const markCancelledSpy = vi.fn();
     const queue: JobQueuePort = {
       ...makeQueue({}),
-      findById: vi.fn(() => makeJob('job-1', 'running')),
+      findById: vi.fn(() =>
+        makeJob('job-1', 'running', {
+          claimedBy: WorkerId('w1'),
+          claimToken: 'token-1' as ClaimToken,
+        }),
+      ),
       markCancelled: markCancelledSpy,
     };
     const controller = new AbortController();
@@ -305,7 +326,10 @@ describe('WorkerScheduler', () => {
     });
     const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     await scheduler.runUntilComplete(JobId('job-1'), controller.signal);
-    expect(markCancelledSpy).toHaveBeenCalledWith(JobId('job-1'), expect.any(Date));
+    expect(markCancelledSpy).toHaveBeenCalledWith(
+      { jobId: JobId('job-1'), workerId: WorkerId('w1'), claimToken: 'token-1' },
+      expect.any(Date),
+    );
   });
 
   it('throws within the per-worker timeout window when workerLoop never resolves', async () => {

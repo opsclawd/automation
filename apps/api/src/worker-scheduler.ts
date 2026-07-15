@@ -1,6 +1,7 @@
 import { workerLoop, type WorkerLoopDeps } from '@ai-sdlc/application';
 import type { JobQueuePort, RepositoryPort } from '@ai-sdlc/application/ports';
 import type { Job, WorkerId, JobId, RunId } from '@ai-sdlc/domain';
+import { generateJobOwnership } from '@ai-sdlc/domain';
 
 function buildRecoverableRunIds(queue: JobQueuePort, repos: RepositoryPort): ReadonlySet<RunId> {
   const allJobs = repos.listEnabled().flatMap((r) => queue.listForRepo(r.id));
@@ -102,11 +103,14 @@ export class WorkerScheduler {
       if (!updated || isTerminal(updated.status)) return;
 
       if (signal.aborted) {
-        if (updated.status === 'claimed') {
-          this.baseDeps.queue.releaseClaim(jobId);
-        } else if (updated.status === 'running') {
+        if (updated.status === 'claimed' && updated.claimedBy && updated.claimToken) {
+          this.baseDeps.queue.releaseClaim(generateJobOwnership(updated, updated.claimedBy));
+        } else if (updated.status === 'running' && updated.claimedBy && updated.claimToken) {
           try {
-            this.baseDeps.queue.markCancelled(jobId, new Date());
+            this.baseDeps.queue.markCancelled(
+              generateJobOwnership(updated, updated.claimedBy),
+              new Date(),
+            );
           } catch {
             /* already terminal */
           }
