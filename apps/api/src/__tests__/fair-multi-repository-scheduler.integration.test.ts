@@ -3,7 +3,14 @@ import { openDatabase, applyMigrations, JobQueueRepository } from '@ai-sdlc/infr
 import { FairRepositoryScheduler } from '@ai-sdlc/application';
 import { RepositorySchedulerAdapter } from '../repository-scheduler-adapter.js';
 import type { Repository, WorkerId } from '@ai-sdlc/domain';
-import { RepositoryId, WorkerId as mkWorkerId, RunId, JobId, IssueNumber } from '@ai-sdlc/domain';
+import {
+  RepositoryId,
+  WorkerId as mkWorkerId,
+  RunId,
+  JobId,
+  IssueNumber,
+  generateJobOwnership,
+} from '@ai-sdlc/domain';
 import { createJob } from '@ai-sdlc/domain';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -652,12 +659,6 @@ describe('fair-multi-repository-scheduler', () => {
       await enqueueJob(rtA, issueNumber, jobIdA, runIdA);
       await enqueueJob(rtB, issueNumber, JobId('job-b-42'), RunId('run-b-42'));
 
-      const dispatchResults = new Map<string, Deferred<'completed' | 'no_work'>>();
-      const deferredDispatchA = defer<'completed' | 'no_work'>();
-      const deferredDispatchB = defer<'completed' | 'no_work'>();
-      dispatchResults.set(String(repoA.id), deferredDispatchA);
-      dispatchResults.set(String(repoB.id), deferredDispatchB);
-
       const adapter = new RepositorySchedulerAdapter({
         runtimeFactory: async (repo) => {
           if (repo.id === repoA.id) return rtA.runtime;
@@ -665,21 +666,37 @@ describe('fair-multi-repository-scheduler', () => {
           throw new Error('unknown repo');
         },
         logger: { error: () => {} },
-        workerLoop: async () => {},
+        workerLoop: async (runtime, input) => {
+          if (input.signal?.aborted) {
+            const job = runtime.jobQueue
+              .listForRun(input.runId)
+              .find((j) => j.claimedBy === input.workerId && j.status === 'claimed');
+            if (job) {
+              try {
+                runtime.jobQueue.markFailed(generateJobOwnership(job, input.workerId), new Date());
+              } catch {
+                // ignore
+              }
+            }
+            return;
+          }
+          await new Promise((resolve) => {
+            const timeout = setTimeout(resolve, 10000);
+            if (input.signal) {
+              input.signal.addEventListener(
+                'abort',
+                () => {
+                  clearTimeout(timeout);
+                  resolve();
+                },
+                { once: true },
+              );
+            }
+          });
+        },
       });
 
       const telemetry = new RecordingTelemetryPort();
-
-      const dispatch = {
-        async runOne(input: {
-          repository: Repository;
-          workerId: WorkerId;
-        }): Promise<'completed' | 'no_work'> {
-          const d = dispatchResults.get(String(input.repository.id));
-          if (d) return d.promise;
-          return 'no_work';
-        },
-      };
 
       const scheduler = new FairRepositoryScheduler({
         globalConcurrency: 10,
@@ -690,7 +707,7 @@ describe('fair-multi-repository-scheduler', () => {
           },
         },
         workSource: adapter,
-        dispatch,
+        dispatch: adapter,
         telemetry,
         workerIdFactory: (repo, seq) => mkWorkerId(`w-${String(repo.id)}-${seq}`),
         sleep: async () => {},
@@ -700,7 +717,12 @@ describe('fair-multi-repository-scheduler', () => {
 
       await scheduler.scheduleOnce();
 
+      const jobAfterFirstSchedule = rtA.jobQueue.findById(jobIdA);
+      expect(jobAfterFirstSchedule?.status).toBe('claimed');
+
       repoA.enabled = false;
+
+      scheduler.stopAdmission('disabled');
 
       await scheduler.scheduleOnce();
 
@@ -708,9 +730,6 @@ describe('fair-multi-repository-scheduler', () => {
       expect(jobAfterDisable?.status).toBe('queued');
       expect(jobAfterDisable?.claimToken ?? null).toBeNull();
       expect(jobAfterDisable?.claimedBy ?? null).toBeNull();
-
-      deferredDispatchA.resolve('completed');
-      deferredDispatchB.resolve('completed');
 
       adapter.close();
       rtA.runtime.close();
