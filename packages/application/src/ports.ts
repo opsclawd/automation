@@ -319,3 +319,11 @@ export type {
   PrepareWorktreeRecoveryInput,
   WorktreeRecoveryOutcome,
 } from './ports/worktree-recovery-port.js';
+export type {
+  OperationalRecoveryPort,
+  OperationalRecoveryInspection,
+  CommitLeaseReclamationInput,
+  ReclaimExpiredClaimInput,
+  LeaseReclamationResult,
+  OperationalRecoveryConflictReason,
+} from './ports/operational-recovery-port.js';

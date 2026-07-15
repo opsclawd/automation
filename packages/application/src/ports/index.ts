@@ -97,6 +97,14 @@ export type {
   PrepareWorktreeRecoveryInput,
   WorktreeRecoveryOutcome,
 } from './worktree-recovery-port.js';
+export type {
+  OperationalRecoveryPort,
+  OperationalRecoveryInspection,
+  CommitLeaseReclamationInput,
+  ReclaimExpiredClaimInput,
+  LeaseReclamationResult,
+  OperationalRecoveryConflictReason,
+} from './operational-recovery-port.js';
 
 export type {
   SignatureReferenceAnalyzerPort,
