@@ -188,6 +188,13 @@ export class RepositorySchedulerAdapter
       }
     } catch (err) {
       this.activeDispatches.delete(workerId);
+      if (this.closed && this.activeDispatches.size === 0) {
+        for (const rt of this.cachedRuntimes.values()) {
+          rt.close();
+        }
+        this.cachedRuntimes.clear();
+        this.cachedRuntimePromises.clear();
+      }
       throw err;
     }
   }
@@ -219,6 +226,13 @@ async function defaultWorkerLoop(
   }
 
   if (signal?.aborted) {
+    if (job.claimedBy && job.claimToken) {
+      try {
+        jobQueue.markFailed(generateJobOwnership(job, job.claimedBy), new Date());
+      } catch (err) {
+        if (!(err instanceof JobOwnershipLostError)) throw err;
+      }
+    }
     return;
   }
 
