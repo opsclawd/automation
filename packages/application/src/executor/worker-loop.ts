@@ -68,11 +68,12 @@ export async function runClaimedJob(
 
   let started = false;
   let acquired = false;
+  let acquiredLease;
 
   try {
     registry.markBusy(workerId, deps.repoId);
 
-    leases.acquire({
+    acquiredLease = leases.acquire({
       repoId: job.repoId,
       workerId,
       runId: job.runId,
@@ -93,6 +94,7 @@ export async function runClaimedJob(
             runId: job.runId,
             now,
             newExpiresAt: new Date(now.getTime() + deps.ttlMs),
+            leaseToken: acquiredLease!.leaseToken,
           });
           deps.onProgress?.();
         } catch {
@@ -211,8 +213,13 @@ export async function runClaimedJob(
     }
     return 'settled';
   } finally {
-    if (acquired) {
-      leases.release({ repoId: job.repoId, workerId, runId: job.runId });
+    if (acquired && acquiredLease) {
+      leases.release({
+        repoId: job.repoId,
+        workerId,
+        runId: job.runId,
+        leaseToken: acquiredLease.leaseToken,
+      });
     }
     const afterRelease = registry.findById(workerId, deps.repoId);
     if (afterRelease && isRunnable(afterRelease.status)) {

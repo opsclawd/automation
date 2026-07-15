@@ -190,7 +190,7 @@ async function defaultWorkerLoop(
   }
 
   const now = new Date();
-  workerLeaseRepository.acquire({
+  const acquiredLease = workerLeaseRepository.acquire({
     repoId: job.repoId,
     workerId: input.workerId,
     runId,
@@ -205,6 +205,7 @@ async function defaultWorkerLoop(
       repoId: job.repoId,
       workerId: input.workerId,
       runId,
+      leaseToken: acquiredLease.leaseToken,
     });
   }
 }

@@ -106,7 +106,7 @@ describe('WorkerLeaseRepository', () => {
   it('heartbeat: updates heartbeatAt and expiresAt', () => {
     const db = freshDb();
     const repo = new WorkerLeaseRepository(db);
-    repo.acquire({
+    const lease = repo.acquire({
       repoId: RepositoryId('repo-a'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
@@ -121,14 +121,15 @@ describe('WorkerLeaseRepository', () => {
       runId: RunId('run-1'),
       now: now1,
       newExpiresAt: newExpiry,
+      leaseToken: lease.leaseToken,
     });
-    const lease = repo.current(RepositoryId('repo-a'));
-    expect(lease?.heartbeatAt).toEqual(now1);
-    expect(lease?.expiresAt).toEqual(newExpiry);
+    const current = repo.current(RepositoryId('repo-a'));
+    expect(current?.heartbeatAt).toEqual(now1);
+    expect(current?.expiresAt).toEqual(newExpiry);
     db.close();
   });
 
-  it('heartbeat: silently ignores wrong workerId', () => {
+  it('heartbeat: throws LeaseOwnershipLostError for wrong token', () => {
     const db = freshDb();
     const repo = new WorkerLeaseRepository(db);
     repo.acquire({
@@ -139,22 +140,47 @@ describe('WorkerLeaseRepository', () => {
       ttlMs: 60_000,
     });
     const now1 = new Date(now0.getTime() + 30_000);
-    repo.heartbeat({
+    expect(() =>
+      repo.heartbeat({
+        repoId: RepositoryId('repo-a'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        now: now1,
+        newExpiresAt: now1,
+        leaseToken: 'wrong-token' as LeaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
+    db.close();
+  });
+
+  it('heartbeat: throws LeaseOwnershipLostError for wrong workerId even with correct token', () => {
+    const db = freshDb();
+    const repo = new WorkerLeaseRepository(db);
+    const lease = repo.acquire({
       repoId: RepositoryId('repo-a'),
-      workerId: WorkerId('wrong-worker'),
+      workerId: WorkerId('w1'),
       runId: RunId('run-1'),
-      now: now1,
-      newExpiresAt: now1,
+      now: now0,
+      ttlMs: 60_000,
     });
-    const lease = repo.current(RepositoryId('repo-a'));
-    expect(lease?.heartbeatAt).toEqual(now0);
+    const now1 = new Date(now0.getTime() + 30_000);
+    expect(() =>
+      repo.heartbeat({
+        repoId: RepositoryId('repo-a'),
+        workerId: WorkerId('wrong-worker'),
+        runId: RunId('run-1'),
+        now: now1,
+        newExpiresAt: now1,
+        leaseToken: lease.leaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
     db.close();
   });
 
   it('release: removes the lease so current() returns undefined', () => {
     const db = freshDb();
     const repo = new WorkerLeaseRepository(db);
-    repo.acquire({
+    const lease = repo.acquire({
       repoId: RepositoryId('repo-a'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
@@ -165,12 +191,13 @@ describe('WorkerLeaseRepository', () => {
       repoId: RepositoryId('repo-a'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
+      leaseToken: lease.leaseToken,
     });
     expect(repo.current(RepositoryId('repo-a'))).toBeUndefined();
     db.close();
   });
 
-  it('release: is idempotent', () => {
+  it('release: throws LeaseOwnershipLostError for wrong token', () => {
     const db = freshDb();
     const repo = new WorkerLeaseRepository(db);
     repo.acquire({
@@ -179,38 +206,36 @@ describe('WorkerLeaseRepository', () => {
       runId: RunId('run-1'),
       now: now0,
       ttlMs: 60_000,
-    });
-    repo.release({
-      repoId: RepositoryId('repo-a'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
     });
     expect(() =>
       repo.release({
         repoId: RepositoryId('repo-a'),
         workerId: WorkerId('w1'),
         runId: RunId('run-1'),
+        leaseToken: 'wrong-token' as LeaseToken,
       }),
-    ).not.toThrow();
+    ).toThrow('WorkerLease ownership lost');
     db.close();
   });
 
-  it('release: silently ignores wrong workerId', () => {
+  it('release: throws LeaseOwnershipLostError for wrong workerId even with correct token', () => {
     const db = freshDb();
     const repo = new WorkerLeaseRepository(db);
-    repo.acquire({
+    const lease = repo.acquire({
       repoId: RepositoryId('repo-a'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
       now: now0,
       ttlMs: 60_000,
     });
-    repo.release({
-      repoId: RepositoryId('repo-a'),
-      workerId: WorkerId('wrong-worker'),
-      runId: RunId('run-1'),
-    });
-    expect(repo.current(RepositoryId('repo-a'))?.workerId).toBe('w1');
+    expect(() =>
+      repo.release({
+        repoId: RepositoryId('repo-a'),
+        workerId: WorkerId('wrong-worker'),
+        runId: RunId('run-1'),
+        leaseToken: lease.leaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
     db.close();
   });
 
@@ -344,7 +369,7 @@ describe('WorkerLeaseRepository', () => {
   it('acquire after release succeeds (repo re-acquisition)', () => {
     const db = freshDb();
     const repo = new WorkerLeaseRepository(db);
-    repo.acquire({
+    const lease = repo.acquire({
       repoId: RepositoryId('repo-a'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
@@ -355,6 +380,7 @@ describe('WorkerLeaseRepository', () => {
       repoId: RepositoryId('repo-a'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
+      leaseToken: lease.leaseToken,
     });
     const lease2 = repo.acquire({
       repoId: RepositoryId('repo-a'),
@@ -364,10 +390,11 @@ describe('WorkerLeaseRepository', () => {
       ttlMs: 60_000,
     });
     expect(lease2.workerId).toBe('w2');
+    expect(lease2.leaseToken).toBeDefined();
     db.close();
   });
 
-  it('acquire: reclaims an expired lease (expires_at <= now)', () => {
+  it('lease acquisition refuses an expired foreign generation', () => {
     const db = freshDb();
     const repo = new WorkerLeaseRepository(db);
     repo.acquire({
@@ -378,39 +405,98 @@ describe('WorkerLeaseRepository', () => {
       ttlMs: 60_000,
     });
     const atExpiry = new Date(now0.getTime() + 60_000);
-    const lease2 = repo.acquire({
-      repoId: RepositoryId('repo-a'),
-      workerId: WorkerId('w2'),
-      runId: RunId('run-2'),
-      now: atExpiry,
-      ttlMs: 60_000,
-    });
-    expect(lease2.workerId).toBe('w2');
-    expect(lease2.repoId).toBe('repo-a');
-    expect(repo.current(RepositoryId('repo-a'))?.workerId).toBe('w2');
+    expect(() =>
+      repo.acquire({
+        repoId: RepositoryId('repo-a'),
+        workerId: WorkerId('w2'),
+        runId: RunId('run-2'),
+        now: atExpiry,
+        ttlMs: 60_000,
+      }),
+    ).toThrow(WorkerLeaseConflictError);
     db.close();
   });
 
-  it('acquire: still throws WorkerLeaseConflictError when existing lease is unexpired', () => {
+  it('stale lease token cannot heartbeat replacement generation', () => {
     const db = freshDb();
     const repo = new WorkerLeaseRepository(db);
-    repo.acquire({
+    const lease1 = repo.acquire({
       repoId: RepositoryId('repo-a'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
       now: now0,
       ttlMs: 60_000,
     });
-    const beforeExpiry = new Date(now0.getTime() + 59_999);
+    // Manually delete the lease, pretending it was reclaimed/released, then insert a replacement
+    repo.release({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      leaseToken: lease1.leaseToken,
+    });
+    const lease2 = repo.acquire({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w2'),
+      runId: RunId('run-2'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+
+    const now1 = new Date(now0.getTime() + 30_000);
     expect(() =>
-      repo.acquire({
+      repo.heartbeat({
         repoId: RepositoryId('repo-a'),
-        workerId: WorkerId('w2'),
-        runId: RunId('run-2'),
-        now: beforeExpiry,
-        ttlMs: 60_000,
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        now: now1,
+        newExpiresAt: new Date(now1.getTime() + 60_000),
+        leaseToken: lease1.leaseToken,
       }),
-    ).toThrow(WorkerLeaseConflictError);
+    ).toThrow('WorkerLease ownership lost');
+    // Ensure the database row is still lease2
+    const current = repo.current(RepositoryId('repo-a'));
+    expect(current?.workerId).toBe('w2');
+    expect(current?.leaseToken).toBe(lease2.leaseToken);
+    db.close();
+  });
+
+  it('stale lease token cannot release replacement generation', () => {
+    const db = freshDb();
+    const repo = new WorkerLeaseRepository(db);
+    const lease1 = repo.acquire({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+    // Manually delete the lease, pretending it was reclaimed/released, then insert a replacement
+    repo.release({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      leaseToken: lease1.leaseToken,
+    });
+    const lease2 = repo.acquire({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w2'),
+      runId: RunId('run-2'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+
+    expect(() =>
+      repo.release({
+        repoId: RepositoryId('repo-a'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        leaseToken: lease1.leaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
+    // Ensure the database row is still lease2
+    const current = repo.current(RepositoryId('repo-a'));
+    expect(current?.workerId).toBe('w2');
+    expect(current?.leaseToken).toBe(lease2.leaseToken);
     db.close();
   });
 });

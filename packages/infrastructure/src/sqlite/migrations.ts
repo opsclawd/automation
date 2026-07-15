@@ -29,6 +29,7 @@ import * as addCommentAttempts from './migrations/0026-add-pr-review-comment-att
 import * as repoScopedQueue from './migrations/0027-repository-scoped-queue.js';
 import * as workerRepoBinding from './migrations/0028-worker-repository-binding.js';
 import * as eventRepoId from './migrations/0029-operational-event-repository-id.js';
+import * as fenceWorkerLeases from './migrations/0030-fence-worker-leases.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -60,6 +61,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: repoScopedQueue.version, sql: repoScopedQueue.sql },
   { version: workerRepoBinding.version, sql: workerRepoBinding.sql },
   { version: eventRepoId.version, sql: eventRepoId.sql },
+  { version: fenceWorkerLeases.version, sql: fenceWorkerLeases.sql },
 ];
 
 export function registerCustomFunctions(db: Db): void {

@@ -82,7 +82,36 @@ describe('FakeWorkerLeasePort', () => {
     expect(leases.current(RepositoryId('r2'))?.workerId).toBe('w2');
   });
 
-  it('release is idempotent', () => {
+  it('release throws LeaseOwnershipLostError when lease already gone (reject zero-row updates)', () => {
+    const { registry, leases } = makePorts();
+    registry.register(
+      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
+    );
+    const lease = leases.acquire({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+    leases.release({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      leaseToken: lease.leaseToken,
+    });
+    expect(() =>
+      leases.release({
+        repoId: RepositoryId('r'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        leaseToken: lease.leaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
+    expect(leases.current(RepositoryId('r'))).toBeUndefined();
+  });
+
+  it('release throws LeaseOwnershipLostError for wrong token', () => {
     const { registry, leases } = makePorts();
     registry.register(
       createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
@@ -94,9 +123,14 @@ describe('FakeWorkerLeasePort', () => {
       now: now0,
       ttlMs: 60_000,
     });
-    leases.release({ repoId: RepositoryId('r'), workerId: WorkerId('w1'), runId: RunId('run-1') });
-    leases.release({ repoId: RepositoryId('r'), workerId: WorkerId('w1'), runId: RunId('run-1') });
-    expect(leases.current(RepositoryId('r'))).toBeUndefined();
+    expect(() =>
+      leases.release({
+        repoId: RepositoryId('r'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        leaseToken: 'wrong-token' as LeaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
   });
 
   it('reclaimExpired does not reclaim unexpired leases', () => {
@@ -256,7 +290,7 @@ describe('FakeWorkerLeasePort', () => {
     expect(reclaimed).toHaveLength(1);
   });
 
-  it('acquire reclaims an expired lease (expires_at <= now)', () => {
+  it('lease acquisition refuses an expired foreign generation', () => {
     const { leases } = makePorts();
     leases.acquire({
       repoId: RepositoryId('r'),
@@ -266,16 +300,15 @@ describe('FakeWorkerLeasePort', () => {
       ttlMs: 60_000,
     });
     const atExpiry = new Date(now0.getTime() + 60_000);
-    const lease2 = leases.acquire({
-      repoId: RepositoryId('r'),
-      workerId: WorkerId('w2'),
-      runId: RunId('run-2'),
-      now: atExpiry,
-      ttlMs: 60_000,
-    });
-    expect(lease2.workerId).toBe('w2');
-    expect(lease2.repoId).toBe('r');
-    expect(leases.current(RepositoryId('r'))?.workerId).toBe('w2');
+    expect(() =>
+      leases.acquire({
+        repoId: RepositoryId('r'),
+        workerId: WorkerId('w2'),
+        runId: RunId('run-2'),
+        now: atExpiry,
+        ttlMs: 60_000,
+      }),
+    ).toThrow(WorkerLeaseConflictError);
   });
 
   it('acquire still throws WorkerLeaseConflictError when existing lease is unexpired', () => {
@@ -299,9 +332,9 @@ describe('FakeWorkerLeasePort', () => {
     ).toThrow(WorkerLeaseConflictError);
   });
 
-  it('stale lease heartbeat cannot extend a reassigned run lease', () => {
+  it('stale lease token cannot heartbeat replacement generation', () => {
     const { leases } = makePorts();
-    leases.acquire({
+    const w1Lease = leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
@@ -309,6 +342,12 @@ describe('FakeWorkerLeasePort', () => {
       ttlMs: 60_000,
     });
     const later = new Date(now0.getTime() + 120_000);
+    leases.release({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      leaseToken: w1Lease.leaseToken,
+    });
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w2'),
@@ -316,21 +355,24 @@ describe('FakeWorkerLeasePort', () => {
       now: later,
       ttlMs: 60_000,
     });
-    leases.heartbeat({
-      repoId: RepositoryId('r'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: later,
-      newExpiresAt: new Date(later.getTime() + 60_000),
-    });
+    expect(() =>
+      leases.heartbeat({
+        repoId: RepositoryId('r'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        now: later,
+        newExpiresAt: new Date(later.getTime() + 60_000),
+        leaseToken: w1Lease.leaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
     const currentLease = leases.current(RepositoryId('r'));
     expect(currentLease?.workerId).toBe('w2');
     expect(currentLease?.runId).toBe('run-2');
   });
 
-  it('stale lease release cannot delete a reassigned run lease', () => {
+  it('stale lease token cannot release replacement generation', () => {
     const { leases } = makePorts();
-    leases.acquire({
+    const w1Lease = leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
@@ -338,6 +380,12 @@ describe('FakeWorkerLeasePort', () => {
       ttlMs: 60_000,
     });
     const later = new Date(now0.getTime() + 120_000);
+    leases.release({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      leaseToken: w1Lease.leaseToken,
+    });
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w2'),
@@ -345,11 +393,14 @@ describe('FakeWorkerLeasePort', () => {
       now: later,
       ttlMs: 60_000,
     });
-    leases.release({
-      repoId: RepositoryId('r'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-    });
+    expect(() =>
+      leases.release({
+        repoId: RepositoryId('r'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        leaseToken: w1Lease.leaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
     const currentLease = leases.current(RepositoryId('r'));
     expect(currentLease?.workerId).toBe('w2');
     expect(currentLease?.runId).toBe('run-2');

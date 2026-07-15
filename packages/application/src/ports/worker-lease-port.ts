@@ -1,4 +1,4 @@
-import type { RepositoryId, RunId, WorkerId, WorkerLease } from '@ai-sdlc/domain';
+import type { RepositoryId, RunId, WorkerId, WorkerLease, LeaseToken } from '@ai-sdlc/domain';
 
 export interface AcquireLeaseInput {
   repoId: RepositoryId;
@@ -14,12 +14,14 @@ export interface HeartbeatLeaseInput {
   runId: RunId;
   now: Date;
   newExpiresAt: Date;
+  leaseToken: LeaseToken;
 }
 
 export interface ReleaseLeaseInput {
   repoId: RepositoryId;
   workerId: WorkerId;
   runId: RunId;
+  leaseToken: LeaseToken;
 }
 
 export interface ReclaimExpiredInput {

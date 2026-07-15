@@ -222,6 +222,7 @@ describe('repository-runtime-recovery', () => {
           repoId: containerA.repo.id,
           workerId: workerIdA,
           runId: runIdA,
+          leaseToken: leaseA.leaseToken,
         });
 
         expect(containerA.leases.current(containerA.repo.id)).toBeUndefined();
@@ -481,7 +482,7 @@ describe('repository-runtime-recovery', () => {
           now,
           ttlMs: 60000,
         });
-        const _leaseB = containerB.leases.acquire({
+        const leaseB = containerB.leases.acquire({
           repoId: containerB.repo.id,
           workerId: workerIdB,
           runId: runIdB,
@@ -544,6 +545,7 @@ describe('repository-runtime-recovery', () => {
           runId: runIdB,
           now: expiredTime,
           newExpiresAt: new Date(expiredTime.getTime() + 60000),
+          leaseToken: leaseB.leaseToken,
         });
 
         const reclaimedA = await reclaimPromise;
@@ -557,6 +559,7 @@ describe('repository-runtime-recovery', () => {
           repoId: containerB.repo.id,
           workerId: workerIdB,
           runId: runIdB,
+          leaseToken: leaseB.leaseToken,
         });
 
         expect(containerB.queue.findById(claimedB!.id)?.status).toBe('succeeded');

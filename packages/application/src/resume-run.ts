@@ -184,8 +184,9 @@ export class ResumeRun implements ResumeRunUseCase {
     }
 
     let leaseAcquired = false;
+    let acquiredLease;
     try {
-      this.deps.leases.acquire({
+      acquiredLease = this.deps.leases.acquire({
         repoId: repo.id,
         workerId: input.workerId,
         runId: input.runId,
@@ -239,13 +240,23 @@ export class ResumeRun implements ResumeRunUseCase {
         throw err;
       }
 
-      if (leaseAcquired) {
-        this.deps.leases.release({ repoId: repo.id, workerId: input.workerId, runId: input.runId });
+      if (leaseAcquired && acquiredLease) {
+        this.deps.leases.release({
+          repoId: repo.id,
+          workerId: input.workerId,
+          runId: input.runId,
+          leaseToken: acquiredLease.leaseToken,
+        });
       }
       return { jobId: job.id, jobStatus: job.status as 'queued' };
     } catch (err) {
-      if (leaseAcquired) {
-        this.deps.leases.release({ repoId: repo.id, workerId: input.workerId, runId: input.runId });
+      if (leaseAcquired && acquiredLease) {
+        this.deps.leases.release({
+          repoId: repo.id,
+          workerId: input.workerId,
+          runId: input.runId,
+          leaseToken: acquiredLease.leaseToken,
+        });
       }
       throw err;
     }

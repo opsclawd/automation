@@ -71,8 +71,14 @@ interface LeaseRepo {
     runId: RunId;
     now: Date;
     newExpiresAt: Date;
+    leaseToken: string;
   }): void;
-  release(input: { repoId: RepositoryId; workerId: WorkerId; runId: RunId }): void;
+  release(input: {
+    repoId: RepositoryId;
+    workerId: WorkerId;
+    runId: RunId;
+    leaseToken: string;
+  }): void;
 }
 
 // Event types that are recorded (persisted to the DB, available for later
@@ -90,6 +96,7 @@ function startLeaseHeartbeat(
   repoId: RepositoryId,
   workerId: WorkerId,
   runId: RunId,
+  leaseToken: string,
   ttlMs: number,
   intervalMs: number,
 ): { stop: () => void } {
@@ -104,6 +111,7 @@ function startLeaseHeartbeat(
         runId,
         now: hbNow,
         newExpiresAt: new Date(hbNow.getTime() + ttlMs),
+        leaseToken,
       });
       heartbeatFailures = 0;
     } catch (err) {
@@ -111,7 +119,7 @@ function startLeaseHeartbeat(
       if (heartbeatFailures >= maxHeartbeatFailures) {
         console.error(`Fatal: heartbeat failed ${heartbeatFailures}x, aborting run.`);
         clearInterval(timer);
-        leaseRepo.release({ repoId, workerId, runId });
+        leaseRepo.release({ repoId, workerId, runId, leaseToken });
         process.exit(EXIT_INTERNAL_ERROR);
       }
       console.error(
@@ -122,7 +130,7 @@ function startLeaseHeartbeat(
   return {
     stop: () => {
       clearInterval(timer);
-      leaseRepo.release({ repoId, workerId, runId });
+      leaseRepo.release({ repoId, workerId, runId, leaseToken });
     },
   };
 }
@@ -729,13 +737,6 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   },
                   'running',
                 );
-                try {
-                  c.workerLeaseRepository.release({ repoId, workerId, runId: RunId(run.uuid) });
-                } catch (err) {
-                  console.error(
-                    `Failed to release lease on exit: ${err instanceof Error ? err.message : String(err)}`,
-                  );
-                }
                 unsubscribe?.();
               } finally {
                 process.exit(exitCode);
@@ -1355,8 +1356,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;
             const heartbeatIntervalMs =
               buildOpts?.lease?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+            let acquiredLease;
             try {
-              c.workerLeaseRepository.acquire({
+              acquiredLease = c.workerLeaseRepository.acquire({
                 repoId,
                 workerId,
                 runId: RunId(opts.uuid),
@@ -1386,7 +1388,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const releaseLeaseOnSignal = () => {
               try {
                 testWorkerReaper?.stop();
-                c.workerLeaseRepository.release({ repoId, workerId, runId: RunId(run.uuid) });
+                c.workerLeaseRepository.release({
+                  repoId,
+                  workerId,
+                  runId: RunId(run.uuid),
+                  leaseToken: acquiredLease.leaseToken,
+                });
               } catch (err) {
                 console.error(
                   `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
@@ -1405,6 +1412,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 repoId,
                 workerId,
                 RunId(run.uuid),
+                acquiredLease.leaseToken,
                 leaseTtlMs,
                 heartbeatIntervalMs,
               );
@@ -1529,8 +1537,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const heartbeatIntervalMs =
                 buildOpts?.lease?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
 
+              let acquiredLease;
               try {
-                c.workerLeaseRepository.acquire({
+                acquiredLease = c.workerLeaseRepository.acquire({
                   repoId,
                   workerId,
                   runId: RunId(opts.uuid),
@@ -1555,7 +1564,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const releaseLeaseOnSignal = () => {
                 try {
                   testWorkerReaper?.stop();
-                  c.workerLeaseRepository.release({ repoId, workerId, runId: RunId(run.uuid) });
+                  c.workerLeaseRepository.release({
+                    repoId,
+                    workerId,
+                    runId: RunId(run.uuid),
+                    leaseToken: acquiredLease.leaseToken,
+                  });
                 } catch (err) {
                   console.error(
                     `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
@@ -1585,6 +1599,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   repoId,
                   workerId,
                   RunId(run.uuid),
+                  acquiredLease.leaseToken,
                   leaseTtlMs,
                   heartbeatIntervalMs,
                 );

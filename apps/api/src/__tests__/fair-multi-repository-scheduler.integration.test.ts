@@ -208,15 +208,20 @@ describe('fair-multi-repository-scheduler', () => {
       expect(leaseB.repoId).toBe(repoB.id);
       expect(leaseA.repoId).not.toBe(leaseB.repoId);
 
+      const leaseTokenA = leaseA.leaseToken;
+      const leaseTokenB = leaseB.leaseToken;
+
       rtA.runtime.workerLeaseRepository.release({
         repoId: repoA.id,
         workerId: mkWorkerId('worker-a'),
         runId: runIdA,
+        leaseToken: leaseTokenA,
       });
       rtB.runtime.workerLeaseRepository.release({
         repoId: repoB.id,
         workerId: mkWorkerId('worker-b'),
         runId: runIdB,
+        leaseToken: leaseTokenB,
       });
 
       rtA.runtime.close();

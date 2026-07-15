@@ -37,8 +37,9 @@ export class WaitingRunsSweeper {
     for (const entry of sweepResult.reactivatedRuns) {
       const run = entry.run;
       let leaseAcquired = false;
+      let acquiredLease;
       try {
-        this.deps.leases.acquire({
+        acquiredLease = this.deps.leases.acquire({
           repoId: run.repoId,
           workerId,
           runId: run.uuid as RunId,
@@ -137,9 +138,14 @@ export class WaitingRunsSweeper {
           `WaitingRunsSweeper: enqueue failed for run ${run.uuid}: ${message}`,
         );
       } finally {
-        if (leaseAcquired) {
+        if (leaseAcquired && acquiredLease) {
           try {
-            this.deps.leases.release({ repoId: run.repoId, workerId, runId: run.uuid as RunId });
+            this.deps.leases.release({
+              repoId: run.repoId,
+              workerId,
+              runId: run.uuid as RunId,
+              leaseToken: acquiredLease.leaseToken,
+            });
           } catch (relErr) {
             this.deps.logger.error(
               `WaitingRunsSweeper: Failed to release lease on failure for ${run.uuid}:`,

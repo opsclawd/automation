@@ -436,6 +436,9 @@ describe('repository-runtime-isolation', () => {
         expect(leaseA.repoId).toBe(repoA.id);
         expect(leaseB.repoId).toBe(repoB.id);
 
+        const leaseTokenA = leaseA.leaseToken;
+        const leaseTokenB = leaseB.leaseToken;
+
         const claimedA = containerA.queue.claimNext({
           repoId: repoA.id,
           workerId: workerIdA,
@@ -466,11 +469,13 @@ describe('repository-runtime-isolation', () => {
           repoId: repoA.id,
           workerId: workerIdA,
           runId: runIdA,
+          leaseToken: leaseTokenA,
         });
         containerB.leases.release({
           repoId: repoB.id,
           workerId: workerIdB,
           runId: runIdB,
+          leaseToken: leaseTokenB,
         });
 
         expect(containerA.leases.current(repoA.id)).toBeUndefined();
