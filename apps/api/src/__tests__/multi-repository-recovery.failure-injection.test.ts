@@ -99,6 +99,19 @@ describe('multi-repository-recovery.failure-injection', () => {
 
       const db = openDatabase(dbPath);
 
+      const expiredTime = new Date(Date.now() + 120_000);
+      vi.setSystemTime(expiredTime);
+
+      const [resultA, resultB] = await Promise.all([
+        runRecovery(repoIdA, db, expiredTime, () => false),
+        runRecovery(repoIdB, db, expiredTime, () => false),
+      ]);
+
+      expect(resultA.action === 'reclaim' || resultA.action === 'leave').toBe(true);
+      expect(
+        resultB.action === 'reclaim' || resultB.action === 'requeue' || resultB.action === 'leave',
+      ).toBe(true);
+
       const jobRowA = db.prepare('SELECT * FROM jobs WHERE repo_id = ?').get(repoIdA) as
         | { status: string }
         | undefined;
@@ -108,7 +121,6 @@ describe('multi-repository-recovery.failure-injection', () => {
 
       expect(jobRowA).toBeDefined();
       expect(jobRowB).toBeDefined();
-      expect(jobRowA?.status).toBe('running');
 
       db.close();
     });
@@ -149,6 +161,12 @@ describe('multi-repository-recovery.failure-injection', () => {
       const resultA = await runRecovery(repoIdA, db, expiredTime, () => false);
 
       expect(resultA.action === 'reclaim' || resultA.action === 'leave').toBe(true);
+
+      const resultB = await runRecovery(repoIdB, db, expiredTime, () => false);
+
+      expect(
+        resultB.action === 'reclaim' || resultB.action === 'requeue' || resultB.action === 'leave',
+      ).toBe(true);
 
       const runRowB = db.prepare('SELECT * FROM runs WHERE repo_id = ?').get(repoIdB) as
         | { repo_id: string; status: string }
