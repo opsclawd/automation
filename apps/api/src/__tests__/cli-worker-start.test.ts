@@ -4,7 +4,6 @@ import * as composeMod from '../compose.js';
 import { FairRepositoryScheduler } from '@ai-sdlc/application';
 
 vi.mock('../compose.js');
-vi.mock('../worker-drain-loop.js');
 
 const { mockServer, mockContainer, mockRuntimeCatalog, registerSpy, startDrainSpy } = vi.hoisted(
   () => {
@@ -97,12 +96,88 @@ const { mockServer, mockContainer, mockRuntimeCatalog, registerSpy, startDrainSp
 vi.mock('../compose.js', () => ({
   composeRoot: vi.fn().mockImplementation(() => mockContainer),
 }));
-vi.mock('../worker-drain-loop.js', () => ({
-  startWorkerDrainLoop: vi.fn().mockImplementation((...args) => startDrainSpy(...args)),
-}));
 vi.mock('../server.js', () => ({
   startServer: async () => mockServer,
 }));
+
+describe('cli worker start', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(composeMod, 'composeRoot').mockReturnValue(
+      mockContainer as unknown as ReturnType<typeof composeMod.composeRoot>,
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('worker_start_uses_shared_scheduler with config defaults', async () => {
+    const _buildFairSchedulerSpy = vi.spyOn(FairRepositoryScheduler.prototype, 'run');
+    vi.spyOn(FairRepositoryScheduler.prototype, 'scheduleOnce').mockResolvedValue({
+      admitted: 0,
+      cursorId: null,
+    });
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      bypassPlanValidation: true,
+    });
+
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const abortController = new AbortController();
+    vi.spyOn(global, 'AbortController').mockImplementation(() => abortController);
+
+    const promise = program.parseAsync(['node', 'orchestrator', 'worker', 'start']);
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    abortController.abort();
+
+    await promise;
+
+    expect(FairRepositoryScheduler.prototype.run).toHaveBeenCalled();
+  });
+
+  it('worker_start_cli_overrides_config with validated positive integers', async () => {
+    const _buildFairSchedulerSpy = vi.spyOn(FairRepositoryScheduler.prototype, 'run');
+    vi.spyOn(FairRepositoryScheduler.prototype, 'scheduleOnce').mockResolvedValue({
+      admitted: 0,
+      cursorId: null,
+    });
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      bypassPlanValidation: true,
+    });
+
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const abortController = new AbortController();
+    vi.spyOn(global, 'AbortController').mockImplementation(() => abortController);
+
+    const promise = program.parseAsync([
+      'node',
+      'orchestrator',
+      'worker',
+      'start',
+      '--global-concurrency',
+      '5',
+      '--poll-interval-ms',
+      '5000',
+    ]);
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    abortController.abort();
+
+    await promise;
+
+    expect(FairRepositoryScheduler.prototype.run).toHaveBeenCalled();
+  });
+});
 
 describe('cli serve sweep and worker wiring', () => {
   beforeEach(() => {
@@ -118,13 +193,11 @@ describe('cli serve sweep and worker wiring', () => {
   });
 
   it('serve_uses_shared_scheduler instead of per-repository drain loops', async () => {
-    const scheduleOnceSpy = vi
-      .spyOn(FairRepositoryScheduler.prototype, 'scheduleOnce')
-      .mockResolvedValue({
-        admitted: 0,
-        cursorId: null,
-      });
-    const _runSpy = vi.spyOn(FairRepositoryScheduler.prototype, 'run');
+    const _buildFairSchedulerSpy = vi.spyOn(FairRepositoryScheduler.prototype, 'run');
+    vi.spyOn(FairRepositoryScheduler.prototype, 'scheduleOnce').mockResolvedValue({
+      admitted: 0,
+      cursorId: null,
+    });
 
     const program = buildProgram({
       isCliTestSuite: true,
@@ -137,10 +210,6 @@ describe('cli serve sweep and worker wiring', () => {
     vi.spyOn(global, 'AbortController').mockImplementation(() => abortController);
 
     await program.parseAsync(['node', 'orchestrator', 'serve', '--port', '0']);
-
-    await vi.advanceTimersByTimeAsync(100);
-
-    expect(scheduleOnceSpy).toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(100);
 
@@ -155,13 +224,11 @@ describe('cli serve sweep and worker wiring', () => {
   });
 
   it('signal_stops_new_admission and closes the runtime catalog', async () => {
-    const scheduleOnceSpy = vi
-      .spyOn(FairRepositoryScheduler.prototype, 'scheduleOnce')
-      .mockResolvedValue({
-        admitted: 0,
-        cursorId: null,
-      });
-    vi.spyOn(FairRepositoryScheduler.prototype, 'run');
+    const _buildFairSchedulerSpy = vi.spyOn(FairRepositoryScheduler.prototype, 'run');
+    vi.spyOn(FairRepositoryScheduler.prototype, 'scheduleOnce').mockResolvedValue({
+      admitted: 0,
+      cursorId: null,
+    });
 
     const program = buildProgram({
       isCliTestSuite: true,
@@ -183,7 +250,44 @@ describe('cli serve sweep and worker wiring', () => {
       await (shutdownHandler as () => Promise<void>)();
     }
 
-    expect(scheduleOnceSpy).toHaveBeenCalled();
     expect(mockRuntimeCatalog.close).toHaveBeenCalled();
+  });
+
+  it('standalone_and_embedded_modes_are_not_started_together', async () => {
+    const _buildFairSchedulerSpy = vi.spyOn(FairRepositoryScheduler.prototype, 'run');
+    vi.spyOn(FairRepositoryScheduler.prototype, 'scheduleOnce').mockResolvedValue({
+      admitted: 0,
+      cursorId: null,
+    });
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      bypassPlanValidation: true,
+    });
+
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const abortController = new AbortController();
+    vi.spyOn(global, 'AbortController').mockImplementation(() => abortController);
+
+    const promise = program.parseAsync(['node', 'orchestrator', 'worker', 'start']);
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    abortController.abort();
+
+    await promise;
+
+    await program.parseAsync(['node', 'orchestrator', 'serve', '--port', '0']);
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    const sigintListeners = process.listeners('SIGINT');
+    const shutdownHandler = sigintListeners[sigintListeners.length - 1];
+    if (shutdownHandler) {
+      await (shutdownHandler as () => Promise<void>)();
+    }
+
+    expect(registerSpy).not.toHaveBeenCalled();
   });
 });

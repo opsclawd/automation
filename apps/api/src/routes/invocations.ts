@@ -16,9 +16,11 @@ export function registerInvocationsRoutes(app: FastifyInstance, c: Container): v
       reply.code(400);
       return { error: 'invalid run uuid' };
     }
-    const run = await guardRead(req, reply, c);
-    if (!run) return;
-    const invocations = c.agentInvocationRepository.listByRun(RunId(uuid)).map((i) => ({
+    const result = await guardRead(req, reply, c);
+    if (!result) return;
+    const agentInvocationRepository =
+      result.runtime?.agentInvocationRepository ?? c.agentInvocationRepository;
+    const invocations = agentInvocationRepository.listByRun(RunId(uuid)).map((i) => ({
       id: i.id,
       phaseId: i.phaseId,
       stepId: i.stepId ?? null,

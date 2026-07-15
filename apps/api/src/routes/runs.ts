@@ -187,7 +187,18 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
 
     let repositoryId: RepositoryId | undefined;
     try {
-      const ctx = resolveRepoContext({ headers: req.headers, query: req.query }, c);
+      // Do NOT fall back to c.repoFullName here: an omitted repositoryId on
+      // an unscoped list request means "aggregate across every registered
+      // repository" (runtimeCatalog.listRuns() with no repositoryId filter
+      // does exactly that). Falling back to the ambient/legacy repo silently
+      // narrows what looks like an unscoped request to one repository —
+      // and in CI, where GITHUB_REPOSITORY is always set, that legacy repo
+      // has healthStatus 'unknown' and fails to resolve, so the "unscoped"
+      // list silently returned zero runs instead of aggregating. Same
+      // rationale as the POST /api/runs handler above.
+      const ctx = resolveRepoContext({ headers: req.headers, query: req.query }, c, {
+        allowFallback: false,
+      });
       if (ctx.repositoryId || ctx.fullName) {
         repositoryId = canonicalizeRepoContext(ctx, c);
       }
@@ -215,7 +226,12 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     if (status !== undefined) {
       filter.status = status;
     }
-    const { runs, total } = c.runRepository.list(filter);
+    let { runs, total } = await c.runtimeCatalog.listRuns(filter);
+    if (total === 0) {
+      const rootResult = c.runRepository.list(filter);
+      runs = rootResult.runs;
+      total = rootResult.total;
+    }
     return {
       runs: runs.map(serializeRun),
       total,
@@ -228,9 +244,11 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     if (!UUID_RE.test(req.params.runId)) {
       return reply.code(400).send({ error: 'invalid_id' });
     }
-    const run = await guardRead(req, reply, c);
-    if (!run) return;
-    const failure = c.failureRepository.findLatestByRun(req.params.runId);
+    const result = await guardRead(req, reply, c);
+    if (!result) return;
+    const { run, runtime } = result;
+    const failureRepository = runtime?.failureRepository ?? c.failureRepository;
+    const failure = failureRepository.findLatestByRun(req.params.runId);
     return { run: serializeRun(run), failure: failure ? serializeFailure(failure) : null };
   });
 

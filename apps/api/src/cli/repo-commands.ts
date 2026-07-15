@@ -122,6 +122,7 @@ export function registerRepoCommand(
     .option('--config-metadata <json>', 'New config metadata blob')
     .option('--enable', 'Re-enable the repository')
     .option('--disable', 'Disable the repository')
+    .option('--max-concurrent-runs <count>', 'Concurrency cap (only 1 is supported)', Number)
     .option(
       '--target-repo-root <path>',
       'Target repository root for worktrees and DB (default: orchestrator repo)',
@@ -134,6 +135,7 @@ export function registerRepoCommand(
         configMetadata?: string;
         enable?: boolean;
         disable?: boolean;
+        maxConcurrentRuns?: number;
         targetRepoRoot?: string;
       }) => {
         if (!ID_OR_FULLNAME_RE.test(opts.id)) {
@@ -154,6 +156,9 @@ export function registerRepoCommand(
             ...(opts.defaultBranch !== undefined ? { defaultBranch: opts.defaultBranch } : {}),
             ...(opts.remoteUrl !== undefined ? { remoteUrl: opts.remoteUrl } : {}),
             ...(opts.configMetadata !== undefined ? { configMetadata: opts.configMetadata } : {}),
+            ...(opts.maxConcurrentRuns !== undefined
+              ? { maxConcurrentRuns: opts.maxConcurrentRuns }
+              : {}),
           });
           console.log(JSON.stringify(out, null, 2));
         } catch (err) {

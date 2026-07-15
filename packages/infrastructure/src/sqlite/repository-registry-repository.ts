@@ -8,6 +8,7 @@ import {
   DuplicateRepositoryError,
   RepositoryHasActiveRunsError,
   RepositoryNotFoundError,
+  RepositoryValidationError,
   type Repository,
   RepositoryId,
   type RepositoryHealthStatus,
@@ -131,6 +132,16 @@ export class RepositoryRegistryRepository implements RepositoryRegistryPort, Rep
       fields.push('last_health_check_at = @last_health_check_at');
       params.last_health_check_at = patch.lastHealthCheckAt?.toISOString() ?? null;
     }
+    if (patch.maxConcurrentRuns !== undefined) {
+      if (patch.maxConcurrentRuns !== 1) {
+        throw new RepositoryValidationError(
+          'maxConcurrentRuns must be 1 until multiple lease slots are supported',
+          existing.local_base_path,
+        );
+      }
+      fields.push('max_concurrent_runs = @max_concurrent_runs');
+      params.max_concurrent_runs = patch.maxConcurrentRuns;
+    }
     fields.push('updated_at = @updated_at');
 
     this.db.prepare(`UPDATE repositories SET ${fields.join(', ')} WHERE id = @id`).run(params);
@@ -187,9 +198,9 @@ export class RepositoryRegistryRepository implements RepositoryRegistryPort, Rep
     return rows.map(rowToRepository);
   }
 
-  private findRow(id: string): { id: string } | undefined {
-    return this.db.prepare(`SELECT id FROM repositories WHERE id = ?`).get(id) as
-      | { id: string }
+  private findRow(id: string): { id: string; local_base_path: string } | undefined {
+    return this.db.prepare(`SELECT id, local_base_path FROM repositories WHERE id = ?`).get(id) as
+      | { id: string; local_base_path: string }
       | undefined;
   }
 }

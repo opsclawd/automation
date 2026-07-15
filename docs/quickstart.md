@@ -23,12 +23,39 @@ pnpm install
 Open **two terminals**:
 
 ```bash
-# Terminal 1 — API
+# Terminal 1 — API (includes embedded worker pool)
 pnpm --filter @ai-sdlc/api dev serve     # http://127.0.0.1:4319
 
 # Terminal 2 — Web dashboard
 pnpm --filter @ai-sdlc/web dev           # http://127.0.0.1:4310
 ```
+
+## Worker Modes
+
+The orchestrator supports two worker modes that are **mutually exclusive for a single control plane**:
+
+| Mode       | Command                                       | Worker Pool            | Use Case                              |
+| ---------- | --------------------------------------------- | ---------------------- | ------------------------------------- |
+| Embedded   | `pnpm --filter @ai-sdlc/api dev serve`        | Built into API process | Local development, single-machine VPS |
+| Standalone | `pnpm --filter @ai-sdlc/api dev worker start` | Separate process(es)   | Multi-worker production               |
+
+**Warning:** Do not run both `serve` (with embedded pool) and standalone `worker start` simultaneously against the same control plane. They compete for the same job queue and will produce duplicate dispatches. Choose one mode per deployment.
+
+### Embedded pool (`serve`)
+
+When running `pnpm --filter @ai-sdlc/api dev serve`, the API process includes an embedded scheduler that polls the job queue and dispatches workers directly. The worker pool runs in the same process as the API.
+
+### Standalone worker (`worker start`)
+
+```bash
+# Start one or more standalone worker processes
+pnpm --filter @ai-sdlc/api dev worker start
+
+# With custom global concurrency
+pnpm --filter @ai-sdlc/api dev worker start --global-concurrency 4
+```
+
+Workers poll the API for available jobs. Multiple workers can run on the same machine or across multiple machines (VPS) as long as they share access to the same SQLite database.
 
 ## Start a run
 
@@ -112,6 +139,7 @@ pnpm --filter @ai-sdlc/api dev serve --target-repo-root /path/to/target/repo
 ```
 
 When bound to a target repository, the API and dashboard will:
+
 - Use the target repository's `.ai-runs/orchestrator.sqlite` database.
 - Read and write artifacts to the target repository's `.ai-runs/` directory.
 - Perform Git and worktree operations inside the target repository.
@@ -146,7 +174,7 @@ Important merge semantics:
 - Plain objects are deep-merged.
 - Arrays (`validation.commands`, `phases.skip`) are deep-merged by index.
   When the override array is longer, extras append — this means target
-  `validation.commands` *extend* the automation list, not replace it.
+  `validation.commands` _extend_ the automation list, not replace it.
 - `agent.phaseProfiles` and any future phase-route maps are replaced
   wholesale, not key-by-key, because individual entries contain
   mutually exclusive fields.
@@ -161,14 +189,14 @@ Example: two projects with different test runners:
 // automation/.ai-orchestrator.json
 {
   "validation": { "commands": ["echo base-validation"], "timeouts": { "build": 60 } },
-  "agent": { "model": "shared-default-model" }
+  "agent": { "model": "shared-default-model" },
 }
 ```
 
 ```jsonc
 // /srv/repos/frontend/.ai-orchestrator.json
 {
-  "validation": { "commands": ["pnpm test"] }
+  "validation": { "commands": ["pnpm test"] },
 }
 ```
 
@@ -176,7 +204,7 @@ Example: two projects with different test runners:
 // /srv/repos/backend/.ai-orchestrator.json
 {
   "validation": { "commands": ["make test"], "timeouts": { "build": 180 } },
-  "agent": { "model": "backend-finetuned" }
+  "agent": { "model": "backend-finetuned" },
 }
 ```
 
@@ -188,3 +216,60 @@ When run against `backend`: commands are `["echo base-validation", "make test"]`
 
 - Multi-repo: migration 0025 backfills every run with a stable `repositoryId`; new `POST /api/runs` requires `repositoryId` when more than one repository is enabled.
 
+## Scheduler Configuration
+
+The scheduler drives multi-repository dispatch. Key settings in `.ai-orchestrator.json`:
+
+```jsonc
+{
+  "scheduler": {
+    "globalConcurrency": 1, // Max dispatches across ALL repos (default: 1)
+    "pollIntervalMs": 2000, // How often to poll for new work (default: 2000)
+  },
+}
+```
+
+### Global Concurrency Override
+
+```bash
+# Standalone worker with custom concurrency
+pnpm --filter @ai-sdlc/api dev worker start --global-concurrency 4
+
+# In .ai-orchestrator.local.json
+{
+  "scheduler": {
+    "globalConcurrency": 4
+  }
+}
+```
+
+With `globalConcurrency=1`, only one dispatch is active across all repositories at once. Each repository still enforces one-lease-at-a-time via `WorkerLease`.
+
+### Disable Policy
+
+Setting `enabled=false` on a repository:
+
+- **Drains admitted work:** In-flight dispatches complete normally
+- **Blocks new work:** Subsequent schedule passes skip the disabled repository
+
+```jsonc
+// Via API
+PUT /api/repositories/{id}
+{ "enabled": false }
+```
+
+### Unhealthy/Unavailable Skip Policy
+
+Repositories with `healthStatus` of `degraded`, `unreachable`, or `unknown` are skipped without blocking healthy repositories. The scheduler records a `scheduler.repository.skipped` telemetry event with reason `disabled`, `unhealthy`, or `unavailable`.
+
+### Telemetry Identity Fields
+
+Every scheduler event includes stable identity fields:
+
+| Field             | Source                            | Example        |
+| ----------------- | --------------------------------- | -------------- |
+| `repository_id`   | Stable repo identifier (fullName) | `acme/api`     |
+| `repository_name` | Current full name                 | `acme/api`     |
+| `worker_id`       | Per-repo sequence                 | `w-acme/api-0` |
+
+Events: `scheduler.dispatch.started`, `scheduler.dispatch.completed`, `scheduler.dispatch.failed`, `scheduler.repository.skipped`, `scheduler.pool.active`, `scheduler.repository.queue_depth`.

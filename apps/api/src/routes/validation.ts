@@ -12,9 +12,11 @@ export function registerValidationRoutes(app: FastifyInstance, c: Container): vo
       reply.code(400);
       return { error: 'invalid run uuid' };
     }
-    const run = await guardRead(req, reply, c);
-    if (!run) return;
-    const runs = c.validationRunRepository.listByRun(RunId(uuid));
+    const result = await guardRead(req, reply, c);
+    if (!result) return;
+    const validationRunRepository =
+      result.runtime?.validationRunRepository ?? c.validationRunRepository;
+    const runs = validationRunRepository.listByRun(RunId(uuid));
     const ordered = [...runs].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
     const validationRuns = ordered.map((v) => ({
       id: v.id,

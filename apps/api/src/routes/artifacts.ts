@@ -71,9 +71,10 @@ export async function artifactsRoutes(app: FastifyInstance, c: Container): Promi
     if (!UUID_RE.test(req.params.runId)) {
       return reply.code(400).send({ error: 'invalid_id' });
     }
-    const run = await guardRead(req, reply, c);
-    if (!run) return;
-    const root = join(c.runsDir, run.displayId);
+    const result = await guardRead(req, reply, c);
+    if (!result) return;
+    const { run, runtime } = result;
+    const root = join(runtime?.paths.runsRoot() ?? c.runsDir, run.displayId);
     try {
       return { files: await walk(root) };
     } catch {
@@ -87,9 +88,10 @@ export async function artifactsRoutes(app: FastifyInstance, c: Container): Promi
       if (!UUID_RE.test(req.params.runId)) {
         return reply.code(400).send({ error: 'invalid_id' });
       }
-      const run = await guardRead(req, reply, c);
-      if (!run) return;
-      const root = join(c.runsDir, run.displayId);
+      const result = await guardRead(req, reply, c);
+      if (!result) return;
+      const { run, runtime } = result;
+      const root = join(runtime?.paths.runsRoot() ?? c.runsDir, run.displayId);
       const requested = normalize(req.params['*']);
       if (requested.startsWith('..') || isAbsolute(requested)) {
         return reply.code(400).send({ error: 'invalid_path' });

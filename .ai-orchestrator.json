@@ -35,6 +35,10 @@
     "maxTestCases": 10,
     "blockOversizedTasks": false
   },
+  "scheduler": {
+    "globalConcurrency": 1,
+    "pollIntervalMs": 2000
+  },
   "agent": {
     "defaultProfile": "builder",
     "profiles": {

@@ -12,6 +12,7 @@ import {
   createRun,
   WorkerId,
   RepositoryId,
+  Repository,
   WorkerLeaseConflictError,
   JobId,
   IssueNumber,
@@ -22,19 +23,27 @@ import { newRunId } from '@ai-sdlc/shared';
 import {
   planRunRecoveryAction,
   ReapOrphanedTestWorkers,
-  SweepOrphanedRuns,
+  FairRepositoryScheduler,
+  runClaimedJob,
   checkPid,
+  type ArtifactGuardPort,
 } from '@ai-sdlc/application';
-import type { RunRepositoryPort } from '@ai-sdlc/application';
-import type { SweepOrphanedRunEntry } from '@ai-sdlc/application';
-import { composeRoot, type ComposeOptions, seedTestDatabase } from './compose.js';
+import type { WorkerLoopDeps } from '@ai-sdlc/application';
+import { composeRoot, type ComposeOptions, type Container, seedTestDatabase } from './compose.js';
 import { resolveTargetRepoRootOrExit, findRepoRoot } from './cli/target-repo-root.js';
 import { composeWithTarget } from './cli/compose-with-target.js';
 import { WorkerScheduler } from './worker-scheduler.js';
-import { startWorkerDrainLoop } from './worker-drain-loop.js';
 import { resolveRepoContext, canonicalizeRepoContext } from './routes/_lib.js';
 import { registerRepoCommand } from './cli/repo-commands.js';
 import { EXIT_USER_ERROR, EXIT_INTERNAL_ERROR } from './cli/exit-codes.js';
+import { schedulerConfigSchema } from '@ai-sdlc/shared';
+import { RepositorySchedulerAdapter } from './repository-scheduler-adapter.js';
+import type { RepositoryRuntime } from './repository-runtime-factory.js';
+
+export interface SchedulerConfig {
+  globalConcurrency: number;
+  pollIntervalMs: number;
+}
 
 export interface LeaseConfig {
   ttlMs: number;
@@ -52,6 +61,7 @@ export interface BuildProgramOptions {
   lease?: Partial<LeaseConfig>;
   isCliTestSuite?: boolean;
   bypassPlanValidation?: boolean;
+  schedulerConfig?: SchedulerConfig;
 }
 
 interface LeaseRepo {
@@ -168,112 +178,6 @@ function startTestWorkerReaper(
         `Orphaned test worker reap failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-  }, intervalMs);
-  return { stop: () => clearInterval(timer) };
-}
-
-const MIN_SWEEP_INTERVAL_MS = 30_000;
-
-type WaitingSweepResult = {
-  reactivated: number;
-  enqueued: number;
-  skippedLeaseConflict: number;
-  timedOut: number;
-  passedOnMergedPr: number;
-  cancelledOnClosedPr: number;
-  stayedReady: number;
-  skipped: number;
-  errors: Array<{ runId: string; error: string }>;
-  enqueueErrors: Array<{ runId: string; error: string }>;
-};
-
-type OrphanSweepResult = {
-  scanned: number;
-  enqueued: number;
-  skippedLeaseConflict: number;
-  skippedAlreadyQueued: number;
-  enqueueErrors: Array<{ runId: string; error: string }>;
-};
-
-function startPeriodicSweepTimer(
-  waitingSweeper: {
-    execute(workerId: WorkerId): Promise<WaitingSweepResult>;
-  },
-  orphanSweeper: {
-    execute(entries: SweepOrphanedRunEntry[]): Promise<OrphanSweepResult>;
-  },
-  isProcessAlive: (pid: number) => boolean,
-  runRepository: RunRepositoryPort,
-  intervalSeconds: number,
-  workerId: WorkerId,
-): { stop: () => void } {
-  const intervalMs = Math.max(intervalSeconds * 1000, MIN_SWEEP_INTERVAL_MS);
-  let isRunning = false;
-  const timer = setInterval(() => {
-    if (isRunning) return;
-    isRunning = true;
-    let orphanResult: OrphanSweepResult | undefined;
-    let waitingResult: WaitingSweepResult | undefined;
-    Promise.resolve()
-      .then(() => {
-        const sweep = new SweepOrphanedRuns({
-          runRepository,
-          isProcessAlive,
-          now: () => new Date(),
-        });
-        return sweep.execute();
-      })
-      .then((discovered) => {
-        return orphanSweeper.execute(discovered.orphanedRuns);
-      })
-      .then((o) => {
-        orphanResult = o;
-        return waitingSweeper.execute(workerId);
-      })
-      .then((w) => {
-        waitingResult = w;
-        isRunning = false;
-        const o = orphanResult!;
-        if (
-          o.enqueued > 0 ||
-          o.skippedLeaseConflict > 0 ||
-          o.skippedAlreadyQueued > 0 ||
-          o.enqueueErrors.length > 0
-        ) {
-          console.error(
-            `Orphan recovery: ${o.enqueued} enqueued, ${o.skippedLeaseConflict} skipped (lease), ${o.skippedAlreadyQueued} skipped (already queued), ${o.enqueueErrors.length} errors`,
-          );
-          for (const err of o.enqueueErrors) {
-            console.error(`  Orphan enqueue error in run ${err.runId}: ${err.error}`);
-          }
-        }
-        if (
-          w.reactivated > 0 ||
-          w.timedOut > 0 ||
-          w.passedOnMergedPr > 0 ||
-          w.cancelledOnClosedPr > 0 ||
-          w.errors.length > 0 ||
-          w.enqueueErrors.length > 0
-        ) {
-          console.error(
-            `Reactivation sweep: ${w.reactivated} reactivated (${w.enqueued} enqueued, ${w.skippedLeaseConflict} skipped due to lease conflict), ${w.timedOut} timed out, ${w.passedOnMergedPr} passed (merged PR), ${w.cancelledOnClosedPr} cancelled (closed PR), ${w.stayedReady} stayed ready, ${w.skipped} skipped, ${w.errors.length} errors, ${w.enqueueErrors.length} enqueue errors`,
-          );
-          for (const err of w.errors) {
-            console.error(`  Error in run ${err.runId}: ${err.error}`);
-          }
-          for (const err of w.enqueueErrors) {
-            console.error(`  Enqueue error in run ${err.runId}: ${err.error}`);
-          }
-        }
-      })
-      .catch((err) => {
-        isRunning = false;
-        if (waitingResult === undefined) {
-          console.error('Periodic reactivation sweep error:', err);
-        } else {
-          console.error('Periodic sweep error (after waiting sweep):', err);
-        }
-      });
   }, intervalMs);
   return { stop: () => clearInterval(timer) };
 }
@@ -399,6 +303,179 @@ export function resolveRepoIdForCli(
     return canonicalizeRepoContext(ctx, c);
   }
   return undefined;
+}
+
+function buildSchedulerLogger() {
+  return {
+    debug: (msg: string, ...args: unknown[]) =>
+      // eslint-disable-next-line no-console
+      console.debug(`[scheduler] ${msg}`, ...args),
+    info: (msg: string, ...args: unknown[]) =>
+      // eslint-disable-next-line no-console
+      console.info(`[scheduler] ${msg}`, ...args),
+    warn: (msg: string, ...args: unknown[]) => console.warn(`[scheduler] ${msg}`, ...args),
+    error: (msg: string, ...args: unknown[]) => console.error(`[scheduler] ERROR: ${msg}`, ...args),
+  };
+}
+
+function buildSchedulerDeps(
+  c: Container,
+  workerIdPrefix: string,
+  logger: ReturnType<typeof buildSchedulerLogger>,
+) {
+  const workSourceAdapter = new RepositorySchedulerAdapter({
+    runtimeFactory: async (repo) => {
+      const result = await c.runtimeCatalog.resolve(repo.id);
+      return result;
+    },
+    logger,
+  });
+
+  const schedulerWorkerLoop = async (
+    runtime: RepositoryRuntime,
+    input: { workerId: WorkerId; runId: RunId },
+  ) => {
+    const { workerId, runId } = input;
+
+    // The scheduler (RepositorySchedulerAdapter.runOne) has already claimed a
+    // job for this run before invoking this callback. Look it up so the job
+    // claim is always explicitly settled, never silently leaked, even if we
+    // bail out below before actual execution.
+    const job = runtime.jobQueue
+      .listForRun(runId)
+      .find((j) => j.claimedBy === workerId && j.status === 'claimed');
+
+    const runExecutor = c.runExecutor;
+    if (!runExecutor) {
+      logger.warn(`No runExecutor available in container to run job ${String(runId)}`);
+      if (job) {
+        runtime.jobQueue.markFailed(job.id, new Date());
+      }
+      return;
+    }
+
+    if (!job) {
+      logger.warn(`No claimed job found for run ${String(runId)} claimed by ${String(workerId)}`);
+      return;
+    }
+
+    const fullDeps: WorkerLoopDeps = {
+      registry: runtime.workerRegistry,
+      queue: runtime.jobQueue,
+      leases: runtime.workerLeaseRepository,
+      repos: runtime.workerLoopDeps.repos,
+      repoId: runtime.repository.id,
+      executeRun: async ({ run: r }) => {
+        runtime.runRepository.update(r.uuid, { pid: process.pid });
+        const result = await runExecutor.execute({ run: r, skip: [], presentArtifacts: [] });
+        return { ok: result.run.status === 'passed' };
+      },
+      prepareWorktree: async ({ repoId: _repoId, runId: rId }) => {
+        const r = runtime.runRepository.findByUuid(rId);
+        if (!r) throw new Error(`prepareWorktree: no run found for ${rId}`);
+        const repo = runtime.repository;
+        const repoRootPath = repo.localBasePath;
+        const repoDefaultBranch = repo.defaultBranch;
+        const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
+        const baseBranch = r.baseBranch ?? repoDefaultBranch;
+        await c.git.createWorktree({
+          repoLocalBasePath: repoRootPath,
+          worktreePath,
+          branch: `ai/issue-${r.issueNumber}`,
+          baseBranch,
+        });
+        if ('seedArtifactExcludes' in c.git) {
+          await (c.git as unknown as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
+        }
+        const sha = await c.git.headCommitSha(worktreePath);
+        runtime.runRepository.update(r.uuid, { startCommitSha: sha });
+        return { cwd: worktreePath };
+      },
+      resetWorktree: (repoId) => {
+        const lease = runtime.workerLeaseRepository.current(repoId);
+        if (!lease) return;
+        const r = runtime.runRepository.findByUuid(lease.runId);
+        if (!r) return;
+        const repo = runtime.repository;
+        const repoRootPath = repo.localBasePath;
+        const repoDefaultBranch = repo.defaultBranch;
+        const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
+        const baseBranch = r.baseBranch ?? repoDefaultBranch;
+        c.git.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
+      },
+      isWorkerAlive: (wId) => {
+        const w = runtime.workerRegistry.findById(wId, runtime.repository.id);
+        if (!w) return false;
+        if (w.hostname !== os.hostname()) {
+          return Date.now() - w.heartbeatAt.getTime() < DEFAULT_LEASE_TTL_MS;
+        }
+        return checkPid(w.processId);
+      },
+      findRun: (rId) => runtime.runRepository.findByUuid(rId) ?? undefined,
+      recoverableRunIds: new Set(),
+      now: () => new Date(),
+      ttlMs: DEFAULT_LEASE_TTL_MS,
+      onLeaseReclaimed: (info) => {
+        logger.error(
+          `Lease reclaimed: repo=${info.repoId} prev=${info.previousWorkerId} by=${info.reclaimedByWorkerId}: ${info.reason}`,
+        );
+      },
+    };
+
+    await runClaimedJob(workerId, job, fullDeps);
+  };
+
+  const dispatchAdapter = new RepositorySchedulerAdapter({
+    runtimeFactory: async (repo) => {
+      const result = await c.runtimeCatalog.resolve(repo.id);
+      return result;
+    },
+    logger,
+    workerLoop: schedulerWorkerLoop,
+  });
+
+  return {
+    repos: {
+      listEnabled: () => c.listRepositories.execute(),
+    },
+    workSource: workSourceAdapter,
+    dispatch: dispatchAdapter,
+    telemetry: {
+      record: () => {},
+    },
+    workerIdFactory: (repo: Repository, seq: number) =>
+      WorkerId(`${workerIdPrefix}-${process.pid}-${String(repo.id)}-${seq}`),
+    sleep: async (ms: number, signal?: AbortSignal) => {
+      if (signal?.aborted) return;
+      await sleep(ms, signal);
+    },
+    now: () => new Date(),
+    logger,
+  };
+}
+
+function getOrCreateScheduler(
+  c: Container,
+  workerIdPrefix: string,
+  opts: { globalConcurrency?: number; pollIntervalMs?: number },
+  buildOpts?: BuildProgramOptions,
+): FairRepositoryScheduler {
+  const schedulerLogger = buildSchedulerLogger();
+  const globalConcurrency =
+    opts.globalConcurrency ??
+    buildOpts?.schedulerConfig?.globalConcurrency ??
+    c.schedulerConfig.globalConcurrency;
+  const pollIntervalMs =
+    opts.pollIntervalMs ??
+    buildOpts?.schedulerConfig?.pollIntervalMs ??
+    c.schedulerConfig.pollIntervalMs;
+
+  const schedulerDeps = {
+    globalConcurrency,
+    pollIntervalMs,
+    ...buildSchedulerDeps(c, workerIdPrefix, schedulerLogger),
+  };
+  return new FairRepositoryScheduler(schedulerDeps);
 }
 
 export function buildProgram(buildOpts?: BuildProgramOptions): Command {
@@ -842,6 +919,89 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     });
 
   program
+    .command('worker start')
+    .description('Start a standalone scheduler worker using the shared fair repository pool')
+    .option(
+      '--global-concurrency <n>',
+      'Maximum number of concurrent runs across all repositories',
+      (v) => {
+        const n = parseInt(v, 10);
+        if (!/^\d+$/.test(v) || n < 1) {
+          throw new Error('--global-concurrency must be a positive integer');
+        }
+        return n;
+      },
+    )
+    .option(
+      '--poll-interval-ms <n>',
+      'Polling interval in milliseconds between scheduler ticks',
+      (v) => {
+        const n = parseInt(v, 10);
+        if (!/^\d+$/.test(v) || n < 1) {
+          throw new Error('--poll-interval-ms must be a positive integer');
+        }
+        return n;
+      },
+    )
+    .action(async (opts: { globalConcurrency?: number; pollIntervalMs?: number }) => {
+      const targetRepoRoot = findRepoRoot(process.cwd());
+      const scriptPath = join(targetRepoRoot, 'scripts', 'legacy', 'ai-run-issue-v2');
+      const composeOpts: ComposeOptions = {
+        repoRoot: targetRepoRoot,
+        scriptPath,
+        runStartupSweeps: false,
+        ...buildOpts?.composeOverrides,
+      };
+      const c = composeRoot(composeOpts);
+
+      const mergedConfig = { ...c.schedulerConfig };
+      if (opts.globalConcurrency !== undefined) {
+        mergedConfig.globalConcurrency = opts.globalConcurrency;
+      }
+      if (opts.pollIntervalMs !== undefined) {
+        mergedConfig.pollIntervalMs = opts.pollIntervalMs;
+      }
+
+      const parsed = schedulerConfigSchema.safeParse(mergedConfig);
+      if (!parsed.success) {
+        console.error(
+          `Error: Invalid scheduler configuration: ${parsed.error.errors.map((e) => e.message).join(', ')}`,
+        );
+        process.exit(EXIT_USER_ERROR);
+      }
+
+      const scheduler = getOrCreateScheduler(
+        c,
+        'worker',
+        {
+          globalConcurrency: parsed.data.globalConcurrency,
+          pollIntervalMs: parsed.data.pollIntervalMs,
+        },
+        buildOpts,
+      );
+      const abortController = new AbortController();
+
+      const shutdown = async () => {
+        abortController.abort();
+        try {
+          await c.runtimeCatalog.close();
+        } finally {
+          process.exit(0);
+        }
+      };
+
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+
+      try {
+        await scheduler.run(abortController.signal);
+      } catch (err) {
+        console.error('Scheduler run error:', err instanceof Error ? err.message : String(err));
+        process.exit(EXIT_INTERNAL_ERROR);
+      }
+    });
+
+  program
     .command('serve')
     .description('Start the orchestrator HTTP API')
     .option('--port <port>', 'Port to listen on', (v) => parseInt(v, 10), 4319)
@@ -892,117 +1052,84 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
         const testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
 
-        // A worker is bound to exactly one repository for its active lifetime
-        // (#651 invariant: worker_assignment_is_immutable_while_active), so
-        // `serve` runs one worker identity + one drain loop per enabled
-        // repository, all concurrently in this single process, rather than
-        // one worker shared across every repo.
-        const workerDrainLoops: Array<{ stop: () => void }> = [];
-        const serveWorkerHeartbeats: Array<{ stop: () => void }> = [];
-        const serveWorkerIds: WorkerId[] = [];
-        // Retained as the sweep mechanism's bookkeeping identity (orphan/
-        // waiting-run recovery is repo-agnostic and unrelated to the #651
-        // per-repo worker binding) — synthetic, never registered.
-        let serveWorkerId: WorkerId | undefined;
-        if (c.workerRegistry && c.workerLoopDeps) {
-          const enabledRepos = c.listRepositories.execute();
-          serveWorkerId = WorkerId(`serve-${process.pid}`);
-          const heartbeatIntervalMs =
-            (typeof buildOpts !== 'undefined' && buildOpts?.lease?.heartbeatIntervalMs) ||
-            DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS;
-          for (const repo of enabledRepos) {
-            const repoWorkerId = WorkerId(`serve-${process.pid}-${repo.id}`);
-            c.workerRegistry.register(
-              createWorker({
-                id: repoWorkerId,
-                repoId: repo.id,
-                hostname: os.hostname(),
-                processId: process.pid,
-                now: new Date(),
-              }),
-            );
-            serveWorkerIds.push(repoWorkerId);
-            serveWorkerHeartbeats.push(
-              startWorkerRegistryHeartbeat(
-                c.workerRegistry,
-                repoWorkerId,
-                repo.id,
-                heartbeatIntervalMs,
-              ),
-            );
-            workerDrainLoops.push(
-              startWorkerDrainLoop(repoWorkerId, {
-                ...c.workerLoopDeps(repo.id),
-                runRepository: c.runRepository,
-              }),
-            );
-          }
-        }
+        const scheduler = getOrCreateScheduler(c, 'serve', {}, buildOpts);
+        const abortController = new AbortController();
+        const serveSweepWorkerId = WorkerId(`serve-sweep-${process.pid}`);
+
+        scheduler.run(abortController.signal).catch((err) => {
+          console.error('Scheduler run error:', err instanceof Error ? err.message : String(err));
+        });
 
         let sweepTimer: { stop: () => void } | undefined;
         let isShuttingDown = false;
-        if (c.workerRegistry && c.workerLoopDeps && serveWorkerId) {
-          const waitingSweeper = c.buildWaitingRunsSweeper();
-          const orphanSweeper = c.buildOrphanedRunsSweeper();
+        if (scheduler) {
+          const sweepCoordinator = c.buildRepositorySweepCoordinator();
 
-          const initialOrphans = new SweepOrphanedRuns({
-            runRepository: c.runRepository,
-            isProcessAlive: checkPid,
-            now: () => new Date(),
-          }).execute();
+          void sweepCoordinator.execute(serveSweepWorkerId)?.catch((err) => {
+            console.error('Initial sweep error:', err);
+          });
 
-          Promise.resolve(orphanSweeper.execute(initialOrphans.orphanedRuns))
-            .then((orphanRecovery) => {
-              if (
-                orphanRecovery.enqueued > 0 ||
-                orphanRecovery.skippedLeaseConflict > 0 ||
-                orphanRecovery.skippedAlreadyQueued > 0 ||
-                orphanRecovery.enqueueErrors.length > 0
-              ) {
-                console.error(
-                  `Orphan recovery: ${orphanRecovery.enqueued} enqueued, ${orphanRecovery.skippedLeaseConflict} skipped (lease), ${orphanRecovery.skippedAlreadyQueued} skipped (already queued), ${orphanRecovery.enqueueErrors.length} errors`,
-                );
-                for (const err of orphanRecovery.enqueueErrors) {
-                  console.error(`  Orphan enqueue error in run ${err.runId}: ${err.error}`);
+          if (c.serveSweepIntervalSeconds > 0 && !isShuttingDown) {
+            const MIN_SWEEP_INTERVAL_MS = 30_000;
+            const intervalMs = Math.max(c.serveSweepIntervalSeconds * 1000, MIN_SWEEP_INTERVAL_MS);
+            let isRunning = false;
+            sweepTimer = {
+              stop: () => {
+                isShuttingDown = true;
+              },
+            };
+            const timer = setInterval(async () => {
+              if (isRunning || isShuttingDown) return;
+              isRunning = true;
+              try {
+                const result = await sweepCoordinator.execute(serveSweepWorkerId);
+                for (const repoResult of result.results) {
+                  if (repoResult.error) {
+                    console.error(`Sweep error for ${repoResult.fullName}: ${repoResult.error}`);
+                  }
+                  if (repoResult.orphaned) {
+                    const o = repoResult.orphaned;
+                    if (
+                      o.enqueued > 0 ||
+                      o.skippedLeaseConflict > 0 ||
+                      o.enqueueErrors.length > 0
+                    ) {
+                      console.error(
+                        `Orphan recovery: ${o.enqueued} enqueued, ${o.skippedLeaseConflict} skipped (lease), ${o.enqueueErrors.length} errors`,
+                      );
+                    }
+                  }
+                  if (repoResult.waiting) {
+                    const w = repoResult.waiting;
+                    if (w.reactivated > 0 || w.errors.length > 0 || w.enqueueErrors.length > 0) {
+                      console.error(
+                        `Reactivation sweep: ${w.reactivated} reactivated, ${w.errors.length} errors, ${w.enqueueErrors.length} enqueue errors`,
+                      );
+                    }
+                  }
                 }
+              } catch (err) {
+                console.error('Periodic sweep error:', err);
+              } finally {
+                isRunning = false;
               }
-              return waitingSweeper.execute(serveWorkerId);
-            })
-            .catch((err) => {
-              console.error('Initial startup reactivation sweep error:', err);
-            })
-            .finally(() => {
-              if (c.serveSweepIntervalSeconds > 0 && !isShuttingDown) {
-                sweepTimer = startPeriodicSweepTimer(
-                  waitingSweeper,
-                  orphanSweeper,
-                  checkPid,
-                  c.runRepository,
-                  c.serveSweepIntervalSeconds,
-                  serveWorkerId,
-                );
-              }
-            });
+            }, intervalMs);
+            sweepTimer = { stop: () => clearInterval(timer) };
+          }
         }
 
         const shutdown = async () => {
           if (isShuttingDown) return;
           isShuttingDown = true;
           sweepTimer?.stop();
-          for (const loop of workerDrainLoops) loop.stop();
-          for (const hb of serveWorkerHeartbeats) hb.stop();
-          if (c.workerRegistry) {
-            for (const wid of serveWorkerIds) {
-              try {
-                c.workerRegistry.deregister(wid);
-              } catch (err) {
-                console.error('Failed to deregister worker on exit:', err);
-              }
-            }
+          abortController.abort();
+          try {
+            await c.runtimeCatalog.close();
+          } finally {
+            testWorkerReaper.stop();
+            await server.stop();
+            process.exit(0);
           }
-          testWorkerReaper.stop();
-          await server.stop();
-          process.exit(0);
         };
         process.on('SIGINT', shutdown);
         process.on('SIGTERM', shutdown);
