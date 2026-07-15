@@ -1,7 +1,6 @@
 import type { RepositoryId, RunId, Repository } from '@ai-sdlc/domain';
 import type { RunRecord, ListRunsFilter } from '@ai-sdlc/application/ports';
 import { loadLayeredConfig } from '@ai-sdlc/shared';
-import type { LoadedConfig } from '@ai-sdlc/shared';
 import { stat } from 'node:fs/promises';
 import {
   RepositoryRuntimeFactory,
@@ -54,19 +53,8 @@ export interface RepositoryRuntimeCatalog {
   close(): Promise<void>;
 }
 
-interface OperationalRuntimeEntry {
-  runtime: RepositoryOperationalRuntime;
-}
-
-interface ExecutionRuntimeEntry {
-  runtime: RepositoryExecutionRuntime;
-  loadedConfig: LoadedConfig;
-}
-
 export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog {
   private readonly factory: RepositoryRuntimeFactory;
-  private readonly operationalCache = new Map<string, OperationalRuntimeEntry>();
-  private readonly executionCache = new Map<string, ExecutionRuntimeEntry>();
   private readonly opts: RepositoryRuntimeCatalogOptions;
 
   constructor(opts: RepositoryRuntimeCatalogOptions) {
@@ -84,7 +72,7 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
             opts.registry.listEnabled().map((r) => ({ id: r.id, fullName: r.fullName })),
         });
       },
-      buildExecutionRuntime: async ({ repository, paths, loadedConfig }) => {
+      buildExecutionRuntime: async ({ repository, paths, loadedConfig, operationalRuntime }) => {
         return composeRepositoryRuntime({
           automationRoot: opts.automationRoot,
           stateRoot: opts.stateRoot,
@@ -94,6 +82,7 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
           controlPlaneDb: opts.controlPlaneDb,
           listEnabledRepositories: () =>
             opts.registry.listEnabled().map((r) => ({ id: r.id, fullName: r.fullName })),
+          ...(operationalRuntime ? { operationalRuntime } : {}),
         });
       },
     });
@@ -109,14 +98,7 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
       );
     }
 
-    const existingEntry = this.operationalCache.get(String(repo.id));
-    if (existingEntry) {
-      return existingEntry.runtime;
-    }
-
-    const runtime = await this.factory.getOperationalRuntime(repo);
-    this.operationalCache.set(String(repo.id), { runtime });
-    return runtime;
+    return await this.factory.getOperationalRuntime(repo);
   }
 
   resolve = this.resolveExecution;
@@ -186,7 +168,6 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
       layered,
       options?.allowDisabled !== undefined ? { allowDisabled: options.allowDisabled } : {},
     );
-    this.executionCache.set(String(repo.id), { runtime, loadedConfig: layered });
     return runtime;
   }
 
@@ -241,13 +222,6 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
       const run = runtime.runRepository.findByUuid(String(runId));
       if (run) {
         return { runtime, run };
-      }
-    }
-
-    for (const entry of this.executionCache.values()) {
-      const run = entry.runtime.runRepository.findByUuid(String(runId));
-      if (run) {
-        return { runtime: entry.runtime, run };
       }
     }
 
@@ -317,21 +291,5 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
 
   async close(): Promise<void> {
     this.factory.close();
-    for (const entry of this.operationalCache.values()) {
-      try {
-        entry.runtime.close();
-      } catch {
-        // Best-effort close
-      }
-    }
-    for (const entry of this.executionCache.values()) {
-      try {
-        entry.runtime.close();
-      } catch {
-        // Best-effort close
-      }
-    }
-    this.operationalCache.clear();
-    this.executionCache.clear();
   }
 }

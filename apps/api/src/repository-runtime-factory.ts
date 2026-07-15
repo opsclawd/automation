@@ -96,6 +96,7 @@ export interface RepositoryRuntimeFactoryOptions {
     repository: Repository;
     paths: RepositoryRuntimePaths;
     loadedConfig: LoadedConfig;
+    operationalRuntime?: RepositoryOperationalRuntime;
   }) => Promise<RepositoryExecutionRuntime>;
 }
 
@@ -373,10 +374,13 @@ export class RepositoryRuntimeFactory {
       repository: repo,
     });
 
+    const operationalRuntime = await this.getOperationalRuntime(repo);
+
     const buildPromise = this.opts.buildExecutionRuntime({
       repository: repo,
       paths,
       loadedConfig,
+      operationalRuntime,
     });
 
     const placeholderEntry: ExecutionCacheEntry = {

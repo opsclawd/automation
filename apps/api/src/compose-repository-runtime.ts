@@ -1,6 +1,9 @@
 import type { LoadedConfig } from '@ai-sdlc/shared';
 import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
-import type { RepositoryExecutionRuntime } from './repository-runtime-factory.js';
+import type {
+  RepositoryExecutionRuntime,
+  RepositoryOperationalRuntime,
+} from './repository-runtime-factory.js';
 import type { RunRepositoryUpdatePatch } from '@ai-sdlc/application/ports';
 import { composeRepositoryOperationalRuntime } from './compose-repository-operational-runtime.js';
 import type { ComposeRepositoryOperationalRuntimeInput } from './compose-repository-operational-runtime.js';
@@ -11,21 +14,31 @@ export interface ComposeRepositoryRuntimeInput extends Omit<
 > {
   paths: RepositoryRuntimePaths;
   loadedConfig: LoadedConfig;
+  operationalRuntime?: RepositoryOperationalRuntime;
 }
 
 export async function composeRepositoryRuntime(
   input: ComposeRepositoryRuntimeInput,
 ): Promise<RepositoryExecutionRuntime> {
-  const { repository, paths, loadedConfig, controlPlaneDb, listEnabledRepositories } = input;
-
-  const operationalRuntime = await composeRepositoryOperationalRuntime({
-    automationRoot: input.automationRoot,
-    stateRoot: input.stateRoot,
+  const {
     repository,
     paths,
+    loadedConfig,
     controlPlaneDb,
     listEnabledRepositories,
-  });
+    operationalRuntime: existingOperationalRuntime,
+  } = input;
+
+  const operationalRuntime =
+    existingOperationalRuntime ??
+    (await composeRepositoryOperationalRuntime({
+      automationRoot: input.automationRoot,
+      stateRoot: input.stateRoot,
+      repository,
+      paths,
+      controlPlaneDb,
+      listEnabledRepositories,
+    }));
 
   const runRepository = operationalRuntime.runRepository;
   const originalUpdate = runRepository.update.bind(runRepository);
