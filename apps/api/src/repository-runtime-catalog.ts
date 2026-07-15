@@ -217,11 +217,15 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
       }
     }
 
-    const enabled = await this.resolveEnabled();
-    for (const { runtime } of enabled) {
+    const allOperational = await this.resolveAllOperational();
+    for (const { runtime } of allOperational) {
+      if (!runtime) continue;
       const run = runtime.runRepository.findByUuid(String(runId));
       if (run) {
-        return { runtime, run };
+        const executionRuntime = await this.resolveExecution(runtime.repository.id, {
+          allowDisabled: true,
+        });
+        return { runtime: executionRuntime, run };
       }
     }
 
@@ -266,9 +270,10 @@ export class DefaultRepositoryRuntimeCatalog implements RepositoryRuntimeCatalog
     }
 
     const allResults: Array<{ runs: RunRecord[]; total: number }> = [];
-    const enabled = await this.resolveEnabled();
+    const allOperational = await this.resolveAllOperational();
 
-    for (const { runtime } of enabled) {
+    for (const { runtime } of allOperational) {
+      if (!runtime) continue;
       const result = runtime.runRepository.list(filter);
       allResults.push(result);
     }
