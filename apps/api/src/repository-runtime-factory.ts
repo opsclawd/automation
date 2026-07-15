@@ -270,6 +270,28 @@ export class RepositoryRuntimeFactory {
   }
 
   async getOperationalRuntime(repo: Repository): Promise<RepositoryOperationalRuntime> {
+    if (repo.healthStatus === 'degraded') {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'degraded',
+        `Repository ${repo.fullName} is in degraded health state: ${repo.healthError ?? 'unknown'}`,
+      );
+    }
+    if (repo.healthStatus === 'unreachable') {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'unreachable',
+        `Repository ${repo.fullName} is unreachable: ${repo.healthError ?? 'unknown'}`,
+      );
+    }
+    if (repo.healthStatus === 'unknown') {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'unknown',
+        `Repository ${repo.fullName} has unknown health status: ${repo.healthError ?? 'unknown'}`,
+      );
+    }
+
     const key = this.operationalCacheKey(repo.id);
     const existingEntry = this.operationalCache.get(key);
 
