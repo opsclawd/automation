@@ -553,4 +553,170 @@ describe('fair-multi-repository-scheduler', () => {
       rtB.db.close();
     });
   });
+
+  describe('disable-race', () => {
+    it('disabled queued repository stays parked while another dispatches', async () => {
+      const repoA = makeRepository('acme/api');
+      const repoB = makeRepository('acme/web');
+
+      const rtA = await buildTestRuntime(repoA);
+      const rtB = await buildTestRuntime(repoB);
+
+      const issueNumber = 42 as IssueNumber;
+      await enqueueJob(rtA, issueNumber, JobId('job-a-42'), RunId('run-a-42'));
+      await enqueueJob(rtB, issueNumber, JobId('job-b-42'), RunId('run-b-42'));
+
+      const deferredDispatchA = defer<'completed' | 'no_work'>();
+      const deferredDispatchB = defer<'completed' | 'no_work'>();
+      const dispatchResults = new Map<string, Deferred<'completed' | 'no_work'>>();
+      dispatchResults.set(String(repoA.id), deferredDispatchA);
+      dispatchResults.set(String(repoB.id), deferredDispatchB);
+
+      const adapter = new RepositorySchedulerAdapter({
+        runtimeFactory: async (repo) => {
+          if (repo.id === repoA.id) return rtA.runtime;
+          if (repo.id === repoB.id) return rtB.runtime;
+          throw new Error('unknown repo');
+        },
+        logger: { error: () => {} },
+        workerLoop: async () => {},
+      });
+
+      const telemetry = new RecordingTelemetryPort();
+
+      const dispatch = {
+        async runOne(input: {
+          repository: Repository;
+          workerId: WorkerId;
+        }): Promise<'completed' | 'no_work'> {
+          const d = dispatchResults.get(String(input.repository.id));
+          if (d) return d.promise;
+          return 'no_work';
+        },
+      };
+
+      const scheduler = new FairRepositoryScheduler({
+        globalConcurrency: 10,
+        pollIntervalMs: 60000,
+        repos: {
+          listEnabled() {
+            return [repoA, repoB];
+          },
+        },
+        workSource: adapter,
+        dispatch,
+        telemetry,
+        workerIdFactory: (repo, seq) => mkWorkerId(`w-${String(repo.id)}-${seq}`),
+        sleep: async () => {},
+        now: () => new Date(),
+        logger: { error: () => {} },
+      });
+
+      await scheduler.scheduleOnce();
+
+      repoA.enabled = false;
+
+      await scheduler.scheduleOnce();
+
+      const skipRecords = telemetry.records.filter(
+        (r) => r.type === 'scheduler.repository.skipped' && r.reason === 'disabled',
+      );
+      expect(skipRecords.some((r) => r.repository_id === String(repoA.id))).toBe(true);
+
+      const startedRecords = telemetry.records.filter(
+        (r) => r.type === 'scheduler.dispatch.started',
+      );
+      const repoBStarted = startedRecords.filter((r) => r.repository_id === String(repoB.id));
+      expect(repoBStarted.length).toBeGreaterThan(0);
+
+      deferredDispatchA.resolve('completed');
+      deferredDispatchB.resolve('completed');
+
+      adapter.close();
+      rtA.runtime.close();
+      rtB.runtime.close();
+      rtA.db.close();
+      rtB.db.close();
+    });
+
+    it('disable after claim requeues exact token without execution', async () => {
+      const repoA = makeRepository('acme/api');
+      const repoB = makeRepository('acme/web');
+
+      const rtA = await buildTestRuntime(repoA);
+      const rtB = await buildTestRuntime(repoB);
+
+      const issueNumber = 42 as IssueNumber;
+      const jobIdA = JobId('job-a-42');
+      const runIdA = RunId('run-a-42');
+      await enqueueJob(rtA, issueNumber, jobIdA, runIdA);
+      await enqueueJob(rtB, issueNumber, JobId('job-b-42'), RunId('run-b-42'));
+
+      const dispatchResults = new Map<string, Deferred<'completed' | 'no_work'>>();
+      const deferredDispatchA = defer<'completed' | 'no_work'>();
+      const deferredDispatchB = defer<'completed' | 'no_work'>();
+      dispatchResults.set(String(repoA.id), deferredDispatchA);
+      dispatchResults.set(String(repoB.id), deferredDispatchB);
+
+      const adapter = new RepositorySchedulerAdapter({
+        runtimeFactory: async (repo) => {
+          if (repo.id === repoA.id) return rtA.runtime;
+          if (repo.id === repoB.id) return rtB.runtime;
+          throw new Error('unknown repo');
+        },
+        logger: { error: () => {} },
+        workerLoop: async () => {},
+      });
+
+      const telemetry = new RecordingTelemetryPort();
+
+      const dispatch = {
+        async runOne(input: {
+          repository: Repository;
+          workerId: WorkerId;
+        }): Promise<'completed' | 'no_work'> {
+          const d = dispatchResults.get(String(input.repository.id));
+          if (d) return d.promise;
+          return 'no_work';
+        },
+      };
+
+      const scheduler = new FairRepositoryScheduler({
+        globalConcurrency: 10,
+        pollIntervalMs: 60000,
+        repos: {
+          listEnabled() {
+            return [repoA, repoB];
+          },
+        },
+        workSource: adapter,
+        dispatch,
+        telemetry,
+        workerIdFactory: (repo, seq) => mkWorkerId(`w-${String(repo.id)}-${seq}`),
+        sleep: async () => {},
+        now: () => new Date(),
+        logger: { error: () => {} },
+      });
+
+      await scheduler.scheduleOnce();
+
+      repoA.enabled = false;
+
+      await scheduler.scheduleOnce();
+
+      const jobAfterDisable = rtA.jobQueue.findById(jobIdA);
+      expect(jobAfterDisable?.status).toBe('queued');
+      expect(jobAfterDisable?.claimToken ?? null).toBeNull();
+      expect(jobAfterDisable?.claimedBy ?? null).toBeNull();
+
+      deferredDispatchA.resolve('completed');
+      deferredDispatchB.resolve('completed');
+
+      adapter.close();
+      rtA.runtime.close();
+      rtB.runtime.close();
+      rtA.db.close();
+      rtB.db.close();
+    });
+  });
 });
