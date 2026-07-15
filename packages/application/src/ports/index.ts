@@ -7,7 +7,6 @@ export type {
   AcquireLeaseInput,
   HeartbeatLeaseInput,
   ReleaseLeaseInput,
-  ReclaimExpiredInput,
 } from './worker-lease-port.js';
 export type {
   GitHubPort,

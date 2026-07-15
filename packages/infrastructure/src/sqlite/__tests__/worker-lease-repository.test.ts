@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { RepositoryId, RunId, WorkerId, WorkerLeaseConflictError } from '@ai-sdlc/domain';
 import { openDatabase, applyMigrations } from '../../index.js';
 import { WorkerLeaseRepository } from '../worker-lease-repository.js';
@@ -236,133 +236,6 @@ describe('WorkerLeaseRepository', () => {
         leaseToken: lease.leaseToken,
       }),
     ).toThrow('WorkerLease ownership lost');
-    db.close();
-  });
-
-  it('reclaimExpired: does not reclaim unexpired leases', () => {
-    const db = freshDb();
-    const repo = new WorkerLeaseRepository(db);
-    repo.acquire({
-      repoId: RepositoryId('repo-a'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: now0,
-      ttlMs: 60_000,
-    });
-    const reclaimed = repo.reclaimExpired({
-      now: new Date(now0.getTime() + 30_000),
-      recoverableRunIds: new Set([RunId('run-1')]),
-      isWorkerAlive: () => false,
-      resetWorktree: () => {},
-      reclaimedByWorkerId: WorkerId('w2'),
-      onReclaimed: () => {},
-    });
-    expect(reclaimed).toEqual([]);
-    db.close();
-  });
-
-  it('reclaimExpired: does not reclaim when worker is still alive', () => {
-    const db = freshDb();
-    const repo = new WorkerLeaseRepository(db);
-    repo.acquire({
-      repoId: RepositoryId('repo-a'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: now0,
-      ttlMs: 60_000,
-    });
-    const reclaimed = repo.reclaimExpired({
-      now: new Date(now0.getTime() + 120_000),
-      recoverableRunIds: new Set([RunId('run-1')]),
-      isWorkerAlive: () => true,
-      resetWorktree: () => {},
-      reclaimedByWorkerId: WorkerId('w2'),
-      onReclaimed: () => {},
-    });
-    expect(reclaimed).toEqual([]);
-    db.close();
-  });
-
-  it('reclaimExpired: does not reclaim when run is not recoverable', () => {
-    const db = freshDb();
-    const repo = new WorkerLeaseRepository(db);
-    repo.acquire({
-      repoId: RepositoryId('repo-a'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: now0,
-      ttlMs: 60_000,
-    });
-    const reclaimed = repo.reclaimExpired({
-      now: new Date(now0.getTime() + 120_000),
-      recoverableRunIds: new Set(),
-      isWorkerAlive: () => false,
-      resetWorktree: () => {},
-      reclaimedByWorkerId: WorkerId('w2'),
-      onReclaimed: () => {},
-    });
-    expect(reclaimed).toEqual([]);
-    db.close();
-  });
-
-  it('reclaimExpired: succeeds when all conditions hold and fires callbacks', () => {
-    const db = freshDb();
-    const repo = new WorkerLeaseRepository(db);
-    repo.acquire({
-      repoId: RepositoryId('repo-a'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: now0,
-      ttlMs: 60_000,
-    });
-    const onReclaimed = vi.fn();
-    const resetWorktree = vi.fn();
-    const reclaimed = repo.reclaimExpired({
-      now: new Date(now0.getTime() + 120_000),
-      recoverableRunIds: new Set([RunId('run-1')]),
-      isWorkerAlive: () => false,
-      resetWorktree,
-      reclaimedByWorkerId: WorkerId('w2'),
-      onReclaimed,
-    });
-    expect(reclaimed).toHaveLength(1);
-    expect(reclaimed[0].repoId).toBe('repo-a');
-    expect(resetWorktree).toHaveBeenCalledWith(RepositoryId('repo-a'));
-    expect(onReclaimed).toHaveBeenCalledWith(
-      expect.objectContaining({
-        repoId: 'repo-a',
-        previousWorkerId: 'w1',
-        previousRunId: 'run-1',
-        reclaimedByWorkerId: 'w2',
-      }),
-    );
-    expect(repo.current(RepositoryId('repo-a'))).toBeUndefined();
-    db.close();
-  });
-
-  it('reclaimExpired: preserves the lease when onReclaimed throws', () => {
-    const db = freshDb();
-    const repo = new WorkerLeaseRepository(db);
-    repo.acquire({
-      repoId: RepositoryId('repo-a'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: now0,
-      ttlMs: 60_000,
-    });
-    expect(() =>
-      repo.reclaimExpired({
-        now: new Date(now0.getTime() + 120_000),
-        recoverableRunIds: new Set([RunId('run-1')]),
-        isWorkerAlive: () => false,
-        resetWorktree: () => {},
-        reclaimedByWorkerId: WorkerId('w2'),
-        onReclaimed: () => {
-          throw new Error('requeue failed');
-        },
-      }),
-    ).toThrow(AggregateError);
-    expect(repo.current(RepositoryId('repo-a'))?.workerId).toBe('w1');
     db.close();
   });
 

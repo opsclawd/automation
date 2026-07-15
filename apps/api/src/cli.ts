@@ -438,11 +438,6 @@ function buildSchedulerDeps(
       recoverableRunIds: new Set(),
       now: () => new Date(),
       ttlMs: DEFAULT_LEASE_TTL_MS,
-      onLeaseReclaimed: (info) => {
-        logger.error(
-          `Lease reclaimed: repo=${info.repoId} prev=${info.previousWorkerId} by=${info.reclaimedByWorkerId}: ${info.reason}`,
-        );
-      },
     };
 
     await runClaimedJob(workerId, job, fullDeps);

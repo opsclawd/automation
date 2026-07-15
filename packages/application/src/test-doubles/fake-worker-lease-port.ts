@@ -10,7 +10,6 @@ import type {
   AcquireLeaseInput,
   HeartbeatLeaseInput,
   ReleaseLeaseInput,
-  ReclaimExpiredInput,
 } from '../ports/worker-lease-port.js';
 import type { WorkerRegistryPort } from '../ports/worker-registry-port.js';
 
@@ -90,30 +89,5 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
   checkActiveLease(repoId: RepositoryId, now: Date): boolean {
     const l = this.leases.get(repoId);
     return l !== undefined && l.expiresAt.getTime() > now.getTime();
-  }
-
-  reclaimExpired(input: ReclaimExpiredInput): WorkerLease[] {
-    const reclaimed: WorkerLease[] = [];
-    for (const lease of [...this.leases.values()]) {
-      if (input.now <= lease.expiresAt) continue;
-      const worker = this.registry.findById(lease.workerId, lease.repoId);
-      const workerStale =
-        !input.isWorkerAlive(lease.workerId) ||
-        worker?.status === 'stopping' ||
-        worker?.status === 'unhealthy';
-      if (!workerStale) continue;
-      if (!input.recoverableRunIds.has(lease.runId)) continue;
-      input.resetWorktree(lease.repoId);
-      input.onReclaimed({
-        repoId: lease.repoId,
-        previousWorkerId: lease.workerId,
-        previousRunId: lease.runId,
-        reclaimedByWorkerId: input.reclaimedByWorkerId,
-        reason: 'expired + worker stale + run recoverable',
-      });
-      this.leases.delete(lease.repoId);
-      reclaimed.push(lease);
-    }
-    return reclaimed;
   }
 }

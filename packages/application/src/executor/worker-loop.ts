@@ -36,13 +36,6 @@ export interface WorkerLoopDeps {
   ttlMs: number;
   executeRunGraceMs?: number;
   findRun: (runId: RunId) => Run | undefined;
-  onLeaseReclaimed?: (info: {
-    repoId: RepositoryId;
-    previousWorkerId: WorkerId;
-    previousRunId: RunId;
-    reclaimedByWorkerId: WorkerId;
-    reason: string;
-  }) => void;
   onProgress?: () => void;
   outerSignal?: AbortSignal;
   heartbeatIntervalMs?: number;
@@ -259,7 +252,7 @@ export async function runClaimedJob(
 }
 
 export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Promise<void> {
-  const { registry, queue, leases } = deps;
+  const { registry, queue } = deps;
 
   if (deps.repos.listEnabled().every((r) => r.id !== deps.repoId)) {
     return;
@@ -268,36 +261,6 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
   if (registry.findById(workerId, deps.repoId)?.status !== 'idle') {
     return;
   }
-
-  leases.reclaimExpired({
-    now: deps.now(),
-    recoverableRunIds: deps.recoverableRunIds,
-    isWorkerAlive: deps.isWorkerAlive,
-    resetWorktree: deps.resetWorktree,
-    reclaimedByWorkerId: workerId,
-    onReclaimed: (info) => {
-      if (info.repoId !== deps.repoId) return;
-      const jobs = queue.listForRun(info.previousRunId);
-      for (const job of jobs) {
-        if (job.status === 'claimed' || job.status === 'running') {
-          const fresh = queue.findById(job.id);
-          if (
-            fresh &&
-            fresh.claimToken &&
-            fresh.claimedBy === info.previousWorkerId &&
-            fresh.claimToken === job.claimToken
-          ) {
-            try {
-              queue.resetToQueued(generateJobOwnership(fresh, fresh.claimedBy));
-            } catch (err) {
-              if (!(err instanceof JobOwnershipLostError)) throw err;
-            }
-          }
-        }
-      }
-      deps.onLeaseReclaimed?.(info);
-    },
-  });
 
   const skippedJobIds = new Set<JobId>();
 

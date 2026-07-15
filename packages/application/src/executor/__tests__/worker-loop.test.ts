@@ -9,7 +9,6 @@ import {
   createJob,
   createRun,
   type Run,
-  generateJobOwnership,
 } from '@ai-sdlc/domain';
 import {
   FakeRepositoryPort,
@@ -370,120 +369,6 @@ describe('workerLoop', () => {
     const lease = s.leases.current(RepositoryId('r1'));
     expect(lease?.workerId).toBe('w1');
     expect(lease?.runId).toBe('run-old');
-  });
-
-  it('reclaimExpired recovers a dead worker lease so new worker can proceed', async () => {
-    const s = setup();
-    const onLeaseReclaimed = vi.fn();
-    // Register w3 and mark it stopping
-    s.registry.register(
-      createWorker({
-        id: WorkerId('w3'),
-        repoId: RepositoryId('r1'),
-        hostname: 'h',
-        processId: 3,
-        now: s.now,
-      }),
-    );
-    s.registry.markBusy(WorkerId('w3'), RepositoryId('r1'));
-
-    // Give w1 a lease that we will make "expired" by advancing time
-    const lease = s.leases.acquire({
-      repoId: RepositoryId('r1'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-old'),
-      now: s.now,
-      ttlMs: 60_000,
-    });
-    s.registry.markStopping(WorkerId('w1'), RepositoryId('r1'));
-
-    const lateNow = new Date(lease.expiresAt.getTime() + 1000);
-
-    s.queue.enqueue({
-      job: createJob({
-        id: JobId('j1'),
-        runId: RunId('run-1'),
-        repoId: RepositoryId('r1'),
-        issueNumber: IssueNumber(1),
-        createdAt: lateNow,
-      }),
-    });
-
-    await workerLoop(WorkerId('w2'), {
-      registry: s.registry,
-      queue: s.queue,
-      leases: s.leases,
-      repos: s.repos,
-      repoId: RepositoryId('r1'),
-      executeRun: executeOk,
-      prepareWorktree: prepareOk,
-      resetWorktree: (_repoId) => {},
-      isWorkerAlive: (_workerId) => false, // w1 is not alive
-      recoverableRunIds: new Set([RunId('run-old')]),
-      now: () => lateNow,
-      ttlMs: 60_000,
-      findRun: (runId) => makeRun(runId as string),
-      onLeaseReclaimed,
-    });
-
-    expect(s.queue.findById(JobId('j1'))!.status).toBe('succeeded');
-    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
-    expect(onLeaseReclaimed).toHaveBeenCalledWith({
-      repoId: RepositoryId('r1'),
-      previousWorkerId: WorkerId('w1'),
-      previousRunId: RunId('run-old'),
-      reclaimedByWorkerId: WorkerId('w2'),
-      reason: 'expired + worker stale + run recoverable',
-    });
-  });
-
-  it('requeues reclaimed lease job left in running state by crashed worker', async () => {
-    const s = setup();
-
-    // Create a job for run-old and simulate w1 having marked it running before crashing
-    s.queue.enqueue({
-      job: createJob({
-        id: JobId('j-old'),
-        runId: RunId('run-old'),
-        repoId: RepositoryId('r1'),
-        issueNumber: IssueNumber(1),
-        createdAt: s.now,
-      }),
-    });
-    // Advance job through claimed→running (w1 crashed after markRunning)
-    const claimed = s.queue.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })!;
-    s.queue.markRunning(generateJobOwnership(claimed, WorkerId('w1')), s.now);
-
-    // Give w1 a lease that expired
-    const lease = s.leases.acquire({
-      repoId: RepositoryId('r1'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-old'),
-      now: s.now,
-      ttlMs: 60_000,
-    });
-
-    const lateNow = new Date(lease.expiresAt.getTime() + 1000);
-
-    await workerLoop(WorkerId('w2'), {
-      registry: s.registry,
-      queue: s.queue,
-      leases: s.leases,
-      repos: s.repos,
-      repoId: RepositoryId('r1'),
-      executeRun: executeOk,
-      prepareWorktree: prepareOk,
-      resetWorktree: (_repoId) => {},
-      isWorkerAlive: () => false,
-      recoverableRunIds: new Set([RunId('run-old')]),
-      now: () => lateNow,
-      ttlMs: 60_000,
-      findRun: (runId) => makeRun(runId as string),
-    });
-
-    // The old job was requeued then claimed+executed by w2
-    expect(s.queue.findById(JobId('j-old'))!.status).toBe('succeeded');
-    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   });
 
   it('repo-bound worker skips a lease-conflicted job in its own repo and leaves other repos untouched', async () => {

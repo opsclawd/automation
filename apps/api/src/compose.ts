@@ -5673,11 +5673,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           findRun: (runId) => runRepository.findByUuid(runId) ?? undefined,
           now: () => new Date(),
           ttlMs: DEFAULT_LEASE_TTL_MS,
-          onLeaseReclaimed: (info) => {
-            logger.error(
-              `Lease reclaimed: repo=${info.repoId} prev=${info.previousWorkerId} by=${info.reclaimedByWorkerId}: ${info.reason}`,
-            );
-          },
         })
       : undefined;
 

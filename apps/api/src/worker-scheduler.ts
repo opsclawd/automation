@@ -41,13 +41,10 @@ export class WorkerScheduler {
   ) {}
 
   async runUntilComplete(jobId: JobId, signal: AbortSignal): Promise<void> {
-    const reclaimCutoff = new Date(Date.now() - this.tickIntervalMs * 6);
     while (!signal.aborted) {
       const job = this.baseDeps.queue.findById(jobId);
       if (!job) throw new Error(`Job ${jobId} not found`);
       if (isTerminal(job.status)) return;
-
-      this.baseDeps.queue.reclaimStaleClaims(reclaimCutoff);
 
       const recoverableRunIds = buildRecoverableRunIds(this.baseDeps.queue, this.baseDeps.repos);
 

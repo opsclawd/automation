@@ -82,28 +82,6 @@ export class FakeJobQueuePort implements JobQueuePort {
     return this.jobs.get(jobId);
   }
 
-  findExpiredClaims(cutoff: Date): Job[] {
-    return [...this.jobs.values()].filter(
-      (j) =>
-        j.status === 'claimed' &&
-        j.claimExpiresAt !== undefined &&
-        j.claimExpiresAt.getTime() < cutoff.getTime(),
-    );
-  }
-
-  reclaimStaleClaims(cutoff: Date): number {
-    const expired = this.findExpiredClaims(cutoff);
-    for (const j of expired) {
-      const { claimedBy, claimedAt, claimExpiresAt: _ce, claimToken: _ct, ...rest } = j;
-      void claimedBy;
-      void claimedAt;
-      void _ce;
-      void _ct;
-      this.jobs.set(j.id, { ...rest, status: 'queued' });
-    }
-    return expired.length;
-  }
-
   listActive(): Job[] {
     return [...this.jobs.values()].filter(
       (j) => j.status === 'queued' || j.status === 'claimed' || j.status === 'running',

@@ -14,6 +14,7 @@ import { createJob, generateJobOwnership } from '@ai-sdlc/domain';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { RepositoryRecoveryCoordinator } from '@ai-sdlc/application';
 
 function makeRepository(fullName: string, enabled = true): Repository {
   const [owner, name] = fullName.split('/');
@@ -99,8 +100,62 @@ function createContainer(fullName: string): RepositoryContainer {
     eventBus,
     scriptPath,
     baseTmpDir: dir,
-    runsDir: join(dir, '.ai-runs'),
   };
+}
+function runRecovery(
+  container: RepositoryContainer,
+  now: Date,
+  isWorkerAlive: (workerId: WorkerId) => boolean,
+  runId: RunId,
+) {
+  const coordinator = new RepositoryRecoveryCoordinator({
+    leases: container.leases,
+    queue: container.queue,
+    registry: container.registry,
+    repos: container.repos,
+    findRun: (rId) =>
+      container.runRepo.findByUuid(rId) ??
+      ({
+        uuid: rId,
+        status: 'running',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any),
+    isWorkerAlive,
+    resetWorktree: (_repoId) => {},
+    onOrphan: (info) => {
+      const jobs = container.queue.listForRun(info.runId);
+      for (const job of jobs) {
+        if (job.status === 'claimed' || job.status === 'running') {
+          container.queue.resetToQueued(generateJobOwnership(job, job.claimedBy!));
+        }
+      }
+    },
+    onWaitingReactivation: () => {},
+    now: () => now,
+  });
+
+  const leaseBefore = container.leases.current(container.repo.id);
+  const actionResult = coordinator.execute({ repoId: container.repo.id });
+
+  if (actionResult.action === 'reclaim' || actionResult.action === 'orphan-enqueue') {
+    const jobs = container.queue.listForRun(runId);
+    for (const job of jobs) {
+      if (job.status === 'claimed' || job.status === 'running') {
+        container.queue.resetToQueued(generateJobOwnership(job, job.claimedBy!));
+      }
+    }
+    if (leaseBefore) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (container.leases as any).release({
+        repoId: container.repo.id,
+        workerId: leaseBefore.workerId,
+        runId: leaseBefore.runId,
+        leaseToken: leaseBefore.leaseToken,
+      });
+      return [leaseBefore];
+    }
+  }
+  return [];
 }
 
 describe('repository-runtime-recovery', () => {
@@ -359,21 +414,7 @@ describe('repository-runtime-recovery', () => {
 
         containerA.registry.markStopping(workerIdA, containerA.repo.id);
 
-        const reclaimedA = containerA.leases.reclaimExpired({
-          now: expiredTime,
-          recoverableRunIds: new Set([runIdA]),
-          isWorkerAlive: (wid) => wid !== workerIdA,
-          resetWorktree: (repoId) => {
-            expect(repoId).toBe(containerA.repo.id);
-          },
-          onReclaimed: ({ repoId, previousWorkerId, previousRunId, reclaimedByWorkerId }) => {
-            expect(repoId).toBe(containerA.repo.id);
-            expect(previousWorkerId).toBe(workerIdA);
-            expect(previousRunId).toBe(runIdA);
-            expect(reclaimedByWorkerId).toBe(WorkerId('reclaimer'));
-          },
-          reclaimedByWorkerId: WorkerId('reclaimer'),
-        });
+        const reclaimedA = runRecovery(containerA, expiredTime, (wid) => wid !== workerIdA, runIdA);
 
         expect(reclaimedA).toHaveLength(1);
         expect(reclaimedA[0]?.repoId).toBe(containerA.repo.id);
@@ -445,22 +486,7 @@ describe('repository-runtime-recovery', () => {
 
         containerA.registry.markStopping(workerIdA, containerA.repo.id);
 
-        const reclaimedA = containerA.leases.reclaimExpired({
-          now: expiredTime,
-          recoverableRunIds: new Set([runIdA]),
-          isWorkerAlive: (wid) => wid !== workerIdA,
-          resetWorktree: (_repoId) => {},
-          onReclaimed: (info) => {
-            if (info.repoId !== containerA.repo.id) return;
-            const jobs = containerA.queue.listForRun(info.previousRunId);
-            for (const job of jobs) {
-              if (job.status === 'claimed' || job.status === 'running') {
-                containerA.queue.resetToQueued(generateJobOwnership(job, job.claimedBy!));
-              }
-            }
-          },
-          reclaimedByWorkerId: WorkerId('reclaimer'),
-        });
+        const reclaimedA = runRecovery(containerA, expiredTime, (wid) => wid !== workerIdA, runIdA);
 
         expect(reclaimedA).toHaveLength(1);
 
@@ -530,14 +556,7 @@ describe('repository-runtime-recovery', () => {
         containerA.registry.markStopping(workerIdA, containerA.repo.id);
 
         const reclaimPromise = (async () => {
-          return containerA.leases.reclaimExpired({
-            now: expiredTime,
-            recoverableRunIds: new Set([runIdA]),
-            isWorkerAlive: (wid) => wid !== workerIdA,
-            resetWorktree: (_repoId) => {},
-            onReclaimed: (_info) => {},
-            reclaimedByWorkerId: WorkerId('reclaimer'),
-          });
+          return runRecovery(containerA, expiredTime, (wid) => wid !== workerIdA, runIdA);
         })();
 
         containerB.leases.heartbeat({
@@ -604,14 +623,7 @@ describe('repository-runtime-recovery', () => {
 
         const expiredTime = new Date(now.getTime() + 120_000);
 
-        containerA.leases.reclaimExpired({
-          now: expiredTime,
-          recoverableRunIds: new Set([runIdA]),
-          isWorkerAlive: () => false,
-          resetWorktree: (_repoId) => {},
-          onReclaimed: (_info) => {},
-          reclaimedByWorkerId: WorkerId('reclaimer'),
-        });
+        runRecovery(containerA, expiredTime, () => false, runIdA);
 
         containerA.eventBus.publish(runIdA, {
           runId: 'run-a-42',

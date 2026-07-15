@@ -139,7 +139,6 @@ export type {
   AcquireLeaseInput,
   HeartbeatLeaseInput,
   ReleaseLeaseInput,
-  ReclaimExpiredInput,
 } from './ports/worker-lease-port.js';
 
 export type {

@@ -218,50 +218,6 @@ export class JobQueueRepository implements JobQueuePort {
     return row ? toJob(row) : undefined;
   }
 
-  findExpiredClaims(cutoff: Date): Job[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM jobs
-       WHERE status = 'claimed'
-         AND claim_expires_at IS NOT NULL
-         AND claim_expires_at < @cutoff`,
-      )
-      .all({ cutoff: cutoff.toISOString() }) as JobRow[];
-    return rows.map(toJob);
-  }
-
-  reclaimStaleClaims(cutoff: Date): number {
-    const reclaimTx = this.db.transaction((cutoffIso: string): number => {
-      const expired = this.db
-        .prepare(
-          `SELECT id FROM jobs
-         WHERE status = 'claimed'
-           AND claim_expires_at IS NOT NULL
-           AND claim_expires_at < @cutoff`,
-        )
-        .all({ cutoff: cutoffIso }) as Array<{ id: string }>;
-
-      if (expired.length === 0) return 0;
-
-      this.db
-        .prepare(
-          `UPDATE jobs
-         SET status = 'queued',
-             claimed_by = NULL,
-             claim_token = NULL,
-             claimed_at = NULL,
-             claim_expires_at = NULL
-         WHERE status = 'claimed'
-           AND claim_expires_at IS NOT NULL
-           AND claim_expires_at < @cutoff`,
-        )
-        .run({ cutoff: cutoffIso });
-
-      return expired.length;
-    });
-    return reclaimTx(cutoff.toISOString());
-  }
-
   listActive(): Job[] {
     const rows = this.db
       .prepare("SELECT * FROM jobs WHERE status IN ('queued', 'claimed', 'running')")

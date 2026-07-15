@@ -13,13 +13,13 @@ function buildRecoverableRunIds(
   const activeRuns = runRepo.findActiveRuns();
   const ids = new Set<RunId>();
   const activeRunIdsFromJobs = new Set(
-    queue.listActive()
+    queue
+      .listActive()
       .filter((j) => j.status === 'queued')
-      .map((j) => j.runId)
+      .map((j) => j.runId),
   );
   for (const r of activeRuns) {
     if (activeRunIdsFromJobs.has(r.uuid as RunId)) continue;
-    // If the run has an active lease, we filter it out to prevent recovering runs that are in the middle of being reactivated by WaitingRunsSweeper.
     if (!leases.checkActiveLease(r.repoId, now)) {
       ids.add(r.uuid as RunId);
     }
@@ -38,8 +38,6 @@ export function startWorkerDrainLoop(
     if (isRunning) return;
     isRunning = true;
     try {
-      const cutoff = deps.now();
-      deps.queue.reclaimStaleClaims(cutoff);
       const recoverableRunIds = buildRecoverableRunIds(
         deps.runRepository,
         deps.leases,

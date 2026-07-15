@@ -49,8 +49,6 @@ function makeQueue(statuses: Record<string, string>): JobQueuePort {
     markSucceeded: vi.fn(),
     markFailed: vi.fn(),
     markCancelled: vi.fn(),
-    findExpiredClaims: vi.fn(() => []),
-    reclaimStaleClaims: vi.fn(() => 0),
   };
 }
 
@@ -228,8 +226,6 @@ describe('WorkerScheduler', () => {
       markFailed: vi.fn(),
       markCancelled: vi.fn(),
       listForRun: vi.fn(() => []),
-      findExpiredClaims: vi.fn(() => []),
-      reclaimStaleClaims: vi.fn(() => 0),
     };
     const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
@@ -262,25 +258,6 @@ describe('WorkerScheduler', () => {
     await expect(
       scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
     ).rejects.toThrow(/plain string/);
-  });
-
-  it('calls reclaimStaleClaims with a cutoff of now - 6*tick before each tick', async () => {
-    const reclaimSpy = vi.fn(() => 0);
-    let callCount = 0;
-    const queue: JobQueuePort = {
-      ...makeQueue({}),
-      findById: vi.fn(() => {
-        callCount++;
-        return makeJob('job-1', callCount === 1 ? 'queued' : 'succeeded');
-      }),
-      reclaimStaleClaims: reclaimSpy,
-    };
-    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 100);
-    await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
-    expect(reclaimSpy).toHaveBeenCalled();
-    const cutoff = reclaimSpy.mock.calls[0]?.[0] as Date;
-    const expected = Date.now() - 600;
-    expect(Math.abs(cutoff.getTime() - expected)).toBeLessThan(200);
   });
 
   it('releases claim when signal aborts while job is claimed', async () => {

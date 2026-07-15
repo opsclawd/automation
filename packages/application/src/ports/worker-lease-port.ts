@@ -1,17 +1,17 @@
-import type { RepositoryId, RunId, WorkerId, WorkerLease, LeaseToken } from '@ai-sdlc/domain';
+import type { RepositoryId, WorkerLease, LeaseToken } from '@ai-sdlc/domain';
 
 export interface AcquireLeaseInput {
   repoId: RepositoryId;
-  workerId: WorkerId;
-  runId: RunId;
+  workerId: import('@ai-sdlc/domain').WorkerId;
+  runId: import('@ai-sdlc/domain').RunId;
   now: Date;
   ttlMs: number;
 }
 
 export interface HeartbeatLeaseInput {
   repoId: RepositoryId;
-  workerId: WorkerId;
-  runId: RunId;
+  workerId: import('@ai-sdlc/domain').WorkerId;
+  runId: import('@ai-sdlc/domain').RunId;
   now: Date;
   newExpiresAt: Date;
   leaseToken: LeaseToken;
@@ -19,34 +19,9 @@ export interface HeartbeatLeaseInput {
 
 export interface ReleaseLeaseInput {
   repoId: RepositoryId;
-  workerId: WorkerId;
-  runId: RunId;
+  workerId: import('@ai-sdlc/domain').WorkerId;
+  runId: import('@ai-sdlc/domain').RunId;
   leaseToken: LeaseToken;
-}
-
-export interface ReclaimExpiredInput {
-  now: Date;
-  recoverableRunIds: ReadonlySet<RunId>;
-  isWorkerAlive(workerId: WorkerId): boolean;
-  resetWorktree(repoId: RepositoryId): void;
-  reclaimedByWorkerId: WorkerId;
-  /**
-   * Called for each reclaimed lease BEFORE the lease is deleted.
-   * Implementations MUST invoke this before removing the lease entry so the
-   * callback can safely requeue claimed/running jobs. If the callback throws,
-   * the lease MUST be preserved (not deleted) to prevent a job from being left
-   * in a non-claimable state without an active lease protecting the repo.
-   * This callback MUST be idempotent — it may be invoked multiple times for the
-   * same lease in the event of a transient failure on a previous reclaim attempt
-   * (e.g. the DELETE step threw after this callback succeeded).
-   */
-  onReclaimed(info: {
-    repoId: RepositoryId;
-    previousWorkerId: WorkerId;
-    previousRunId: RunId;
-    reclaimedByWorkerId: WorkerId;
-    reason: string;
-  }): void;
 }
 
 export interface WorkerLeasePort {
@@ -55,5 +30,4 @@ export interface WorkerLeasePort {
   release(input: ReleaseLeaseInput): void;
   current(repoId: RepositoryId): WorkerLease | undefined;
   checkActiveLease(repoId: RepositoryId, now: Date): boolean;
-  reclaimExpired(input: ReclaimExpiredInput): WorkerLease[];
 }
