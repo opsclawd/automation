@@ -313,3 +313,9 @@ export type {
   SchedulerDispatchTotalRecord,
   SchedulerRepositorySkipTotalRecord,
 } from './ports/repository-scheduler-port.js';
+
+export type {
+  WorktreeRecoveryPort,
+  PrepareWorktreeRecoveryInput,
+  WorktreeRecoveryOutcome,
+} from './ports/worktree-recovery-port.js';

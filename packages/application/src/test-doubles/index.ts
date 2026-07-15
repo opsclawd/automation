@@ -24,3 +24,4 @@ export * from './fake-synthesize-from-transcript.js';
 export * from './fake-structured-result-repair.js';
 export * from './fake-review-state-repository.js';
 export * from './fake-repository-scheduler-ports.js';
+export * from './fake-worktree-recovery-port.js';

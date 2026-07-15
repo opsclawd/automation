@@ -92,6 +92,11 @@ export type {
 } from './structured-result-repair-port.js';
 
 export type { RepositoryRegistryPort, RepositoryUpdatePatch } from './repository-registry-port.js';
+export type {
+  WorktreeRecoveryPort,
+  PrepareWorktreeRecoveryInput,
+  WorktreeRecoveryOutcome,
+} from './worktree-recovery-port.js';
 
 export type {
   SignatureReferenceAnalyzerPort,
