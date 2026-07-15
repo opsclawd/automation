@@ -2597,17 +2597,23 @@ export function composeRoot(opts: ComposeOptions): Container {
           commands: config.validation.commands,
           timeoutSeconds: config.validation.timeout,
         });
-        const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
+        const failingCommands = vr.validationRun.commands.filter((c) => c.outcome !== 'passed');
         let failureDetail: string | undefined;
-        if (failedCommand) {
-          const stdoutAbs = join(revalidateLogDir, basename(failedCommand.stdoutPath));
-          const stderrAbs = join(revalidateLogDir, basename(failedCommand.stderrPath));
-          const [stdoutTail, stderrTail] = await Promise.all([
-            readTail(stdoutAbs),
-            readTail(stderrAbs),
-          ]);
-          failureDetail = `Command: ${failedCommand.command}\nOutcome: ${failedCommand.outcome}\n\nStdout:\n${stdoutTail}\n\nStderr:\n${stderrTail}`;
+        if (failingCommands.length > 0) {
+          const details = await Promise.all(
+            failingCommands.map(async (c) => {
+              const stdoutAbs = join(revalidateLogDir, basename(c.stdoutPath));
+              const stderrAbs = join(revalidateLogDir, basename(c.stderrPath));
+              const [stdoutTail, stderrTail] = await Promise.all([
+                readTail(stdoutAbs),
+                readTail(stderrAbs),
+              ]);
+              return `Command: ${c.command}\nOutcome: ${c.outcome}\n\nStdout:\n${stdoutTail}\n\nStderr:\n${stderrTail}`;
+            }),
+          );
+          failureDetail = details.join('\n\n---\n\n');
         }
+        const failedCommand = failingCommands[0];
         await artifactStoreForRun(String(ctx.runId), ctx.cwd).write({
           runId: String(ctx.runId),
           phaseId: 'validate',
@@ -4274,17 +4280,23 @@ export function composeRoot(opts: ComposeOptions): Container {
             commands: [...config.validation.commands, ...taskValidationCommands],
             timeoutSeconds: config.validation.timeout,
           });
-          const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
+          const failingCommands = vr.validationRun.commands.filter((c) => c.outcome !== 'passed');
           let failureDetail: string | undefined;
-          if (failedCommand) {
-            const stdoutAbs = join(revalidateLogDir, basename(failedCommand.stdoutPath));
-            const stderrAbs = join(revalidateLogDir, basename(failedCommand.stderrPath));
-            const [stdoutTail, stderrTail] = await Promise.all([
-              readTail(stdoutAbs),
-              readTail(stderrAbs),
-            ]);
-            failureDetail = `Command: ${failedCommand.command}\nOutcome: ${failedCommand.outcome}\n\nStdout:\n${stdoutTail}\n\nStderr:\n${stderrTail}`;
+          if (failingCommands.length > 0) {
+            const details = await Promise.all(
+              failingCommands.map(async (c) => {
+                const stdoutAbs = join(revalidateLogDir, basename(c.stdoutPath));
+                const stderrAbs = join(revalidateLogDir, basename(c.stderrPath));
+                const [stdoutTail, stderrTail] = await Promise.all([
+                  readTail(stdoutAbs),
+                  readTail(stderrAbs),
+                ]);
+                return `Command: ${c.command}\nOutcome: ${c.outcome}\n\nStdout:\n${stdoutTail}\n\nStderr:\n${stderrTail}`;
+              }),
+            );
+            failureDetail = details.join('\n\n---\n\n');
           }
+          const failedCommand = failingCommands[0];
           await artifacts.write({
             runId: String(ctx.runId),
             phaseId: 'validate',
