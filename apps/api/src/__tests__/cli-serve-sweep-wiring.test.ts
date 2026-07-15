@@ -243,6 +243,87 @@ describe('cli serve sweep and worker wiring', () => {
     }
   });
 
+  it('startup waits for failed repository result before admission', async () => {
+    const _scheduleOnceSpy = vi
+      .spyOn(FairRepositoryScheduler.prototype, 'scheduleOnce')
+      .mockResolvedValue({
+        admitted: 0,
+        cursorId: null,
+      });
+    const runSpy = vi.spyOn(FairRepositoryScheduler.prototype, 'run');
+
+    let sweepResolve: (() => void) | undefined;
+    const mockSweepCoordinatorWithError = {
+      execute: vi.fn().mockImplementation(
+        () =>
+          new Promise<{
+            results: Array<{
+              fullName: string;
+              error?: string;
+              orphaned?: {
+                enqueued: number;
+                skippedLeaseConflict: number;
+                enqueueErrors: string[];
+              };
+              waiting?: { reactivated: number; errors: string[]; enqueueErrors: string[] };
+            }>;
+          }>((resolve) => {
+            sweepResolve = () =>
+              resolve({
+                results: [
+                  {
+                    fullName: 'owner/repo',
+                    error: 'connection refused',
+                    orphaned: { enqueued: 0, skippedLeaseConflict: 0, enqueueErrors: [] },
+                    waiting: { reactivated: 0, errors: [], enqueueErrors: [] },
+                  },
+                ],
+              });
+          }),
+      ),
+    };
+    const localMockContainer = {
+      ...mockContainer,
+      buildRepositorySweepCoordinator: () => mockSweepCoordinatorWithError,
+    };
+    vi.spyOn(composeMod, 'composeRoot').mockReturnValue(
+      localMockContainer as unknown as ReturnType<typeof composeMod.composeRoot>,
+    );
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      bypassPlanValidation: true,
+    });
+
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const abortController = new AbortController();
+    vi.spyOn(global, 'AbortController').mockImplementation(() => abortController);
+
+    await program.parseAsync(['node', 'orchestrator', 'serve', '--port', '0']);
+
+    // Advance timers to let async operations run, but the sweep hasn't resolved yet
+    await vi.advanceTimersByTimeAsync(100);
+
+    // The scheduler's run() should NOT have been called yet because the
+    // initial sweep must complete first (it's an admission barrier).
+    expect(runSpy).not.toHaveBeenCalled();
+
+    // Now resolve the initial sweep - even though it has an error
+    expect(sweepResolve).toBeDefined();
+    sweepResolve!();
+
+    // Now advance time again - the scheduler should start after sweep completes
+    await vi.advanceTimersByTimeAsync(100);
+    expect(runSpy).toHaveBeenCalled();
+
+    const sigintListeners = process.listeners('SIGINT');
+    const shutdownHandler = sigintListeners[sigintListeners.length - 1];
+    if (shutdownHandler) {
+      await (shutdownHandler as () => Promise<void>)();
+    }
+  });
+
   it('periodic pass uses the same coordinator without overlapping', async () => {
     const _runSpy = vi.spyOn(FairRepositoryScheduler.prototype, 'run');
     vi.spyOn(FairRepositoryScheduler.prototype, 'scheduleOnce').mockResolvedValue({

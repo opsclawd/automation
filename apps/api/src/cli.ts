@@ -1001,6 +1001,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         buildOpts,
       );
       const abortController = new AbortController();
+      const workerSweepWorkerId = WorkerId(`worker-sweep-${process.pid}`);
+      const sweepCoordinator = c.buildRepositorySweepCoordinator();
 
       const shutdown = async () => {
         abortController.abort();
@@ -1015,6 +1017,28 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       process.on('SIGTERM', shutdown);
 
       try {
+        const initialResult = await sweepCoordinator.execute(workerSweepWorkerId);
+        for (const repoResult of initialResult.results) {
+          if (repoResult.error) {
+            console.error(`Initial sweep error for ${repoResult.fullName}: ${repoResult.error}`);
+          }
+          if (repoResult.orphaned) {
+            const o = repoResult.orphaned;
+            if (o.enqueued > 0 || o.skippedLeaseConflict > 0 || o.enqueueErrors.length > 0) {
+              console.error(
+                `Orphan recovery: ${o.enqueued} enqueued, ${o.skippedLeaseConflict} skipped (lease), ${o.enqueueErrors.length} errors`,
+              );
+            }
+          }
+          if (repoResult.waiting) {
+            const w = repoResult.waiting;
+            if (w.reactivated > 0 || w.errors.length > 0 || w.enqueueErrors.length > 0) {
+              console.error(
+                `Reactivation sweep: ${w.reactivated} reactivated, ${w.errors.length} errors, ${w.enqueueErrors.length} enqueue errors`,
+              );
+            }
+          }
+        }
         await scheduler.run(abortController.signal);
       } catch (err) {
         console.error('Scheduler run error:', err instanceof Error ? err.message : String(err));
