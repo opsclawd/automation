@@ -351,9 +351,9 @@ function buildSchedulerDeps(
 
   const schedulerWorkerLoop = async (
     runtime: RepositoryRuntime,
-    input: { workerId: WorkerId; runId: RunId },
+    input: { workerId: WorkerId; runId: RunId; signal?: AbortSignal },
   ) => {
-    const { workerId, runId } = input;
+    const { workerId, runId, signal } = input;
 
     // The scheduler (RepositorySchedulerAdapter.runOne) has already claimed a
     // job for this run before invoking this callback. Look it up so the job
@@ -438,6 +438,7 @@ function buildSchedulerDeps(
       updateRun: (runId, patch) => runtime.runRepository.update(String(runId), patch),
       now: () => new Date(),
       ttlMs: DEFAULT_LEASE_TTL_MS,
+      ...(signal && { outerSignal: signal }),
     };
 
     await runClaimedJob(workerId, job, fullDeps);
@@ -1006,6 +1007,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
       const shutdown = async () => {
         abortController.abort();
+        scheduler.stopAdmission('shutdown');
+        const drainResult = await scheduler.drain(30000);
+        if (!drainResult.drained) {
+          console.error(
+            `drain timed out, ${drainResult.remainingWorkerIds.length} workers still active`,
+          );
+        }
         try {
           await c.runtimeCatalog.close();
         } finally {
@@ -1139,6 +1147,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           isShuttingDown = true;
           sweepTimer?.stop();
           abortController.abort();
+          scheduler.stopAdmission('shutdown');
+          const drainResult = await scheduler.drain(30000);
+          if (!drainResult.drained) {
+            console.error(
+              `drain timed out, ${drainResult.remainingWorkerIds.length} workers still active`,
+            );
+          }
           try {
             await c.runtimeCatalog.close();
           } finally {

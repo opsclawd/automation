@@ -251,25 +251,20 @@ export class FairRepositoryScheduler {
 
   async drain(timeoutMs: number): Promise<{ drained: boolean; remainingWorkerIds: WorkerId[] }> {
     const startTime = this.deps.now();
-    const checkTimeout = () => this.deps.now().getTime() - startTime.getTime() >= timeoutMs;
 
     while (this.inFlight.size > 0) {
-      if (checkTimeout()) {
+      const elapsed = this.deps.now().getTime() - startTime.getTime();
+      if (elapsed >= timeoutMs) {
         return {
           drained: false,
           remainingWorkerIds: [...this.inFlight.keys()],
         };
       }
-      const reservation = [...this.inFlight.values()][0];
-      if (!reservation || !reservation.dispatchPromise) {
-        await this.deps.sleep(100);
-        continue;
-      }
-      try {
-        await Promise.race([reservation.dispatchPromise, this.deps.sleep(100)]);
-      } catch {
-        // ignore and continue draining
-      }
+
+      const remaining = timeoutMs - elapsed;
+      const dispatchPromises = [...this.inFlight.values()].map((r) => r.dispatchPromise!);
+
+      await Promise.race([Promise.allSettled(dispatchPromises), this.deps.sleep(remaining)]);
     }
 
     return { drained: true, remainingWorkerIds: [] };
