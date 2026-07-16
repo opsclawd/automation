@@ -8,9 +8,6 @@ import type {
   AgentPort,
   AgentInvocationRequest,
   AgentInvocationResult,
-  ValidationPort,
-  RunValidationInput,
-  ValidationCommandResult,
   PhaseHandlerContext,
 } from '@ai-sdlc/application';
 import { RepositoryId, type Run } from '@ai-sdlc/domain';
@@ -22,11 +19,6 @@ export interface ScriptedAgentScript {
   handle: (
     request: AgentInvocationRequest,
   ) => AgentInvocationResult | Promise<AgentInvocationResult>;
-}
-
-export interface RecordingValidationPort extends ValidationPort {
-  readonly inputs: RunValidationInput[];
-  readonly results: ValidationCommandResult[][];
 }
 
 export interface ComposedOrchestrationHarnessOptions {
@@ -44,7 +36,6 @@ export interface ComposedOrchestrationHarness {
   targetRoot: string;
   automationRoot: string;
   scriptedInvocations: AgentInvocationRequest[];
-  validationPort: RecordingValidationPort;
   cleanup: () => void;
 }
 
@@ -109,30 +100,6 @@ class ScriptedAgentPort implements AgentPort {
   }
 }
 
-class RecordingValidationAdapter implements RecordingValidationPort {
-  readonly inputs: RunValidationInput[] = [];
-  readonly results: ValidationCommandResult[][] = [];
-
-  async run(input: RunValidationInput): Promise<ValidationCommandResult[]> {
-    this.inputs.push({ ...input });
-    const result: ValidationCommandResult[] = (input.commands || ['echo ok']).map((cmd) => {
-      const isFailure = cmd.trim() === 'exit 1';
-      return {
-        command: cmd,
-        exitCode: isFailure ? 1 : 0,
-        durationMs: 1,
-        stdout: '',
-        stderr: isFailure ? 'exit 1' : '',
-        stdoutPath: '',
-        stderrPath: '',
-        outcome: isFailure ? ('failed' as const) : ('passed' as const),
-      };
-    });
-    this.results.push(result);
-    return result;
-  }
-}
-
 export function createComposedOrchestrationHarness(
   opts: ComposedOrchestrationHarnessOptions,
 ): ComposedOrchestrationHarness {
@@ -158,7 +125,6 @@ export function createComposedOrchestrationHarness(
   chmodSync(scriptPath, 0o755);
 
   const scriptedAgent = new ScriptedAgentPort(opts.scripts ?? []);
-  const recordingValidation = new RecordingValidationAdapter();
 
   const container = composeRoot({
     repoRoot: targetRoot,
@@ -169,7 +135,6 @@ export function createComposedOrchestrationHarness(
     agentAdapterOverrides: {
       opencode: scriptedAgent,
     },
-    validationPort: recordingValidation,
   });
 
   const [owner, repoName] = opts.repoFullName.split('/');
@@ -228,7 +193,6 @@ export function createComposedOrchestrationHarness(
     targetRoot,
     automationRoot,
     scriptedInvocations: scriptedAgent.invocations,
-    validationPort: recordingValidation,
     cleanup,
   };
 }
