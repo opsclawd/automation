@@ -38,7 +38,7 @@ describe('compose-validation-environment', () => {
       try {
         const harness = createHarness({
           repoFullName: TARGET_REPO,
-          validationCommands: [`ls`],
+          validationCommands: ['ls'],
         });
 
         const validateHandler = harness.container.phaseRegistry.get(PhaseName('validate'));
@@ -74,7 +74,7 @@ describe('compose-validation-environment', () => {
       try {
         const harness = createHarness({
           repoFullName: 'owner/test-repo',
-          validationCommands: [`ls`],
+          validationCommands: ['ls'],
         });
 
         const validateHandler = harness.container.phaseRegistry.get(PhaseName('validate'));
@@ -107,13 +107,13 @@ describe('compose-validation-environment', () => {
         const harnessA = createHarness({
           repoFullName: REPO_A,
           issueNumber: 1,
-          validationCommands: [`ls`],
+          validationCommands: ['ls'],
         });
 
         const harnessB = createHarness({
           repoFullName: REPO_B,
           issueNumber: 2,
-          validationCommands: [`ls`],
+          validationCommands: ['ls'],
         });
 
         const handlerA = harnessA.container.phaseRegistry.get(PhaseName('validate'));
@@ -162,13 +162,13 @@ describe('compose-validation-environment', () => {
       const harnessFirst = createHarness({
         repoFullName: REPO_FIRST,
         issueNumber: 10,
-        validationCommands: [`ls`],
+        validationCommands: ['ls'],
       });
 
       const harnessSecond = createHarness({
         repoFullName: REPO_SECOND,
         issueNumber: 20,
-        validationCommands: [`ls`],
+        validationCommands: ['ls'],
       });
 
       const handlerFirst = harnessFirst.container.phaseRegistry.get(PhaseName('validate'));
@@ -204,7 +204,7 @@ describe('compose-validation-environment', () => {
 
       const harness = createHarness({
         repoFullName: 'owner/cleanup-test-repo',
-        validationCommands: [`ls`],
+        validationCommands: ['ls'],
       });
 
       const validateHandler = harness.container.phaseRegistry.get(PhaseName('validate'));
@@ -218,7 +218,7 @@ describe('compose-validation-environment', () => {
     it('removes temporary directories on cleanup', () => {
       const harness = createHarness({
         repoFullName: 'owner/tmp-cleanup-repo',
-        validationCommands: [`ls`],
+        validationCommands: ['ls'],
       });
 
       const { automationRoot, targetRoot } = harness;
@@ -234,7 +234,7 @@ describe('compose-validation-environment', () => {
     it('handles cleanup after assertion failures gracefully', async () => {
       const harness = createHarness({
         repoFullName: 'owner/assertion-fail-repo',
-        validationCommands: [`ls`],
+        validationCommands: ['ls'],
       });
 
       const validateHandler = harness.container.phaseRegistry.get(PhaseName('validate'));
@@ -243,8 +243,9 @@ describe('compose-validation-environment', () => {
         const result = await validateHandler.run(harness.context);
         expect(result.outcome).toBe('passed');
         expect(true).toBe(false);
-      } catch {
+      } catch (error) {
         harness.cleanup();
+        throw error;
       }
     });
 
