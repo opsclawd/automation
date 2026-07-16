@@ -7,7 +7,7 @@ import type { AgentPort } from '@ai-sdlc/application';
 import type { AgentRuntimeKind } from '@ai-sdlc/domain';
 import type { ValidationPort, RunValidationInput } from '@ai-sdlc/application';
 import type { AgentInvocationRequest } from '@ai-sdlc/application';
-import { RepositoryId, type PhaseName } from '@ai-sdlc/domain';
+import { RepositoryId, AgentProfileName, type PhaseName } from '@ai-sdlc/domain';
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -175,7 +175,7 @@ describe('composeRoot — injection seams', () => {
     ]);
   });
 
-  it('runtime overrides replace only their matching runtime adapter', () => {
+  it('runtime overrides replace only their matching runtime adapter', async () => {
     const root = makeRepoRoot();
     const scriptPath = fakeScript(0);
     writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(makeAgentConfig()));
@@ -193,5 +193,37 @@ describe('composeRoot — injection seams', () => {
     });
 
     expect(container.agentRuntime).toBeDefined();
+
+    const runUuid = '00000000-0000-0000-0000-000000000001';
+    container.runRepository.insert({
+      uuid: runUuid,
+      displayId: `issue-1-${runUuid}`,
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    });
+
+    const request: AgentInvocationRequest = {
+      profile: AgentProfileName('test'),
+      promptPath: '/tmp/prompt.md',
+      expectedArtifacts: [],
+      cwd: '/tmp',
+      runId: runUuid,
+      repoId: 'owner/repo',
+      phaseId: 'plan-design',
+      startCommitSha: 'a'.repeat(40),
+    };
+
+    await container.agentRuntime!.invoke(request);
+    expect(scriptedAgent.invocations).toEqual([
+      expect.objectContaining({
+        profile: AgentProfileName('test'),
+        phaseId: 'plan-design',
+      }),
+    ]);
   });
 });
