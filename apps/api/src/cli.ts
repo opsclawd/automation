@@ -507,7 +507,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
   program
     .command('run')
     .alias('start')
-    .description('Start an issue-to-PR run by wrapping the legacy Bash script')
+    .description('Start an issue-to-PR run with the TypeScript executor by default')
     .option('--repository-id <id|owner/name>', 'Repository ID or owner/name')
     .requiredOption('--issue <number>', 'GitHub issue number', (v) => {
       if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
