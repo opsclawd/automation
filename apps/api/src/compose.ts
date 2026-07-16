@@ -163,6 +163,8 @@ import {
   type HolisticFile,
   fingerprintFinding,
   type RepositoryAvailabilityPort,
+  type AgentPort,
+  type ValidationPort,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -663,6 +665,10 @@ export interface ComposeOptions {
   metadataResolver?: {
     resolve(path: string): import('@ai-sdlc/infrastructure').RepositoryMetadata;
   };
+  /** Override specific runtime adapters with test doubles or custom implementations */
+  agentAdapterOverrides?: Partial<Record<import('@ai-sdlc/domain').AgentRuntimeKind, AgentPort>>;
+  /** Use a custom validation adapter instead of ProcessValidationAdapter */
+  validationPort?: ValidationPort;
 }
 
 class AbortRegistry {
@@ -2006,7 +2012,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const validationRunRepository = new ValidationRunRepository(db);
   const agentUsageRepository = new AgentUsageRepository(db);
   const loopRepository = new LoopRepository(db);
-  const validationAdapter = new ProcessValidationAdapter();
+  const validationAdapter = opts.validationPort ?? new ProcessValidationAdapter();
   const runValidation = new RunValidation({
     validation: validationAdapter,
     validationRunRepository,
@@ -2209,6 +2215,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           artifactsDir: join(runsDir, 'agent-artifacts'),
         });
       }
+      Object.assign(adapters, opts.agentAdapterOverrides ?? {});
       agentRuntime = new AgentRuntimeRouter({
         agent: config.agent,
         adapters,
