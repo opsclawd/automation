@@ -12,9 +12,12 @@ import {
   type RunId,
   type WorkerId,
   type IssueNumber,
+  type ClaimToken,
+  type JobOwnership,
   RepositoryNotApprovedError,
   DuplicateJobIdError,
   type JobStatus,
+  JobOwnershipLostError,
   JobId as mkJobId,
   RepositoryId as mkRepositoryId,
   RunId as mkRunId,
@@ -37,6 +40,7 @@ interface JobRow {
   priority: number;
   attempts: number;
   claimed_by: string | null;
+  claim_token: string | null;
   created_at: string;
   claimed_at: string | null;
   started_at: string | null;
@@ -57,6 +61,9 @@ function toJob(row: JobRow): Job {
   };
   if (row.claimed_by !== null) {
     job.claimedBy = mkWorkerId(row.claimed_by);
+  }
+  if (row.claim_token !== null) {
+    job.claimToken = row.claim_token as ClaimToken;
   }
   if (row.claimed_at !== null) {
     job.claimedAt = new Date(row.claimed_at);
@@ -112,6 +119,7 @@ export class JobQueueRepository implements JobQueuePort {
             `UPDATE jobs
          SET status = @status,
              claimed_by = @claimed_by,
+             claim_token = @claim_token,
              claimed_at = @claimed_at,
              claim_expires_at = @claim_expires_at,
              attempts = @attempts
@@ -120,6 +128,7 @@ export class JobQueueRepository implements JobQueuePort {
           .run({
             status: claimedJob.status,
             claimed_by: claimedJob.claimedBy ?? null,
+            claim_token: claimedJob.claimToken ?? null,
             claimed_at: claimedJob.claimedAt?.toISOString() ?? null,
             claim_expires_at: claimedJob.claimExpiresAt?.toISOString() ?? null,
             attempts: claimedJob.attempts,
@@ -145,8 +154,8 @@ export class JobQueueRepository implements JobQueuePort {
 
     this.db
       .prepare(
-        `INSERT INTO jobs (id, run_id, repo_id, issue_number, status, priority, attempts, claimed_by, created_at, claimed_at, started_at, completed_at, claim_expires_at)
-       VALUES (@id, @run_id, @repo_id, @issue_number, @status, @priority, @attempts, @claimed_by, @created_at, @claimed_at, @started_at, @completed_at, @claim_expires_at)`,
+        `INSERT INTO jobs (id, run_id, repo_id, issue_number, status, priority, attempts, claimed_by, claim_token, created_at, claimed_at, started_at, completed_at, claim_expires_at)
+       VALUES (@id, @run_id, @repo_id, @issue_number, @status, @priority, @attempts, @claimed_by, @claim_token, @created_at, @claimed_at, @started_at, @completed_at, @claim_expires_at)`,
       )
       .run({
         id: input.job.id,
@@ -157,6 +166,7 @@ export class JobQueueRepository implements JobQueuePort {
         priority: input.job.priority,
         attempts: input.job.attempts,
         claimed_by: input.job.claimedBy ?? null,
+        claim_token: input.job.claimToken ?? null,
         created_at: input.job.createdAt.toISOString(),
         claimed_at: input.job.claimedAt?.toISOString() ?? null,
         started_at: input.job.startedAt?.toISOString() ?? null,
@@ -169,28 +179,28 @@ export class JobQueueRepository implements JobQueuePort {
     return this.claimTx(input.workerId, input.repoId, input.skipJobIds, input.ttlMs);
   }
 
-  releaseClaim(jobId: JobId): void {
-    this.updateJob(jobId, (j) => unclaimJob(j));
+  releaseClaim(owner: JobOwnership): void {
+    this.updateJobWithOwnership(owner, (j) => unclaimJob(j));
   }
 
-  resetToQueued(jobId: JobId): void {
-    this.updateJob(jobId, (j) => resetJobToQueued(j));
+  resetToQueued(owner: JobOwnership): void {
+    this.updateJobWithOwnership(owner, (j) => resetJobToQueued(j));
   }
 
-  markRunning(jobId: JobId, now: Date): void {
-    this.updateJob(jobId, (j) => markJobRunning(j, now));
+  markRunning(owner: JobOwnership, now: Date): void {
+    this.updateJobWithOwnership(owner, (j) => markJobRunning(j, now));
   }
 
-  markSucceeded(jobId: JobId, now: Date): void {
-    this.updateJob(jobId, (j) => markJobSucceeded(j, now));
+  markSucceeded(owner: JobOwnership, now: Date): void {
+    this.updateJobWithOwnership(owner, (j) => markJobSucceeded(j, now));
   }
 
-  markFailed(jobId: JobId, now: Date): void {
-    this.updateJob(jobId, (j) => markJobFailed(j, now));
+  markFailed(owner: JobOwnership, now: Date): void {
+    this.updateJobWithOwnership(owner, (j) => markJobFailed(j, now));
   }
 
-  markCancelled(jobId: JobId, now: Date): void {
-    this.updateJob(jobId, (j) => markJobCancelled(j, now));
+  markCancelled(owner: JobOwnership, now: Date): void {
+    this.updateJobWithOwnership(owner, (j) => markJobCancelled(j, now));
   }
 
   listForRepo(repoId: RepositoryId): Job[] {
@@ -208,49 +218,6 @@ export class JobQueueRepository implements JobQueuePort {
     return row ? toJob(row) : undefined;
   }
 
-  findExpiredClaims(cutoff: Date): Job[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM jobs
-       WHERE status = 'claimed'
-         AND claim_expires_at IS NOT NULL
-         AND claim_expires_at < @cutoff`,
-      )
-      .all({ cutoff: cutoff.toISOString() }) as JobRow[];
-    return rows.map(toJob);
-  }
-
-  reclaimStaleClaims(cutoff: Date): number {
-    const reclaimTx = this.db.transaction((cutoffIso: string): number => {
-      const expired = this.db
-        .prepare(
-          `SELECT id FROM jobs
-         WHERE status = 'claimed'
-           AND claim_expires_at IS NOT NULL
-           AND claim_expires_at < @cutoff`,
-        )
-        .all({ cutoff: cutoffIso }) as Array<{ id: string }>;
-
-      if (expired.length === 0) return 0;
-
-      this.db
-        .prepare(
-          `UPDATE jobs
-         SET status = 'queued',
-             claimed_by = NULL,
-             claimed_at = NULL,
-             claim_expires_at = NULL
-         WHERE status = 'claimed'
-           AND claim_expires_at IS NOT NULL
-           AND claim_expires_at < @cutoff`,
-        )
-        .run({ cutoff: cutoffIso });
-
-      return expired.length;
-    });
-    return reclaimTx(cutoff.toISOString());
-  }
-
   listActive(): Job[] {
     const rows = this.db
       .prepare("SELECT * FROM jobs WHERE status IN ('queued', 'claimed', 'running')")
@@ -258,38 +225,49 @@ export class JobQueueRepository implements JobQueuePort {
     return rows.map(toJob);
   }
 
-  private updateJob(jobId: JobId, transition: (job: Job) => Job): void {
+  private updateJobWithOwnership(owner: JobOwnership, transition: (job: Job) => Job): void {
     const tx = this.db.transaction(() => {
-      const row = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as
+      const row = this.db
+        .prepare(
+          `SELECT * FROM jobs WHERE id = @id AND claimed_by = @claimed_by AND claim_token = @claim_token`,
+        )
+        .get({ id: owner.jobId, claimed_by: owner.workerId, claim_token: owner.claimToken }) as
         | JobRow
         | undefined;
       if (!row) {
-        throw new Error(`unknown job ${jobId}`);
+        throw new JobOwnershipLostError(owner.jobId);
       }
       const job = toJob(row);
       const updated = transition(job);
-      this.db
+      const result = this.db
         .prepare(
           `UPDATE jobs
          SET status = @status,
              attempts = @attempts,
              claimed_by = @claimed_by,
+             claim_token = @claim_token,
              claimed_at = @claimed_at,
              started_at = @started_at,
              completed_at = @completed_at,
              claim_expires_at = @claim_expires_at
-         WHERE id = @id`,
+         WHERE id = @id AND claimed_by = @original_claimed_by AND claim_token = @original_claim_token`,
         )
         .run({
           status: updated.status,
           attempts: updated.attempts,
           claimed_by: updated.claimedBy ?? null,
+          claim_token: updated.claimToken ?? null,
           claimed_at: updated.claimedAt?.toISOString() ?? null,
           started_at: updated.startedAt?.toISOString() ?? null,
           completed_at: updated.completedAt?.toISOString() ?? null,
           claim_expires_at: updated.claimExpiresAt?.toISOString() ?? null,
           id: updated.id,
+          original_claimed_by: owner.workerId,
+          original_claim_token: owner.claimToken,
         });
+      if (result.changes === 0) {
+        throw new JobOwnershipLostError(owner.jobId);
+      }
     });
     tx();
   }

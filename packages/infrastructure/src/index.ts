@@ -18,6 +18,8 @@ export * from './sqlite/job-queue-repository.js';
 export * from './sqlite/repository-registry-repository.js';
 export * from './sqlite/review-state-repository.js';
 export * from './sqlite/repository-runtime-migrator.js';
+export * from './sqlite/operational-recovery-repository.js';
+
 export * from './process/process-adapter.js';
 export * from './failure/classifier.js';
 export * from './bash/run-bash-script.js';
@@ -29,6 +31,7 @@ export * from './github/gh-cli-adapter.js';
 export * from './github/errors.js';
 export * from './git/git-worktree-adapter.js';
 export * from './git/repository-metadata-resolver.js';
+export * from './git/worktree-recovery-adapter.js';
 export { createFixDiffInspector } from './git/fix-diff-inspector.js';
 export { createFindingEvidenceInspector } from './git/finding-evidence-inspector.js';
 export * from './artifacts/filesystem-artifact-store.js';

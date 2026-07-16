@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "DefaultRepositoryRuntimeCatalog permanently caches operational runtimes in its own operationalCache, bypassing the factory's lifecycle management and returning closed database connections after the factory reaps them.",
+      "file": "apps/api/src/repository-runtime-catalog.ts",
+      "suggested_fix": "Remove operationalCache from DefaultRepositoryRuntimeCatalog and have resolveOperational return await this.factory.getOperationalRuntime(repo) directly."
+    },
+    {
+      "severity": "P1",
+      "summary": "DefaultRepositoryRuntimeCatalog permanently caches execution runtimes in its own executionCache without checking for staleness, causing findRun to potentially query closed DB connections for runtimes that the factory has already reaped.",
+      "file": "apps/api/src/repository-runtime-catalog.ts",
+      "suggested_fix": "Remove executionCache from DefaultRepositoryRuntimeCatalog. In findRun, retrieve runtimes directly from the factory instead of maintaining a duplicated catalog-level cache that leaks closed runtimes."
+    },
+    {
+      "severity": "P2",
+      "summary": "composeRepositoryRuntime builds a new operational runtime for every execution runtime instead of reusing the factory's cached operational runtime, resulting in duplicate database connections and redundant SQLite migrations.",
+      "file": "apps/api/src/compose-repository-runtime.ts",
+      "suggested_fix": "Modify composeRepositoryRuntime to accept an existing operationalRuntime in its input, and update the catalog's buildExecutionRuntime callback to pass await this.factory.getOperationalRuntime(repository) instead of raw DB dependencies."
+    }
+  ]
+}

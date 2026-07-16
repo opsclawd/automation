@@ -383,4 +383,349 @@ describe('FairRepositoryScheduler run loop', () => {
       expect(calls.length).toBe(2);
     });
   });
+
+  describe('scheduler stop and drain lifecycle', () => {
+    describe('stopAdmission is an admission fence', () => {
+      it('scheduler stop prevents new admission', async () => {
+        const { FairRepositoryScheduler } = await import('../fair-repository-scheduler.js');
+
+        const r1 = mkRepo('r1');
+
+        const source = new FakeRepositoryWorkSourcePort();
+        const dispatch = new FakeRepositoryDispatchPort();
+        const telemetry = new FakeSchedulerTelemetryPort();
+
+        source.setResult('r1', { available: true, queueDepth: 1, activeCount: 0 });
+        dispatch.setResult('r1', 'completed');
+
+        const fakeRepos = {
+          listEnabled() {
+            return [r1];
+          },
+        };
+
+        const scheduler = new FairRepositoryScheduler({
+          globalConcurrency: 10,
+          pollIntervalMs: 60000,
+          repos: fakeRepos as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+          workSource: source,
+          dispatch,
+          telemetry,
+          workerIdFactory: makeWorkerIdFactory(),
+          sleep,
+          now: () => new Date(),
+          logger: { error: () => {} },
+        });
+
+        scheduler.stopAdmission('shutdown');
+
+        const result = await scheduler.scheduleOnce();
+
+        expect(result.admitted).toBe(0);
+      });
+
+      it('concurrent scheduleOnce cannot admit after stop begins', async () => {
+        const { FairRepositoryScheduler } = await import('../fair-repository-scheduler.js');
+
+        const r1 = mkRepo('r1');
+
+        const source = new FakeRepositoryWorkSourcePort();
+        const dispatch = new FakeRepositoryDispatchPort();
+        const telemetry = new FakeSchedulerTelemetryPort();
+
+        source.setResult('r1', { available: true, queueDepth: 1, activeCount: 0 });
+
+        const fakeRepos = {
+          listEnabled() {
+            return [r1];
+          },
+        };
+
+        const scheduler = new FairRepositoryScheduler({
+          globalConcurrency: 10,
+          pollIntervalMs: 60000,
+          repos: fakeRepos as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+          workSource: source,
+          dispatch,
+          telemetry,
+          workerIdFactory: makeWorkerIdFactory(),
+          sleep,
+          now: () => new Date(),
+          logger: { error: () => {} },
+        });
+
+        const pending = dispatch.pendingResult('r1');
+
+        const [p1] = await Promise.all([scheduler.scheduleOnce()]);
+
+        scheduler.stopAdmission('shutdown');
+
+        const p2Result = await scheduler.scheduleOnce();
+
+        expect(p2Result.admitted).toBe(0);
+
+        pending.resolve('completed');
+        await p1;
+      });
+
+      it('stopAdmission is idempotent', async () => {
+        const { FairRepositoryScheduler } = await import('../fair-repository-scheduler.js');
+
+        const r1 = mkRepo('r1');
+
+        const source = new FakeRepositoryWorkSourcePort();
+        const dispatch = new FakeRepositoryDispatchPort();
+        const telemetry = new FakeSchedulerTelemetryPort();
+
+        source.setResult('r1', { available: true, queueDepth: 1, activeCount: 0 });
+        dispatch.setResult('r1', 'completed');
+
+        const fakeRepos = {
+          listEnabled() {
+            return [r1];
+          },
+        };
+
+        const scheduler = new FairRepositoryScheduler({
+          globalConcurrency: 10,
+          pollIntervalMs: 60000,
+          repos: fakeRepos as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+          workSource: source,
+          dispatch,
+          telemetry,
+          workerIdFactory: makeWorkerIdFactory(),
+          sleep,
+          now: () => new Date(),
+          logger: { error: () => {} },
+        });
+
+        scheduler.stopAdmission('shutdown');
+        scheduler.stopAdmission('shutdown');
+
+        const result = await scheduler.scheduleOnce();
+
+        expect(result.admitted).toBe(0);
+      });
+    });
+
+    describe('dispatch abort is scoped', () => {
+      it('dispatch receives its own abort signal', async () => {
+        const { FairRepositoryScheduler } = await import('../fair-repository-scheduler.js');
+
+        const r1 = mkRepo('r1');
+
+        const receivedSignals: AbortSignal[] = [];
+
+        class SignalTrackingDispatchPort extends FakeRepositoryDispatchPort {
+          async runOne(input: {
+            repository: Repository;
+            workerId: WorkerId;
+            signal?: AbortSignal;
+          }): Promise<'completed' | 'no_work'> {
+            if (input.signal) {
+              receivedSignals.push(input.signal);
+            }
+            return super.runOne(input);
+          }
+        }
+
+        const source = new FakeRepositoryWorkSourcePort();
+        const dispatch = new SignalTrackingDispatchPort();
+        const telemetry = new FakeSchedulerTelemetryPort();
+
+        source.setResult('r1', { available: true, queueDepth: 1, activeCount: 0 });
+
+        const fakeRepos = {
+          listEnabled() {
+            return [r1];
+          },
+        };
+
+        const scheduler = new FairRepositoryScheduler({
+          globalConcurrency: 10,
+          pollIntervalMs: 60000,
+          repos: fakeRepos as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+          workSource: source,
+          dispatch,
+          telemetry,
+          workerIdFactory: makeWorkerIdFactory(),
+          sleep,
+          now: () => new Date(),
+          logger: { error: () => {} },
+        });
+
+        const pending = dispatch.pendingResult('r1');
+
+        await scheduler.scheduleOnce();
+
+        expect(receivedSignals.length).toBeGreaterThan(0);
+        expect(receivedSignals[0].aborted).toBe(false);
+
+        scheduler.stopAdmission('shutdown');
+
+        expect(receivedSignals[0].aborted).toBe(true);
+        expect(receivedSignals[0].reason).toBe('shutdown');
+
+        pending.resolve('completed');
+      });
+
+      it('scheduler stop aborts every in-flight dispatch with shutdown reason', async () => {
+        const { FairRepositoryScheduler } = await import('../fair-repository-scheduler.js');
+
+        const r1 = mkRepo('r1');
+        const r2 = mkRepo('r2');
+
+        const receivedSignals: AbortSignal[] = [];
+
+        class SignalTrackingDispatchPort extends FakeRepositoryDispatchPort {
+          async runOne(input: {
+            repository: Repository;
+            workerId: WorkerId;
+            signal?: AbortSignal;
+          }): Promise<'completed' | 'no_work'> {
+            if (input.signal) {
+              receivedSignals.push(input.signal);
+            }
+            return super.runOne(input);
+          }
+        }
+
+        const source = new FakeRepositoryWorkSourcePort();
+        const dispatch = new SignalTrackingDispatchPort();
+        const telemetry = new FakeSchedulerTelemetryPort();
+
+        source.setResult('r1', { available: true, queueDepth: 1, activeCount: 0 });
+        source.setResult('r2', { available: true, queueDepth: 1, activeCount: 0 });
+
+        const fakeRepos = {
+          listEnabled() {
+            return [r1, r2];
+          },
+        };
+
+        const scheduler = new FairRepositoryScheduler({
+          globalConcurrency: 10,
+          pollIntervalMs: 60000,
+          repos: fakeRepos as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+          workSource: source,
+          dispatch,
+          telemetry,
+          workerIdFactory: makeWorkerIdFactory(),
+          sleep,
+          now: () => new Date(),
+          logger: { error: () => {} },
+        });
+
+        const pendingR1 = dispatch.pendingResult('r1');
+        const pendingR2 = dispatch.pendingResult('r2');
+
+        await scheduler.scheduleOnce();
+
+        expect(receivedSignals.length).toBe(2);
+
+        scheduler.stopAdmission('shutdown');
+
+        expect(receivedSignals[0].aborted).toBe(true);
+        expect(receivedSignals[0].reason).toBe('shutdown');
+        expect(receivedSignals[1].aborted).toBe(true);
+        expect(receivedSignals[1].reason).toBe('shutdown');
+
+        pendingR1.resolve('completed');
+        pendingR2.resolve('completed');
+      });
+    });
+
+    describe('drain waits for in-flight dispatches', () => {
+      it('drain waits for every in-flight dispatch', async () => {
+        const { FairRepositoryScheduler } = await import('../fair-repository-scheduler.js');
+
+        const r1 = mkRepo('r1');
+
+        const source = new FakeRepositoryWorkSourcePort();
+        const dispatch = new FakeRepositoryDispatchPort();
+        const telemetry = new FakeSchedulerTelemetryPort();
+
+        source.setResult('r1', { available: true, queueDepth: 1, activeCount: 0 });
+
+        const fakeRepos = {
+          listEnabled() {
+            return [r1];
+          },
+        };
+
+        const scheduler = new FairRepositoryScheduler({
+          globalConcurrency: 10,
+          pollIntervalMs: 60000,
+          repos: fakeRepos as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+          workSource: source,
+          dispatch,
+          telemetry,
+          workerIdFactory: makeWorkerIdFactory(),
+          sleep,
+          now: () => new Date(),
+          logger: { error: () => {} },
+        });
+
+        const pending = dispatch.pendingResult('r1');
+
+        await scheduler.scheduleOnce();
+
+        scheduler.stopAdmission('shutdown');
+
+        const drainPromise = scheduler.drain(5000);
+
+        pending.resolve('completed');
+
+        const drainResult = await drainPromise;
+
+        expect(drainResult.drained).toBe(true);
+      });
+
+      it('drain reports timeout without forgetting reservations', async () => {
+        const { FairRepositoryScheduler } = await import('../fair-repository-scheduler.js');
+
+        const r1 = mkRepo('r1');
+
+        const source = new FakeRepositoryWorkSourcePort();
+        const dispatch = new FakeRepositoryDispatchPort();
+        const telemetry = new FakeSchedulerTelemetryPort();
+
+        source.setResult('r1', { available: true, queueDepth: 1, activeCount: 0 });
+
+        const fakeRepos = {
+          listEnabled() {
+            return [r1];
+          },
+        };
+
+        const scheduler = new FairRepositoryScheduler({
+          globalConcurrency: 10,
+          pollIntervalMs: 60000,
+          repos: fakeRepos as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+          workSource: source,
+          dispatch,
+          telemetry,
+          workerIdFactory: makeWorkerIdFactory(),
+          sleep,
+          now: () => new Date(),
+          logger: { error: () => {} },
+        });
+
+        const pending = dispatch.pendingResult('r1');
+
+        await scheduler.scheduleOnce();
+
+        scheduler.stopAdmission('shutdown');
+
+        const drainPromise = scheduler.drain(50);
+
+        const drainResult = await drainPromise;
+
+        expect(drainResult.drained).toBe(false);
+        expect(drainResult.remainingWorkerIds.length).toBeGreaterThan(0);
+
+        pending.resolve('completed');
+      });
+    });
+  });
 });

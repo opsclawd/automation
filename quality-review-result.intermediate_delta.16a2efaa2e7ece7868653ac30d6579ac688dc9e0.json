@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "In apps/api/src/worker-drain-loop.ts, onWaitingReactivation attempts to update a Run's status by incorrectly mutating a Repository record. It calls update() on deps.repos (a RepositoryPort) using repoId, rather than updating the Run record via a run repository port.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Add an `updateRun: (runId: RunId, patch: Partial<Run>) => void` port to WorkerLoopDeps, wire it to `runRepository.update` in apps/api/src/compose.ts, and call `deps.updateRun(runId, { status: next.status })` instead of casting and calling `deps.repos.update`."
+    }
+  ]
+}

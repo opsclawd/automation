@@ -1,0 +1,29 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "RepositoryRecoveryCoordinator is not integrated into worker-loop.ts or worker-drain-loop.ts, leaving the system without active repository recovery.",
+      "file": "packages/application/src/executor/worker-loop.ts",
+      "suggested_fix": "Instantiate and execute RepositoryRecoveryCoordinator inside the worker loop to replace the removed reclaimExpired logic."
+    },
+    {
+      "severity": "P0",
+      "summary": "RepositoryRecoveryCoordinator does not call the atomic port (OperationalRecoveryPort) to execute recovery actions, instead merely returning an action type.",
+      "file": "packages/application/src/repository-recovery-coordinator.ts",
+      "suggested_fix": "Inject OperationalRecoveryPort into the coordinator's dependencies and have it execute the required transaction when a reclaim action is determined."
+    },
+    {
+      "severity": "P1",
+      "summary": "RepositoryRecoveryCoordinator does not invoke prepareWorktree to require a safe worktree outcome before reclamation, instead calling the legacy synchronous resetWorktree.",
+      "file": "packages/application/src/repository-recovery-coordinator.ts",
+      "suggested_fix": "Use the WorktreeRecoveryPort (prepareWorktree) and require a safe outcome before returning or executing a reclaim action."
+    },
+    {
+      "severity": "P1",
+      "summary": "RepositoryRecoveryCoordinator does not check for same-host dead PID when determining if a worker is stale.",
+      "file": "packages/application/src/repository-recovery-coordinator.ts",
+      "suggested_fix": "Compare the registered worker's hostname and processId against the local environment to accurately determine a same-host dead PID."
+    }
+  ]
+}

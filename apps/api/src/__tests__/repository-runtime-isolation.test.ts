@@ -10,7 +10,7 @@ import {
   FakeGitHubPort,
   FakeEventBus,
 } from '@ai-sdlc/application/test-doubles';
-import { createJob } from '@ai-sdlc/domain';
+import { createJob, generateJobOwnership } from '@ai-sdlc/domain';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
@@ -436,6 +436,9 @@ describe('repository-runtime-isolation', () => {
         expect(leaseA.repoId).toBe(repoA.id);
         expect(leaseB.repoId).toBe(repoB.id);
 
+        const leaseTokenA = leaseA.leaseToken;
+        const leaseTokenB = leaseB.leaseToken;
+
         const claimedA = containerA.queue.claimNext({
           repoId: repoA.id,
           workerId: workerIdA,
@@ -450,14 +453,17 @@ describe('repository-runtime-isolation', () => {
         expect(claimedA?.id).toBe(jobIdA);
         expect(claimedB?.id).toBe(jobIdB);
 
-        containerA.queue.markRunning(jobIdA, now);
-        containerB.queue.markRunning(jobIdB, now);
+        const ownerA = generateJobOwnership(claimedA!, workerIdA);
+        const ownerB = generateJobOwnership(claimedB!, workerIdB);
+
+        containerA.queue.markRunning(ownerA, now);
+        containerB.queue.markRunning(ownerB, now);
 
         expect(containerA.queue.findById(jobIdA)?.status).toBe('running');
         expect(containerB.queue.findById(jobIdB)?.status).toBe('running');
 
-        containerA.queue.markSucceeded(jobIdA, new Date());
-        containerB.queue.markSucceeded(jobIdB, new Date());
+        containerA.queue.markSucceeded(ownerA, new Date());
+        containerB.queue.markSucceeded(ownerB, new Date());
 
         expect(containerA.queue.findById(jobIdA)?.status).toBe('succeeded');
         expect(containerB.queue.findById(jobIdB)?.status).toBe('succeeded');
@@ -466,11 +472,13 @@ describe('repository-runtime-isolation', () => {
           repoId: repoA.id,
           workerId: workerIdA,
           runId: runIdA,
+          leaseToken: leaseTokenA,
         });
         containerB.leases.release({
           repoId: repoB.id,
           workerId: workerIdB,
           runId: runIdB,
+          leaseToken: leaseTokenB,
         });
 
         expect(containerA.leases.current(repoA.id)).toBeUndefined();

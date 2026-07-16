@@ -4,8 +4,18 @@ import type {
   JobQueuePort,
   WorkerLeasePort,
   RepositoryPort,
+  RunRepositoryUpdatePatch,
+  RepositoryAvailabilityPort,
 } from '../ports.js';
-import { WorkerLeaseConflictError } from '@ai-sdlc/domain';
+import {
+  WorkerLeaseConflictError,
+  LeaseOwnershipLostError,
+  JobOwnershipLostError,
+  RepositoryUnavailableError,
+  generateJobOwnership,
+} from '@ai-sdlc/domain';
+
+export type AbortReason = 'shutdown' | 'user_cancelled' | 'lease_lost' | 'repository_unavailable';
 
 export interface WorkerLoopDeps {
   registry: WorkerRegistryPort;
@@ -25,22 +35,25 @@ export interface WorkerLoopDeps {
     signal: AbortSignal;
   }) => Promise<{ cwd: string }>;
   resetWorktree: (repoId: RepositoryId) => void;
-  isWorkerAlive: (workerId: WorkerId) => boolean;
-  recoverableRunIds: ReadonlySet<RunId>;
+  isWorkerAlive(workerId: WorkerId): boolean;
   now: () => Date;
   ttlMs: number;
   executeRunGraceMs?: number;
   findRun: (runId: RunId) => Run | undefined;
-  onLeaseReclaimed?: (info: {
-    repoId: RepositoryId;
-    previousWorkerId: WorkerId;
-    previousRunId: RunId;
-    reclaimedByWorkerId: WorkerId;
-    reason: string;
-  }) => void;
+  updateRun(runId: RunId, patch: RunRepositoryUpdatePatch): void;
   onProgress?: () => void;
   outerSignal?: AbortSignal;
   heartbeatIntervalMs?: number;
+  checkPid?(pid: number): boolean;
+  registryWorkerHostname?(workerId: WorkerId, repoId: RepositoryId): string | undefined;
+  worktreeRecovery?: import('../ports/worktree-recovery-port.js').WorktreeRecoveryPort;
+  operationalRecovery?: import('../ports/operational-recovery-port.js').OperationalRecoveryPort;
+  getWorktreePath?(repoId: RepositoryId): string;
+  getQuarantineRoot?(repoId: RepositoryId): string;
+  listRunsForRepo?(repoId: RepositoryId): Run[];
+  repoAvailability?: RepositoryAvailabilityPort;
+  markStopping?: () => void;
+  getAbortReason?(): AbortReason | undefined;
 }
 
 function isRunnable(status: string): boolean {
@@ -66,13 +79,27 @@ export async function runClaimedJob(
 ): Promise<'settled' | 'lease_conflict'> {
   const { registry, queue, leases } = deps;
 
+  if (!job.claimToken) {
+    throw new Error(`job ${job.id} has no claimToken - cannot run without ownership`);
+  }
+
+  const ownership = generateJobOwnership(job, workerId);
+
   let started = false;
   let acquired = false;
+  let acquiredLease;
+  let graceExpiredDuringShutdown = false;
+
+  const abortController = new AbortController();
+  const onOuterAbort = () => {
+    const currentReason = deps.getAbortReason?.() ?? 'user_cancelled';
+    abortController.abort(currentReason);
+  };
 
   try {
     registry.markBusy(workerId, deps.repoId);
 
-    leases.acquire({
+    acquiredLease = leases.acquire({
       repoId: job.repoId,
       workerId,
       runId: job.runId,
@@ -81,7 +108,13 @@ export async function runClaimedJob(
     });
     acquired = true;
 
-    const abortController = new AbortController();
+    if (deps.outerSignal) {
+      if (deps.outerSignal.aborted) {
+        onOuterAbort();
+      } else {
+        deps.outerSignal.addEventListener('abort', onOuterAbort);
+      }
+    }
 
     const heartbeatInterval = setInterval(
       () => {
@@ -93,18 +126,19 @@ export async function runClaimedJob(
             runId: job.runId,
             now,
             newExpiresAt: new Date(now.getTime() + deps.ttlMs),
+            leaseToken: acquiredLease!.leaseToken,
           });
           deps.onProgress?.();
         } catch {
           clearInterval(heartbeatInterval);
-          abortController.abort();
+          abortController.abort('lease_lost');
         }
       },
       Math.max(Math.floor(deps.ttlMs / 2), deps.heartbeatIntervalMs ?? 1_000),
     );
 
     try {
-      queue.markRunning(job.id, deps.now());
+      queue.markRunning(ownership, deps.now());
       started = true;
 
       const worktree = await Promise.race([
@@ -115,12 +149,12 @@ export async function runClaimedJob(
         }),
         new Promise<never>((_, reject) => {
           if (abortController.signal.aborted) {
-            reject(new Error('heartbeat failed during worktree preparation'));
+            reject(new Error('aborted during worktree preparation'));
             return;
           }
           abortController.signal.addEventListener(
             'abort',
-            () => reject(new Error('heartbeat failed during worktree preparation')),
+            () => reject(new Error('aborted during worktree preparation')),
             { once: true },
           );
         }),
@@ -140,41 +174,72 @@ export async function runClaimedJob(
 
       const result = await new Promise<{ ok: boolean }>((resolve, reject) => {
         let graceTimer: ReturnType<typeof setTimeout> | undefined;
+        let settled = false;
 
-        const onAbort = () => {
-          graceTimer = setTimeout(
-            () => reject(new Error('heartbeat failed during job execution')),
-            deps.executeRunGraceMs ?? 10_000,
-          );
-          void executeRunPromise.then(
-            () => {
-              clearTimeout(graceTimer);
-              reject(new Error('heartbeat failed during job execution'));
-            },
-            (err) => {
-              clearTimeout(graceTimer);
-              reject(new Error(`heartbeat failed during job execution: ${(err as Error).message}`));
-            },
-          );
+        const onAbort = (reason: unknown) => {
+          const abortReasonStr = typeof reason === 'string' ? reason : 'unknown';
+          if (abortReasonStr === 'shutdown') {
+            graceTimer = setTimeout(
+              () => reject(new Error('grace expired during shutdown')),
+              deps.executeRunGraceMs ?? 10_000,
+            );
+            void executeRunPromise.then(
+              () => {
+                if (!settled) {
+                  settled = true;
+                  clearTimeout(graceTimer);
+                  reject(new Error('cooperative shutdown: execution settled'));
+                }
+              },
+              (err) => {
+                if (!settled) {
+                  settled = true;
+                  clearTimeout(graceTimer);
+                  reject(
+                    new Error(`cooperative shutdown: execution failed - ${(err as Error).message}`),
+                  );
+                }
+              },
+            );
+          } else {
+            graceTimer = setTimeout(
+              () => reject(new Error('grace expired')),
+              deps.executeRunGraceMs ?? 10_000,
+            );
+            void executeRunPromise.then(
+              () => {
+                clearTimeout(graceTimer);
+                reject(new Error('heartbeat failed during job execution'));
+              },
+              (err) => {
+                clearTimeout(graceTimer);
+                reject(
+                  new Error(`heartbeat failed during job execution: ${(err as Error).message}`),
+                );
+              },
+            );
+          }
         };
 
+        const onSignalAbort = () => onAbort(abortController.signal.reason);
+
         if (abortController.signal.aborted) {
-          onAbort();
+          onAbort(abortController.signal.reason);
           return;
         }
 
-        abortController.signal.addEventListener('abort', onAbort, { once: true });
+        abortController.signal.addEventListener('abort', onSignalAbort, { once: true });
 
         void executeRunPromise.then(
           (r) => {
             if (!abortController.signal.aborted) {
-              abortController.signal.removeEventListener('abort', onAbort);
+              abortController.signal.removeEventListener('abort', onSignalAbort);
               resolve(r);
             }
           },
           (err) => {
             if (!abortController.signal.aborted) {
-              abortController.signal.removeEventListener('abort', onAbort);
+              abortController.signal.removeEventListener('abort', onSignalAbort);
               reject(err as Error);
             }
           },
@@ -182,47 +247,121 @@ export async function runClaimedJob(
       });
 
       if (result.ok) {
-        queue.markSucceeded(job.id, deps.now());
+        queue.markSucceeded(ownership, deps.now());
       } else {
-        queue.markFailed(job.id, deps.now());
+        queue.markFailed(ownership, deps.now());
       }
       return 'settled';
     } finally {
       clearInterval(heartbeatInterval);
     }
   } catch (err) {
+    const reason =
+      deps.getAbortReason?.() ?? (deps.outerSignal?.aborted ? 'user_cancelled' : undefined);
+
+    if (err instanceof JobOwnershipLostError) {
+      return 'settled';
+    }
     if (err instanceof WorkerLeaseConflictError) {
-      queue.releaseClaim(job.id);
+      try {
+        queue.releaseClaim(ownership);
+      } catch (e) {
+        if (!(e instanceof JobOwnershipLostError)) throw e;
+      }
       skippedJobIds?.add(job.id);
       return 'lease_conflict';
     }
-    if (started) {
-      if (deps.outerSignal?.aborted) {
+    if (err instanceof RepositoryUnavailableError) {
+      deps.repoAvailability?.markUnreachable(deps.repoId, err.cause);
+      deps.updateRun(job.runId, { status: 'failed', failureReason: err.cause });
+      if (started) {
         try {
-          queue.markCancelled(job.id, deps.now());
+          queue.markFailed(ownership, deps.now());
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
+      } else {
+        try {
+          queue.releaseClaim(ownership);
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
+      }
+      return 'settled';
+    }
+    graceExpiredDuringShutdown =
+      err instanceof Error && err.message === 'grace expired during shutdown';
+    if (started) {
+      if (graceExpiredDuringShutdown) {
+        try {
+          queue.markFailed(ownership, deps.now());
+        } catch {
+          /* already terminal */
+        }
+      } else if (reason === 'shutdown') {
+        try {
+          queue.resetToQueued(ownership);
+        } catch {
+          /* already terminal */
+        }
+      } else if (reason === 'user_cancelled') {
+        deps.updateRun(job.runId, { status: 'cancelled' });
+        try {
+          queue.markCancelled(ownership, deps.now());
         } catch {
           /* already terminal */
         }
       } else {
-        queue.markFailed(job.id, deps.now());
+        try {
+          queue.markFailed(ownership, deps.now());
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
       }
     } else {
-      queue.releaseClaim(job.id);
+      try {
+        queue.releaseClaim(ownership);
+      } catch (e) {
+        if (!(e instanceof JobOwnershipLostError)) throw e;
+      }
     }
     return 'settled';
   } finally {
-    if (acquired) {
-      leases.release({ repoId: job.repoId, workerId, runId: job.runId });
+    deps.outerSignal?.removeEventListener('abort', onOuterAbort);
+
+    const reason =
+      deps.getAbortReason?.() ?? (deps.outerSignal?.aborted ? 'user_cancelled' : undefined);
+
+    if (acquired && acquiredLease) {
+      if (reason === 'lease_lost' || graceExpiredDuringShutdown) {
+        // For lease_lost and grace-expired-during-shutdown, preserve the lease for startup recovery
+      } else {
+        try {
+          leases.release({
+            repoId: job.repoId,
+            workerId,
+            runId: job.runId,
+            leaseToken: acquiredLease.leaseToken,
+          });
+        } catch (err) {
+          if (!(err instanceof LeaseOwnershipLostError)) throw err;
+        }
+      }
     }
     const afterRelease = registry.findById(workerId, deps.repoId);
     if (afterRelease && isRunnable(afterRelease.status)) {
-      registry.markIdle(workerId, deps.repoId);
+      if (reason === 'shutdown' && !graceExpiredDuringShutdown) {
+        deps.markStopping?.();
+        registry.markStopping(workerId, deps.repoId);
+      } else if (!graceExpiredDuringShutdown) {
+        registry.markIdle(workerId, deps.repoId);
+      }
     }
   }
 }
 
 export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Promise<void> {
-  const { registry, queue, leases } = deps;
+  const { registry, queue } = deps;
 
   if (deps.repos.listEnabled().every((r) => r.id !== deps.repoId)) {
     return;
@@ -231,24 +370,6 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
   if (registry.findById(workerId, deps.repoId)?.status !== 'idle') {
     return;
   }
-
-  leases.reclaimExpired({
-    now: deps.now(),
-    recoverableRunIds: deps.recoverableRunIds,
-    isWorkerAlive: deps.isWorkerAlive,
-    resetWorktree: deps.resetWorktree,
-    reclaimedByWorkerId: workerId,
-    onReclaimed: (info) => {
-      if (info.repoId !== deps.repoId) return;
-      const jobs = queue.listForRun(info.previousRunId);
-      for (const job of jobs) {
-        if (job.status === 'claimed' || job.status === 'running') {
-          queue.resetToQueued(job.id);
-        }
-      }
-      deps.onLeaseReclaimed?.(info);
-    },
-  });
 
   const skippedJobIds = new Set<JobId>();
 
@@ -267,14 +388,26 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
     }
 
     if (job.repoId !== deps.repoId) {
-      queue.releaseClaim(job.id);
+      if (job.claimToken) {
+        try {
+          queue.releaseClaim(generateJobOwnership(job, workerId));
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
+      }
       skippedJobIds.add(job.id);
       continue;
     }
 
     const repo = deps.repos.findById(deps.repoId);
     if (!repo || !repo.enabled) {
-      queue.releaseClaim(job.id);
+      if (job.claimToken) {
+        try {
+          queue.releaseClaim(generateJobOwnership(job, workerId));
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
+      }
       return;
     }
 

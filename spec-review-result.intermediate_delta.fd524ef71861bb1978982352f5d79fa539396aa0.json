@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "RepositoryRecoveryCoordinator is instantiated in startWorkerDrainLoop without its operationalRecovery and worktreeRecovery ports.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Add the operationalRecovery and worktreeRecovery ports (and other optional parameters like checkPid and registryWorkerHostname) to WorkerLoopDeps, and pass them to RepositoryRecoveryCoordinator in startWorkerDrainLoop."
+    }
+  ]
+}

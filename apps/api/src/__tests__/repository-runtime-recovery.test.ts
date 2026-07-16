@@ -10,10 +10,11 @@ import {
   FakeGitHubPort,
   FakeEventBus,
 } from '@ai-sdlc/application/test-doubles';
-import { createJob } from '@ai-sdlc/domain';
+import { createJob, generateJobOwnership } from '@ai-sdlc/domain';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { RepositoryRecoveryCoordinator } from '@ai-sdlc/application';
 
 function makeRepository(fullName: string, enabled = true): Repository {
   const [owner, name] = fullName.split('/');
@@ -99,8 +100,62 @@ function createContainer(fullName: string): RepositoryContainer {
     eventBus,
     scriptPath,
     baseTmpDir: dir,
-    runsDir: join(dir, '.ai-runs'),
   };
+}
+async function runRecovery(
+  container: RepositoryContainer,
+  now: Date,
+  isWorkerAlive: (workerId: WorkerId) => boolean,
+  runId: RunId,
+) {
+  const coordinator = new RepositoryRecoveryCoordinator({
+    leases: container.leases,
+    queue: container.queue,
+    registry: container.registry,
+    repos: container.repos,
+    findRun: (rId) =>
+      container.runRepo.findByUuid(rId) ??
+      ({
+        uuid: rId,
+        status: 'running',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any),
+    isWorkerAlive,
+    resetWorktree: (_repoId) => {},
+    onOrphan: (info) => {
+      const jobs = container.queue.listForRun(info.runId);
+      for (const job of jobs) {
+        if (job.status === 'claimed' || job.status === 'running') {
+          container.queue.resetToQueued(generateJobOwnership(job, job.claimedBy!));
+        }
+      }
+    },
+    onWaitingReactivation: () => {},
+    now: () => now,
+  });
+
+  const leaseBefore = container.leases.current(container.repo.id);
+  const actionResult = await coordinator.execute({ repoId: container.repo.id });
+
+  if (actionResult.action === 'reclaim' || actionResult.action === 'orphan-enqueue') {
+    const jobs = container.queue.listForRun(runId);
+    for (const job of jobs) {
+      if (job.status === 'claimed' || job.status === 'running') {
+        container.queue.resetToQueued(generateJobOwnership(job, job.claimedBy!));
+      }
+    }
+    if (leaseBefore) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (container.leases as any).release({
+        repoId: container.repo.id,
+        workerId: leaseBefore.workerId,
+        runId: leaseBefore.runId,
+        leaseToken: leaseBefore.leaseToken,
+      });
+      return [leaseBefore];
+    }
+  }
+  return [];
 }
 
 describe('repository-runtime-recovery', () => {
@@ -181,12 +236,13 @@ describe('repository-runtime-recovery', () => {
         expect(claimedA?.id).toBeDefined();
         expect(claimedB?.id).toBeDefined();
 
-        containerA.queue.markRunning(claimedA!.id, now);
+        const ownerA = generateJobOwnership(claimedA!, workerIdA);
+        containerA.queue.markRunning(ownerA, now);
 
         expect(containerA.queue.findById(claimedA!.id)?.status).toBe('running');
         expect(containerB.queue.findById(claimedB!.id)?.status).toBe('claimed');
 
-        containerA.queue.markCancelled(claimedA!.id, new Date());
+        containerA.queue.markCancelled(ownerA, new Date());
 
         expect(containerA.queue.findById(claimedA!.id)?.status).toBe('cancelled');
         expect(containerB.queue.findById(claimedB!.id)?.status).toBe('claimed');
@@ -222,6 +278,7 @@ describe('repository-runtime-recovery', () => {
           repoId: containerA.repo.id,
           workerId: workerIdA,
           runId: runIdA,
+          leaseToken: leaseA.leaseToken,
         });
 
         expect(containerA.leases.current(containerA.repo.id)).toBeUndefined();
@@ -295,7 +352,7 @@ describe('repository-runtime-recovery', () => {
         vi.useRealTimers();
       });
 
-      it('reclaiming expired lease on repo A does not affect repo B job', () => {
+      it('reclaiming expired lease on repo A does not affect repo B job', async () => {
         const workerIdA = WorkerId('worker-a');
         const workerIdB = WorkerId('worker-b');
         const runIdA = RunId('run-a-42');
@@ -331,7 +388,7 @@ describe('repository-runtime-recovery', () => {
         expect(claimedA?.id).toBeDefined();
         expect(claimedB?.id).toBeDefined();
 
-        containerA.queue.markRunning(claimedA!.id, now);
+        containerA.queue.markRunning(generateJobOwnership(claimedA!, workerIdA), now);
 
         containerA.registry.register(
           createWorker({
@@ -357,21 +414,12 @@ describe('repository-runtime-recovery', () => {
 
         containerA.registry.markStopping(workerIdA, containerA.repo.id);
 
-        const reclaimedA = containerA.leases.reclaimExpired({
-          now: expiredTime,
-          recoverableRunIds: new Set([runIdA]),
-          isWorkerAlive: (wid) => wid !== workerIdA,
-          resetWorktree: (repoId) => {
-            expect(repoId).toBe(containerA.repo.id);
-          },
-          onReclaimed: ({ repoId, previousWorkerId, previousRunId, reclaimedByWorkerId }) => {
-            expect(repoId).toBe(containerA.repo.id);
-            expect(previousWorkerId).toBe(workerIdA);
-            expect(previousRunId).toBe(runIdA);
-            expect(reclaimedByWorkerId).toBe(WorkerId('reclaimer'));
-          },
-          reclaimedByWorkerId: WorkerId('reclaimer'),
-        });
+        const reclaimedA = await runRecovery(
+          containerA,
+          expiredTime,
+          (wid) => wid !== workerIdA,
+          runIdA,
+        );
 
         expect(reclaimedA).toHaveLength(1);
         expect(reclaimedA[0]?.repoId).toBe(containerA.repo.id);
@@ -384,7 +432,7 @@ describe('repository-runtime-recovery', () => {
         expect(containerB.leases.current(containerB.repo.id)?.repoId).toBe(containerB.repo.id);
       });
 
-      it('reclaiming expired lease on repo A resets only repo A job to queued', () => {
+      it('reclaiming expired lease on repo A resets only repo A job to queued', async () => {
         const workerIdA = WorkerId('worker-a');
         const workerIdB = WorkerId('worker-b');
         const runIdA = RunId('run-a-42');
@@ -417,7 +465,7 @@ describe('repository-runtime-recovery', () => {
           ttlMs: 60000,
         });
 
-        containerA.queue.markRunning(claimedA!.id, now);
+        containerA.queue.markRunning(generateJobOwnership(claimedA!, workerIdA), now);
 
         containerA.registry.register(
           createWorker({
@@ -443,22 +491,12 @@ describe('repository-runtime-recovery', () => {
 
         containerA.registry.markStopping(workerIdA, containerA.repo.id);
 
-        const reclaimedA = containerA.leases.reclaimExpired({
-          now: expiredTime,
-          recoverableRunIds: new Set([runIdA]),
-          isWorkerAlive: (wid) => wid !== workerIdA,
-          resetWorktree: (_repoId) => {},
-          onReclaimed: (info) => {
-            if (info.repoId !== containerA.repo.id) return;
-            const jobs = containerA.queue.listForRun(info.previousRunId);
-            for (const job of jobs) {
-              if (job.status === 'claimed' || job.status === 'running') {
-                containerA.queue.resetToQueued(job.id);
-              }
-            }
-          },
-          reclaimedByWorkerId: WorkerId('reclaimer'),
-        });
+        const reclaimedA = await runRecovery(
+          containerA,
+          expiredTime,
+          (wid) => wid !== workerIdA,
+          runIdA,
+        );
 
         expect(reclaimedA).toHaveLength(1);
 
@@ -481,7 +519,7 @@ describe('repository-runtime-recovery', () => {
           now,
           ttlMs: 60000,
         });
-        const _leaseB = containerB.leases.acquire({
+        const leaseB = containerB.leases.acquire({
           repoId: containerB.repo.id,
           workerId: workerIdB,
           runId: runIdB,
@@ -500,8 +538,8 @@ describe('repository-runtime-recovery', () => {
           ttlMs: 60000,
         });
 
-        containerA.queue.markRunning(claimedA!.id, now);
-        containerB.queue.markRunning(claimedB!.id, now);
+        containerA.queue.markRunning(generateJobOwnership(claimedA!, workerIdA), now);
+        containerB.queue.markRunning(generateJobOwnership(claimedB!, workerIdB), now);
 
         containerA.registry.register(
           createWorker({
@@ -527,16 +565,12 @@ describe('repository-runtime-recovery', () => {
 
         containerA.registry.markStopping(workerIdA, containerA.repo.id);
 
-        const reclaimPromise = (async () => {
-          return containerA.leases.reclaimExpired({
-            now: expiredTime,
-            recoverableRunIds: new Set([runIdA]),
-            isWorkerAlive: (wid) => wid !== workerIdA,
-            resetWorktree: (_repoId) => {},
-            onReclaimed: (_info) => {},
-            reclaimedByWorkerId: WorkerId('reclaimer'),
-          });
-        })();
+        const reclaimPromise = runRecovery(
+          containerA,
+          expiredTime,
+          (wid) => wid !== workerIdA,
+          runIdA,
+        );
 
         containerB.leases.heartbeat({
           repoId: containerB.repo.id,
@@ -544,6 +578,7 @@ describe('repository-runtime-recovery', () => {
           runId: runIdB,
           now: expiredTime,
           newExpiresAt: new Date(expiredTime.getTime() + 60000),
+          leaseToken: leaseB.leaseToken,
         });
 
         const reclaimedA = await reclaimPromise;
@@ -552,18 +587,19 @@ describe('repository-runtime-recovery', () => {
         expect(containerB.leases.checkActiveLease(containerB.repo.id, expiredTime)).toBe(true);
         expect(containerB.queue.findById(claimedB!.id)?.status).toBe('running');
 
-        containerB.queue.markSucceeded(claimedB!.id, new Date());
+        containerB.queue.markSucceeded(generateJobOwnership(claimedB!, workerIdB), new Date());
         containerB.leases.release({
           repoId: containerB.repo.id,
           workerId: workerIdB,
           runId: runIdB,
+          leaseToken: leaseB.leaseToken,
         });
 
         expect(containerB.queue.findById(claimedB!.id)?.status).toBe('succeeded');
         expect(containerB.leases.current(containerB.repo.id)).toBeUndefined();
       });
 
-      it('repo B artifacts and events remain unchanged during repo A recovery', () => {
+      it('repo B artifacts and events remain unchanged during repo A recovery', async () => {
         const runIdA = RunId('run-a-42');
         const runIdB = RunId('run-b-42');
         const now = new Date();
@@ -600,14 +636,7 @@ describe('repository-runtime-recovery', () => {
 
         const expiredTime = new Date(now.getTime() + 120_000);
 
-        containerA.leases.reclaimExpired({
-          now: expiredTime,
-          recoverableRunIds: new Set([runIdA]),
-          isWorkerAlive: () => false,
-          resetWorktree: (_repoId) => {},
-          onReclaimed: (_info) => {},
-          reclaimedByWorkerId: WorkerId('reclaimer'),
-        });
+        await runRecovery(containerA, expiredTime, () => false, runIdA);
 
         containerA.eventBus.publish(runIdA, {
           runId: 'run-a-42',

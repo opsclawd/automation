@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "JobOwnershipLostError is uncaught in runClaimedJob's catch block, causing the worker loop to crash. If markRunning or markSucceeded throws JobOwnershipLostError, the catch block attempts queue.releaseClaim or queue.markFailed which throws a second unhandled JobOwnershipLostError.",
+      "file": "packages/application/src/executor/worker-loop.ts",
+      "suggested_fix": "Add `if (err instanceof JobOwnershipLostError) return 'settled';` (or similar) at the top of the catch block in runClaimedJob to safely ignore lost claims."
+    },
+    {
+      "severity": "P1",
+      "summary": "workerLoop startup uses the old job's claimedBy when resetting stranded jobs, which will throw JobOwnershipLostError if the job was reclaimed by a new worker. It also risks forcefully resetting a job currently owned by another worker if it uses fresh.claimedBy.",
+      "file": "packages/application/src/executor/worker-loop.ts",
+      "suggested_fix": "Check `fresh.claimToken === job.claimToken` before calling `resetToQueued`, and/or catch and ignore `JobOwnershipLostError`."
+    },
+    {
+      "severity": "P2",
+      "summary": "buildSchedulerDeps does not catch JobOwnershipLostError when calling markFailed for a job without a runExecutor.",
+      "file": "apps/api/src/cli.ts",
+      "suggested_fix": "Wrap `runtime.jobQueue.markFailed(ownership, new Date());` in a try-catch block to prevent crashing if the job's ownership was lost."
+    }
+  ]
+}

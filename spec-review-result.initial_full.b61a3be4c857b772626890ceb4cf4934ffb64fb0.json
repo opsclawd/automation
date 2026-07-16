@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "HTTP admission starts before the initial recovery sweep completes, violating the 'recovery precedes admission' invariant.",
+      "file": "apps/api/src/cli.ts",
+      "suggested_fix": "Move `await startServer(...)` and related server startup code to execute after `await sweepCoordinator.execute(serveSweepWorkerId)` completes."
+    }
+  ]
+}

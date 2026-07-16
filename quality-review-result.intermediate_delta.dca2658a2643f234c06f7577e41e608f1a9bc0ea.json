@@ -1,0 +1,11 @@
+{
+  "result": "pass",
+  "findings": [
+    {
+      "severity": "P3",
+      "summary": "Redundant leaseRepo.release() call when LeaseOwnershipLostError is caught.",
+      "file": "apps/api/src/cli.ts",
+      "suggested_fix": "Remove the try/catch and leaseRepo.release() inside the `if (err instanceof LeaseOwnershipLostError)` block, as ownership is already lost and calling release with the same token will simply throw again and be swallowed."
+    }
+  ]
+}

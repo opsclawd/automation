@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "Unhandled `JobOwnershipLostError` in `runClaimedJob` catch block and `repository-scheduler-adapter.ts` will crash the worker loop if a job loses ownership prior to a failure cleanup.",
+      "file": "packages/application/src/executor/worker-loop.ts",
+      "suggested_fix": "Wrap `queue.releaseClaim`, `queue.markFailed`, and `queue.markRunning` calls in try/catch blocks that ignore `JobOwnershipLostError`, similar to how it is handled in `cli.ts`."
+    },
+    {
+      "severity": "P3",
+      "summary": "The migration script `0031-fence-job-claims.ts` creates an unused index `idx_jobs_fence` on `jobs(status, claimed_by, claim_token)` that is never queried and penalizes write performance.",
+      "file": "packages/infrastructure/src/sqlite/migrations/0031-fence-job-claims.ts",
+      "suggested_fix": "Remove the `CREATE INDEX idx_jobs_fence` statement as the repository queries exclusively by primary key (`id`) for ownership validations."
+    }
+  ]
+}

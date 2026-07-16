@@ -1,12 +1,12 @@
 export type { RepositoryPort } from './repository-port.js';
 export type { JobQueuePort, EnqueueJobInput, ClaimNextInput } from './job-queue-port.js';
+export type { JobOwnership } from '@ai-sdlc/domain';
 export type { WorkerRegistryPort } from './worker-registry-port.js';
 export type {
   WorkerLeasePort,
   AcquireLeaseInput,
   HeartbeatLeaseInput,
   ReleaseLeaseInput,
-  ReclaimExpiredInput,
 } from './worker-lease-port.js';
 export type {
   GitHubPort,
@@ -91,6 +91,19 @@ export type {
 } from './structured-result-repair-port.js';
 
 export type { RepositoryRegistryPort, RepositoryUpdatePatch } from './repository-registry-port.js';
+export type {
+  WorktreeRecoveryPort,
+  PrepareWorktreeRecoveryInput,
+  WorktreeRecoveryOutcome,
+} from './worktree-recovery-port.js';
+export type {
+  OperationalRecoveryPort,
+  OperationalRecoveryInspection,
+  CommitLeaseReclamationInput,
+  ReclaimExpiredClaimInput,
+  LeaseReclamationResult,
+  OperationalRecoveryConflictReason,
+} from './operational-recovery-port.js';
 
 export type {
   SignatureReferenceAnalyzerPort,
@@ -112,3 +125,4 @@ export type {
   SchedulerTelemetryPort,
   SchedulerTelemetryRecord,
 } from './repository-scheduler-port.js';
+export type { RepositoryAvailabilityPort } from './repository-availability-port.js';

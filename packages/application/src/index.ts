@@ -36,6 +36,7 @@ export * from './phases/index.js';
 export * from './executor/phase-handler-registry.js';
 export * from './executor/run-executor.js';
 export * from './executor/worker-loop.js';
+export * from './repository-recovery-coordinator.js';
 export type {
   StepLoopContext,
   ImplementStepOptions,

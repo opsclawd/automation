@@ -6,7 +6,7 @@ import { buildProgram } from '../cli.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 import { RunExecutor, ResumeRun, RetryFailedPhase } from '@ai-sdlc/application';
 import { WorkerLeaseRepository } from '@ai-sdlc/infrastructure';
-import { WorkerId, RepositoryId, RunId } from '@ai-sdlc/domain';
+import { WorkerId, RepositoryId, RunId, LeaseToken } from '@ai-sdlc/domain';
 
 describe('CLI runs resume confirmation tests', () => {
   const tempDirs: string[] = [];
@@ -19,6 +19,8 @@ describe('CLI runs resume confirmation tests', () => {
       throw new Error(`process.exit: ${code}`);
     });
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockImplementation(() => {});
+    vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -105,6 +107,7 @@ describe('CLI runs resume confirmation tests', () => {
           acquiredAt: new Date(),
           heartbeatAt: new Date(),
           expiresAt: new Date(Date.now() + 120_000),
+          leaseToken: 'mocked-token' as LeaseToken,
         };
       });
 
@@ -174,6 +177,7 @@ describe('CLI runs resume confirmation tests', () => {
           acquiredAt: new Date(),
           heartbeatAt: new Date(),
           expiresAt: new Date(Date.now() + 120_000),
+          leaseToken: 'mocked-token' as LeaseToken,
         };
       });
 
@@ -242,6 +246,7 @@ describe('CLI runs resume confirmation tests', () => {
           acquiredAt: new Date(),
           heartbeatAt: new Date(),
           expiresAt: new Date(Date.now() + 120_000),
+          leaseToken: 'mocked-token' as LeaseToken,
         };
       });
 
@@ -294,6 +299,7 @@ describe('CLI runs resume confirmation tests', () => {
           acquiredAt: new Date(),
           heartbeatAt: new Date(),
           expiresAt: new Date(Date.now() + 120_000),
+          leaseToken: 'mocked-token' as LeaseToken,
         };
       });
 
@@ -346,6 +352,7 @@ describe('CLI runs resume confirmation tests', () => {
           acquiredAt: new Date(),
           heartbeatAt: new Date(),
           expiresAt: new Date(Date.now() + 120_000),
+          leaseToken: 'mocked-token' as LeaseToken,
         };
       });
 

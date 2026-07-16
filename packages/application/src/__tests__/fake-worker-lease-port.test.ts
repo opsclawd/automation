@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   RepositoryId,
   RunId,
@@ -82,181 +82,58 @@ describe('FakeWorkerLeasePort', () => {
     expect(leases.current(RepositoryId('r2'))?.workerId).toBe('w2');
   });
 
-  it('release is idempotent', () => {
+  it('release throws LeaseOwnershipLostError when lease already gone (reject zero-row updates)', () => {
     const { registry, leases } = makePorts();
     registry.register(
       createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
     );
-    leases.acquire({
+    const lease = leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
       now: now0,
       ttlMs: 60_000,
     });
-    leases.release({ repoId: RepositoryId('r'), workerId: WorkerId('w1'), runId: RunId('run-1') });
-    leases.release({ repoId: RepositoryId('r'), workerId: WorkerId('w1'), runId: RunId('run-1') });
-    expect(leases.current(RepositoryId('r'))).toBeUndefined();
-  });
-
-  it('reclaimExpired does not reclaim unexpired leases', () => {
-    const { registry, leases } = makePorts();
-    registry.register(
-      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
-    );
-    leases.acquire({
+    leases.release({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
-      now: now0,
-      ttlMs: 60_000,
+      leaseToken: lease.leaseToken,
     });
-    const reclaimed = leases.reclaimExpired({
-      now: new Date(now0.getTime() + 30_000),
-      recoverableRunIds: new Set([RunId('run-1')]),
-      isWorkerAlive: () => false,
-      resetWorktree: () => {},
-      reclaimedByWorkerId: WorkerId('w2'),
-      onReclaimed: () => {},
-    });
-    expect(reclaimed).toEqual([]);
-  });
-
-  it('reclaimExpired requires worker stale or unhealthy', () => {
-    const { registry, leases } = makePorts();
-    registry.register(
-      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
-    );
-    leases.acquire({
-      repoId: RepositoryId('r'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: now0,
-      ttlMs: 60_000,
-    });
-    const reclaimed = leases.reclaimExpired({
-      now: new Date(now0.getTime() + 120_000),
-      recoverableRunIds: new Set([RunId('run-1')]),
-      isWorkerAlive: () => true,
-      resetWorktree: () => {},
-      reclaimedByWorkerId: WorkerId('w2'),
-      onReclaimed: () => {},
-    });
-    expect(reclaimed).toEqual([]);
-  });
-
-  it('reclaimExpired requires run to be recoverable', () => {
-    const { registry, leases } = makePorts();
-    registry.register(
-      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
-    );
-    leases.acquire({
-      repoId: RepositoryId('r'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: now0,
-      ttlMs: 60_000,
-    });
-    const reclaimed = leases.reclaimExpired({
-      now: new Date(now0.getTime() + 120_000),
-      recoverableRunIds: new Set(),
-      isWorkerAlive: () => false,
-      resetWorktree: () => {},
-      reclaimedByWorkerId: WorkerId('w2'),
-      onReclaimed: () => {},
-    });
-    expect(reclaimed).toEqual([]);
-  });
-
-  it('reclaimExpired succeeds when all conditions hold and emits onReclaimed', () => {
-    const { registry, leases } = makePorts();
-    registry.register(
-      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
-    );
-    leases.acquire({
-      repoId: RepositoryId('r'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: now0,
-      ttlMs: 60_000,
-    });
-    const onReclaimed = vi.fn();
-    const resetWorktree = vi.fn();
-    const reclaimed = leases.reclaimExpired({
-      now: new Date(now0.getTime() + 120_000),
-      recoverableRunIds: new Set([RunId('run-1')]),
-      isWorkerAlive: () => false,
-      resetWorktree,
-      reclaimedByWorkerId: WorkerId('w2'),
-      onReclaimed,
-    });
-    expect(reclaimed).toHaveLength(1);
-    expect(resetWorktree).toHaveBeenCalledWith(RepositoryId('r'));
-    expect(onReclaimed).toHaveBeenCalledWith(
-      expect.objectContaining({
-        repoId: 'r',
-        previousWorkerId: 'w1',
-        previousRunId: 'run-1',
-        reclaimedByWorkerId: 'w2',
-      }),
-    );
-    expect(leases.current(RepositoryId('r'))).toBeUndefined();
-  });
-
-  it('reclaimExpired preserves the lease when onReclaimed throws', () => {
-    const { registry, leases } = makePorts();
-    registry.register(
-      createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
-    );
-    leases.acquire({
-      repoId: RepositoryId('r'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: now0,
-      ttlMs: 60_000,
-    });
-
     expect(() =>
-      leases.reclaimExpired({
-        now: new Date(now0.getTime() + 120_000),
-        recoverableRunIds: new Set([RunId('run-1')]),
-        isWorkerAlive: () => false,
-        resetWorktree: () => {},
-        reclaimedByWorkerId: WorkerId('w2'),
-        onReclaimed: () => {
-          throw new Error('requeue failed');
-        },
+      leases.release({
+        repoId: RepositoryId('r'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        leaseToken: lease.leaseToken,
       }),
-    ).toThrow('requeue failed');
-
-    expect(leases.current(RepositoryId('r'))?.workerId).toBe('w1');
+    ).toThrow('WorkerLease ownership lost');
+    expect(leases.current(RepositoryId('r'))).toBeUndefined();
   });
 
-  it('reclaimExpired succeeds when worker is marked unhealthy even if isWorkerAlive returns true', () => {
+  it('release throws LeaseOwnershipLostError for wrong token', () => {
     const { registry, leases } = makePorts();
     registry.register(
       createWorker({ id: WorkerId('w1'), repoId, hostname: 'h', processId: 1, now: now0 }),
     );
     leases.acquire({
-      repoId: repoId,
+      repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
       now: now0,
       ttlMs: 60_000,
     });
-    registry.markUnhealthy(WorkerId('w1'), repoId);
-    const reclaimed = leases.reclaimExpired({
-      now: new Date(now0.getTime() + 120_000),
-      recoverableRunIds: new Set([RunId('run-1')]),
-      isWorkerAlive: () => true,
-      resetWorktree: () => {},
-      reclaimedByWorkerId: WorkerId('w2'),
-      onReclaimed: () => {},
-    });
-    expect(reclaimed).toHaveLength(1);
+    expect(() =>
+      leases.release({
+        repoId: RepositoryId('r'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        leaseToken: 'wrong-token' as LeaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
   });
 
-  it('acquire reclaims an expired lease (expires_at <= now)', () => {
+  it('lease acquisition allows an expired foreign generation to be replaced', () => {
     const { leases } = makePorts();
     leases.acquire({
       repoId: RepositoryId('r'),
@@ -266,16 +143,15 @@ describe('FakeWorkerLeasePort', () => {
       ttlMs: 60_000,
     });
     const atExpiry = new Date(now0.getTime() + 60_000);
-    const lease2 = leases.acquire({
+    const newLease = leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w2'),
       runId: RunId('run-2'),
       now: atExpiry,
       ttlMs: 60_000,
     });
-    expect(lease2.workerId).toBe('w2');
-    expect(lease2.repoId).toBe('r');
-    expect(leases.current(RepositoryId('r'))?.workerId).toBe('w2');
+    expect(newLease.workerId).toBe('w2');
+    expect(newLease.runId).toBe('run-2');
   });
 
   it('acquire still throws WorkerLeaseConflictError when existing lease is unexpired', () => {
@@ -299,9 +175,9 @@ describe('FakeWorkerLeasePort', () => {
     ).toThrow(WorkerLeaseConflictError);
   });
 
-  it('stale lease heartbeat cannot extend a reassigned run lease', () => {
+  it('stale lease token cannot heartbeat replacement generation', () => {
     const { leases } = makePorts();
-    leases.acquire({
+    const w1Lease = leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
@@ -309,6 +185,12 @@ describe('FakeWorkerLeasePort', () => {
       ttlMs: 60_000,
     });
     const later = new Date(now0.getTime() + 120_000);
+    leases.release({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      leaseToken: w1Lease.leaseToken,
+    });
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w2'),
@@ -316,21 +198,24 @@ describe('FakeWorkerLeasePort', () => {
       now: later,
       ttlMs: 60_000,
     });
-    leases.heartbeat({
-      repoId: RepositoryId('r'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: later,
-      newExpiresAt: new Date(later.getTime() + 60_000),
-    });
+    expect(() =>
+      leases.heartbeat({
+        repoId: RepositoryId('r'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        now: later,
+        newExpiresAt: new Date(later.getTime() + 60_000),
+        leaseToken: w1Lease.leaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
     const currentLease = leases.current(RepositoryId('r'));
     expect(currentLease?.workerId).toBe('w2');
     expect(currentLease?.runId).toBe('run-2');
   });
 
-  it('stale lease release cannot delete a reassigned run lease', () => {
+  it('stale lease token cannot release replacement generation', () => {
     const { leases } = makePorts();
-    leases.acquire({
+    const w1Lease = leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
@@ -338,6 +223,12 @@ describe('FakeWorkerLeasePort', () => {
       ttlMs: 60_000,
     });
     const later = new Date(now0.getTime() + 120_000);
+    leases.release({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      leaseToken: w1Lease.leaseToken,
+    });
     leases.acquire({
       repoId: RepositoryId('r'),
       workerId: WorkerId('w2'),
@@ -345,11 +236,14 @@ describe('FakeWorkerLeasePort', () => {
       now: later,
       ttlMs: 60_000,
     });
-    leases.release({
-      repoId: RepositoryId('r'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-    });
+    expect(() =>
+      leases.release({
+        repoId: RepositoryId('r'),
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        leaseToken: w1Lease.leaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
     const currentLease = leases.current(RepositoryId('r'));
     expect(currentLease?.workerId).toBe('w2');
     expect(currentLease?.runId).toBe('run-2');

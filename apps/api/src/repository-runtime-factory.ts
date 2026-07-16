@@ -5,6 +5,7 @@ import type {
   WorkerLeasePort,
   WorkerRegistryPort,
   RunRepositoryPort,
+  RunRepositoryUpdatePatch,
   PrReviewRepositoryPort,
   LoopRepositoryPort,
   AgentInvocationPort,
@@ -41,58 +42,71 @@ export interface RepositoryRuntimeLoopDeps {
     listEnabled: () => Array<Repository>;
   };
   repoId: RepositoryId;
+  updateRun(runId: import('@ai-sdlc/domain').RunId, patch: RunRepositoryUpdatePatch): void;
 }
 
-export interface RepositoryRuntime {
+export interface RepositoryOperationalRuntime {
   readonly repository: Repository;
   readonly paths: RepositoryRuntimePaths;
-  readonly configFingerprint: string;
-  readonly defaultBranch: string;
-  readonly fullName: string;
-  readonly jobQueue: JobQueuePort;
   readonly runRepository: RunRepositoryPort;
   readonly workerRegistry: WorkerRegistryPort;
   readonly workerLeaseRepository: WorkerLeasePort;
   readonly workerLoopDeps: RepositoryRuntimeLoopDeps;
-  /**
-   * Repository-scoped read ports for control-plane routes (#652 Task 6).
-   * Backed by the same per-repository operational database as
-   * `runRepository`, so route handlers that resolve a run via this runtime
-   * must read associated events/artifacts/invocations/etc. through these
-   * ports rather than falling back to the root container's ports.
-   */
   readonly eventRepository: EventRepositoryPort;
   readonly prReviewRepository: PrReviewRepositoryPort;
   readonly loopRepository: LoopRepositoryPort;
   readonly agentInvocationRepository: AgentInvocationPort;
   readonly validationRunRepository: ValidationRunRepositoryPort;
   readonly failureRepository: FailureRepositoryPort;
+  readonly jobQueue: JobQueuePort;
   close(): void;
 }
 
-interface CacheEntry {
-  runtime: RepositoryRuntime;
+export interface RepositoryExecutionRuntime extends RepositoryOperationalRuntime {
+  readonly configFingerprint: string;
+  readonly defaultBranch: string;
+  readonly fullName: string;
+}
+
+export type RepositoryRuntime = RepositoryExecutionRuntime;
+
+interface OperationalCacheEntry {
+  runtime: RepositoryOperationalRuntime;
+  isStale: boolean;
+  markedStaleAt?: Date;
+  buildPromise?: Promise<RepositoryOperationalRuntime>;
+}
+
+interface ExecutionCacheEntry {
+  runtime: RepositoryExecutionRuntime;
   fingerprint: string;
   isStale: boolean;
   markedStaleAt?: Date;
-  buildPromise?: Promise<RepositoryRuntime>;
+  buildPromise?: Promise<RepositoryExecutionRuntime>;
 }
 
 export interface RepositoryRuntimeFactoryOptions {
   stateRoot: string;
   now?: () => Date;
-  buildRuntime: (input: {
+  buildOperationalRuntime: (input: {
+    repository: Repository;
+    paths: RepositoryRuntimePaths;
+  }) => Promise<RepositoryOperationalRuntime>;
+  buildExecutionRuntime: (input: {
     repository: Repository;
     paths: RepositoryRuntimePaths;
     loadedConfig: LoadedConfig;
-  }) => Promise<RepositoryRuntime>;
+    operationalRuntime?: RepositoryOperationalRuntime;
+  }) => Promise<RepositoryExecutionRuntime>;
 }
 
 export class RepositoryRuntimeFactory {
   private static readonly MAX_STALE_AGE_MS = 10 * 60 * 1000;
 
-  private readonly cache = new Map<string, CacheEntry>();
-  private readonly staleRuntimes = new Set<string>();
+  private readonly operationalCache = new Map<string, OperationalCacheEntry>();
+  private readonly executionCache = new Map<string, ExecutionCacheEntry>();
+  private readonly staleOperationalRuntimes = new Set<string>();
+  private readonly staleExecutionRuntimes = new Set<string>();
   private readonly activeFingerprint = new Map<string, string>();
   private reapScheduled = false;
   private reapTimer: ReturnType<typeof setTimeout> | null = null;
@@ -102,27 +116,35 @@ export class RepositoryRuntimeFactory {
     this.opts = opts;
   }
 
-  private cacheKey(repoId: RepositoryId, fingerprint: string): string {
+  private operationalCacheKey(repoId: RepositoryId): string {
+    return String(repoId);
+  }
+
+  private executionCacheKey(repoId: RepositoryId, fingerprint: string): string {
     return `${String(repoId)}|${fingerprint}`;
   }
 
-  private markStale(key: string): void {
-    const entry = this.cache.get(key);
+  private markStale(key: string, isOperational: boolean): void {
+    const cache = isOperational ? this.operationalCache : this.executionCache;
+    const staleSet = isOperational ? this.staleOperationalRuntimes : this.staleExecutionRuntimes;
+    const entry = cache.get(key);
     if (entry) {
       entry.isStale = true;
       const now = this.opts.now?.();
       entry.markedStaleAt = now ?? new Date();
-      this.staleRuntimes.add(key);
+      staleSet.add(key);
       this.scheduleReap();
     }
   }
 
-  private unmarkStale(key: string): void {
-    const entry = this.cache.get(key);
+  private unmarkStale(key: string, isOperational: boolean): void {
+    const cache = isOperational ? this.operationalCache : this.executionCache;
+    const staleSet = isOperational ? this.staleOperationalRuntimes : this.staleExecutionRuntimes;
+    const entry = cache.get(key);
     if (entry) {
       entry.isStale = false;
       delete entry.markedStaleAt;
-      this.staleRuntimes.delete(key);
+      staleSet.delete(key);
     }
   }
 
@@ -140,60 +162,173 @@ export class RepositoryRuntimeFactory {
     const now = this.opts.now?.() ?? new Date();
     let needsRetry = false;
 
-    for (const key of this.staleRuntimes) {
-      const entry = this.cache.get(key);
-      if (!entry) {
-        this.staleRuntimes.delete(key);
-        continue;
-      }
+    const reapOperationalEntry = (
+      cache: Map<string, OperationalCacheEntry>,
+      staleSet: Set<string>,
+    ) => {
+      for (const key of staleSet) {
+        const entry = cache.get(key);
+        if (!entry) {
+          staleSet.delete(key);
+          continue;
+        }
 
-      if (entry.buildPromise) {
-        needsRetry = true;
-        continue;
-      }
+        if (entry.buildPromise) {
+          needsRetry = true;
+          continue;
+        }
 
-      const repoIdStr = String(entry.runtime.repository.id);
-      const activeFp = this.activeFingerprint.get(repoIdStr);
-      const isActiveFingerprint = entry.fingerprint === activeFp;
-      const staleAgeMs = entry.markedStaleAt ? now.getTime() - entry.markedStaleAt.getTime() : 0;
-      const exceededMaxAge = staleAgeMs >= RepositoryRuntimeFactory.MAX_STALE_AGE_MS;
+        const staleAgeMs = entry.markedStaleAt ? now.getTime() - entry.markedStaleAt.getTime() : 0;
+        const exceededMaxAge = staleAgeMs >= RepositoryRuntimeFactory.MAX_STALE_AGE_MS;
 
-      let hasActiveLease: boolean;
-      try {
-        hasActiveLease = entry.runtime.workerLeaseRepository.checkActiveLease(
-          entry.runtime.repository.id,
-          now,
-        );
-      } catch {
-        hasActiveLease = true;
-        needsRetry = true;
-      }
+        let hasActiveLease: boolean;
+        try {
+          hasActiveLease = entry.runtime.workerLeaseRepository.checkActiveLease(
+            entry.runtime.repository.id,
+            now,
+          );
+        } catch {
+          hasActiveLease = true;
+          needsRetry = true;
+        }
 
-      if (hasActiveLease && isActiveFingerprint) {
-        this.unmarkStale(key);
-        continue;
-      }
+        if (hasActiveLease && !exceededMaxAge) {
+          needsRetry = true;
+          continue;
+        }
 
-      if (hasActiveLease && !exceededMaxAge) {
-        needsRetry = true;
-        continue;
+        try {
+          entry.runtime.close();
+        } catch {
+          // Best-effort: eviction must not throw
+        }
+        cache.delete(key);
+        staleSet.delete(key);
       }
+    };
 
-      try {
-        entry.runtime.close();
-      } catch {
-        // Best-effort: eviction must not throw
-      }
-      this.cache.delete(key);
-      this.staleRuntimes.delete(key);
+    const reapExecutionEntry = (cache: Map<string, ExecutionCacheEntry>, staleSet: Set<string>) => {
+      for (const key of staleSet) {
+        const entry = cache.get(key);
+        if (!entry) {
+          staleSet.delete(key);
+          continue;
+        }
 
-      if (this.activeFingerprint.get(repoIdStr) === entry.fingerprint) {
-        this.activeFingerprint.delete(repoIdStr);
+        if (entry.buildPromise) {
+          needsRetry = true;
+          continue;
+        }
+
+        const repoIdStr = String(entry.runtime.repository.id);
+        const activeFp = this.activeFingerprint.get(repoIdStr);
+        const isActiveFingerprint = activeFp ? entry.fingerprint === activeFp : true;
+        const staleAgeMs = entry.markedStaleAt ? now.getTime() - entry.markedStaleAt.getTime() : 0;
+        const exceededMaxAge = staleAgeMs >= RepositoryRuntimeFactory.MAX_STALE_AGE_MS;
+
+        let hasActiveLease: boolean;
+        try {
+          hasActiveLease = entry.runtime.workerLeaseRepository.checkActiveLease(
+            entry.runtime.repository.id,
+            now,
+          );
+        } catch {
+          hasActiveLease = true;
+          needsRetry = true;
+        }
+
+        if (hasActiveLease && isActiveFingerprint) {
+          this.unmarkStale(key, false);
+          continue;
+        }
+
+        if (hasActiveLease && !exceededMaxAge) {
+          needsRetry = true;
+          continue;
+        }
+
+        try {
+          entry.runtime.close();
+        } catch {
+          // Best-effort: eviction must not throw
+        }
+        cache.delete(key);
+        staleSet.delete(key);
+
+        if (this.activeFingerprint.get(repoIdStr) === entry.fingerprint) {
+          this.activeFingerprint.delete(repoIdStr);
+        }
       }
-    }
+    };
+
+    reapOperationalEntry(this.operationalCache, this.staleOperationalRuntimes);
+    reapExecutionEntry(this.executionCache, this.staleExecutionRuntimes);
 
     if (needsRetry) {
       this.scheduleReap();
+    }
+  }
+
+  async getOperationalRuntime(repo: Repository): Promise<RepositoryOperationalRuntime> {
+    if (repo.healthStatus === 'degraded') {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'degraded',
+        `Repository ${repo.fullName} is in degraded health state: ${repo.healthError ?? 'unknown'}`,
+      );
+    }
+    if (repo.healthStatus === 'unreachable') {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'unreachable',
+        `Repository ${repo.fullName} is unreachable: ${repo.healthError ?? 'unknown'}`,
+      );
+    }
+    if (repo.healthStatus === 'unknown') {
+      throw new RepositoryResolutionError(
+        repo.id,
+        'unknown',
+        `Repository ${repo.fullName} has unknown health status: ${repo.healthError ?? 'unknown'}`,
+      );
+    }
+
+    const key = this.operationalCacheKey(repo.id);
+    const existingEntry = this.operationalCache.get(key);
+
+    if (existingEntry) {
+      if (existingEntry.buildPromise) {
+        return existingEntry.buildPromise;
+      }
+      this.unmarkStale(key, true);
+      return existingEntry.runtime;
+    }
+
+    const paths = RepositoryRuntimePaths.create({
+      stateRoot: this.opts.stateRoot,
+      repository: repo,
+    });
+
+    const buildPromise = this.opts.buildOperationalRuntime({
+      repository: repo,
+      paths,
+    });
+
+    const placeholderEntry: OperationalCacheEntry = {
+      runtime: null as unknown as RepositoryOperationalRuntime,
+      isStale: false,
+      buildPromise,
+    };
+
+    this.operationalCache.set(key, placeholderEntry);
+
+    try {
+      const runtime = await buildPromise;
+      placeholderEntry.runtime = runtime;
+      delete placeholderEntry.buildPromise;
+      return runtime;
+    } catch (err) {
+      this.operationalCache.delete(key);
+      throw err;
     }
   }
 
@@ -201,7 +336,7 @@ export class RepositoryRuntimeFactory {
     repo: Repository,
     loadedConfig: LoadedConfig,
     options?: { allowDisabled?: boolean },
-  ): Promise<RepositoryRuntime> {
+  ): Promise<RepositoryExecutionRuntime> {
     if (!options?.allowDisabled && !repo.enabled) {
       throw new RepositoryResolutionError(
         repo.id,
@@ -231,8 +366,8 @@ export class RepositoryRuntimeFactory {
       );
     }
 
-    const key = this.cacheKey(repo.id, loadedConfig.fingerprint);
-    const existingEntry = this.cache.get(key);
+    const key = this.executionCacheKey(repo.id, loadedConfig.fingerprint);
+    const existingEntry = this.executionCache.get(key);
 
     if (existingEntry) {
       if (existingEntry.buildPromise) {
@@ -240,18 +375,18 @@ export class RepositoryRuntimeFactory {
       }
       const previousActiveFingerprint = this.activeFingerprint.get(String(repo.id));
       if (previousActiveFingerprint && previousActiveFingerprint !== loadedConfig.fingerprint) {
-        const previousKey = this.cacheKey(repo.id, previousActiveFingerprint);
-        this.markStale(previousKey);
+        const previousKey = this.executionCacheKey(repo.id, previousActiveFingerprint);
+        this.markStale(previousKey, false);
       }
       this.activeFingerprint.set(String(repo.id), loadedConfig.fingerprint);
-      this.unmarkStale(key);
+      this.unmarkStale(key, false);
       return existingEntry.runtime;
     }
 
     const previousActiveFingerprint = this.activeFingerprint.get(String(repo.id));
     if (previousActiveFingerprint && previousActiveFingerprint !== loadedConfig.fingerprint) {
-      const previousKey = this.cacheKey(repo.id, previousActiveFingerprint);
-      this.markStale(previousKey);
+      const previousKey = this.executionCacheKey(repo.id, previousActiveFingerprint);
+      this.markStale(previousKey, false);
     }
 
     this.activeFingerprint.set(String(repo.id), loadedConfig.fingerprint);
@@ -261,20 +396,23 @@ export class RepositoryRuntimeFactory {
       repository: repo,
     });
 
-    const buildPromise = this.opts.buildRuntime({
+    const operationalRuntime = await this.getOperationalRuntime(repo);
+
+    const buildPromise = this.opts.buildExecutionRuntime({
       repository: repo,
       paths,
       loadedConfig,
+      operationalRuntime,
     });
 
-    const placeholderEntry: CacheEntry = {
-      runtime: null as unknown as RepositoryRuntime,
+    const placeholderEntry: ExecutionCacheEntry = {
+      runtime: null as unknown as RepositoryExecutionRuntime,
       fingerprint: loadedConfig.fingerprint,
       isStale: false,
       buildPromise,
     };
 
-    this.cache.set(key, placeholderEntry);
+    this.executionCache.set(key, placeholderEntry);
 
     try {
       const runtime = await buildPromise;
@@ -282,7 +420,7 @@ export class RepositoryRuntimeFactory {
       delete placeholderEntry.buildPromise;
       return runtime;
     } catch (err) {
-      this.cache.delete(key);
+      this.executionCache.delete(key);
       if (this.activeFingerprint.get(String(repo.id)) === loadedConfig.fingerprint) {
         this.activeFingerprint.delete(String(repo.id));
       }
@@ -294,32 +432,56 @@ export class RepositoryRuntimeFactory {
     const now = this.opts.now?.() ?? new Date();
     const repoIdStr = String(repoId);
     const activeFp = this.activeFingerprint.get(repoIdStr);
-    if (!activeFp) return;
 
-    const activeKey = this.cacheKey(repoId, activeFp);
-    const activeEntry = this.cache.get(activeKey);
-    if (!activeEntry || !activeEntry.runtime) return;
+    if (activeFp) {
+      const activeKey = this.executionCacheKey(repoId, activeFp);
+      const activeEntry = this.executionCache.get(activeKey);
+      if (activeEntry && activeEntry.runtime) {
+        let hasActiveLease: boolean;
+        try {
+          hasActiveLease = activeEntry.runtime.workerLeaseRepository.checkActiveLease(repoId, now);
+        } catch {
+          hasActiveLease = true;
+        }
 
-    let hasActiveLease: boolean;
-    try {
-      hasActiveLease = activeEntry.runtime.workerLeaseRepository.checkActiveLease(repoId, now);
-    } catch {
-      hasActiveLease = true;
+        if (hasActiveLease) {
+          this.unmarkStale(activeKey, false);
+        } else if (!activeEntry.isStale) {
+          this.markStale(activeKey, false);
+        }
+      }
     }
 
-    if (hasActiveLease) {
-      this.unmarkStale(activeKey);
-    } else if (!activeEntry.isStale) {
-      this.markStale(activeKey);
+    const operationalKey = this.operationalCacheKey(repoId);
+    const operationalEntry = this.operationalCache.get(operationalKey);
+    if (operationalEntry && operationalEntry.runtime) {
+      let hasActiveLease: boolean;
+      try {
+        hasActiveLease = operationalEntry.runtime.workerLeaseRepository.checkActiveLease(
+          repoId,
+          now,
+        );
+      } catch {
+        hasActiveLease = true;
+      }
+
+      if (hasActiveLease) {
+        this.unmarkStale(operationalKey, true);
+      } else if (!operationalEntry.isStale) {
+        this.markStale(operationalKey, true);
+      }
     }
   }
 
   onLeaseAcquired(repoId: RepositoryId): void {
     const activeFp = this.activeFingerprint.get(String(repoId));
-    if (!activeFp) return;
+    if (activeFp) {
+      const key = this.executionCacheKey(repoId, activeFp);
+      this.unmarkStale(key, false);
+    }
 
-    const key = this.cacheKey(repoId, activeFp);
-    this.unmarkStale(key);
+    const operationalKey = this.operationalCacheKey(repoId);
+    this.unmarkStale(operationalKey, true);
   }
 
   close(): void {
@@ -327,7 +489,7 @@ export class RepositoryRuntimeFactory {
       clearTimeout(this.reapTimer);
       this.reapTimer = null;
     }
-    for (const entry of this.cache.values()) {
+    for (const entry of this.operationalCache.values()) {
       if (entry.buildPromise) {
         entry.buildPromise.then((r) => r.close()).catch(() => {});
       }
@@ -337,16 +499,28 @@ export class RepositoryRuntimeFactory {
         // Best-effort: shutdown must not throw
       }
     }
-    this.cache.clear();
-    this.staleRuntimes.clear();
+    for (const entry of this.executionCache.values()) {
+      if (entry.buildPromise) {
+        entry.buildPromise.then((r) => r.close()).catch(() => {});
+      }
+      try {
+        entry.runtime?.close();
+      } catch {
+        // Best-effort: shutdown must not throw
+      }
+    }
+    this.operationalCache.clear();
+    this.executionCache.clear();
+    this.staleOperationalRuntimes.clear();
+    this.staleExecutionRuntimes.clear();
     this.activeFingerprint.clear();
   }
 
-  getActiveRuntimes(): ReadonlyMap<string, RepositoryRuntime> {
-    const result = new Map<string, RepositoryRuntime>();
+  getActiveRuntimes(): ReadonlyMap<string, RepositoryExecutionRuntime> {
+    const result = new Map<string, RepositoryExecutionRuntime>();
     for (const [repoIdStr, activeFp] of this.activeFingerprint.entries()) {
-      const key = this.cacheKey(repoIdStr as RepositoryId, activeFp);
-      const entry = this.cache.get(key);
+      const key = this.executionCacheKey(repoIdStr as RepositoryId, activeFp);
+      const entry = this.executionCache.get(key);
       if (entry && !entry.isStale && entry.runtime) {
         result.set(key, entry.runtime);
       }
@@ -359,8 +533,8 @@ export class RepositoryRuntimeFactory {
     const activeFp = this.activeFingerprint.get(repoIdStr);
     if (!activeFp) return false;
 
-    const key = this.cacheKey(repoId, activeFp);
-    const entry = this.cache.get(key);
+    const key = this.executionCacheKey(repoId, activeFp);
+    const entry = this.executionCache.get(key);
     return entry?.isStale ?? false;
   }
 }

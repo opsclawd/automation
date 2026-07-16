@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "Uncaught JobOwnershipLostError inside runClaimedJob's catch block when queue.releaseClaim, queue.markFailed, or queue.markCancelled is called.",
+      "file": "packages/application/src/executor/worker-loop.ts",
+      "suggested_fix": "Wrap queue.releaseClaim, queue.markCancelled, and queue.markFailed calls inside the catch block with try/catch to gracefully ignore JobOwnershipLostError."
+    },
+    {
+      "severity": "P2",
+      "summary": "Uncaught JobOwnershipLostError in defaultWorkerLoop when calling jobQueue.markFailed and jobQueue.markRunning.",
+      "file": "apps/api/src/repository-scheduler-adapter.ts",
+      "suggested_fix": "Wrap jobQueue.markFailed and jobQueue.markRunning with try/catch to ignore JobOwnershipLostError."
+    },
+    {
+      "severity": "P2",
+      "summary": "Uncaught JobOwnershipLostError when calling queue.releaseClaim on signal abort.",
+      "file": "apps/api/src/worker-scheduler.ts",
+      "suggested_fix": "Wrap queue.releaseClaim with try/catch to ignore JobOwnershipLostError."
+    }
+  ]
+}

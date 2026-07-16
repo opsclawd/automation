@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P2",
+      "summary": "Unbounded concurrency in repository sweep coordinator can cause DB connection pool exhaustion or GitHub API rate limits on startup.",
+      "file": "apps/api/src/compose.ts",
+      "suggested_fix": "Change `await Promise.all(allOperational.map(sweepOne))` back to a sequential `for...of` loop to bound concurrency to 1, or use a bounded concurrency pool (e.g., p-limit)."
+    },
+    {
+      "severity": "P3",
+      "summary": "Misleading error log in worker start command: if the initial sweep throws an exception, it is caught by the shared try/catch block and logged as 'Scheduler run error'.",
+      "file": "apps/api/src/cli.ts",
+      "suggested_fix": "Wrap `await sweepCoordinator.execute(...)` in its own try/catch block in the `worker start` command, just like in `serve`."
+    }
+  ]
+}

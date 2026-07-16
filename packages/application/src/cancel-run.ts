@@ -1,5 +1,5 @@
-import { cancelRun } from '@ai-sdlc/domain';
-import type { RunId } from '@ai-sdlc/domain';
+import { cancelRun, LeaseOwnershipLostError } from '@ai-sdlc/domain';
+import type { RunId } from '@ai-sdlc/domain'; // run identification
 import type {
   RunRepositoryPort,
   RunAbortPort,
@@ -91,11 +91,18 @@ export class CancelRun implements CancelRunUseCase {
               `CancelRun: lease runId mismatch for repo ${repoId}: expected ${input.runId}, got ${lease.runId}`,
             );
           } else {
-            leases.release({ repoId, workerId: lease.workerId, runId: lease.runId });
+            leases.release({
+              repoId,
+              workerId: lease.workerId,
+              runId: lease.runId,
+              leaseToken: lease.leaseToken,
+            });
           }
         }
       } catch (err) {
-        this.deps.logger.error(`CancelRun: lease release failed for ${input.runId}`, err);
+        if (!(err instanceof LeaseOwnershipLostError)) {
+          this.deps.logger.error(`CancelRun: lease release failed for ${input.runId}`, err);
+        }
       }
     }
   }

@@ -231,11 +231,18 @@ A repository with `healthStatus` of `unreachable`, `unknown`, or `degraded` is m
 
 Every scheduler event includes `repository_id` (stable repository identifier) and `repository_name` (current full name). Telemetry records are emitted for dispatch start/complete/fail, repository skip, pool active count, and queue depth.
 
+### Single-Host Requirement
+
+Multiple worker processes are supported **only on one host**. The scheduler uses local PID checks and hostname comparison to determine worker liveness. Cross-host lease recovery is not supported because PID reuse is ambiguous across hosts and the `WorkerLease` table has no cross-host liveness mechanism. Workers on separate machines cannot reliably distinguish a living remote process from a PID-reused zombie.
+
+For details on recovery behavior, lease heartbeats, fencing tokens, startup barriers, shutdown/grace fallback, and operator procedures, see [`docs/operations/scheduler-recovery.md`](./docs/operations/scheduler-recovery.md).
+
 ## Documentation
 
 - [`CONTEXT.md`](./CONTEXT.md) — project language, core domain model, relationships, outcome rules, and lifecycle states.
 - [`docs/product-direction.md`](./docs/product-direction.md) — product thesis, positioning, invariants, priorities, deferred ambitions, risks, and decision log.
 - [`docs/adr/0001-local-first-orchestrator-architecture.md`](./docs/adr/0001-local-first-orchestrator-architecture.md) — architecture decision record for local-first design, persistence, agent execution, cancellation, and distribution boundaries.
+- [`docs/operations/scheduler-recovery.md`](./docs/operations/scheduler-recovery.md) — scheduler recovery operations, database topology, lease/claim tokens, recovery state machine, and operator procedures.
 - [`docs/prd.md`](./docs/prd.md) — full product requirements document.
 - [`docs/design-decisions-report.md`](./docs/design-decisions-report.md) — resolved design questions and implementation constraints.
 

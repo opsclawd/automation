@@ -100,6 +100,7 @@ function makeDeps(s: ReturnType<typeof setup>, workerId: WorkerId, repoId: Repos
 }
 
 describe('workerLoop repository assignment', () => {
+  // Test repository isolation and worker assignment
   it('worker loop rejects a claimed job outside its repository assignment', async () => {
     const s = setup();
     const prepareWorktree = vi.fn(prepareOk);
@@ -174,7 +175,7 @@ describe('workerLoop repository assignment', () => {
     const s = setup();
     const now = s.now;
 
-    s.leases.acquire({
+    const w1Lease = s.leases.acquire({
       repoId: REPO_ID,
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
@@ -183,6 +184,12 @@ describe('workerLoop repository assignment', () => {
     });
 
     const later = new Date(now.getTime() + 120_000);
+    s.leases.release({
+      repoId: REPO_ID,
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      leaseToken: w1Lease.leaseToken,
+    });
     s.leases.acquire({
       repoId: REPO_ID,
       workerId: WorkerId('w2'),
@@ -191,13 +198,16 @@ describe('workerLoop repository assignment', () => {
       ttlMs: 60_000,
     });
 
-    s.leases.heartbeat({
-      repoId: REPO_ID,
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-      now: later,
-      newExpiresAt: new Date(later.getTime() + 60_000),
-    });
+    expect(() =>
+      s.leases.heartbeat({
+        repoId: REPO_ID,
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        now: later,
+        newExpiresAt: new Date(later.getTime() + 60_000),
+        leaseToken: w1Lease.leaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
 
     const currentLease = s.leases.current(REPO_ID);
     expect(currentLease?.workerId).toBe('w2');
@@ -208,7 +218,7 @@ describe('workerLoop repository assignment', () => {
     const s = setup();
     const now = s.now;
 
-    s.leases.acquire({
+    const w1Lease = s.leases.acquire({
       repoId: REPO_ID,
       workerId: WorkerId('w1'),
       runId: RunId('run-1'),
@@ -217,6 +227,12 @@ describe('workerLoop repository assignment', () => {
     });
 
     const later = new Date(now.getTime() + 120_000);
+    s.leases.release({
+      repoId: REPO_ID,
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      leaseToken: w1Lease.leaseToken,
+    });
     s.leases.acquire({
       repoId: REPO_ID,
       workerId: WorkerId('w2'),
@@ -225,11 +241,14 @@ describe('workerLoop repository assignment', () => {
       ttlMs: 60_000,
     });
 
-    s.leases.release({
-      repoId: REPO_ID,
-      workerId: WorkerId('w1'),
-      runId: RunId('run-1'),
-    });
+    expect(() =>
+      s.leases.release({
+        repoId: REPO_ID,
+        workerId: WorkerId('w1'),
+        runId: RunId('run-1'),
+        leaseToken: w1Lease.leaseToken,
+      }),
+    ).toThrow('WorkerLease ownership lost');
 
     const currentLease = s.leases.current(REPO_ID);
     expect(currentLease?.workerId).toBe('w2');

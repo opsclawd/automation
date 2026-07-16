@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "In `onWaitingReactivation`, `deps.repos.update` attempts to update a Repository with a run's status (`next.status`), but `deps.repos` is a `RepositoryPort` which lacks an `update` method, silently failing to update the `Run` object.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Add an `updateRun` callback to `WorkerLoopDeps` or pass `runRepository`, and use it to update the `Run`'s status instead of incorrectly targeting `deps.repos`."
+    }
+  ]
+}

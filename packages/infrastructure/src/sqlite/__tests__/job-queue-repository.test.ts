@@ -13,6 +13,8 @@ import {
   DuplicateJobIdError,
   RepositoryNotApprovedError,
   JobStateError,
+  generateJobOwnership,
+  JobOwnershipLostError,
 } from '@ai-sdlc/domain';
 import type { RepositoryPort } from '@ai-sdlc/application/ports';
 import { openDatabase, applyMigrations } from '../../index.js';
@@ -222,13 +224,15 @@ describe('JobQueueRepository', () => {
       repoId: mkRepositoryId('repo-1'),
     });
     expect(claimed).toBeDefined();
+    const owner = generateJobOwnership(claimed, mkWorkerId('worker-1'));
 
     // releaseClaim: claimed -> queued
-    repo.releaseClaim(job.id);
+    repo.releaseClaim(owner);
     let updated = repo.findById(job.id);
     expect(updated?.status).toBe('queued');
     expect(updated?.claimedBy).toBeUndefined();
     expect(updated?.claimedAt).toBeUndefined();
+    expect(updated?.claimToken).toBeUndefined();
 
     // Claim again
     const claimedAgain = repo.claimNext({
@@ -236,35 +240,83 @@ describe('JobQueueRepository', () => {
       repoId: mkRepositoryId('repo-1'),
     });
     expect(claimedAgain?.attempts).toBe(2);
+    const owner2 = generateJobOwnership(claimedAgain, mkWorkerId('worker-1'));
 
     // markRunning: claimed -> running
     const runTime = new Date('2026-01-01T01:00:00Z');
-    repo.markRunning(job.id, runTime);
+    repo.markRunning(owner2, runTime);
     updated = repo.findById(job.id);
     expect(updated?.status).toBe('running');
     expect(updated?.startedAt).toEqual(runTime);
 
     // resetToQueued: running -> queued
-    repo.resetToQueued(job.id);
+    repo.resetToQueued(owner2);
     updated = repo.findById(job.id);
     expect(updated?.status).toBe('queued');
     expect(updated?.claimedBy).toBeUndefined();
     expect(updated?.claimedAt).toBeUndefined();
     expect(updated?.startedAt).toBeUndefined();
+    expect(updated?.claimToken).toBeUndefined();
 
     // Claim and mark running again
-    repo.claimNext({ workerId: mkWorkerId('worker-1'), repoId: mkRepositoryId('repo-1') });
-    repo.markRunning(job.id, runTime);
+    const claimed3 = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+    });
+    const owner3 = generateJobOwnership(claimed3!, mkWorkerId('worker-1'));
+    repo.markRunning(owner3, runTime);
 
     // markSucceeded: running -> succeeded
     const compTime = new Date('2026-01-01T02:00:00Z');
-    repo.markSucceeded(job.id, compTime);
+    repo.markSucceeded(owner3, compTime);
     updated = repo.findById(job.id);
     expect(updated?.status).toBe('succeeded');
     expect(updated?.completedAt).toEqual(compTime);
 
     // Try invalid state transition (succeeded -> running)
-    expect(() => repo.markRunning(job.id, runTime)).toThrow(JobStateError);
+    expect(() => repo.markRunning(owner3, runTime)).toThrow(JobStateError);
+
+    db.close();
+  });
+
+  it('stale claim token cannot mutate reclaimed job', () => {
+    const db = freshDb();
+    const repos = mockRepos({ 'repo-1': true });
+    const repo = new JobQueueRepository(db, repos);
+
+    const job = defaultJob();
+    repo.enqueue({ job });
+
+    // 1st claim
+    const claimed1 = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      repoId: mkRepositoryId('repo-1'),
+    });
+    expect(claimed1).toBeDefined();
+    const owner1 = generateJobOwnership(claimed1!, mkWorkerId('worker-1'));
+
+    // Reclaim (via releaseClaim) and 2nd claim (gets a fresh token)
+    repo.releaseClaim(owner1);
+    const claimed2 = repo.claimNext({
+      workerId: mkWorkerId('worker-2'),
+      repoId: mkRepositoryId('repo-1'),
+    });
+    expect(claimed2).toBeDefined();
+    const _owner2 = generateJobOwnership(claimed2!, mkWorkerId('worker-2'));
+
+    // Verify owner1 (stale claim token) cannot mutate the reclaimed job:
+    // 1. markRunning
+    expect(() => repo.markRunning(owner1, new Date())).toThrow(JobOwnershipLostError);
+    // 2. markSucceeded (cannot settle)
+    expect(() => repo.markSucceeded(owner1, new Date())).toThrow(JobOwnershipLostError);
+    // 3. markFailed (cannot settle)
+    expect(() => repo.markFailed(owner1, new Date())).toThrow(JobOwnershipLostError);
+    // 4. markCancelled (cannot settle)
+    expect(() => repo.markCancelled(owner1, new Date())).toThrow(JobOwnershipLostError);
+    // 5. releaseClaim
+    expect(() => repo.releaseClaim(owner1)).toThrow(JobOwnershipLostError);
+    // 6. resetToQueued (shutdown-requeue)
+    expect(() => repo.resetToQueued(owner1)).toThrow(JobOwnershipLostError);
 
     db.close();
   });
@@ -343,114 +395,6 @@ describe('JobQueueRepository', () => {
 
     const reloaded = repo.findById(defaultJob().id);
     expect(reloaded?.claimExpiresAt).toBeUndefined();
-    db.close();
-  });
-
-  it('findExpiredClaims: returns claimed jobs whose claim_expires_at < cutoff', () => {
-    const db = freshDb();
-    const repos = mockRepos({ 'repo-1': true });
-    const repo = new JobQueueRepository(db, repos);
-
-    // Stale claim — ttlMs 1s, cutoff is well after
-    repo.enqueue({ job: defaultJob({ id: mkJobId('stale') }) });
-    const stale = repo.claimNext({
-      workerId: mkWorkerId('w-stale'),
-      repoId: mkRepositoryId('repo-1'),
-      ttlMs: 1_000,
-    });
-    expect(stale).toBeDefined();
-
-    // Fresh claim — claimExpiresAt far in future (effective non-expiring via direct SQL)
-    repo.enqueue({ job: defaultJob({ id: mkJobId('fresh') }) });
-    const fresh = repo.claimNext({
-      workerId: mkWorkerId('w-fresh'),
-      repoId: mkRepositoryId('repo-1'),
-      ttlMs: 60_000,
-    });
-    expect(fresh).toBeDefined();
-
-    const cutoff = new Date(Date.now() + 10_000);
-    const expired = repo.findExpiredClaims(cutoff);
-    expect(expired.map((j) => j.id)).toEqual(['stale']);
-    db.close();
-  });
-
-  it('findExpiredClaims: ignores jobs without claim_expires_at', () => {
-    const db = freshDb();
-    const repos = mockRepos({ 'repo-1': true });
-    const repo = new JobQueueRepository(db, repos);
-
-    repo.enqueue({ job: defaultJob() });
-    // Claim without ttlMs => no claim_expires_at
-    repo.claimNext({ workerId: mkWorkerId('worker-1'), repoId: mkRepositoryId('repo-1') });
-
-    const expired = repo.findExpiredClaims(new Date(Date.now() + 1_000_000));
-    expect(expired).toEqual([]);
-    db.close();
-  });
-
-  it('findExpiredClaims: ignores non-claimed jobs even if they had a past claim_expires_at', () => {
-    const db = freshDb();
-    const repos = mockRepos({ 'repo-1': true });
-    const repo = new JobQueueRepository(db, repos);
-
-    repo.enqueue({ job: defaultJob() });
-    repo.claimNext({
-      workerId: mkWorkerId('worker-1'),
-      repoId: mkRepositoryId('repo-1'),
-      ttlMs: 1_000,
-    });
-    // Move to running — should no longer match
-    repo.markRunning(defaultJob().id, new Date());
-
-    const expired = repo.findExpiredClaims(new Date(Date.now() + 60_000));
-    expect(expired).toEqual([]);
-    db.close();
-  });
-
-  it('reclaimStaleClaims: resets expired claims to queued and returns count', () => {
-    const db = freshDb();
-    const repos = mockRepos({ 'repo-1': true });
-    const repo = new JobQueueRepository(db, repos);
-
-    repo.enqueue({ job: defaultJob({ id: mkJobId('expired-1') }) });
-    repo.enqueue({ job: defaultJob({ id: mkJobId('expired-2') }) });
-    repo.enqueue({ job: defaultJob({ id: mkJobId('fresh') }) });
-
-    repo.claimNext({ workerId: mkWorkerId('w1'), repoId: mkRepositoryId('repo-1'), ttlMs: 1_000 });
-    repo.claimNext({ workerId: mkWorkerId('w2'), repoId: mkRepositoryId('repo-1'), ttlMs: 1_000 });
-    repo.claimNext({ workerId: mkWorkerId('w3'), repoId: mkRepositoryId('repo-1'), ttlMs: 60_000 });
-
-    const cutoff = new Date(Date.now() + 10_000);
-    const count = repo.reclaimStaleClaims(cutoff);
-    expect(count).toBe(2);
-
-    // expired jobs reset to queued with no claim fields
-    for (const id of ['expired-1', 'expired-2'] as const) {
-      const j = repo.findById(mkJobId(id));
-      expect(j?.status).toBe('queued');
-      expect(j?.claimedBy).toBeUndefined();
-      expect(j?.claimedAt).toBeUndefined();
-      expect(j?.claimExpiresAt).toBeUndefined();
-    }
-
-    // fresh claim survives
-    const fresh = repo.findById(mkJobId('fresh'));
-    expect(fresh?.status).toBe('claimed');
-    expect(fresh?.claimExpiresAt).toBeInstanceOf(Date);
-    db.close();
-  });
-
-  it('reclaimStaleClaims: returns 0 when nothing is expired', () => {
-    const db = freshDb();
-    const repos = mockRepos({ 'repo-1': true });
-    const repo = new JobQueueRepository(db, repos);
-
-    repo.enqueue({ job: defaultJob() });
-    repo.claimNext({ workerId: mkWorkerId('w1'), ttlMs: 60_000, repoId: mkRepositoryId('repo-1') });
-
-    const count = repo.reclaimStaleClaims(new Date(Date.now() - 60_000));
-    expect(count).toBe(0);
     db.close();
   });
 

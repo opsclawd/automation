@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "startWorkerDrainLoop ignores the RepositoryRecoveryAction returned by coordinator.execute(), causing actions like 'requeue' to be silently dropped and expired claims to never be recovered.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Switch on the action returned by coordinator.execute() and implement the missing 'requeue' behavior, or pass a callback for requeueing directly into the coordinator."
+    },
+    {
+      "severity": "P1",
+      "summary": "startWorkerDrainLoop provides an empty function for onWaitingReactivation, meaning waiting runs are never actually reactivated when the coordinator determines they should be.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Provide a real implementation for onWaitingReactivation that reactivates the run."
+    },
+    {
+      "severity": "P1",
+      "summary": "startWorkerDrainLoop fails to provide getWorktreePath and getQuarantineRoot to RepositoryRecoveryCoordinator, causing worktree recovery to silently bypass the safe quarantine mechanism and always fall back to a hard reset.",
+      "file": "apps/api/src/worker-drain-loop.ts",
+      "suggested_fix": "Inject getWorktreePath and getQuarantineRoot into startWorkerDrainLoop and pass them to the RepositoryRecoveryCoordinator."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P2",
+      "summary": "CommitLeaseReclamationInput is missing the `worktreeAction` property specified in the plan, and it is not recorded in the lease.reclaimed event metadata.",
+      "file": "packages/application/src/ports/operational-recovery-port.ts",
+      "suggested_fix": "Add `worktreeAction: 'reset' | 'quarantined' | 'blocked'` to `CommitLeaseReclamationInput` and include it in the `metadata` payload for the `lease.reclaimed` event insertion in `OperationalRecoveryRepository.commitLeaseReclamation`."
+    }
+  ]
+}

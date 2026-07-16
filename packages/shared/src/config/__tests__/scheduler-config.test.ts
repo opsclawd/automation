@@ -108,4 +108,39 @@ describe('scheduler config', () => {
       expect(parsed.scheduler.pollIntervalMs).toBe(3000);
     });
   });
+
+  describe('defaults scheduler config defaults shutdown grace', () => {
+    it('omitted shutdownGraceMs yields 30000', () => {
+      const parsed = orchestratorConfigSchema.parse(baseConfig);
+      expect(parsed.scheduler.shutdownGraceMs).toBe(30000);
+    });
+  });
+
+  describe('rejects scheduler config rejects nonpositive shutdown grace', () => {
+    it('rejects shutdownGraceMs of zero', () => {
+      const result = orchestratorConfigSchema.safeParse({
+        ...baseConfig,
+        scheduler: { globalConcurrency: 1, pollIntervalMs: 2000, shutdownGraceMs: 0 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects negative shutdownGraceMs', () => {
+      const result = orchestratorConfigSchema.safeParse({
+        ...baseConfig,
+        scheduler: { globalConcurrency: 1, pollIntervalMs: 2000, shutdownGraceMs: -1000 },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('accepts scheduler config accepts explicit shutdown grace', () => {
+    it('accepts explicit shutdownGraceMs override', () => {
+      const parsed = orchestratorConfigSchema.parse({
+        ...baseConfig,
+        scheduler: { globalConcurrency: 1, pollIntervalMs: 2000, shutdownGraceMs: 60000 },
+      });
+      expect(parsed.scheduler.shutdownGraceMs).toBe(60000);
+    });
+  });
 });

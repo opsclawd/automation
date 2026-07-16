@@ -1,4 +1,10 @@
-import { canResume, resumeRun, createJob, WorkerLeaseConflictError } from '@ai-sdlc/domain';
+import {
+  canResume,
+  resumeRun,
+  createJob,
+  WorkerLeaseConflictError,
+  LeaseOwnershipLostError,
+} from '@ai-sdlc/domain';
 import { IssueNumber } from '@ai-sdlc/domain';
 import type { RunId, WorkerId, JobId, Step, Phase, RunStatus } from '@ai-sdlc/domain';
 import type {
@@ -16,7 +22,7 @@ import type { ResumeRunUseCase } from './use-cases.js';
 // same run. Tradeoff: a crash between lease acquisition and the CAS orphans
 // the lease for LEASE_TTL_MS. Tuned to 30s as a reasonable recovery bound.
 const LEASE_TTL_MS = 30_000;
-const RESUME_JOB_PRIORITY = 10;
+const RESUME_JOB_PRIORITY = 10; // priority for resumed runs
 
 export interface ResumeRunDeps {
   runRepository: RunRepositoryPort;
@@ -184,8 +190,9 @@ export class ResumeRun implements ResumeRunUseCase {
     }
 
     let leaseAcquired = false;
+    let acquiredLease;
     try {
-      this.deps.leases.acquire({
+      acquiredLease = this.deps.leases.acquire({
         repoId: repo.id,
         workerId: input.workerId,
         runId: input.runId,
@@ -239,13 +246,31 @@ export class ResumeRun implements ResumeRunUseCase {
         throw err;
       }
 
-      if (leaseAcquired) {
-        this.deps.leases.release({ repoId: repo.id, workerId: input.workerId, runId: input.runId });
+      if (leaseAcquired && acquiredLease) {
+        try {
+          this.deps.leases.release({
+            repoId: repo.id,
+            workerId: input.workerId,
+            runId: input.runId,
+            leaseToken: acquiredLease.leaseToken,
+          });
+        } catch (err) {
+          if (!(err instanceof LeaseOwnershipLostError)) throw err;
+        }
       }
       return { jobId: job.id, jobStatus: job.status as 'queued' };
     } catch (err) {
-      if (leaseAcquired) {
-        this.deps.leases.release({ repoId: repo.id, workerId: input.workerId, runId: input.runId });
+      if (leaseAcquired && acquiredLease) {
+        try {
+          this.deps.leases.release({
+            repoId: repo.id,
+            workerId: input.workerId,
+            runId: input.runId,
+            leaseToken: acquiredLease.leaseToken,
+          });
+        } catch (leaseErr) {
+          if (!(leaseErr instanceof LeaseOwnershipLostError)) throw leaseErr;
+        }
       }
       throw err;
     }

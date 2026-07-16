@@ -66,6 +66,7 @@ import {
   OrphanedRunsSweeper,
   type OrphanedRunsSweeperResult,
   checkPid,
+  RepositoryRecoveryCoordinator,
   RunValidation,
   ReadIssueHandler,
   PlanDesignHandler,
@@ -161,6 +162,7 @@ import {
   TaskContextGenerator,
   type HolisticFile,
   fingerprintFinding,
+  type RepositoryAvailabilityPort,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -176,6 +178,7 @@ import {
 interface SchedulerConfig {
   globalConcurrency: number;
   pollIntervalMs: number;
+  shutdownGraceMs: number;
 }
 import {
   AgentProfileName,
@@ -185,6 +188,7 @@ import {
   Run,
   RunId,
   RepositoryId,
+  generateJobOwnership,
 } from '@ai-sdlc/domain';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- forward reference for Task 5 runtime factory
 import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
@@ -1846,7 +1850,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     // Fallback to default 7 / disabled.
   }
 
-  let schedulerConfig = { globalConcurrency: 1, pollIntervalMs: 2000 };
+  let schedulerConfig = { globalConcurrency: 1, pollIntervalMs: 2000, shutdownGraceMs: 30_000 };
   try {
     const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
     let sweepLayered = layeredConfigCache.get(cacheKey);
@@ -5682,11 +5686,34 @@ export function composeRoot(opts: ComposeOptions): Container {
           findRun: (runId) => runRepository.findByUuid(runId) ?? undefined,
           now: () => new Date(),
           ttlMs: DEFAULT_LEASE_TTL_MS,
-          onLeaseReclaimed: (info) => {
-            logger.error(
-              `Lease reclaimed: repo=${info.repoId} prev=${info.previousWorkerId} by=${info.reclaimedByWorkerId}: ${info.reason}`,
-            );
+          getWorktreePath: (repoId: RepositoryId) => {
+            const lease = workerLeaseRepository.current(repoId);
+            if (!lease) return '';
+            const r = runRepository.findByUuid(lease.runId);
+            if (!r) return '';
+            const repo = registryBackedRepo.findById(repoId);
+            const repoRootPath = repo ? repo.localBasePath : targetRoot;
+            return join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
           },
+          getQuarantineRoot: (repoId: RepositoryId) => {
+            const repo = registryBackedRepo.findById(repoId);
+            const repoRootPath = repo ? repo.localBasePath : targetRoot;
+            return join(repoRootPath, '.ai-quarantine');
+          },
+          listRunsForRepo: (repoId: RepositoryId) => {
+            const result = runRepository.list({ repositoryId: repoId });
+            return result.runs as unknown as import('@ai-sdlc/domain').Run[];
+          },
+          updateRun: (runId, patch) => runRepository.update(String(runId), patch),
+          repoAvailability: {
+            markUnreachable: (repoId: RepositoryId, reason: string) => {
+              repositoryRegistry.update(
+                repoId,
+                { healthStatus: 'unreachable', healthError: reason },
+                new Date(),
+              );
+            },
+          } as RepositoryAvailabilityPort,
         })
       : undefined;
 
@@ -6161,14 +6188,52 @@ export function composeRoot(opts: ComposeOptions): Container {
   function buildRepositorySweepCoordinator(): RepositorySweepCoordinator {
     return {
       async execute(workerId: import('@ai-sdlc/domain').WorkerId) {
-        const results: RepositorySweepResult[] = [];
-        const enabled = await runtimeCatalog.resolveEnabled();
+        const allOperational = await runtimeCatalog.resolveAllOperational();
 
-        for (const { repository, runtime } of enabled) {
+        const sweepOne = async ({
+          repository,
+          runtime,
+          error,
+        }: {
+          repository: import('@ai-sdlc/domain').Repository;
+          runtime?: import('./repository-runtime-factory.js').RepositoryOperationalRuntime;
+          error?: import('./repository-runtime-factory.js').RepositoryResolutionError;
+        }): Promise<RepositorySweepResult> => {
           const entry: RepositorySweepResult = {
             repositoryId: String(repository.id),
             fullName: repository.fullName,
           };
+
+          if (error || !runtime) {
+            entry.error =
+              error?.message ??
+              (runtime ? 'resolution error occurred' : 'no operational runtime available');
+            sweepLogger.error(
+              `RepositorySweepCoordinator: cannot sweep ${repository.fullName}: ${entry.error}`,
+            );
+            return entry;
+          }
+
+          if (!repository.enabled) {
+            entry.waiting = {
+              scanned: 0,
+              reactivated: 0,
+              reactivatedRuns: [],
+              timedOut: 0,
+              passedOnMergedPr: 0,
+              cancelledOnClosedPr: 0,
+              stayedReady: 0,
+              skipped: 0,
+              errors: [],
+              enqueued: 0,
+              skippedLeaseConflict: 0,
+              enqueueErrors: [],
+            };
+            sweepLogger.debug(
+              `RepositorySweepCoordinator: skipping disabled repository ${repository.fullName}`,
+            );
+            return entry;
+          }
 
           try {
             const resolvePrContextForRuntime = async (
@@ -6200,10 +6265,6 @@ export function composeRoot(opts: ComposeOptions): Container {
                   run: RunRecord,
                   decision: { action: string; reason: string },
                 ) => {
-                  // Mirrors the root-scoped sweeper's finalization-vs-reactivation
-                  // split so a per-runtime sweep applies the same semantics: only
-                  // a genuine reactivation is deferred to the worker loop, while
-                  // merge/close finalization applies immediately.
                   const isFinalization =
                     decision.action === 'reactivate' &&
                     (decision.reason.includes('PR merged') ||
@@ -6244,6 +6305,91 @@ export function composeRoot(opts: ComposeOptions): Container {
 
             entry.orphaned = await orphanedRunsSweeper.execute(orphanScan.orphanedRuns);
             entry.waiting = await waitingSweeper.execute(workerId);
+
+            const coordinator = new RepositoryRecoveryCoordinator({
+              leases: runtime.workerLeaseRepository,
+              queue: runtime.jobQueue,
+              registry: runtime.workerRegistry,
+              repos: runtime.workerLoopDeps.repos,
+              findRun: (runId) => runtime.runRepository.findByUuid(runId) ?? undefined,
+              isWorkerAlive: (workerId) => {
+                const w = runtime.workerRegistry.findById(workerId, repository.id);
+                if (!w) return false;
+                if (w.hostname !== os.hostname()) {
+                  return Date.now() - w.heartbeatAt.getTime() < DEFAULT_LEASE_TTL_MS;
+                }
+                return checkPid(w.processId);
+              },
+              resetWorktree: (repoId) => {
+                const lease = runtime.workerLeaseRepository.current(repoId);
+                if (!lease) return;
+                const r = runtime.runRepository.findByUuid(lease.runId);
+                if (!r) return;
+                const worktreePath = runtime.paths.worktree(r.issueNumber);
+                const baseBranch = r.baseBranch ?? repository.defaultBranch;
+                gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
+              },
+              now: () => new Date(),
+              checkPid,
+              registryWorkerHostname: (workerId) => {
+                const w = runtime.workerRegistry.findById(workerId, repository.id);
+                return w?.hostname;
+              },
+              getWorktreePath: (repoId) => {
+                const lease = runtime.workerLeaseRepository.current(repoId);
+                if (!lease) return '';
+                const r = runtime.runRepository.findByUuid(lease.runId);
+                if (!r) return '';
+                return runtime.paths.worktree(r.issueNumber);
+              },
+              getQuarantineRoot: (_repoId) => {
+                return join(runtime.paths.tmpRoot(), 'quarantine');
+              },
+              listRunsForRepo: (repoId) => {
+                const result = runtime.runRepository.list({ repositoryId: repoId });
+                return result.runs as unknown as import('@ai-sdlc/domain').Run[];
+              },
+              onOrphan: () => {
+                /* Already handled by orphanedRunsSweeper above */
+              },
+              onWaitingReactivation: () => {
+                /* Already handled by waitingSweeper above */
+              },
+            });
+
+            try {
+              const action = await coordinator.execute({ repoId: repository.id });
+              if (action.action === 'reclaim') {
+                const lease = runtime.workerLeaseRepository.current(repository.id);
+                if (lease) {
+                  runtime.workerLeaseRepository.release({
+                    repoId: repository.id,
+                    workerId: lease.workerId,
+                    runId: lease.runId,
+                    leaseToken: lease.leaseToken,
+                  });
+                }
+              } else if (action.action === 'requeue') {
+                const jobs = runtime.jobQueue.listForRepo(repository.id);
+                for (const job of jobs) {
+                  if (
+                    job.status === 'claimed' &&
+                    job.claimExpiresAt &&
+                    job.claimExpiresAt.getTime() < Date.now()
+                  ) {
+                    if (job.claimedBy && job.claimToken) {
+                      try {
+                        runtime.jobQueue.resetToQueued(generateJobOwnership(job, job.claimedBy));
+                      } catch {
+                        /* ignore */
+                      }
+                    }
+                  }
+                }
+              }
+            } catch {
+              /* recovery failure should not block sweep */
+            }
           } catch (err) {
             entry.error = err instanceof Error ? err.message : String(err);
             sweepLogger.error(
@@ -6251,10 +6397,15 @@ export function composeRoot(opts: ComposeOptions): Container {
             );
           }
 
-          results.push(entry);
+          return entry;
+        };
+
+        const settled: RepositorySweepResult[] = [];
+        for (const op of allOperational) {
+          settled.push(await sweepOne(op));
         }
 
-        return { results };
+        return { results: settled };
       },
     };
   }

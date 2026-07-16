@@ -64,13 +64,13 @@ describe('startWorkerDrainLoop', () => {
         leases,
         repos,
         repoId: RepositoryId('owner/repo'),
-        runRepository: runRepo,
         executeRun,
         prepareWorktree: async () => ({ cwd: '/tmp/wt' }),
         resetWorktree: () => {},
         isWorkerAlive: () => true,
         now: () => new Date(),
         ttlMs: 60_000,
+        updateRun: (runId, patch) => runRepo.update(runId, patch),
         findRun: () =>
           ({
             uuid: 'run-1',
@@ -96,67 +96,10 @@ describe('startWorkerDrainLoop', () => {
     }
   });
 
-  it('reclaims a stale claim before each tick using deps.now() as cutoff', async () => {
-    const repos = new FakeRepositoryPort([
-      {
-        id: RepositoryId('owner/repo'),
-        fullName: 'owner/repo',
-        localBasePath: '/tmp/owner-repo',
-        defaultBranch: 'main',
-        enabled: true,
-      } as never,
-    ]);
-    const queue = new FakeJobQueuePort(repos);
-    const runRepo = new FakeRunRepository();
-    const reclaimSpy = vi.spyOn(queue, 'reclaimStaleClaims');
-    const registry = new FakeWorkerRegistryPort();
-    const leases = new FakeWorkerLeasePort(registry);
-    registry.register(
-      createWorker({
-        id: workerId,
-        repoId: RepositoryId('owner/repo'),
-        hostname: 'test',
-        processId: 1,
-        now: new Date(),
-      }),
-    );
-
-    const { stop } = startWorkerDrainLoop(
-      workerId,
-      {
-        registry,
-        queue,
-        leases,
-        repos,
-        repoId: RepositoryId('owner/repo'),
-        runRepository: runRepo,
-        executeRun: async () => ({ ok: true }),
-        prepareWorktree: async () => ({ cwd: '/tmp/wt' }),
-        resetWorktree: () => {},
-        isWorkerAlive: () => true,
-        now: () => new Date(),
-        ttlMs: 60_000,
-        findRun: () => undefined,
-      },
-      1_000,
-    );
-
-    try {
-      await vi.advanceTimersByTimeAsync(2_000);
-      expect(reclaimSpy).toHaveBeenCalledTimes(2);
-      expect(reclaimSpy).toHaveBeenLastCalledWith(expect.any(Date));
-      const passedCutoff = reclaimSpy.mock.calls[1]?.[0];
-      expect(passedCutoff?.getTime()).toBeCloseTo(Date.now(), -2);
-    } finally {
-      stop();
-    }
-  });
-
   it('stop() prevents further ticks', async () => {
     const repos = new FakeRepositoryPort();
     const queue = new FakeJobQueuePort(repos);
     const runRepo = new FakeRunRepository();
-    const reclaimSpy = vi.spyOn(queue, 'reclaimStaleClaims');
     const registry = new FakeWorkerRegistryPort();
     const leases = new FakeWorkerLeasePort(registry);
     registry.register(
@@ -169,6 +112,7 @@ describe('startWorkerDrainLoop', () => {
       }),
     );
 
+    const executeRun = vi.fn().mockResolvedValue({ ok: true });
     const { stop } = startWorkerDrainLoop(
       workerId,
       {
@@ -177,19 +121,19 @@ describe('startWorkerDrainLoop', () => {
         leases,
         repos,
         repoId: RepositoryId('owner/repo'),
-        runRepository: runRepo,
-        executeRun: async () => ({ ok: true }),
+        executeRun,
         prepareWorktree: async () => ({ cwd: '/tmp/wt' }),
         resetWorktree: () => {},
         isWorkerAlive: () => true,
         now: () => new Date(),
         ttlMs: 60_000,
+        updateRun: (runId, patch) => runRepo.update(runId, patch),
         findRun: () => undefined,
       },
       1_000,
     );
     stop();
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(reclaimSpy).not.toHaveBeenCalled();
+    expect(executeRun).not.toHaveBeenCalled();
   });
 });

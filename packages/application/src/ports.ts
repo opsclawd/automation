@@ -132,14 +132,13 @@ export type {
   RepositoryRegistryPort,
   RepositoryUpdatePatch,
 } from './ports/repository-registry-port.js';
-export type { JobQueuePort, EnqueueJobInput } from './ports/job-queue-port.js';
+export type { JobQueuePort, EnqueueJobInput, ClaimNextInput } from './ports/job-queue-port.js';
 export type { WorkerRegistryPort } from './ports/worker-registry-port.js';
 export type {
   WorkerLeasePort,
   AcquireLeaseInput,
   HeartbeatLeaseInput,
   ReleaseLeaseInput,
-  ReclaimExpiredInput,
 } from './ports/worker-lease-port.js';
 
 export type {
@@ -206,7 +205,7 @@ export type {
   FixDiffInspectionResult,
 } from './ports/fix-diff-inspector-port.js';
 
-export type { ClassifyExitInput } from '@ai-sdlc/domain';
+export type { ClassifyExitInput, JobOwnership } from '@ai-sdlc/domain';
 
 export type ClassifyExitFn = (input: ClassifyExitInput) => Failure;
 
@@ -313,3 +312,18 @@ export type {
   SchedulerDispatchTotalRecord,
   SchedulerRepositorySkipTotalRecord,
 } from './ports/repository-scheduler-port.js';
+
+export type {
+  WorktreeRecoveryPort,
+  PrepareWorktreeRecoveryInput,
+  WorktreeRecoveryOutcome,
+} from './ports/worktree-recovery-port.js';
+export type {
+  OperationalRecoveryPort,
+  OperationalRecoveryInspection,
+  CommitLeaseReclamationInput,
+  ReclaimExpiredClaimInput,
+  LeaseReclamationResult,
+  OperationalRecoveryConflictReason,
+} from './ports/operational-recovery-port.js';
+export type { RepositoryAvailabilityPort } from './ports/repository-availability-port.js';

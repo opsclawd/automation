@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P2",
+      "summary": "Missing JobOwnershipLostError try/catch around queue.releaseClaim for rejected jobs in workerLoop",
+      "file": "packages/application/src/executor/worker-loop.ts",
+      "suggested_fix": "Wrap queue.releaseClaim in a try/catch block that ignores JobOwnershipLostError, matching the pattern used in other releaseClaim call sites."
+    }
+  ]
+}

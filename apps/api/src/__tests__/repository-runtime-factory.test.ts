@@ -7,7 +7,10 @@ import { join } from 'node:path';
 import { mkdirSync, rmSync } from 'node:fs';
 import { openDatabase, applyMigrations, WorkerLeaseRepository } from '@ai-sdlc/infrastructure';
 import type { LoadedConfig } from '@ai-sdlc/shared';
-import type { RepositoryRuntime } from '../repository-runtime-factory.js';
+import type {
+  RepositoryExecutionRuntime,
+  RepositoryOperationalRuntime,
+} from '../repository-runtime-factory.js';
 
 const TEST_FINGERPRINT_A = 'fingerprint-repo-a';
 const TEST_FINGERPRINT_A_V2 = 'fingerprint-repo-a-v2';
@@ -59,8 +62,35 @@ function makeFactory(): TestFactoryDeps {
 
   const factory = new RepositoryRuntimeFactory({
     stateRoot,
-    controlPlaneDb,
-    buildRuntime: async ({ repository, paths, loadedConfig }) => {
+    buildOperationalRuntime: async ({ repository, paths }) => {
+      const db = openDatabase(paths.database());
+      applyMigrations(db);
+      const workerLeaseRepository = new WorkerLeaseRepository(db);
+      return {
+        repository,
+        paths,
+        runRepository: {} as never,
+        workerRegistry: {} as never,
+        workerLeaseRepository,
+        workerLoopDeps: {} as never,
+        eventRepository: {} as never,
+        prReviewRepository: {} as never,
+        loopRepository: {} as never,
+        agentInvocationRepository: {} as never,
+        validationRunRepository: {} as never,
+        failureRepository: {} as never,
+        jobQueue: {} as never,
+        close() {
+          closeCallCount++;
+          try {
+            db.close();
+          } catch {
+            /* ignore */
+          }
+        },
+      } as unknown as RepositoryOperationalRuntime;
+    },
+    buildExecutionRuntime: async ({ repository, paths, loadedConfig }) => {
       const db = openDatabase(paths.database());
       applyMigrations(db);
       const workerLeaseRepository = new WorkerLeaseRepository(db);
@@ -70,11 +100,17 @@ function makeFactory(): TestFactoryDeps {
         configFingerprint: loadedConfig.fingerprint,
         defaultBranch: repository.defaultBranch,
         fullName: repository.fullName,
-        jobQueue: {} as never,
         runRepository: {} as never,
         workerRegistry: {} as never,
         workerLeaseRepository,
         workerLoopDeps: {} as never,
+        eventRepository: {} as never,
+        prReviewRepository: {} as never,
+        loopRepository: {} as never,
+        agentInvocationRepository: {} as never,
+        validationRunRepository: {} as never,
+        failureRepository: {} as never,
+        jobQueue: {} as never,
         close() {
           closeCallCount++;
           try {
@@ -83,7 +119,7 @@ function makeFactory(): TestFactoryDeps {
             /* ignore */
           }
         },
-      } as unknown as RepositoryRuntime;
+      } as unknown as RepositoryExecutionRuntime;
     },
   });
 

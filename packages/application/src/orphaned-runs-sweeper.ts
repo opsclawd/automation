@@ -2,6 +2,7 @@ import {
   createJob,
   resumeRun,
   WorkerLeaseConflictError,
+  LeaseOwnershipLostError,
   type IssueNumber,
   type JobId,
   type RunId,
@@ -77,8 +78,9 @@ export class OrphanedRunsSweeper {
       }
 
       let leaseAcquired = false;
+      let acquiredLease;
       try {
-        this.deps.leases.acquire({
+        acquiredLease = this.deps.leases.acquire({
           repoId: run.repoId,
           workerId: 'orphan-sweeper' as unknown as WorkerId,
           runId: run.uuid as RunId,
@@ -166,18 +168,21 @@ export class OrphanedRunsSweeper {
           error: err instanceof Error ? err.message : String(err),
         });
       } finally {
-        if (leaseAcquired) {
+        if (leaseAcquired && acquiredLease) {
           try {
             this.deps.leases.release({
               repoId: run.repoId,
               workerId: 'orphan-sweeper' as unknown as WorkerId,
               runId: run.uuid as RunId,
+              leaseToken: acquiredLease.leaseToken,
             });
           } catch (relErr) {
-            this.deps.logger.error(
-              `OrphanedRunsSweeper: Failed to release lease on completion for ${run.uuid}:`,
-              relErr,
-            );
+            if (!(relErr instanceof LeaseOwnershipLostError)) {
+              this.deps.logger.error(
+                `OrphanedRunsSweeper: Failed to release lease on completion for ${run.uuid}:`,
+                relErr,
+              );
+            }
           }
         }
       }

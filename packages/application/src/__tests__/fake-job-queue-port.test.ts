@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { createJob, JobId, RepositoryId, RunId, WorkerId, IssueNumber } from '@ai-sdlc/domain';
+import {
+  createJob,
+  JobId,
+  RepositoryId,
+  RunId,
+  WorkerId,
+  IssueNumber,
+  generateJobOwnership,
+  JobOwnershipLostError,
+} from '@ai-sdlc/domain';
 import { FakeRepositoryPort, FakeJobQueuePort } from '../test-doubles/index.js';
 
 function repo(id: string, enabled = true) {
@@ -60,24 +69,27 @@ describe('FakeJobQueuePort', () => {
     const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
     q.enqueue({ job: job('a', 'r1') });
     const c = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })!;
-    q.markRunning(c.id, new Date());
-    q.markSucceeded(c.id, new Date());
+    const ownership = generateJobOwnership(c, WorkerId('w1'));
+    q.markRunning(ownership, new Date());
+    q.markSucceeded(ownership, new Date());
     expect(q.findById(c.id)?.status).toBe('succeeded');
   });
   it('lifecycle: claim -> markRunning -> markFailed', () => {
     const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
     q.enqueue({ job: job('a', 'r1') });
     const c = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })!;
-    q.markRunning(c.id, new Date());
-    q.markFailed(c.id, new Date());
+    const ownership = generateJobOwnership(c, WorkerId('w1'));
+    q.markRunning(ownership, new Date());
+    q.markFailed(ownership, new Date());
     expect(q.findById(c.id)?.status).toBe('failed');
   });
   it('lifecycle: claim -> markRunning -> markCancelled', () => {
     const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
     q.enqueue({ job: job('a', 'r1') });
     const c = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') })!;
-    q.markRunning(c.id, new Date());
-    q.markCancelled(c.id, new Date());
+    const ownership = generateJobOwnership(c, WorkerId('w1'));
+    q.markRunning(ownership, new Date());
+    q.markCancelled(ownership, new Date());
     expect(q.findById(c.id)?.status).toBe('cancelled');
   });
   it('listForRepo / listForRun return matching jobs', () => {
@@ -117,6 +129,36 @@ describe('FakeJobQueuePort', () => {
       const claimedR2 = q.claimNext({ workerId: WorkerId('w2'), repoId: RepositoryId('r2') });
       expect(claimedR2?.repoId).toBe('r2');
       expect(claimedR1?.id).not.toBe(claimedR2?.id);
+    });
+
+    it('stale claim token cannot mutate reclaimed job', () => {
+      const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
+      q.enqueue({ job: job('a', 'r1') });
+
+      // 1st claim
+      const claimed1 = q.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') });
+      expect(claimed1).toBeDefined();
+      const owner1 = generateJobOwnership(claimed1!, WorkerId('w1'));
+
+      // Reclaim (via releaseClaim) and 2nd claim (gets a fresh token)
+      q.releaseClaim(owner1);
+      const claimed2 = q.claimNext({ workerId: WorkerId('w2'), repoId: RepositoryId('r1') });
+      expect(claimed2).toBeDefined();
+      const _owner2 = generateJobOwnership(claimed2!, WorkerId('w2'));
+
+      // Verify owner1 (stale claim token) cannot mutate the reclaimed job:
+      // 1. markRunning
+      expect(() => q.markRunning(owner1, new Date())).toThrow(JobOwnershipLostError);
+      // 2. markSucceeded
+      expect(() => q.markSucceeded(owner1, new Date())).toThrow(JobOwnershipLostError);
+      // 3. markFailed
+      expect(() => q.markFailed(owner1, new Date())).toThrow(JobOwnershipLostError);
+      // 4. markCancelled
+      expect(() => q.markCancelled(owner1, new Date())).toThrow(JobOwnershipLostError);
+      // 5. releaseClaim
+      expect(() => q.releaseClaim(owner1)).toThrow(JobOwnershipLostError);
+      // 6. resetToQueued
+      expect(() => q.resetToQueued(owner1)).toThrow(JobOwnershipLostError);
     });
   });
 });

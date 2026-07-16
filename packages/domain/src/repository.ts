@@ -118,3 +118,34 @@ export class RunRepositoryMissingError extends Error {
     this.identifier = identifier;
   }
 }
+
+export class RepositoryUnavailableError extends Error {
+  readonly repositoryId: RepositoryId;
+  readonly fullName: string;
+  readonly localPath: string;
+  readonly operation: string;
+  override readonly cause: string;
+  readonly code: string;
+  readonly operatorAction: string;
+
+  constructor(detail: {
+    repositoryId: RepositoryId;
+    fullName: string;
+    localPath: string;
+    operation: string;
+    cause: string;
+    code?: string;
+  }) {
+    const message = `Repository ${detail.fullName} (${detail.repositoryId}) unavailable during ${detail.operation}: ${detail.cause}${detail.code ? ` (${detail.code})` : ''}`;
+    super(message);
+    this.name = 'RepositoryUnavailableError';
+    this.repositoryId = detail.repositoryId;
+    this.fullName = detail.fullName;
+    this.localPath = detail.localPath;
+    this.operation = detail.operation;
+    this.cause = detail.cause;
+    this.code = detail.code ?? 'UNKNOWN';
+    this.operatorAction =
+      'Restore the path or mount, then refresh repository health before retrying.';
+  }
+}

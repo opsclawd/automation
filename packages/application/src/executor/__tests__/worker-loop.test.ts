@@ -4,6 +4,7 @@ import {
   IssueNumber,
   JobId,
   RepositoryId,
+  RepositoryUnavailableError,
   RunId,
   WorkerId,
   createJob,
@@ -121,6 +122,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId: import('@ai-sdlc/domain').RunId) => makeRun(runId as string),
+      updateRun: () => {},
     };
 
     await workerLoop(WorkerId('w1'), deps);
@@ -178,6 +180,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId: import('@ai-sdlc/domain').RunId) => makeRun(runId as string),
+      updateRun: () => {},
     };
 
     await Promise.all([
@@ -217,6 +220,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
@@ -268,6 +272,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 10,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
@@ -312,6 +317,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     const job = s.queue.findById(JobId('j1'));
@@ -361,6 +367,7 @@ describe('workerLoop', () => {
       now: () => s.now, // keep the prior lease unexpired
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     // The new job is released back to queued (conflict), and crucially the prior
@@ -369,120 +376,6 @@ describe('workerLoop', () => {
     const lease = s.leases.current(RepositoryId('r1'));
     expect(lease?.workerId).toBe('w1');
     expect(lease?.runId).toBe('run-old');
-  });
-
-  it('reclaimExpired recovers a dead worker lease so new worker can proceed', async () => {
-    const s = setup();
-    const onLeaseReclaimed = vi.fn();
-    // Register w3 and mark it stopping
-    s.registry.register(
-      createWorker({
-        id: WorkerId('w3'),
-        repoId: RepositoryId('r1'),
-        hostname: 'h',
-        processId: 3,
-        now: s.now,
-      }),
-    );
-    s.registry.markBusy(WorkerId('w3'), RepositoryId('r1'));
-
-    // Give w1 a lease that we will make "expired" by advancing time
-    const lease = s.leases.acquire({
-      repoId: RepositoryId('r1'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-old'),
-      now: s.now,
-      ttlMs: 60_000,
-    });
-    s.registry.markStopping(WorkerId('w1'), RepositoryId('r1'));
-
-    const lateNow = new Date(lease.expiresAt.getTime() + 1000);
-
-    s.queue.enqueue({
-      job: createJob({
-        id: JobId('j1'),
-        runId: RunId('run-1'),
-        repoId: RepositoryId('r1'),
-        issueNumber: IssueNumber(1),
-        createdAt: lateNow,
-      }),
-    });
-
-    await workerLoop(WorkerId('w2'), {
-      registry: s.registry,
-      queue: s.queue,
-      leases: s.leases,
-      repos: s.repos,
-      repoId: RepositoryId('r1'),
-      executeRun: executeOk,
-      prepareWorktree: prepareOk,
-      resetWorktree: (_repoId) => {},
-      isWorkerAlive: (_workerId) => false, // w1 is not alive
-      recoverableRunIds: new Set([RunId('run-old')]),
-      now: () => lateNow,
-      ttlMs: 60_000,
-      findRun: (runId) => makeRun(runId as string),
-      onLeaseReclaimed,
-    });
-
-    expect(s.queue.findById(JobId('j1'))!.status).toBe('succeeded');
-    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
-    expect(onLeaseReclaimed).toHaveBeenCalledWith({
-      repoId: RepositoryId('r1'),
-      previousWorkerId: WorkerId('w1'),
-      previousRunId: RunId('run-old'),
-      reclaimedByWorkerId: WorkerId('w2'),
-      reason: 'expired + worker stale + run recoverable',
-    });
-  });
-
-  it('requeues reclaimed lease job left in running state by crashed worker', async () => {
-    const s = setup();
-
-    // Create a job for run-old and simulate w1 having marked it running before crashing
-    s.queue.enqueue({
-      job: createJob({
-        id: JobId('j-old'),
-        runId: RunId('run-old'),
-        repoId: RepositoryId('r1'),
-        issueNumber: IssueNumber(1),
-        createdAt: s.now,
-      }),
-    });
-    // Advance job through claimed→running (w1 crashed after markRunning)
-    s.queue.claimNext({ workerId: WorkerId('w1'), repoId: RepositoryId('r1') });
-    s.queue.markRunning(JobId('j-old'), s.now);
-
-    // Give w1 a lease that expired
-    const lease = s.leases.acquire({
-      repoId: RepositoryId('r1'),
-      workerId: WorkerId('w1'),
-      runId: RunId('run-old'),
-      now: s.now,
-      ttlMs: 60_000,
-    });
-
-    const lateNow = new Date(lease.expiresAt.getTime() + 1000);
-
-    await workerLoop(WorkerId('w2'), {
-      registry: s.registry,
-      queue: s.queue,
-      leases: s.leases,
-      repos: s.repos,
-      repoId: RepositoryId('r1'),
-      executeRun: executeOk,
-      prepareWorktree: prepareOk,
-      resetWorktree: (_repoId) => {},
-      isWorkerAlive: () => false,
-      recoverableRunIds: new Set([RunId('run-old')]),
-      now: () => lateNow,
-      ttlMs: 60_000,
-      findRun: (runId) => makeRun(runId as string),
-    });
-
-    // The old job was requeued then claimed+executed by w2
-    expect(s.queue.findById(JobId('j-old'))!.status).toBe('succeeded');
-    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   });
 
   it('repo-bound worker skips a lease-conflicted job in its own repo and leaves other repos untouched', async () => {
@@ -534,6 +427,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     // j1 was released back to queued (r1 lease still held by w2)
@@ -565,6 +459,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     const w = s.registry.findById(WorkerId('w1'), RepositoryId('r1'));
@@ -589,6 +484,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(s.registry.findById(WorkerId('w1'), RepositoryId('r1'))!.status).toBe('busy');
@@ -636,6 +532,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 10,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(capturedSignal?.aborted).toBe(true);
@@ -690,6 +587,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 10,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(leaseHeldDuringCleanup).toBe(true);
@@ -727,6 +625,7 @@ describe('workerLoop', () => {
       now: () => new Date(),
       ttlMs: 10,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     // Microtask ordering: executeRun resolves as a microtask, its .then handler
@@ -768,6 +667,7 @@ describe('workerLoop', () => {
       ttlMs: 10,
       executeRunGraceMs: 50,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
     });
 
     expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
@@ -795,7 +695,6 @@ describe('workerLoop', () => {
       repos: s.repos,
       repoId: RepositoryId('r1'),
       executeRun: async () => {
-        // Wait for heartbeat to fire
         await new Promise((resolve) => setTimeout(resolve, 150));
         return { ok: true };
       },
@@ -807,11 +706,220 @@ describe('workerLoop', () => {
       ttlMs: 100,
       heartbeatIntervalMs: 50,
       findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
       onProgress,
     });
 
     expect(onProgress).toHaveBeenCalled();
-    // 1 call at start of loop + at least 1 call during heartbeat
     expect(onProgress.mock.calls.length).toBeGreaterThanOrEqual(2);
   }, 10_000);
+
+  it('cooperative shutdown requeues resumable job and releases exact lease', async () => {
+    const s = setup();
+    const abortController = new AbortController();
+    let abortReason: string | undefined = 'shutdown';
+
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    const executeRun = async ({
+      signal,
+    }: {
+      run: Run;
+      workerId: WorkerId;
+      cwd: string;
+      signal: AbortSignal;
+    }) => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (signal.aborted) return { ok: false };
+      return { ok: true };
+    };
+
+    const runPromise = workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun,
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
+      outerSignal: abortController.signal,
+      getAbortReason: () => abortReason,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    abortController.abort();
+
+    await runPromise;
+
+    const job = s.queue.findById(JobId('j1'));
+    expect(job!.status).toBe('queued');
+    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+  });
+
+  it('user cancellation remains terminal', async () => {
+    const s = setup();
+    const abortController = new AbortController();
+    let abortReason: string | undefined = 'user_cancelled';
+    const updateRun = vi.fn();
+
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    const executeRun = async ({
+      signal,
+    }: {
+      run: Run;
+      workerId: WorkerId;
+      cwd: string;
+      signal: AbortSignal;
+    }) => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (signal.aborted) return { ok: false };
+      return { ok: true };
+    };
+
+    const runPromise = workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun,
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun,
+      outerSignal: abortController.signal,
+      getAbortReason: () => abortReason,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    abortController.abort();
+
+    await runPromise;
+
+    expect(updateRun).toHaveBeenCalledWith(RunId('run-1'), { status: 'cancelled' });
+    const job = s.queue.findById(JobId('j1'));
+    expect(job!.status).toBe('cancelled');
+  });
+
+  it('non-cooperative shutdown preserves lease', async () => {
+    const s = setup();
+    let abortReason: string | undefined = 'lease_lost';
+
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    vi.spyOn(s.leases, 'heartbeat').mockImplementation(() => {
+      throw new Error('heartbeat failed');
+    });
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun: async () => await new Promise<never>(() => {}),
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 10,
+      executeRunGraceMs: 50,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
+      getAbortReason: () => abortReason,
+    });
+
+    const job = s.queue.findById(JobId('j1'));
+    expect(job!.status).toBe('failed');
+    const lease = s.leases.current(RepositoryId('r1'));
+    expect(lease?.workerId).toBe('w1');
+    expect(lease?.runId).toBe('run-1');
+  });
+
+  it('repository unavailable fails matching job and run', async () => {
+    const s = setup();
+    const markUnreachable = vi.fn();
+    const updateRun = vi.fn();
+
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun: executeOk,
+      prepareWorktree: async () => {
+        throw new RepositoryUnavailableError({
+          repositoryId: RepositoryId('r1'),
+          fullName: 'o/r1',
+          localPath: '/x',
+          operation: 'worktree preparation',
+          cause: 'path not accessible',
+        });
+      },
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun,
+      repoAvailability: { markUnreachable },
+    });
+
+    expect(markUnreachable).toHaveBeenCalledWith(RepositoryId('r1'), 'path not accessible');
+    expect(updateRun).toHaveBeenCalledWith(RunId('run-1'), {
+      status: 'failed',
+      failureReason: 'path not accessible',
+    });
+    expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
+    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+  });
 });

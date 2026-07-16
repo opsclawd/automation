@@ -1,12 +1,21 @@
-import { type RepositoryId, type WorkerLease, WorkerLeaseConflictError } from '@ai-sdlc/domain';
+import {
+  type RepositoryId,
+  type WorkerLease,
+  type LeaseToken,
+  WorkerLeaseConflictError,
+  LeaseOwnershipLostError,
+} from '@ai-sdlc/domain';
 import type {
   WorkerLeasePort,
   AcquireLeaseInput,
   HeartbeatLeaseInput,
   ReleaseLeaseInput,
-  ReclaimExpiredInput,
 } from '../ports/worker-lease-port.js';
 import type { WorkerRegistryPort } from '../ports/worker-registry-port.js';
+
+function makeLeaseToken(): LeaseToken {
+  return `lt-${Math.random().toString(36).slice(2)}-${Date.now()}` as LeaseToken;
+}
 
 /**
  * In-memory fake WorkerLeasePort enforcing one active lease per Repository.
@@ -26,12 +35,13 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
 
   acquire(input: AcquireLeaseInput): WorkerLease {
     const existing = this.leases.get(input.repoId);
-    if (
-      existing &&
-      existing.expiresAt > input.now &&
-      (existing.workerId !== input.workerId || existing.runId !== input.runId)
-    ) {
-      throw new WorkerLeaseConflictError(input.repoId, existing.workerId);
+    if (existing) {
+      const isExpired = existing.expiresAt.getTime() <= input.now.getTime();
+      const isSameWorkerAndRun =
+        existing.workerId === input.workerId && existing.runId === input.runId;
+      if (!isExpired && !isSameWorkerAndRun) {
+        throw new WorkerLeaseConflictError(input.repoId, existing.workerId);
+      }
     }
     const lease: WorkerLease = {
       repoId: input.repoId,
@@ -40,6 +50,7 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
       acquiredAt: input.now,
       heartbeatAt: input.now,
       expiresAt: new Date(input.now.getTime() + input.ttlMs),
+      leaseToken: makeLeaseToken(),
     };
     this.leases.set(input.repoId, lease);
     return lease;
@@ -47,13 +58,27 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
 
   heartbeat(input: HeartbeatLeaseInput): void {
     const l = this.leases.get(input.repoId);
-    if (!l || l.workerId !== input.workerId || l.runId !== input.runId) return;
+    if (
+      !l ||
+      l.workerId !== input.workerId ||
+      l.runId !== input.runId ||
+      l.leaseToken !== input.leaseToken
+    ) {
+      throw new LeaseOwnershipLostError(input.repoId, input.leaseToken);
+    }
     this.leases.set(input.repoId, { ...l, heartbeatAt: input.now, expiresAt: input.newExpiresAt });
   }
 
   release(input: ReleaseLeaseInput): void {
     const l = this.leases.get(input.repoId);
-    if (!l || l.workerId !== input.workerId || l.runId !== input.runId) return;
+    if (
+      !l ||
+      l.workerId !== input.workerId ||
+      l.runId !== input.runId ||
+      l.leaseToken !== input.leaseToken
+    ) {
+      throw new LeaseOwnershipLostError(input.repoId, input.leaseToken);
+    }
     this.leases.delete(input.repoId);
   }
 
@@ -64,30 +89,5 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
   checkActiveLease(repoId: RepositoryId, now: Date): boolean {
     const l = this.leases.get(repoId);
     return l !== undefined && l.expiresAt.getTime() > now.getTime();
-  }
-
-  reclaimExpired(input: ReclaimExpiredInput): WorkerLease[] {
-    const reclaimed: WorkerLease[] = [];
-    for (const lease of [...this.leases.values()]) {
-      if (input.now <= lease.expiresAt) continue;
-      const worker = this.registry.findById(lease.workerId, lease.repoId);
-      const workerStale =
-        !input.isWorkerAlive(lease.workerId) ||
-        worker?.status === 'stopping' ||
-        worker?.status === 'unhealthy';
-      if (!workerStale) continue;
-      if (!input.recoverableRunIds.has(lease.runId)) continue;
-      input.resetWorktree(lease.repoId);
-      input.onReclaimed({
-        repoId: lease.repoId,
-        previousWorkerId: lease.workerId,
-        previousRunId: lease.runId,
-        reclaimedByWorkerId: input.reclaimedByWorkerId,
-        reason: 'expired + worker stale + run recoverable',
-      });
-      this.leases.delete(lease.repoId);
-      reclaimed.push(lease);
-    }
-    return reclaimed;
   }
 }

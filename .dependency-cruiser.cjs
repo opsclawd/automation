@@ -108,13 +108,15 @@ module.exports = {
       severity: 'error',
       comment:
         'Only apps/api/src/compose.ts (and the repository-scoped ' +
-        'compose-repository-runtime.ts) may import both @ai-sdlc/application and ' +
-        '@ai-sdlc/infrastructure. Move wiring there.',
+        'compose-repository-runtime.ts / compose-repository-operational-runtime.ts) ' +
+        'may import both @ai-sdlc/application and @ai-sdlc/infrastructure. ' +
+        'Move wiring there.',
       from: {
         path: '^apps/api/src',
         pathNot: [
           '^apps/api/src/compose\\.ts$',
           '^apps/api/src/compose-repository-runtime\\.ts$',
+          '^apps/api/src/compose-repository-operational-runtime\\.ts$',
           '^apps/api/src/repository-runtime-catalog\\.ts$',
           '^apps/api/src/repository-runtime-factory\\.ts$',
           '(^|/)__tests__/',

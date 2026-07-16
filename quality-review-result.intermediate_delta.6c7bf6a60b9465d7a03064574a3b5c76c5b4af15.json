@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "findRun and listRuns eagerly resolve RepositoryExecutionRuntime instead of using OperationalRuntime, causing severe performance overhead and hiding runs from disabled repositories.",
+      "file": "apps/api/src/repository-runtime-catalog.ts",
+      "suggested_fix": "Update listRuns to use resolveOperational and resolveAllOperational instead of resolveExecution and resolveEnabled. Update findRun to search for the run by iterating over resolveAllOperational(), and only call resolveExecution on the specific repository where the run was found."
+    }
+  ]
+}
