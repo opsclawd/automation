@@ -1,10 +1,19 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { PhaseName, RunId } from '@ai-sdlc/domain';
 import {
   createComposedOrchestrationHarness,
   type ComposedOrchestrationHarness,
 } from './helpers/composed-orchestration-harness.js';
+
+const FIXTURE_PATH = fileURLToPath(
+  new URL('./fixtures/validation-env-fixture.mjs', import.meta.url),
+);
+
+function fixtureCommand(expectedRepository: string): string {
+  return `node ${JSON.stringify(FIXTURE_PATH)} ${expectedRepository} check`;
+}
 
 const harnessCleanup: ComposedOrchestrationHarness[] = [];
 
@@ -41,7 +50,7 @@ describe('compose-validation-environment', () => {
       try {
         const harness = createHarness({
           repoFullName: TARGET_REPO,
-          validationCommands: ['ls'],
+          validationCommands: [fixtureCommand(TARGET_REPO)],
         });
 
         const validateHandler = harness.container.phaseRegistry.get(PhaseName('validate'));
@@ -117,13 +126,13 @@ describe('compose-validation-environment', () => {
         const harnessA = createHarness({
           repoFullName: REPO_A,
           issueNumber: 1,
-          validationCommands: ['ls'],
+          validationCommands: [fixtureCommand(REPO_A)],
         });
 
         const harnessB = createHarness({
           repoFullName: REPO_B,
           issueNumber: 2,
-          validationCommands: ['ls'],
+          validationCommands: [fixtureCommand(REPO_B)],
         });
 
         const handlerA = harnessA.container.phaseRegistry.get(PhaseName('validate'));
@@ -247,25 +256,22 @@ describe('compose-validation-environment', () => {
       expect(existsSync(targetRoot)).toBe(false);
     });
 
-    it('handles cleanup after assertion failures gracefully', async () => {
+    it('cleanup is idempotent when called multiple times', async () => {
       const harness = createHarness({
-        repoFullName: 'owner/assertion-fail-repo',
+        repoFullName: 'owner/idempotent-cleanup-repo',
         validationCommands: ['ls'],
       });
 
       const validateHandler = harness.container.phaseRegistry.get(PhaseName('validate'));
+      const result = await validateHandler.run(harness.context);
+      expect(result.outcome).toBe('passed');
 
-      let cleanupWasCalled = false;
-      try {
-        const result = await validateHandler.run(harness.context);
-        expect(result.outcome).toBe('passed');
-        expect(true).toBe(false);
-      } catch {
-        cleanupWasCalled = true;
-        harness.cleanup();
-      }
+      harness.cleanup();
+      expect(existsSync(harness.automationRoot)).toBe(false);
 
-      expect(cleanupWasCalled).toBe(true);
+      // afterEach's harnessCleanup array will call cleanup() again for this
+      // harness; a second call after removal must not throw.
+      expect(() => harness.cleanup()).not.toThrow();
     });
 
     it('cleans up even when validation fails', async () => {
