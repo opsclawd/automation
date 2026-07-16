@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 import { PhaseName, RunId } from '@ai-sdlc/domain';
 import {
   createComposedOrchestrationHarness,
@@ -33,7 +34,9 @@ describe('compose-validation-environment', () => {
       const TARGET_REPO = 'owner/test-repo';
 
       const originalGithubRepo = process.env.GITHUB_REPOSITORY;
+      const originalInheritedSentinel = process.env.AI_SDLC_INHERITED_SENTINEL;
       process.env.GITHUB_REPOSITORY = AMBIENT_REPO;
+      process.env.AI_SDLC_INHERITED_SENTINEL = 'sentinel-preserved';
 
       try {
         const harness = createHarness({
@@ -60,6 +63,11 @@ describe('compose-validation-environment', () => {
           process.env.GITHUB_REPOSITORY = originalGithubRepo;
         } else {
           delete process.env.GITHUB_REPOSITORY;
+        }
+        if (originalInheritedSentinel !== undefined) {
+          process.env.AI_SDLC_INHERITED_SENTINEL = originalInheritedSentinel;
+        } else {
+          delete process.env.AI_SDLC_INHERITED_SENTINEL;
         }
       }
     });
@@ -101,7 +109,9 @@ describe('compose-validation-environment', () => {
       const REPO_B = 'owner/repo-b';
 
       const originalGithubRepo = process.env.GITHUB_REPOSITORY;
+      const originalInheritedSentinel = process.env.AI_SDLC_INHERITED_SENTINEL;
       process.env.GITHUB_REPOSITORY = AMBIENT_REPO;
+      process.env.AI_SDLC_INHERITED_SENTINEL = 'sentinel-preserved';
 
       try {
         const harnessA = createHarness({
@@ -151,6 +161,11 @@ describe('compose-validation-environment', () => {
           process.env.GITHUB_REPOSITORY = originalGithubRepo;
         } else {
           delete process.env.GITHUB_REPOSITORY;
+        }
+        if (originalInheritedSentinel !== undefined) {
+          process.env.AI_SDLC_INHERITED_SENTINEL = originalInheritedSentinel;
+        } else {
+          delete process.env.AI_SDLC_INHERITED_SENTINEL;
         }
       }
     });
@@ -228,7 +243,8 @@ describe('compose-validation-environment', () => {
 
       harness.cleanup();
 
-      // Accessing properties after cleanup is undefined behavior, but the cleanup itself should not throw
+      expect(existsSync(automationRoot)).toBe(false);
+      expect(existsSync(targetRoot)).toBe(false);
     });
 
     it('handles cleanup after assertion failures gracefully', async () => {
@@ -239,13 +255,17 @@ describe('compose-validation-environment', () => {
 
       const validateHandler = harness.container.phaseRegistry.get(PhaseName('validate'));
 
+      let cleanupWasCalled = false;
       try {
         const result = await validateHandler.run(harness.context);
         expect(result.outcome).toBe('passed');
-      } catch (error) {
+        expect(true).toBe(false);
+      } catch {
+        cleanupWasCalled = true;
         harness.cleanup();
-        throw error;
       }
+
+      expect(cleanupWasCalled).toBe(true);
     });
 
     it('cleans up even when validation fails', async () => {

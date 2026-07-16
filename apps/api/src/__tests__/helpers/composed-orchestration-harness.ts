@@ -181,6 +181,9 @@ export function createComposedOrchestrationHarness(
 
   const context = container.buildRunContext!(runRecord);
 
+  const worktreeIssueDir = path.join(worktreeRoot, `issue-${runRecord.issueNumber}`);
+  mkdirSync(worktreeIssueDir, { recursive: true });
+
   const cleanup = () => {
     try {
       rmSync(automationRoot, { recursive: true, force: true });
