@@ -3854,11 +3854,13 @@ export function composeRoot(opts: ComposeOptions): Container {
                   metadata: {
                     implementation_task_number: ctx.stepIndex,
                     iteration: ctx.iterationIndex,
-                    invocation_type: isDeterministic
-                      ? 'deterministic_fix'
-                      : isSemanticRetry
-                        ? 'semantic_retry'
-                        : 'initial',
+                    invocation_type: opts.isTerminalFix
+                      ? 'terminal_fix'
+                      : isDeterministic
+                        ? 'deterministic_fix'
+                        : isSemanticRetry
+                          ? 'semantic_retry'
+                          : 'initial',
                   },
                   ...(isSemanticRetry
                     ? {
