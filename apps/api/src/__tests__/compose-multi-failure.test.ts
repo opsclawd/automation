@@ -10,8 +10,7 @@ describe('multi-failure revalidation collection', () => {
     );
 
     // Look for the ReviewFixLoop runRevalidation closure
-    // It's around line 2600
-    const reviewFixRevalMatch = composeSrc.match(/const reviewFixLoopInstance = new ReviewFixLoop\(\{[\s\S]*?runRevalidation: async \(ctx\) => \{([\s\S]*?)\},[\s\S]*?\}\);/);
+    const reviewFixRevalMatch = composeSrc.match(/const reviewFixLoopInstance = new ReviewFixLoop\(\{[\s\S]*?runRevalidation: async \(ctx: StepContext\) => \{([\s\S]*?)\},[\s\S]*?rollbackFix:/);
 
     // Fallback if the above regex is too strict about newlines/spaces
     const reviewFixRevalBody = reviewFixRevalMatch ? reviewFixRevalMatch[1] :
@@ -32,8 +31,8 @@ describe('multi-failure revalidation collection', () => {
     );
 
     // Look for the ImplementStepLoop runRevalidation closure
-    // It's around line 4280
-    const implementRevalMatch = composeSrc.match(/implementStepLoop = new ImplementStepLoop\(\{[\s\S]*?runRevalidation: async \(ctx\) => \{([\s\S]*?)\},[\s\S]*?\}\);/);
+    // The regex matches up to 'await artifacts.write(' which is outside the env: {} block
+    const implementRevalMatch = composeSrc.match(/implementStepLoop = new ImplementStepLoop\(\{[\s\S]*?runRevalidation: async \(ctx\) => \{([\s\S]*?await artifacts\.write\(\{[\s\S]*?\}\);)/);
 
     expect(implementRevalMatch).toBeTruthy();
     const implementRevalBody = implementRevalMatch![1];
