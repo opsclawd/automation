@@ -8,10 +8,7 @@ import { ProcessValidationAdapter, commandSlug } from '../validation-adapter.js'
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const FIXTURE_PATH = resolve(
-  __dirname,
-  '../../../../../apps/api/src/__tests__/fixtures/validation-env-fixture.mjs',
-);
+const FIXTURE_PATH = resolve(__dirname, './fixtures/validation-env-fixture.mjs');
 
 const tempDirs: string[] = [];
 
