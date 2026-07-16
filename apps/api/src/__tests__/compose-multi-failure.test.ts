@@ -98,13 +98,21 @@ describe('multi-failure revalidation collection', () => {
       expect(failedCommands[0]!.command).toContain('FIRST');
       expect(failedCommands[1]!.command).toContain('SECOND');
 
-      // Assert that failureDetail is actually bounded
       expect(capturedRevalResult).toBeDefined();
       expect(capturedRevalResult.passed).toBe(false);
       expect(capturedRevalResult.failureDetail).toBeDefined();
       const detail = capturedRevalResult.failureDetail;
 
-      // Extract stdout/stderr sections to check for bounding
+      expect(detail).toContain(validationCommands[0]);
+      expect(detail).toContain('\n\n---\n\n');
+      expect(detail).toContain(validationCommands[1]);
+
+      const firstDetailIndex = detail.indexOf(validationCommands[0]);
+      const separatorIndex = detail.indexOf('\n\n---\n\n');
+      const secondDetailIndex = detail.indexOf(validationCommands[1]);
+      expect(firstDetailIndex).toBeLessThan(separatorIndex);
+      expect(separatorIndex).toBeLessThan(secondDetailIndex);
+
       const stdoutParts = detail.split('Stdout:\n');
       const stderrParts = detail.split('Stderr:\n');
 
@@ -219,7 +227,21 @@ describe('implement terminal prompt contains every bounded deterministic validat
 
     const promptContent = readFileSync(capturedTerminalPromptPath, 'utf-8');
 
-    // Extract stdout/stderr sections to check for bounding
+    expect(promptContent).toContain('## DETERMINISTIC VERIFICATION FAILURES — MUST BE FIXED');
+    expect(promptContent).toContain(validationCommands[0]);
+    expect(promptContent).toContain('\n\n---\n\n');
+    expect(promptContent).toContain(validationCommands[1]);
+
+    const headingIndex = promptContent.indexOf(
+      '## DETERMINISTIC VERIFICATION FAILURES — MUST BE FIXED',
+    );
+    const firstCmdIndex = promptContent.indexOf(validationCommands[0]);
+    const separatorIndex = promptContent.indexOf('\n\n---\n\n');
+    const secondCmdIndex = promptContent.indexOf(validationCommands[1]);
+    expect(headingIndex).toBeLessThan(firstCmdIndex);
+    expect(firstCmdIndex).toBeLessThan(separatorIndex);
+    expect(separatorIndex).toBeLessThan(secondCmdIndex);
+
     const stdoutParts = promptContent.split('Stdout:\n');
     const stderrParts = promptContent.split('Stderr:\n');
 
