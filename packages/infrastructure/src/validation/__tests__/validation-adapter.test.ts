@@ -2,7 +2,16 @@ import { afterEach, describe, it, expect } from 'vitest';
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { ProcessValidationAdapter, commandSlug } from '../validation-adapter.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const FIXTURE_PATH = resolve(
+  __dirname,
+  '../../../../../apps/api/src/__tests__/fixtures/validation-env-fixture.mjs',
+);
 
 const tempDirs: string[] = [];
 
@@ -131,5 +140,75 @@ describe('ProcessValidationAdapter', () => {
     });
     expect(results[0].outcome).toBe('passed');
     expect(results[0].stdout.trim()).toBe('owner/repo-injected');
+  });
+
+  it('overlays the target repository while preserving inherited environment values', async () => {
+    const logDir = freshDir();
+    const adapter = new ProcessValidationAdapter();
+    const priorSentinel = process.env.AI_SDLC_INHERITED_SENTINEL;
+    try {
+      process.env.AI_SDLC_INHERITED_SENTINEL = 'sentinel-preserved';
+      const results = await adapter.run({
+        cwd: process.cwd(),
+        commands: [`node ${FIXTURE_PATH} owner/target-repo check TAIL_MARKER`],
+        timeoutSeconds: 30,
+        logDir,
+        env: {
+          GITHUB_REPOSITORY: 'owner/target-repo',
+        },
+      });
+      expect(results[0].outcome).toBe('passed');
+      expect(results[0].stdout).toContain('Repository=owner/target-repo');
+      expect(results[0].stdout).toContain('Sentinel=sentinel-preserved');
+    } finally {
+      if (priorSentinel !== undefined) {
+        process.env.AI_SDLC_INHERITED_SENTINEL = priorSentinel;
+      } else {
+        delete process.env.AI_SDLC_INHERITED_SENTINEL;
+      }
+    }
+  });
+
+  it('regression: fixture rejects ambient mismatched repository and passes with explicit override', async () => {
+    const logDir = freshDir();
+    const adapter = new ProcessValidationAdapter();
+    const priorRepo = process.env.GITHUB_REPOSITORY;
+    const priorSentinel = process.env.AI_SDLC_INHERITED_SENTINEL;
+    try {
+      process.env.GITHUB_REPOSITORY = 'owner/wrong-repository';
+      process.env.AI_SDLC_INHERITED_SENTINEL = 'sentinel-preserved';
+      const resultsAmbient = await adapter.run({
+        cwd: process.cwd(),
+        commands: [`node ${FIXTURE_PATH} owner/expected-repository check TAIL_MARKER`],
+        timeoutSeconds: 30,
+        logDir,
+      });
+      expect(resultsAmbient[0].outcome).toBe('failed');
+      expect(resultsAmbient[0].stderr).toContain('repository_mismatch');
+
+      const resultsOverride = await adapter.run({
+        cwd: process.cwd(),
+        commands: [`node ${FIXTURE_PATH} owner/expected-repository check TAIL_MARKER`],
+        timeoutSeconds: 30,
+        logDir,
+        env: {
+          GITHUB_REPOSITORY: 'owner/expected-repository',
+        },
+      });
+      expect(resultsOverride[0].outcome).toBe('passed');
+      expect(resultsOverride[0].stdout).toContain('Repository=owner/expected-repository');
+      expect(resultsOverride[0].stdout).toContain('Sentinel=sentinel-preserved');
+    } finally {
+      if (priorRepo !== undefined) {
+        process.env.GITHUB_REPOSITORY = priorRepo;
+      } else {
+        delete process.env.GITHUB_REPOSITORY;
+      }
+      if (priorSentinel !== undefined) {
+        process.env.AI_SDLC_INHERITED_SENTINEL = priorSentinel;
+      } else {
+        delete process.env.AI_SDLC_INHERITED_SENTINEL;
+      }
+    }
   });
 });
