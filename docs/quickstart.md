@@ -1,279 +1,386 @@
 # Orchestrator Quickstart
 
+This guide covers the implemented TypeScript orchestrator: installation, repository registration, local services, run creation and control, multi-repository scheduling, configuration, state, and recovery.
+
 ## Prerequisites
 
-- **Node 22+** (`node -v` to check)
-- **pnpm 9+** — enable via corepack:
-  ```bash
-  corepack enable
-  corepack prepare pnpm@9.12.3 --activate
-  ```
-- **`gh` CLI** authenticated (`gh auth status` to verify)
-- A valid `.ai-orchestrator.json` at the repo root
+- Node.js 22 or newer (`node --version`)
+- pnpm 9 or newer (`pnpm --version`)
+- Git
+- GitHub CLI authenticated for every repository you will operate (`gh auth status`)
+- A local checkout of this automation repository
+- A valid `.ai-orchestrator.json` in the automation repository
+
+Target repositories must be existing local Git working trees whose GitHub identity can be resolved through Git/`gh`. The control plane will not clone arbitrary repositories or operate on unregistered paths.
 
 ## Install
 
+From the automation repository:
+
 ```bash
-corepack enable   # idempotent; safe to re-run if already enabled
+corepack enable
+corepack prepare pnpm@9.12.3 --activate
 pnpm install
+pnpm -r build
 ```
 
-## Start the API and UI
-
-Open **two terminals**:
+Confirm the CLI is available:
 
 ```bash
-# Terminal 1 — API (includes embedded worker pool)
-pnpm --filter @ai-sdlc/api dev serve     # http://127.0.0.1:4319
-
-# Terminal 2 — Web dashboard
-pnpm --filter @ai-sdlc/web dev           # http://127.0.0.1:4310
+pnpm --filter @ai-sdlc/api dev --help
 ```
 
-## Worker Modes
+All examples below use the workspace development command. After packaging, the equivalent binary form is `orchestrator ...`.
 
-The orchestrator supports two worker modes that are **mutually exclusive for a single control plane**:
+## Choose a process topology
 
-| Mode       | Command                                       | Worker Pool            | Use Case                              |
-| ---------- | --------------------------------------------- | ---------------------- | ------------------------------------- |
-| Embedded   | `pnpm --filter @ai-sdlc/api dev serve`        | Built into API process | Local development, single-machine VPS |
-| Standalone | `pnpm --filter @ai-sdlc/api dev worker start` | Separate process(es)   | Multi-worker production               |
+| Mode          | Command                                       | Use                                                                         |
+| ------------- | --------------------------------------------- | --------------------------------------------------------------------------- |
+| API scheduler | `pnpm --filter @ai-sdlc/api dev serve`        | Required control-plane/API process and the simplest single-host deployment. |
+| Extra worker  | `pnpm --filter @ai-sdlc/api dev worker start` | Optional same-host scheduler worker process supervised independently.       |
 
-**Warning:** Do not run both `serve` (with embedded pool) and standalone `worker start` simultaneously against the same control plane. They compete for the same job queue and will produce duplicate dispatches. Choose one mode per deployment.
+Run only one API/control-plane process. Additional workers are supported only when every process shares the same host, state root, and SQLite files. Each process enforces its own `globalConcurrency`; Repository leases prevent concurrent ownership of one Repository across processes.
 
-### Embedded pool (`serve`)
+## Start the API and dashboard
 
-When running `pnpm --filter @ai-sdlc/api dev serve`, the API process includes an embedded scheduler that polls the job queue and dispatches workers directly. The worker pool runs in the same process as the API.
-
-### Standalone worker (`worker start`)
+Open two terminals:
 
 ```bash
-# Start one or more standalone worker processes
+# Terminal 1: API plus embedded scheduler/worker pool
+pnpm --filter @ai-sdlc/api dev serve
+
+# Terminal 2: browser dashboard
+pnpm --filter @ai-sdlc/web dev
+```
+
+Default addresses:
+
+- API: `http://127.0.0.1:4319`
+- Dashboard: `http://127.0.0.1:4310`
+
+For a separate worker topology, start the API according to your deployment configuration and run one or more same-host workers:
+
+```bash
 pnpm --filter @ai-sdlc/api dev worker start
-
-# With custom global concurrency
 pnpm --filter @ai-sdlc/api dev worker start --global-concurrency 4
 ```
 
-Workers poll the API for available jobs. Multiple worker processes can run concurrently on the **same machine** as long as they share access to the same SQLite database and control plane. Running workers across multiple machines is not supported — the scheduler uses local PID checks and hostname comparison for liveness detection, which are ambiguous across hosts.
+`--global-concurrency` and `--poll-interval-ms` override scheduler configuration for that process. The global counter is process-local; it is not a distributed cluster-wide limit.
+
+## Register repositories
+
+Register every checkout the control plane may operate on:
+
+```bash
+pnpm --filter @ai-sdlc/api dev repo register \
+  --local-path /absolute/path/to/acme-api
+
+pnpm --filter @ai-sdlc/api dev repo register \
+  --local-path /absolute/path/to/acme-web
+```
+
+The command validates the local path and GitHub identity before persisting the Repository. `--full-name owner/repo` may be supplied as a consistency check, but it must match the identity resolved through Git/`gh`.
+
+Inspect the registry:
+
+```bash
+pnpm --filter @ai-sdlc/api dev repo list
+pnpm --filter @ai-sdlc/api dev repo list --all --json
+pnpm --filter @ai-sdlc/api dev repo inspect --full-name acme/api
+```
+
+Repository IDs are stable SHA-256 identifiers. Commands that accept `<id|owner/name>` resolve either form; commands documented as `--id` require the stable ID unless their help says otherwise.
+
+Manage repository availability:
+
+```bash
+pnpm --filter @ai-sdlc/api dev repo disable --id <repository-id>
+pnpm --filter @ai-sdlc/api dev repo enable --id <repository-id>
+pnpm --filter @ai-sdlc/api dev repo refresh --id <repository-id>
+```
+
+Disabling a Repository blocks new admission while already admitted work drains. A degraded, unreachable, or otherwise unavailable Repository is skipped without preventing healthy repositories from running. `repo refresh` re-resolves Git/GitHub metadata and health after an operator repairs a path or remote.
 
 ## Start a run
 
+The TypeScript `RunExecutor` is the default:
+
 ```bash
-pnpm --filter @ai-sdlc/api dev run --issue 123
+pnpm --filter @ai-sdlc/api dev run \
+  --repository-id acme/api \
+  --target-repo-root /absolute/path/to/acme-api \
+  --issue 123
 ```
 
-The default executor is the TypeScript `RunExecutor`. On success the CLI prints a JSON line:
+When exactly one Repository is enabled, `--repository-id` may be omitted. With more than one enabled Repository it is required.
 
-<!-- prettier-ignore -->
-```json
-{"uuid":"a1b2c3d4-…","displayId":"issue-123-20260516-143000","exitCode":0,"status":"passed"}
+Useful run options:
+
+```text
+--base-branch <branch>     Override the Repository default branch.
+--executor ts              TypeScript executor (default).
+--executor bash            Deprecated emergency fallback.
+--verbose / --no-verbose   Control progress streaming.
+--target-repo-root <path>  Use a target checkout's legacy/single-target state context.
 ```
 
-Exit code 0 means the run passed; exit code 1 means it failed.
+On successful enqueue/start, the command emits JSON containing the Run UUID, display ID, repository identity, exit code, and status. Keep the UUID for management commands.
 
-## Where things live
+## Canonical phases
 
-All run data is under `.ai-runs/` in the repo root.
+The TypeScript executor advances through:
 
-| Path                                           | Contents                    |
-| ---------------------------------------------- | --------------------------- |
-| `.ai-runs/orchestrator.sqlite`                 | SQLite database of all runs |
-| `.ai-runs/agent-artifacts/<inv-id>/stdout.log` | Agent stdout per invocation |
-| `.ai-runs/agent-artifacts/<inv-id>/stderr.log` | Agent stderr per invocation |
+```text
+read_issue
+→ plan-design
+→ plan-write
+→ plan-review
+→ implement
+→ validate
+→ fix-validate
+→ review-fix
+→ compound
+→ create-pr
+→ post-pr-review
+```
 
-Worktrees for active runs are under `.ai-worktrees/issue-<N>/`. Completed run artifacts (design.md, plan.md, reviews, PR metadata) are archived to `ai/issues/<N>/`.
+The top-level phases are durable orchestration state. Review, fix, arbitration, and terminal-repair invocations inside a phase may have more specific labels in logs and artifacts.
+
+## Run statuses
+
+| Status               | Operator interpretation                                             |
+| -------------------- | ------------------------------------------------------------------- |
+| `queued`             | Waiting for a Worker to claim the Job.                              |
+| `running`            | Active execution.                                                   |
+| `waiting`            | Waiting for external PR review activity; eligible for reactivation. |
+| `blocked`            | Waiting for an external condition or explicit operator action.      |
+| `needs_human_review` | Automated policy exhausted; inspect artifacts before resuming.      |
+| `passed`             | Successful terminal state.                                          |
+| `failed`             | Failed terminal state.                                              |
+| `cancelled`          | Cancelled terminal state.                                           |
+
+Only `passed`, `failed`, and `cancelled` are terminal in the domain model.
+
+## Manage runs
+
+### Follow logs
+
+`runs logs` currently selects the Repository through its target root and the Run through its issue number:
+
+```bash
+pnpm --filter @ai-sdlc/api dev runs logs \
+  --issue 123 \
+  --target-repo-root /absolute/path/to/acme-api
+
+pnpm --filter @ai-sdlc/api dev runs logs \
+  --issue 123 \
+  --target-repo-root /absolute/path/to/acme-api \
+  --no-follow \
+  --lines 100
+```
+
+### Cancel
+
+Cancel by UUID or by Repository-scoped issue number, but not both:
+
+```bash
+pnpm --filter @ai-sdlc/api dev runs cancel \
+  --uuid <run-uuid> \
+  --repository-id acme/api \
+  --target-repo-root /absolute/path/to/acme-api \
+  --reason "operator requested"
+```
+
+### Execute queued or waiting work
+
+```bash
+pnpm --filter @ai-sdlc/api dev runs execute \
+  --uuid <run-uuid> \
+  --repository-id acme/api \
+  --target-repo-root /absolute/path/to/acme-api
+```
+
+`execute` accepts Runs in `queued`, `running`, or `waiting` state, acquires the Repository lease, and advances them through the `RunExecutor`.
+
+### Resume or retry
+
+```bash
+pnpm --filter @ai-sdlc/api dev runs resume \
+  --uuid <run-uuid> \
+  --repository-id acme/api \
+  --target-repo-root /absolute/path/to/acme-api
+
+pnpm --filter @ai-sdlc/api dev runs resume \
+  --uuid <run-uuid> \
+  --repository-id acme/api \
+  --target-repo-root /absolute/path/to/acme-api \
+  --from-phase implement \
+  --confirm
+```
+
+The command auto-detects the failed or blocked phase unless `--from-phase` is supplied. Unsafe phase retries stop with guidance and require `--confirm`; inspect the Run and worktree before confirming.
+
+### Check merge readiness
+
+```bash
+pnpm --filter @ai-sdlc/api dev runs check-merge-ready \
+  --uuid <run-uuid> \
+  --repository-id acme/api \
+  --target-repo-root /absolute/path/to/acme-api
+```
+
+The command fails for unknown Runs and for PRs with unverified or blocked review comments.
+
+Use `pnpm --filter @ai-sdlc/api dev runs --help` and the individual subcommand help before scripting these interfaces.
+
+## Dashboard and API context
+
+The dashboard provides:
+
+- a global run view with Repository identity;
+- Repository selection and Repository-specific run views;
+- Repository health and enabled state;
+- explicit Repository selection for run creation when multiple repositories are enabled;
+- Repository-preserving links to run detail, logs, artifacts, phases, jobs, and workers.
+
+The API accepts stable Repository IDs and resolves `owner/name` compatibility inputs where documented. Runs, jobs, leases, artifacts, and mutations are checked against persisted Repository ownership; clients do not supply arbitrary filesystem paths as resource identity.
 
 ## Configuration
 
-`.ai-orchestrator.json` at the repo root defines validation commands, phase skip-list, agent profiles, and timeouts. See [`packages/shared/src/config/schema.ts`](../packages/shared/src/config/schema.ts) for the full schema.
+The automation repository's `.ai-orchestrator.json` is required. A gitignored `.ai-orchestrator.local.json` may contain operator-specific overrides. For a selected target Repository, configuration is layered in this order:
 
-CLI flags for the `run` command:
+1. `automation/.ai-orchestrator.json`
+2. `automation/.ai-orchestrator.local.json`
+3. `target/.ai-orchestrator.json`
+4. `target/.ai-orchestrator.local.json`
+5. supported CLI overrides
 
-| Flag                     | Purpose                                                                                          |
-| ------------------------ | ------------------------------------------------------------------------------------------------ |
-| `--base-branch <branch>` | Base branch (default: target repository default branch). Used for worktree creation and PR base. |
-| `--model <model>`        | `AI_AGENT_MODEL` env var (Bash executor only). Rejected for `--executor ts`.                     |
-| `--agent-cli <cli>`      | `AI_RUNTIME` env var (Bash executor only). Rejected for `--executor ts`.                         |
-| `--executor <engine>`    | `ts` (default) or `bash` (legacy, emergency only)                                                |
+Plain objects deep-merge. Arrays follow the loader's indexed deep-merge behavior. Phase routing maps are replaced as policy units rather than partially combined. The persisted Run records the effective configuration fingerprint and source paths without copying local configuration contents into artifacts.
 
-## Managing a targeted run
-
-When you start a run against a different repository using `--target-repo-root <path>`, every follow-up command must point at the same target — otherwise it will read the orchestrator's own database and artifact directories. Pass `--target-repo-root` to each follow-up command:
-
-```bash
-# Start a run against /path/to/target-repo
-pnpm --filter @ai-sdlc/api dev run --issue 123 --target-repo-root /path/to/target-repo
-
-# Operate on that run from the orchestrator repo
-pnpm --filter @ai-sdlc/api dev runs logs --issue 123 --target-repo-root /path/to/target-repo
-pnpm --filter @ai-sdlc/api dev runs check-merge-ready --uuid <uuid> --target-repo-root /path/to/target-repo
-pnpm --filter @ai-sdlc/api dev runs execute --uuid <uuid> --target-repo-root /path/to/target-repo
-pnpm --filter @ai-sdlc/api dev runs resume --uuid <uuid> --target-repo-root /path/to/target-repo
-pnpm --filter @ai-sdlc/api dev runs cancel --uuid <uuid> --target-repo-root /path/to/target-repo
-```
-
-The path must point at an existing directory that is inside a git working tree. Omitting the flag preserves the existing single-repo behavior (the orchestrator repo is used).
-
-## Troubleshooting
-
-**Run row stuck in `running`**
-Update the row directly:
-
-```bash
-sqlite3 .ai-runs/orchestrator.sqlite "UPDATE runs SET status = 'failed' WHERE display_id = '<displayId>' AND status = 'running';"
-```
-
-**`active run already exists for issue N`**
-A previous run for that issue is in a non-terminal state. Resume or fail it before starting a new one.
-
-**Next.js shows `Failed to load runs: 500`**
-The API server is not running. Start it with `pnpm --filter @ai-sdlc/api dev serve` and refresh the dashboard.
-
-## Serving a target repository
-
-The orchestrator server can be bound to a specific target repository. This is useful when you want to inspect or manage runs for a repository other than the one where the orchestrator is installed.
-
-```bash
-pnpm --filter @ai-sdlc/api dev serve --target-repo-root /path/to/target/repo
-```
-
-When bound to a target repository, the API and dashboard will:
-
-- Use the target repository's `.ai-runs/orchestrator.sqlite` database.
-- Read and write artifacts to the target repository's `.ai-runs/` directory.
-- Perform Git and worktree operations inside the target repository.
-- Display the target repository's name and path in the dashboard header.
-
-## Emergency: legacy Bash executor
-
-The legacy Bash orchestrator is preserved at `scripts/legacy/ai-run-issue-v2` for emergency use. To invoke it explicitly:
-
-```bash
-pnpm --filter @ai-sdlc/api dev run --issue 123 --executor bash
-```
-
-This path is not the default and is not maintained going forward. See `docs/adr/ADR-0002-typescript-cutover.md` for the cutover history.
-
-## Cross-repository configuration
-
-A single installation of the orchestrator can drive runs against multiple
-target repositories. Each target may ship its own
-`.ai-orchestrator.json` and `.ai-orchestrator.local.json`. The precedence
-is deterministic:
-
-1. `automation/.ai-orchestrator.json` (committed, automation repo)
-2. `automation/.ai-orchestrator.local.json` (gitignored)
-3. `target/.ai-orchestrator.json` (committed, target repo)
-4. `target/.ai-orchestrator.local.json` (gitignored, target repo)
-5. Explicit supported CLI overrides (`--base-branch`, `--model`,
-   `--agent-cli`)
-
-Important merge semantics:
-
-- Plain objects are deep-merged.
-- Arrays (`validation.commands`, `phases.skip`) are deep-merged by index.
-  When the override array is longer, extras append — this means target
-  `validation.commands` _extend_ the automation list, not replace it.
-- `agent.phaseProfiles` and any future phase-route maps are replaced
-  wholesale, not key-by-key, because individual entries contain
-  mutually exclusive fields.
-
-Run metadata records both the **effective configuration fingerprint**
-(sha256 of the merged config) and the **source files used** (paths only,
-never file contents). Local files are never copied into run artifacts.
-
-Example: two projects with different test runners:
-
-```jsonc
-// automation/.ai-orchestrator.json
-{
-  "validation": { "commands": ["echo base-validation"], "timeouts": { "build": 60 } },
-  "agent": { "model": "shared-default-model" },
-}
-```
-
-```jsonc
-// /srv/repos/frontend/.ai-orchestrator.json
-{
-  "validation": { "commands": ["pnpm test"] },
-}
-```
-
-```jsonc
-// /srv/repos/backend/.ai-orchestrator.json
-{
-  "validation": { "commands": ["make test"], "timeouts": { "build": 180 } },
-  "agent": { "model": "backend-finetuned" },
-}
-```
-
-When run against `frontend`: commands are `["echo base-validation", "pnpm test"]`, model is `shared-default-model`.
-
-When run against `backend`: commands are `["echo base-validation", "make test"]`, timeouts override build to `180`, model is `backend-finetuned`.
-
-## Migration
-
-- Multi-repo: migration 0025 backfills every run with a stable `repositoryId`; new `POST /api/runs` requires `repositoryId` when more than one repository is enabled.
-
-## Scheduler Configuration
-
-The scheduler drives multi-repository dispatch. Key settings in `.ai-orchestrator.json`:
+Key sections include:
 
 ```jsonc
 {
+  "validation": {
+    "commands": ["pnpm -r build", "pnpm -r test"],
+    "timeout": 1800,
+  },
+  "phases": {
+    "skip": [],
+    "implement": { "maxIterations": 3 },
+    "reviewFix": { "maxIterations": 3 },
+  },
   "scheduler": {
-    "globalConcurrency": 1, // Max dispatches across ALL repos (default: 1)
-    "pollIntervalMs": 2000, // How often to poll for new work (default: 2000)
+    "globalConcurrency": 1,
+    "pollIntervalMs": 2000,
+    "shutdownGraceMs": 30000,
+  },
+  "agent": {
+    "defaultProfile": "opencode-frontier",
+    "profiles": {},
+    "phaseProfiles": {},
   },
 }
 ```
 
-### Global Concurrency Override
+The example is structural, not a complete usable agent configuration. The authoritative schema is [`packages/shared/src/config/schema.ts`](../packages/shared/src/config/schema.ts).
+
+### Agent profiles and fallback
+
+Each Agent Profile declares a runtime, provider, model, timeout, and optional prompt/context/output budgets. `agent.phaseProfiles` maps a phase to its primary profile and optional fallback profile/triggers. Phase and loop use cases own semantic fallback decisions; the runtime router owns mechanical dispatch and objective adapter failures.
+
+Supported runtime kinds in the current schema are `opencode`, `pi`, `antigravity`, `claude-code`, and `codex`.
+
+## State, artifacts, and worktrees
+
+There are two active path models because the CLI preserves the original single-target interface while the centralized runtime namespaces repositories.
+
+### Single-target/default CLI context
+
+Unless overridden by `--db-path`, `--runs-dir`, or `--target-repo-root`:
+
+| Path                                    | Contents                                                       |
+| --------------------------------------- | -------------------------------------------------------------- |
+| `<target>/.ai-runs/orchestrator.sqlite` | Registry and composed runtime database for the target context. |
+| `<target>/.ai-runs/agent-artifacts/`    | Captured invocation stdout/stderr and durable agent artifacts. |
+| `<target>/.ai-worktrees/issue-<N>/`     | Active issue worktree.                                         |
+| `<target>/ai/issues/<N>/`               | Completed issue artifacts archived by the pipeline.            |
+
+### Centralized RepositoryRuntime context
+
+Centralized runtimes use a state root. It is `opts.baseTmpDir` when embedded programmatically, otherwise `$TMPDIR/.ai-tmp` when `TMPDIR` is set, or `<target>/.ai-tmp` by default. Under that root, every Repository is namespaced by `owner/name`:
+
+| Path under `<state-root>`                      | Contents                                        |
+| ---------------------------------------------- | ----------------------------------------------- |
+| `.ai-state/<owner>/<name>/orchestrator.sqlite` | Repository operational database.                |
+| `.ai-runs/<owner>/<name>/`                     | Repository Run directories and validation logs. |
+| `.ai-worktrees/<owner>/<name>/issue-<N>/`      | Collision-free worktrees.                       |
+| `.ai-artifacts/<owner>/<name>/`                | Agent artifacts.                                |
+| `.ai-tmp/<owner>/<name>/`                      | Repository-scoped prompts and temporary files.  |
+
+Do not assume two repositories with the same issue number share any runtime path. Repository namespacing is a safety boundary.
+
+## Recovery and shutdown
+
+Recovery runs as an all-Repository startup barrier before new admission. It evaluates worker health, expired job claims, expired leases, Run state, and worktree safety. Ownership tokens fence old processes after reclamation.
+
+On SIGTERM/SIGINT, the scheduler stops new admission and drains in-flight work up to `scheduler.shutdownGraceMs`. Cooperative work releases ownership. If a child does not settle before the grace window, the process follows the crash-equivalent path: ownership remains fenced and expires for the next recovery pass.
+
+If a Repository path moves or becomes unavailable:
+
+1. Stop or disable admission for that Repository.
+2. Restore the checkout/mount or correct its registered metadata.
+3. Run `repo refresh --id <repository-id>`.
+4. Inspect leases, jobs, Run state, and recovery events.
+5. Re-enable the Repository only after health is restored.
+
+See [Scheduler Recovery Operations](operations/scheduler-recovery.md) for the state machine, fencing rules, SQL inspection, and operator procedures.
+
+## Emergency legacy executor
+
+The Bash orchestrator is quarantined under `scripts/legacy/` and is not maintained as the default path:
 
 ```bash
-# Standalone worker with custom concurrency
-pnpm --filter @ai-sdlc/api dev worker start --global-concurrency 4
-
-# In .ai-orchestrator.local.json
-{
-  "scheduler": {
-    "globalConcurrency": 4
-  }
-}
+pnpm --filter @ai-sdlc/api dev run \
+  --repository-id acme/api \
+  --target-repo-root /absolute/path/to/acme-api \
+  --issue 123 \
+  --executor bash
 ```
 
-With `globalConcurrency=1`, only one dispatch is active across all repositories at once. Each repository still enforces one-lease-at-a-time via `WorkerLease`.
+`--model`, `--agent-cli`, and `--script` exist for this fallback. They are rejected for `--executor ts`. Use the Bash path only for a deliberate emergency rollback and expect it to lack newer TypeScript-only orchestration behavior.
 
-### Disable Policy
+## Troubleshooting
 
-Setting `enabled=false` on a repository:
+### More than one Repository is enabled
 
-- **Drains admitted work:** In-flight dispatches complete normally
-- **Blocks new work:** Subsequent schedule passes skip the disabled repository
+Pass `--repository-id <id|owner/name>` to `run`, `cancel`, `execute`, `resume`, and `check-merge-ready`.
 
-```jsonc
-// Via API
-PUT /api/repositories/{id}
-{ "enabled": false }
+### Repository is unavailable
+
+Run `repo inspect` and `repo refresh`, repair the local checkout or GitHub authentication, then enable the Repository after it reports healthy.
+
+### Active Run already exists
+
+Only one active Run is allowed for a `(Repository, issue)` pair. Inspect the existing Run and choose resume, cancel, or wait for it to finish.
+
+### Repository lease conflict
+
+Another Worker owns that Repository. Do not delete lease rows manually. Inspect worker/lease state and follow the recovery guide; generation fencing and worktree safety checks are part of reclamation.
+
+### Dashboard cannot load runs
+
+Confirm the API is listening on port 4319 and that the dashboard is pointed at that API.
+
+## Before contributing a PR
+
+Run all mandatory gates:
+
+```bash
+pnpm -r build
+pnpm -r typecheck
+pnpm lint
+pnpm -r test
 ```
 
-### Unhealthy/Unavailable Skip Policy
-
-Repositories with `healthStatus` of `degraded`, `unreachable`, or `unknown` are skipped without blocking healthy repositories. The scheduler records a `scheduler.repository.skipped` telemetry event with reason `disabled`, `unhealthy`, or `unavailable`.
-
-### Telemetry Identity Fields
-
-Every scheduler event includes stable identity fields:
-
-| Field             | Source                            | Example        |
-| ----------------- | --------------------------------- | -------------- |
-| `repository_id`   | Stable repo identifier (fullName) | `acme/api`     |
-| `repository_name` | Current full name                 | `acme/api`     |
-| `worker_id`       | Per-repo sequence                 | `w-acme/api-0` |
-
-Events: `scheduler.dispatch.started`, `scheduler.dispatch.completed`, `scheduler.dispatch.failed`, `scheduler.repository.skipped`, `scheduler.pool.active`, `scheduler.repository.queue_depth`.
-
-## Recovery Operations
-
-For details on scheduler recovery behavior, lease/claim token fencing, startup barriers, shutdown/grace fallback, and operator procedures for restoring a moved or deleted checkout, see [`docs/operations/scheduler-recovery.md`](../operations/scheduler-recovery.md).
+When changing imports across packages or apps, also run `pnpm depcruise`.

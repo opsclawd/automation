@@ -1,5 +1,7 @@
 # Product Requirements Document: AI Agent SDLC Orchestrator
 
+> **Historical planning document.** This PRD records the original milestone requirements and is not a guide to current behavior. M1–M8 are complete. For the implemented system, use the [README](../README.md), [quickstart](./quickstart.md), and [domain context](../CONTEXT.md).
+
 **Document status:** Draft  
 **Generated:** 2026-05-13  
 **Owner:** Gary Poon Tip  

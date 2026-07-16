@@ -100,6 +100,14 @@ describe('findRepoRoot', () => {
 });
 
 describe('CLI run command', () => {
+  it('describes the TypeScript executor as the default run path', () => {
+    const runCommand = buildProgram().commands.find((command) => command.name() === 'run');
+
+    expect(runCommand?.description()).toBe(
+      'Start an issue-to-PR run with the TypeScript executor by default',
+    );
+  });
+
   it('exits 0 on passed run and outputs JSON', async () => {
     const scriptPath = fakeScript(0);
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
