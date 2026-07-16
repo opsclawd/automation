@@ -1011,11 +1011,11 @@ describe('PlanReviewLoop', () => {
     );
   });
 
-  it('later deterministic failure precedes re-review', async () => {
+  it('later deterministic failure precedes re-review and handles budget extension', async () => {
     let reviewCalls = 0;
     let fixCalls = 0;
     let checkCalls = 0;
-    const { deps } = makeDeps({
+    const { deps, events } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
         return {
@@ -1042,16 +1042,19 @@ describe('PlanReviewLoop', () => {
       },
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
-    // The delta pass converges only at maxIterations, leaving no budget for
-    // the mandatory final_full verification pass — success here would bypass
-    // the #716 final gates, so the loop escalates instead.
-    expect(out.outcome).toBe('needs_human_review');
-    expect(out.loop.iterations).toHaveLength(3);
+    // Iteration 1: review (p1_found) -> fix
+    // Iteration 2: deterministic_fix
+    // Iteration 3: review (pass) -> budget extended
+    // Iteration 4: final_full (pass) -> success
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(4);
     expect(out.loop.iterations[0]?.kind).toBe('review');
     expect(out.loop.iterations[1]?.kind).toBe('deterministic_fix');
     expect(out.loop.iterations[2]?.kind).toBe('review');
-    expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
-    expect(reviewCalls).toBe(2);
+    expect(out.loop.iterations[3]?.kind).toBe('review');
+    expect(out.loop.iterations[3]?.outcome).toBe('resolved');
+    expect(events.some((e) => e.type === 'plan-review.loop.final_review.budget_extended')).toBe(true);
+    expect(reviewCalls).toBe(3);
     expect(fixCalls).toBe(2);
   });
 
@@ -1901,3 +1904,126 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
     });
   });
 });
+
+describe('PlanReviewLoop budget extension (#repro)', () => {
+  it('repro: delta convergence on the literal last iteration grants one extra iteration and succeeds', async () => {
+    let reviewCalls = 0;
+    let n = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${++n}`,
+          agentOutcome: 'success',
+          verdict: reviewCalls === 1 ? 'p1_found' : 'pass',
+          findings: reviewCalls === 1 ? groundedP1Findings() : [],
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: `fix-${++n}`,
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+      }),
+    });
+
+    const input = {
+      ...baseInput(),
+      maxIterations: 2,
+    };
+
+    const out = await new PlanReviewLoop(deps).execute(input);
+    expect(out.outcome).toBe('success');
+    // Iteration 1: initial_full (p1_found) -> fix
+    // Iteration 2: intermediate_delta (pass) -> budget extended
+    // Iteration 3: final_full (pass) -> success
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.status).toBe('converged');
+    expect(events.some((e) => e.type === 'plan-review.loop.final_review.budget_extended')).toBe(true);
+  });
+});
+
+  it('proceed_with_concerns at max iterations grants extension and succeeds after final_full', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        // Iteration 1: initial_full (p1_found)
+        // Iteration 2: intermediate_delta (proceed_with_concerns)
+        // Iteration 3: final_full (pass)
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success',
+          verdict: reviewCalls === 1 ? 'p1_found' : reviewCalls === 2 ? 'proceed_with_concerns' : 'pass',
+          findings: reviewCalls === 1 ? groundedP1Findings() : [],
+          knownLimitations: reviewCalls === 2 ? 'some limitations' : undefined,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+      }),
+    });
+
+    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+    expect(out.outcome).toBe('success');
+    expect(out.proceedWithConcerns).toBe(false); // pass on final_full wins
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(events.some((e) => e.type === 'plan-review.loop.final_review.budget_extended')).toBe(true);
+  });
+
+  it('one-time budget extension is not granted twice', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        // Iter 1: p1_found -> fix
+        // Iter 2: pass -> extension granted (maxIter=3)
+        // Iter 3 (final_full): p1_found -> reopen (iter1Snapshot=undefined, forceInitialFull=true)
+        // Iter 4: initial_full (pass) -> no more extension, loop exhausted
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success',
+          verdict: (reviewCalls === 1 || reviewCalls === 3) ? 'p1_found' : 'pass',
+          findings: (reviewCalls === 1 || reviewCalls === 3) ? groundedP1Findings() : [],
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: `fix-${reviewCalls}`,
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+      }),
+    });
+
+    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+    const extensionEvents = events.filter((e) => e.type === 'plan-review.loop.final_review.budget_extended');
+    expect(extensionEvents).toHaveLength(1);
+    expect(events.some((e) => e.type === 'plan-review.loop.exhausted')).toBe(true);
+  });
+
+  it('exhaustion with extension used', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success',
+          verdict: 'p1_found',
+          findings: groundedP1Findings(),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+      }),
+    });
+
+    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.iterations).toHaveLength(2); // 1st review fail -> fix, 2nd review fail -> exhaust
+    expect(events.some((e) => e.type === 'plan-review.loop.exhausted')).toBe(true);
+  });

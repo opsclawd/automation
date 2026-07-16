@@ -108,6 +108,7 @@ export class PlanReviewLoop {
     const reviewerMaxRetries = deps.reviewerMaxRetries ?? DEFAULT_REVIEWER_MAX_RETRIES;
     const options = { ...(deps.options ?? {}), ...(input.options ?? {}) };
     let bonusIterationUsed = false;
+    let finalFullGrantUsed = false;
 
     let loop = createLoop({
       id: deps.idFactory(),
@@ -626,19 +627,31 @@ export class PlanReviewLoop {
           return { outcome: 'success', loop, proceedWithConcerns: false };
         }
         if (iterationIndex === loop.maxIterations) {
-          // The delta cycle converged only on the final iteration, leaving no
-          // budget for the mandatory final_full verification pass. Returning
-          // success here would bypass the #716 final gates — escalate instead.
-          loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
-          deps.loops.update(loop);
-          this.emit(
-            input,
-            'plan-review.loop.final_review.skipped_budget_exhausted',
-            'warn',
-            `iteration ${iterationIndex} passed at max iterations without a final_full pass; escalating to human review`,
-            { index: iterationIndex, outcome: 'unresolved' },
-          );
-          return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          if (!finalFullGrantUsed) {
+            finalFullGrantUsed = true;
+            loop.maxIterations += 1;
+            this.emit(
+              input,
+              'plan-review.loop.final_review.budget_extended',
+              'info',
+              `iteration ${iterationIndex} passed at max iterations; granting one additional iteration for mandatory final_full pass`,
+              { index: iterationIndex, maxIterations: loop.maxIterations },
+            );
+          } else {
+            // The delta cycle converged only on the final iteration, leaving no
+            // budget for the mandatory final_full verification pass. Returning
+            // success here would bypass the #716 final gates — escalate instead.
+            loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+            deps.loops.update(loop);
+            this.emit(
+              input,
+              'plan-review.loop.final_review.skipped_budget_exhausted',
+              'warn',
+              `iteration ${iterationIndex} passed at max iterations without a final_full pass; escalating to human review`,
+              { index: iterationIndex, outcome: 'unresolved' },
+            );
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          }
         }
 
         const open = loop.iterations[loop.iterations.length - 1]!;
@@ -735,21 +748,33 @@ export class PlanReviewLoop {
           };
         }
         if (iterationIndex === loop.maxIterations) {
-          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
-          deps.loops.update(loop);
-          this.emit(
-            input,
-            'plan-review.loop.iteration.completed',
-            'info',
-            `iteration ${iterationIndex} completed: resolved (proceed with concerns — max iterations reached)`,
-            { index: iterationIndex, outcome: 'resolved', knownLimitations: true },
-          );
-          return {
-            outcome: 'success',
-            loop,
-            proceedWithConcerns: true,
-            ...(review.knownLimitations ? { knownLimitations: review.knownLimitations } : {}),
-          };
+          if (!finalFullGrantUsed) {
+            finalFullGrantUsed = true;
+            loop.maxIterations += 1;
+            this.emit(
+              input,
+              'plan-review.loop.final_review.budget_extended',
+              'info',
+              `iteration ${iterationIndex} converged with concerns at max iterations; granting one additional iteration for mandatory final_full pass`,
+              { index: iterationIndex, maxIterations: loop.maxIterations },
+            );
+          } else {
+            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+            deps.loops.update(loop);
+            this.emit(
+              input,
+              'plan-review.loop.iteration.completed',
+              'info',
+              `iteration ${iterationIndex} completed: resolved (proceed with concerns — max iterations reached)`,
+              { index: iterationIndex, outcome: 'resolved', knownLimitations: true },
+            );
+            return {
+              outcome: 'success',
+              loop,
+              proceedWithConcerns: true,
+              ...(review.knownLimitations ? { knownLimitations: review.knownLimitations } : {}),
+            };
+          }
         }
         const open = loop.iterations[loop.iterations.length - 1]!;
         const convergedIteration: import('@ai-sdlc/domain').LoopIteration = {
@@ -1092,7 +1117,7 @@ export class PlanReviewLoop {
         { index: iterationIndex, outcome: 'fixed' },
       );
 
-      if (iterationIndex === loop.maxIterations) {
+      if (iterationIndex === loop.maxIterations && !finalFullGrantUsed) {
         const syncResult = await checkAndFixDeterministic({
           ...baseCtx,
           iterationIndex: loop.iterations.length + 1,
