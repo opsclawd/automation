@@ -13,6 +13,123 @@ import type {
 import { RepositoryId, type Run } from '@ai-sdlc/domain';
 import { randomUUID, createHash } from 'node:crypto';
 
+export function createReviewFailScript(): ScriptedAgentScript {
+  return {
+    phaseId: 'whole-pr-review',
+    invocationType: 'initial',
+    handle: async (request) => {
+      const resultJson = JSON.stringify({
+        result: 'fail',
+        findings: [{ severity: 'warning', summary: 'Test finding' }],
+      });
+      writeFileSync(path.join(request.cwd, 'result.json'), resultJson, 'utf-8');
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdoutPath: '/dev/null',
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
+export function createFixCommitsResultScript(): ScriptedAgentScript {
+  return {
+    phaseId: 'fix-review',
+    invocationType: 'initial',
+    handle: async (request) => {
+      const resultJson = JSON.stringify({ result: 'done_with_fixes' });
+      writeFileSync(path.join(request.cwd, 'result.json'), resultJson, 'utf-8');
+      execFileSync('git', ['add', 'result.json'], { cwd: request.cwd });
+      execFileSync('git', ['commit', '-m', 'fix: test fix'], { cwd: request.cwd });
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdoutPath: '/dev/null',
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
+export function createImplementPassScript(): ScriptedAgentScript {
+  return {
+    phaseId: 'implement',
+    invocationType: 'initial',
+    handle: async (request) => {
+      const implLog = JSON.stringify({ files: [], summary: 'test implementation' });
+      writeFileSync(path.join(request.cwd, 'implementation-log.md'), implLog, 'utf-8');
+      execFileSync('git', ['add', 'implementation-log.md'], { cwd: request.cwd });
+      execFileSync('git', ['commit', '-m', 'implement: test'], { cwd: request.cwd });
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdoutPath: '/dev/null',
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
+export function createSpecReviewPassScript(): ScriptedAgentScript {
+  return {
+    phaseId: 'spec-review',
+    invocationType: 'initial',
+    handle: async (request) => {
+      const resultJson = JSON.stringify({ result: 'pass' });
+      writeFileSync(path.join(request.cwd, 'result.json'), resultJson, 'utf-8');
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdoutPath: '/dev/null',
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
+export function createQualityReviewPassScript(): ScriptedAgentScript {
+  return {
+    phaseId: 'quality-review',
+    invocationType: 'initial',
+    handle: async (request) => {
+      const resultJson = JSON.stringify({ result: 'pass' });
+      writeFileSync(path.join(request.cwd, 'result.json'), resultJson, 'utf-8');
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdoutPath: '/dev/null',
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
 export interface ScriptedAgentScript {
   phaseId?: string;
   invocationType?: string;

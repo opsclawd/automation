@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PhaseName, RunId } from '@ai-sdlc/domain';
 import {
   createComposedOrchestrationHarness,
+  createReviewFailScript,
+  createFixCommitsResultScript,
+  createImplementPassScript,
+  createSpecReviewPassScript,
+  createQualityReviewPassScript,
   type ComposedOrchestrationHarness,
 } from './helpers/composed-orchestration-harness.js';
 
@@ -288,6 +293,218 @@ describe('compose-validation-environment', () => {
 
       // This should not throw
       harness.cleanup();
+    });
+  });
+
+  describe('revalidation injects the correct repository identity', () => {
+    it('review-fix revalidation injects the StepContext repository', async () => {
+      const AMBIENT_REPO = 'ambient/wrong-repo';
+      const TARGET_REPO = 'owner/review-fix-test-repo';
+
+      const originalGithubRepo = process.env.GITHUB_REPOSITORY;
+      const originalInheritedSentinel = process.env.AI_SDLC_INHERITED_SENTINEL;
+      process.env.GITHUB_REPOSITORY = AMBIENT_REPO;
+      process.env.AI_SDLC_INHERITED_SENTINEL = 'sentinel-preserved';
+
+      try {
+        const harness = createHarness({
+          repoFullName: TARGET_REPO,
+          issueNumber: 100,
+          validationCommands: [fixtureCommand(TARGET_REPO)],
+          scripts: [createReviewFailScript(), createFixCommitsResultScript()],
+        });
+
+        if (!harness.container.reviewFixLoop) {
+          throw new Error('reviewFixLoop not available on container');
+        }
+
+        const reviewFixResult = await harness.container.reviewFixLoop.execute({
+          runId: RunId(harness.run.uuid),
+          phaseId: PhaseName('review-fix'),
+          repoId: TARGET_REPO,
+          cwd: harness.context.cwd,
+          maxIterations: 1,
+          reviewProfile: 'test' as import('@ai-sdlc/domain').AgentProfileName,
+          fixProfile: 'test' as import('@ai-sdlc/domain').AgentProfileName,
+        });
+
+        expect(reviewFixResult.phaseOutcome).toBeDefined();
+
+        const validationRuns = harness.container.validationRunRepository.listByRun(
+          RunId(harness.run.uuid),
+        );
+
+        const passingRuns = validationRuns.filter((vr) => vr.outcome === 'passed');
+        expect(passingRuns.length).toBeGreaterThan(0);
+
+        const revalidationRun = passingRuns.find((vr) => vr.logPath?.includes('revalidate'));
+        expect(revalidationRun).toBeDefined();
+
+        if (revalidationRun?.logPath) {
+          const logContents = readFileSync(revalidationRun.logPath, 'utf-8');
+          expect(logContents).toContain(TARGET_REPO);
+          expect(logContents).toContain('sentinel-preserved');
+        }
+      } finally {
+        if (originalGithubRepo !== undefined) {
+          process.env.GITHUB_REPOSITORY = originalGithubRepo;
+        } else {
+          delete process.env.GITHUB_REPOSITORY;
+        }
+        if (originalInheritedSentinel !== undefined) {
+          process.env.AI_SDLC_INHERITED_SENTINEL = originalInheritedSentinel;
+        } else {
+          delete process.env.AI_SDLC_INHERITED_SENTINEL;
+        }
+      }
+    });
+
+    it('implement-step revalidation injects the StepLoopContext repository', async () => {
+      const AMBIENT_REPO = 'ambient/wrong-implement-repo';
+      const TARGET_REPO = 'owner/implement-step-test-repo';
+
+      const originalGithubRepo = process.env.GITHUB_REPOSITORY;
+      const originalInheritedSentinel = process.env.AI_SDLC_INHERITED_SENTINEL;
+      process.env.GITHUB_REPOSITORY = AMBIENT_REPO;
+      process.env.AI_SDLC_INHERITED_SENTINEL = 'sentinel-preserved';
+
+      try {
+        const harness = createHarness({
+          repoFullName: TARGET_REPO,
+          issueNumber: 200,
+          validationCommands: [fixtureCommand(TARGET_REPO)],
+          scripts: [
+            createImplementPassScript(),
+            createSpecReviewPassScript(),
+            createQualityReviewPassScript(),
+            createFixCommitsResultScript(),
+          ],
+        });
+
+        if (!harness.container.implementStepLoop) {
+          throw new Error('implementStepLoop not available on container');
+        }
+
+        const taskManifest = {
+          version: 2 as const,
+          task_count: 1,
+          tasks: [
+            {
+              n: 1,
+              title: 'Test Task',
+              validation_commands: ['ls'],
+            },
+          ],
+        };
+
+        const planMd = '# Plan\n\n## Task 1: Test Task\n\nImplement the test.';
+        const artifacts = harness.container.artifactRepository;
+        await artifacts.write({
+          runId: harness.run.uuid,
+          relativePath: 'task-manifest.json',
+          contents: JSON.stringify(taskManifest),
+        });
+        await artifacts.write({
+          runId: harness.run.uuid,
+          relativePath: 'plan.md',
+          contents: planMd,
+        });
+
+        const implementResult = await harness.container.implementStepLoop.execute({
+          runId: RunId(harness.run.uuid),
+          phaseId: PhaseName('implement'),
+          repoId: TARGET_REPO,
+          cwd: harness.context.cwd,
+          stepIndex: 1,
+          stepTitle: 'Test Task',
+          maxIterations: 1,
+          maxTypeCheckRetries: 0,
+          manifest: taskManifest,
+          planMd,
+        });
+
+        expect(implementResult.outcome).toBeDefined();
+
+        const validationRuns = harness.container.validationRunRepository.listByRun(
+          RunId(harness.run.uuid),
+        );
+
+        const passingRuns = validationRuns.filter((vr) => vr.outcome === 'passed');
+        expect(passingRuns.length).toBeGreaterThan(0);
+
+        const revalidationRun = passingRuns.find((vr) => vr.logPath?.includes('revalidate'));
+        expect(revalidationRun).toBeDefined();
+      } finally {
+        if (originalGithubRepo !== undefined) {
+          process.env.GITHUB_REPOSITORY = originalGithubRepo;
+        } else {
+          delete process.env.GITHUB_REPOSITORY;
+        }
+        if (originalInheritedSentinel !== undefined) {
+          process.env.AI_SDLC_INHERITED_SENTINEL = originalInheritedSentinel;
+        } else {
+          delete process.env.AI_SDLC_INHERITED_SENTINEL;
+        }
+      }
+    });
+
+    it('revalidation cleanup restores environment after a scripted agent failure', async () => {
+      const AMBIENT_REPO = 'ambient/cleanup-test-repo';
+      const TARGET_REPO = 'owner/cleanup-test-repo';
+
+      const originalGithubRepo = process.env.GITHUB_REPOSITORY;
+      const originalInheritedSentinel = process.env.AI_SDLC_INHERITED_SENTINEL;
+      process.env.GITHUB_REPOSITORY = AMBIENT_REPO;
+      process.env.AI_SDLC_INHERITED_SENTINEL = 'sentinel-preserved';
+
+      const failingScript: import('./helpers/composed-orchestration-harness.js').ScriptedAgentScript =
+        {
+          phaseId: 'whole-pr-review',
+          invocationType: 'initial',
+          handle: async () => {
+            process.env.GITHUB_REPOSITORY = 'mutated/by/agent';
+            throw new Error('Scripted agent failure after environment mutation');
+          },
+        };
+
+      const harness = createHarness({
+        repoFullName: TARGET_REPO,
+        issueNumber: 300,
+        validationCommands: [fixtureCommand(TARGET_REPO)],
+        scripts: [failingScript],
+      });
+
+      try {
+        if (!harness.container.reviewFixLoop) {
+          throw new Error('reviewFixLoop not available on container');
+        }
+
+        await expect(async () => {
+          await harness.container.reviewFixLoop.execute({
+            runId: RunId(harness.run.uuid),
+            phaseId: PhaseName('review-fix'),
+            repoId: TARGET_REPO,
+            cwd: harness.context.cwd,
+            maxIterations: 1,
+            reviewProfile: 'test' as import('@ai-sdlc/domain').AgentProfileName,
+            fixProfile: 'test' as import('@ai-sdlc/domain').AgentProfileName,
+          });
+        }).rejects.toThrow('Scripted agent failure after environment mutation');
+
+        expect(process.env.GITHUB_REPOSITORY).toBe(AMBIENT_REPO);
+        expect(process.env.AI_SDLC_INHERITED_SENTINEL).toBe('sentinel-preserved');
+      } finally {
+        if (originalGithubRepo !== undefined) {
+          process.env.GITHUB_REPOSITORY = originalGithubRepo;
+        } else {
+          delete process.env.GITHUB_REPOSITORY;
+        }
+        if (originalInheritedSentinel !== undefined) {
+          process.env.AI_SDLC_INHERITED_SENTINEL = originalInheritedSentinel;
+        } else {
+          delete process.env.AI_SDLC_INHERITED_SENTINEL;
+        }
+      }
     });
   });
 });
