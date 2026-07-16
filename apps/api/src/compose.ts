@@ -4352,7 +4352,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         ? resolveProfileForPhaseBound!('plan-fix')
         : undefined;
       const planReviewTerminalFixProfileName = config.phases.planReview?.enabled
-        ? config.agent.phaseProfiles?.['terminal-fix']?.profile
+        ? (config.agent.phaseProfiles?.['terminal-fix']?.profile ?? arbiterProfileName)
         : undefined;
       const terminalSnapshots = new Map<string, { planMdDigest: string; manifestDigest: string }>();
       const planReviewDeltaScopedReReview = config.phases.planReview?.deltaScopedReReview ?? true;
