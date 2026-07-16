@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { PhaseName, RunId } from '@ai-sdlc/domain';
+import { PhaseName, RunId, validationRunPassed } from '@ai-sdlc/domain';
 import {
   createComposedOrchestrationHarness,
   createReviewFailScript,
@@ -334,14 +334,16 @@ describe('compose-validation-environment', () => {
           RunId(harness.run.uuid),
         );
 
-        const passingRuns = validationRuns.filter((vr) => vr.outcome === 'passed');
+        const passingRuns = validationRuns.filter((vr) => validationRunPassed(vr));
         expect(passingRuns.length).toBeGreaterThan(0);
 
-        const revalidationRun = passingRuns.find((vr) => vr.logPath?.includes('revalidate'));
+        const revalidationRun = passingRuns.find((vr) =>
+          vr.commands.some((c) => c.stdoutPath.includes('revalidate')),
+        );
         expect(revalidationRun).toBeDefined();
 
-        if (revalidationRun?.logPath) {
-          const logContents = readFileSync(revalidationRun.logPath, 'utf-8');
+        if (revalidationRun && revalidationRun.commands.length > 0) {
+          const logContents = readFileSync(revalidationRun.commands[0]!.stdoutPath, 'utf-8');
           expect(logContents).toContain(TARGET_REPO);
           expect(logContents).toContain('sentinel-preserved');
         }
@@ -428,17 +430,82 @@ describe('compose-validation-environment', () => {
           RunId(harness.run.uuid),
         );
 
-        const passingRuns = validationRuns.filter((vr) => vr.outcome === 'passed');
+        const passingRuns = validationRuns.filter((vr) => validationRunPassed(vr));
         expect(passingRuns.length).toBeGreaterThan(0);
 
-        const revalidationRun = passingRuns.find((vr) => vr.logPath?.includes('revalidate'));
+        const revalidationRun = passingRuns.find((vr) =>
+          vr.commands.some((c) => c.stdoutPath.includes('revalidate')),
+        );
         expect(revalidationRun).toBeDefined();
 
-        if (revalidationRun?.logPath) {
-          const logContents = readFileSync(revalidationRun.logPath, 'utf-8');
+        if (revalidationRun && revalidationRun.commands.length > 0) {
+          const logContents = readFileSync(revalidationRun.commands[0]!.stdoutPath, 'utf-8');
           expect(logContents).toContain(TARGET_REPO);
           expect(logContents).toContain('sentinel-preserved');
         }
+      } finally {
+        if (originalGithubRepo !== undefined) {
+          process.env.GITHUB_REPOSITORY = originalGithubRepo;
+        } else {
+          delete process.env.GITHUB_REPOSITORY;
+        }
+        if (originalInheritedSentinel !== undefined) {
+          process.env.AI_SDLC_INHERITED_SENTINEL = originalInheritedSentinel;
+        } else {
+          delete process.env.AI_SDLC_INHERITED_SENTINEL;
+        }
+      }
+    });
+
+    it('revalidation cleanup restores environment after a scripted agent failure', async () => {
+      const AMBIENT_REPO = 'ambient/cleanup-test-repo';
+      const TARGET_REPO = 'owner/cleanup-test-repo';
+
+      const originalGithubRepo = process.env.GITHUB_REPOSITORY;
+      const originalInheritedSentinel = process.env.AI_SDLC_INHERITED_SENTINEL;
+      process.env.GITHUB_REPOSITORY = AMBIENT_REPO;
+      process.env.AI_SDLC_INHERITED_SENTINEL = 'sentinel-preserved';
+
+      const failingScript: import('./helpers/composed-orchestration-harness.js').ScriptedAgentScript =
+        {
+          phaseId: 'whole-pr-review',
+          invocationType: 'initial',
+          handle: async () => {
+            throw new Error('Scripted agent failure');
+          },
+        };
+
+      const harness = createHarness({
+        repoFullName: TARGET_REPO,
+        issueNumber: 300,
+        validationCommands: [fixtureCommand(TARGET_REPO)],
+        scripts: [failingScript],
+      });
+
+      try {
+        if (!harness.container.reviewFixLoop) {
+          throw new Error('reviewFixLoop not available on container');
+        }
+
+        await expect(async () => {
+          await harness.container.reviewFixLoop.execute({
+            runId: RunId(harness.run.uuid),
+            phaseId: PhaseName('review-fix'),
+            repoId: TARGET_REPO,
+            cwd: harness.context.cwd,
+            maxIterations: 1,
+            reviewProfile: 'test' as import('@ai-sdlc/domain').AgentProfileName,
+            fixProfile: 'test' as import('@ai-sdlc/domain').AgentProfileName,
+          });
+        }).rejects.toThrow('Scripted agent failure');
+
+        expect(process.env.GITHUB_REPOSITORY).toBe(AMBIENT_REPO);
+        expect(process.env.AI_SDLC_INHERITED_SENTINEL).toBe('sentinel-preserved');
+
+        harness.cleanup();
+
+        expect(existsSync(harness.automationRoot)).toBe(false);
+        expect(existsSync(harness.targetRoot)).toBe(false);
       } finally {
         if (originalGithubRepo !== undefined) {
           process.env.GITHUB_REPOSITORY = originalGithubRepo;
