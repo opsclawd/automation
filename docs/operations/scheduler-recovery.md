@@ -4,21 +4,28 @@ This guide covers scheduler recovery behavior, database topology, worker lifecyc
 
 ## Database Topology
 
-The orchestrator uses two SQLite databases with distinct roles:
+Centralized operation uses one control-plane SQLite database plus one namespaced operational database per registered repository.
 
-### Control Plane (`control.sqlite`)
+### Control Plane (`orchestrator.sqlite`)
 
-The control plane database is the single central registry. It lives at `.ai-runs/control.sqlite` in the installation root and contains:
+The control-plane database is the single repository registry. By default it lives at `<targetRepoRoot>/.ai-runs/orchestrator.sqlite`; `--db-path` can override it. It contains:
 
 - **repositories** — registered repositories, their health status, and enabled state
 - **workers** — worker registration records (hostname, PID, heartbeat, status)
-- **configuration** — scheduler settings, global concurrency limits
 
-The control plane is shared across all repositories and worker processes on the same host.
+Scheduler settings come from layered `.ai-orchestrator.json` configuration rather than a database table. The control plane is shared by the API and worker processes on the same host.
 
-### Per-Repository Operational Database (`operational.sqlite`)
+### Per-Repository Operational Database (`orchestrator.sqlite`)
 
-Each registered repository has its own operational database at `<repoRoot>/.ai-runs/operational.sqlite`. It contains:
+Each registered repository has its own operational database at:
+
+```text
+<stateRoot>/.ai-state/<owner>/<name>/orchestrator.sqlite
+```
+
+`stateRoot` is the `baseTmpDir` compose option when supplied, otherwise `$TMPDIR/.ai-tmp` when `TMPDIR` is set, or `<targetRepoRoot>/.ai-tmp`. The same namespace is used for run artifacts, worktrees, agent artifacts, and temporary files. See the [quickstart state layout](../quickstart.md#state-artifacts-and-worktrees) for the complete mapping.
+
+The operational database contains:
 
 - **runs** — run identity, status, phase, artifacts, and lifecycle state
 - **jobs** — job queue with claim/lease tokens, priority, and status
@@ -27,6 +34,7 @@ Each registered repository has its own operational database at `<repoRoot>/.ai-r
 - **artifacts** — artifact manifest and file paths
 
 This separation ensures:
+
 - Per-repository event audit trails with unambiguous `repoId` binding
 - Query isolation — one repository's load does not contend with another's
 - Potential future per-repo data retention without cross-repo contamination
@@ -88,13 +96,13 @@ This ensures that a late-surviving old process cannot mutate state under a new g
 
 The `RepositoryRecoveryCoordinator` evaluates each repository on every schedule pass. It produces one of the following actions:
 
-| Action | Condition |
-|--------|-----------|
-| `leave` | Active lease exists, or active non-expired jobs exist, or nothing to recover |
-| `requeue` | Expired claim with no active lease — job is reset to `queued` |
-| `reclaim` | Stale lease with recoverable run AND (no active jobs OR repo disabled) |
-| `orphan-enqueue` | Stale lease with recoverable run, no active jobs, repo enabled — orphan recovery job enqueued |
-| `waiting-reactivate` | `waiting` run exists with repo enabled — re-enqueue the waiting job |
+| Action               | Condition                                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------------- |
+| `leave`              | Active lease exists, or active non-expired jobs exist, or nothing to recover                  |
+| `requeue`            | Expired claim with no active lease — job is reset to `queued`                                 |
+| `reclaim`            | Stale lease with recoverable run AND (no active jobs OR repo disabled)                        |
+| `orphan-enqueue`     | Stale lease with recoverable run, no active jobs, repo enabled — orphan recovery job enqueued |
+| `waiting-reactivate` | `waiting` run exists with repo enabled — re-enqueue the waiting job                           |
 
 ### Startup Barrier
 
@@ -103,6 +111,7 @@ On process startup, the scheduler **waits for an initial recovery sweep to compl
 ### Disable Policy
 
 Setting `enabled=false` on a repository:
+
 - Drains admitted work: in-flight dispatches complete normally
 - Blocks new work: subsequent schedule passes skip the disabled repository
 
@@ -115,6 +124,7 @@ Repositories with `healthStatus` of `unreachable`, `unknown`, or `degraded` are 
 ### Cooperative Shutdown
 
 When a worker receives SIGTERM, it:
+
 1. Stops accepting new dispatches
 2. Drains in-flight work (up to `shutdownGraceMs`)
 3. Releases its leases and claims
@@ -130,7 +140,7 @@ The `lease.reclaimed` audit event records the transition, including the reason (
 
 ## Recovery State Table
 
-The `operational_recovery_inspection` view (or `OperationalRecoveryPort.inspect()`) exposes:
+`OperationalRecoveryPort.inspect()` queries the operational database and exposes:
 
 ```
 hasActiveLease: boolean
@@ -145,15 +155,15 @@ This table is the basis for all recovery decisions. The coordinator queries it b
 
 Every recovery action emits a typed event to the repository's event log:
 
-| Event | Fields |
-|-------|--------|
-| `lease.acquired` | `repoId`, `workerId`, `runId`, `leaseToken` |
-| `lease.heartbeat` | `repoId`, `workerId`, `runId` |
-| `lease.released` | `repoId`, `workerId`, `runId`, `leaseToken`, `reason` |
-| `lease.reclaimed` | `repoId`, `previousWorkerId`, `previousRunId`, `reclaimedByWorkerId`, `leaseToken`, `reason` |
-| `job.claimed` | `repoId`, `jobId`, `runId`, `workerId`, `claimToken` |
-| `job.completed` | `repoId`, `jobId`, `runId`, `status` |
-| `run.orphan-enqueued` | `repoId`, `runId`, `previousWorkerId`, `reason` |
+| Event                 | Fields                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `lease.acquired`      | `repoId`, `workerId`, `runId`, `leaseToken`                                                  |
+| `lease.heartbeat`     | `repoId`, `workerId`, `runId`                                                                |
+| `lease.released`      | `repoId`, `workerId`, `runId`, `leaseToken`, `reason`                                        |
+| `lease.reclaimed`     | `repoId`, `previousWorkerId`, `previousRunId`, `reclaimedByWorkerId`, `leaseToken`, `reason` |
+| `job.claimed`         | `repoId`, `jobId`, `runId`, `workerId`, `claimToken`                                         |
+| `job.completed`       | `repoId`, `jobId`, `runId`, `status`                                                         |
+| `run.orphan-enqueued` | `repoId`, `runId`, `previousWorkerId`, `reason`                                              |
 
 ## Operator Procedures
 
@@ -162,59 +172,62 @@ Every recovery action emits a typed event to the repository's event log:
 If a repository's checkout is moved or deleted while a run is active:
 
 1. **Quarantine the old worktree** (if it still exists):
+
    ```bash
    mv /path/to/worktree /path/to/worktree-quarantined-$(date +%s)
    ```
 
 2. **Restore from backup or reclone**:
+
    ```bash
    git clone https://github.com/owner/repo.git /path/to/repo
    ```
 
 3. **Reset to the last known-good commit** (the run's `baseBranch` or `lastGoodCommit`):
+
    ```bash
    git -C /path/to/repo checkout <baseBranch>
    git -C /path/to/repo reset --hard <lastKnownGoodCommit>
    ```
 
 4. **Refresh repository health** via the API:
+
    ```bash
-   curl -X POST http://127.0.0.1:4319/api/repositories/<repoId>/refresh-health
+   curl -X POST http://127.0.0.1:4319/api/repositories/<repoId>/refresh
    ```
 
 5. **Verify health status** is `healthy` before retrying:
+
    ```bash
    curl http://127.0.0.1:4319/api/repositories/<repoId> | jq '.healthStatus'
    ```
 
 6. **Retry the run**:
    ```bash
-   pnpm --filter @ai-sdlc/api dev run --issue <issueNumber>
+   pnpm --filter @ai-sdlc/api dev run \
+     --repository-id <repoId> \
+     --target-repo-root /path/to/repo \
+     --issue <issueNumber>
    ```
 
-### Manual Lease Release
+### Stuck Lease
 
-If a lease is stuck (worker died without recovery triggering):
-
-```bash
-sqlite3 .ai-runs/operational.sqlite \
-  "DELETE FROM worker_leases WHERE repo_id = 'owner/repo' AND worker_id = 'w1'"
-```
-
-Then refresh health and retry. This is a last resort — prefer the automatic recovery path.
+Stop the owning worker and restart the coordinator so automatic recovery can reclaim an expired generation. If the lease remains after its expiry and a recovery pass, keep the Repository disabled, preserve the database and worktree for diagnosis, and inspect worker, job, lease, and recovery-event state. Do not delete a lease row while an owning process may still be alive; direct mutation bypasses the generation fence.
 
 ### Inspecting Recovery State
 
 ```bash
+REPO_DB='<stateRoot>/.ai-state/<owner>/<name>/orchestrator.sqlite'
+
 # View active leases
-sqlite3 .ai-runs/operational.sqlite "SELECT * FROM worker_leases"
+sqlite3 "$REPO_DB" "SELECT * FROM worker_leases"
 
 # View jobs in non-terminal states
-sqlite3 .ai-runs/operational.sqlite \
+sqlite3 "$REPO_DB" \
   "SELECT * FROM jobs WHERE status IN ('queued', 'claimed', 'running')"
 
 # View recent recovery audit events
-sqlite3 .ai-runs/operational.sqlite \
+sqlite3 "$REPO_DB" \
   "SELECT * FROM events WHERE type = 'lease.reclaimed' ORDER BY timestamp DESC LIMIT 10"
 ```
 
@@ -222,12 +235,12 @@ sqlite3 .ai-runs/operational.sqlite \
 
 The following failure scenarios are covered by integration tests:
 
-| Scenario | Test file |
-|----------|-----------|
-| SIGKILL restart with startup barrier | `restart-recovery.failure-injection.test.ts` |
-| Cooperative SIGTERM drain | `shutdown-recovery.failure-injection.test.ts` |
-| Non-cooperative SIGTERM (grace expired) | `shutdown-recovery.failure-injection.test.ts` |
-| Expired lease recovery with generation fence | `restart-recovery.failure-injection.test.ts` |
+| Scenario                                                 | Test file                                             |
+| -------------------------------------------------------- | ----------------------------------------------------- |
+| SIGKILL restart with startup barrier                     | `restart-recovery.failure-injection.test.ts`          |
+| Cooperative SIGTERM drain                                | `shutdown-recovery.failure-injection.test.ts`         |
+| Non-cooperative SIGTERM (grace expired)                  | `shutdown-recovery.failure-injection.test.ts`         |
+| Expired lease recovery with generation fence             | `restart-recovery.failure-injection.test.ts`          |
 | Blocked operational open (one repo) while other recovers | `multi-repository-recovery.failure-injection.test.ts` |
-| Concurrent recovery on two repos | `multi-repository-recovery.failure-injection.test.ts` |
-| Late killed owner cannot heartbeat reclaimed generation | `restart-recovery.failure-injection.test.ts` |
+| Concurrent recovery on two repos                         | `multi-repository-recovery.failure-injection.test.ts` |
+| Late killed owner cannot heartbeat reclaimed generation  | `restart-recovery.failure-injection.test.ts`          |
