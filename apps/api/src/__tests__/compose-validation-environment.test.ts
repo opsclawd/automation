@@ -434,6 +434,12 @@ describe('compose-validation-environment', () => {
 
         const revalidationRun = passingRuns.find((vr) => vr.logPath?.includes('revalidate'));
         expect(revalidationRun).toBeDefined();
+
+        if (revalidationRun?.logPath) {
+          const logContents = readFileSync(revalidationRun.logPath, 'utf-8');
+          expect(logContents).toContain(TARGET_REPO);
+          expect(logContents).toContain('sentinel-preserved');
+        }
       } finally {
         if (originalGithubRepo !== undefined) {
           process.env.GITHUB_REPOSITORY = originalGithubRepo;
