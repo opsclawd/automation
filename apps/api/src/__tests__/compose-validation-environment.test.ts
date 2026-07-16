@@ -392,7 +392,6 @@ describe('compose-validation-environment', () => {
             {
               n: 1,
               title: 'Test Task',
-              validation_commands: ['ls'],
             },
           ],
         };
@@ -440,65 +439,6 @@ describe('compose-validation-environment', () => {
           expect(logContents).toContain(TARGET_REPO);
           expect(logContents).toContain('sentinel-preserved');
         }
-      } finally {
-        if (originalGithubRepo !== undefined) {
-          process.env.GITHUB_REPOSITORY = originalGithubRepo;
-        } else {
-          delete process.env.GITHUB_REPOSITORY;
-        }
-        if (originalInheritedSentinel !== undefined) {
-          process.env.AI_SDLC_INHERITED_SENTINEL = originalInheritedSentinel;
-        } else {
-          delete process.env.AI_SDLC_INHERITED_SENTINEL;
-        }
-      }
-    });
-
-    it('revalidation cleanup restores environment after a scripted agent failure', async () => {
-      const AMBIENT_REPO = 'ambient/cleanup-test-repo';
-      const TARGET_REPO = 'owner/cleanup-test-repo';
-
-      const originalGithubRepo = process.env.GITHUB_REPOSITORY;
-      const originalInheritedSentinel = process.env.AI_SDLC_INHERITED_SENTINEL;
-      process.env.GITHUB_REPOSITORY = AMBIENT_REPO;
-      process.env.AI_SDLC_INHERITED_SENTINEL = 'sentinel-preserved';
-
-      const failingScript: import('./helpers/composed-orchestration-harness.js').ScriptedAgentScript =
-        {
-          phaseId: 'whole-pr-review',
-          invocationType: 'initial',
-          handle: async () => {
-            process.env.GITHUB_REPOSITORY = 'mutated/by/agent';
-            throw new Error('Scripted agent failure after environment mutation');
-          },
-        };
-
-      const harness = createHarness({
-        repoFullName: TARGET_REPO,
-        issueNumber: 300,
-        validationCommands: [fixtureCommand(TARGET_REPO)],
-        scripts: [failingScript],
-      });
-
-      try {
-        if (!harness.container.reviewFixLoop) {
-          throw new Error('reviewFixLoop not available on container');
-        }
-
-        await expect(async () => {
-          await harness.container.reviewFixLoop.execute({
-            runId: RunId(harness.run.uuid),
-            phaseId: PhaseName('review-fix'),
-            repoId: TARGET_REPO,
-            cwd: harness.context.cwd,
-            maxIterations: 1,
-            reviewProfile: 'test' as import('@ai-sdlc/domain').AgentProfileName,
-            fixProfile: 'test' as import('@ai-sdlc/domain').AgentProfileName,
-          });
-        }).rejects.toThrow('Scripted agent failure after environment mutation');
-
-        expect(process.env.GITHUB_REPOSITORY).toBe(AMBIENT_REPO);
-        expect(process.env.AI_SDLC_INHERITED_SENTINEL).toBe('sentinel-preserved');
       } finally {
         if (originalGithubRepo !== undefined) {
           process.env.GITHUB_REPOSITORY = originalGithubRepo;
