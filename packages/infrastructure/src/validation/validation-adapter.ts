@@ -52,6 +52,10 @@ export class ProcessValidationAdapter implements ValidationPort {
           reject: false,
           all: false,
           detached: true,
+          env: {
+            ...process.env,
+            ...(input.env ?? {}),
+          },
         });
 
         timeoutId = setTimeout(() => {

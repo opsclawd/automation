@@ -50,6 +50,9 @@ export class ValidateHandler implements PhaseHandler {
         logDir: this.opts.logDir,
         commands: this.opts.commands,
         timeoutSeconds: this.opts.timeoutSeconds,
+        env: {
+          GITHUB_REPOSITORY: ctx.repoFullName,
+        },
       });
       passed = result.passed;
       failure = result.failure;

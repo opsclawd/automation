@@ -116,4 +116,20 @@ describe('ProcessValidationAdapter', () => {
     expect(summary.commands[1].outcome).toBe('failed');
     expect(summary.commands[0].stdoutPath).toMatch(/^validate\/0-/);
   });
+
+  it('injects environment variables into the validation subprocess', async () => {
+    const logDir = freshDir();
+    const adapter = new ProcessValidationAdapter();
+    const results = await adapter.run({
+      cwd: process.cwd(),
+      commands: ['echo $GITHUB_REPOSITORY'],
+      timeoutSeconds: 30,
+      logDir,
+      env: {
+        GITHUB_REPOSITORY: 'owner/repo-injected',
+      },
+    });
+    expect(results[0].outcome).toBe('passed');
+    expect(results[0].stdout.trim()).toBe('owner/repo-injected');
+  });
 });

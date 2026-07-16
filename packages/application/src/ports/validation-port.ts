@@ -15,6 +15,7 @@ export interface RunValidationInput {
   timeoutSeconds: number;
   logDir: string;
   logPathPrefix?: string;
+  env?: Record<string, string>;
 }
 export interface ValidationPort {
   run(input: RunValidationInput): Promise<ValidationCommandResult[]>;

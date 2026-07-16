@@ -2600,6 +2600,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           logDir: revalidateLogDir,
           commands: config.validation.commands,
           timeoutSeconds: config.validation.timeout,
+          env: {
+            GITHUB_REPOSITORY: ctx.repoId,
+          },
         });
         const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
         let failureDetail: string | undefined;
@@ -4277,6 +4280,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             logDir: revalidateLogDir,
             commands: [...config.validation.commands, ...taskValidationCommands],
             timeoutSeconds: config.validation.timeout,
+            env: {
+              GITHUB_REPOSITORY: (ctx as StepLoopContext).repoId,
+            },
           });
           const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
           let failureDetail: string | undefined;
@@ -5838,8 +5844,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             return { passed: true };
           }
           const buildCheckId = `pr-review-build-check-${randomUUID()}`;
-          const runDir = runRepository.findByUuid(runId)?.displayId ?? runId;
+          const runRecord = runRepository.findByUuid(runId);
+          const runDir = runRecord?.displayId ?? runId;
           const logDir = join(runsDir, runDir, buildCheckId);
+          const repo = runRecord ? registryBackedRepo.findById(runRecord.repoId) : undefined;
+          const repoFullName = repo ? repo.fullName : (resolvedRepoFullName ?? '');
+
           const result = await runValidation.execute({
             runId: RunId(runId),
             phaseId: PhaseName('post-pr-review'),
@@ -5848,6 +5858,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             logPathPrefix: buildCheckId,
             commands: config.validation.commands,
             timeoutSeconds: config.validation.timeout,
+            env: {
+              GITHUB_REPOSITORY: repoFullName,
+            },
           });
           if (result.passed) {
             return { passed: true };

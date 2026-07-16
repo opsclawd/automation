@@ -137,6 +137,9 @@ async function main() {
   );
 
   try {
+    const runRecord = c.runRepository.findByUuid(runId);
+    const repoFullName = runRecord ? String(runRecord.repoId) : (values['repo-id'] || '');
+
     const result = await c.runValidation.execute({
       runId: RunId(runId),
       phaseId: PhaseName(phaseId),
@@ -144,6 +147,9 @@ async function main() {
       logDir,
       commands: config.validation.commands,
       timeoutSeconds: config.validation.timeout,
+      env: {
+        GITHUB_REPOSITORY: repoFullName,
+      },
     });
     const { validationRun, passed, failure } = result;
 
