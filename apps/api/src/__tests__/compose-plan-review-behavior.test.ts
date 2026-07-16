@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import {
@@ -189,9 +189,11 @@ p1_found
       expect(terminalFix!.metadata?.invocation_type).toBe('terminal_fix');
       expect(terminalFix!.profile).toBe(AgentProfileName('arbiter-profile'));
       expect(terminalFix!.phaseId).toBe('plan-fix');
+      expect(terminalFix!.promptPath).toMatch(/plan-fix.*\.md/);
+      expect(terminalFix!.expectedArtifacts).toEqual(['plan.md']);
 
       const config = JSON.parse(
-        require('fs').readFileSync(path.join(harness.targetRoot, '.ai-orchestrator.json'), 'utf-8'),
+        readFileSync(path.join(harness.targetRoot, '.ai-orchestrator.json'), 'utf-8'),
       );
       expect(config.agent.phaseProfiles['terminal-fix']).toBeUndefined();
     });

@@ -86,18 +86,6 @@ describe('plan-review compose wiring', () => {
     expect(constructorMatch![0]).toContain('getRecentFixCitations');
   });
 
-  it('planReviewTerminalFixProfileName falls back to arbiterProfileName (#792)', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const profileMatch = composeSrc.match(
-      /const planReviewTerminalFixProfileName = config\.phases\.planReview\?\.enabled\s+\? ([\s\S]*?)\s+: undefined;/,
-    );
-    expect(profileMatch).toBeTruthy();
-    expect(profileMatch![1]).toContain('?? arbiterProfileName');
-  });
-
   it('planReviewRunFix forwards the deterministic diagnostic in vars and sets deterministic_fix invocation_type', () => {
     const composeSrc = readFileSync(
       path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
