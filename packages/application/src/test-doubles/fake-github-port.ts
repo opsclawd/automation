@@ -1,6 +1,7 @@
 import type {
   GitHubPort,
   GitHubIssue,
+  GitHubIssueComment,
   PullRequest,
   PullRequestDetail,
   PullRequestReview,
@@ -12,6 +13,7 @@ export class FakeGitHubPort implements GitHubPort {
   issues = new Map<string, GitHubIssue>();
   prs = new Map<string, PullRequestDetail>();
   comments = new Map<string, GitHubReviewComment[]>();
+  issueComments = new Map<string, GitHubIssueComment[]>();
   repliesPosted: Array<{
     repoFullName: string;
     prNumber: number;
@@ -33,6 +35,10 @@ export class FakeGitHubPort implements GitHubPort {
     const i = this.issues.get(`${repoFullName}/${issueNumber}`);
     if (!i) throw new Error(`no issue ${repoFullName}#${issueNumber}`);
     return i;
+  }
+
+  async listIssueComments(repoFullName: string, issueNumber: number): Promise<GitHubIssueComment[]> {
+    return this.issueComments.get(`${repoFullName}/${issueNumber}`) ?? [];
   }
 
   async getPr(repoFullName: string, prNumber: number): Promise<PullRequestDetail> {

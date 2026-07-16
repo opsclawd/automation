@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import type {
   GitHubPort,
   GitHubIssue,
+  GitHubIssueComment,
   PullRequestDetail,
   PullRequest,
   PullRequestReview,
@@ -26,6 +27,13 @@ interface RestComment {
   created_at: string;
   in_reply_to_id: number | null;
   pull_request_review_id?: number;
+}
+
+interface RestIssueComment {
+  id: number;
+  user: { login: string } | null | undefined;
+  body: string;
+  created_at: string;
 }
 
 export class GhCliAdapter implements GitHubPort {
@@ -88,6 +96,30 @@ export class GhCliAdapter implements GitHubPort {
       labels: Array<{ name: string }>;
     }>(out, command);
     return { number: j.number, title: j.title, body: j.body, labels: j.labels.map((l) => l.name) };
+  }
+
+  async listIssueComments(repoFullName: string, issueNumber: number): Promise<GitHubIssueComment[]> {
+    const out = await this.run([
+      'api',
+      '--paginate',
+      '--slurp',
+      `repos/${repoFullName}/issues/${issueNumber}/comments`,
+    ]);
+    return this.parseIssueComments(out, repoFullName, issueNumber);
+  }
+
+  private parseIssueComments(raw: string, repoFullName: string, issueNumber: number): GitHubIssueComment[] {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    const command = `gh api --paginate --slurp repos/${repoFullName}/issues/${issueNumber}/comments`;
+    const parsed = this.safeJsonParse<RestIssueComment[][]>(trimmed, command);
+    const flat = parsed.flat();
+    return flat.map((c) => ({
+      id: c.id,
+      author: c.user?.login ?? 'ghost',
+      body: c.body,
+      createdAt: new Date(c.created_at),
+    }));
   }
 
   async getPr(repoFullName: string, prNumber: number): Promise<PullRequestDetail> {

@@ -21,6 +21,17 @@ describe('GhCliAdapter reads', () => {
     expect(issue.labels).toEqual(['bug']);
   });
 
+  it('parses issue comments from REST shape', async () => {
+    const cs = await ok.listIssueComments('o/r', 7);
+    expect(cs).toHaveLength(1);
+    expect(cs[0]).toEqual({
+      id: 9001,
+      author: 'octocat',
+      body: 'issue comment body',
+      createdAt: new Date('2026-06-04T00:00:00Z'),
+    });
+  });
+
   it('parses PR metadata and normalises state to lowercase', async () => {
     const pr = await ok.getPr('o/r', 5);
     expect(pr.headRefName).toBe('feat-x');

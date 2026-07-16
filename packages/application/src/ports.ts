@@ -144,6 +144,7 @@ export type {
 export type {
   GitHubPort,
   GitHubIssue,
+  GitHubIssueComment,
   PullRequest,
   PullRequestDetail,
   GitHubReviewComment,
