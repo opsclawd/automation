@@ -2,25 +2,35 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+// Both runRevalidation closures share these unique start markers followed
+// eventually by a matching unique marker that appears exactly once right
+// after the closure ends. Slicing between those two indices (rather than a
+// non-greedy regex spanning `[\s\S]*?`) avoids matching the wrong occurrence
+// or truncating at the first nested `},` inside the closure body (e.g. the
+// `env: {...}` object literal), both of which caused false negatives here
+// once task-manifest-derived validation commands were folded in ahead of
+// the shared filter/collect logic.
+function sliceBetween(source: string, startMarker: string, endMarker: string): string {
+  const start = source.indexOf(startMarker);
+  if (start === -1) {
+    throw new Error(`start marker not found: ${startMarker}`);
+  }
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  if (end === -1) {
+    throw new Error(`end marker not found after start: ${endMarker}`);
+  }
+  return source.slice(start + startMarker.length, end);
+}
+
 describe('multi-failure revalidation collection', () => {
   it('collects all failing commands in review-fix runRevalidation', () => {
     const composeSrc = readFileSync(path.join(import.meta.dirname, '..', 'compose.ts'), 'utf-8');
 
-    // Look for the ReviewFixLoop runRevalidation closure
-    // It's around line 2600
-    const reviewFixRevalMatch = composeSrc.match(
-      /const reviewFixLoopInstance = new ReviewFixLoop\(\{[\s\S]*?runRevalidation: async \(ctx\) => \{([\s\S]*?)\},[\s\S]*?\}\);/,
+    const reviewFixRevalBody = sliceBetween(
+      composeSrc,
+      'const runRevalidation = async (ctx: StepContext): Promise<RevalidationResult> => {',
+      '\n      // Wrap the in-memory bus so loop events survive process restarts.',
     );
-
-    // Fallback if the above regex is too strict about newlines/spaces
-    const reviewFixRevalBody = reviewFixRevalMatch
-      ? reviewFixRevalMatch[1]
-      : composeSrc.slice(
-          composeSrc.indexOf(
-            'const runRevalidation = async (ctx: StepContext): Promise<RevalidationResult> => {',
-          ),
-          composeSrc.indexOf('await artifactStoreForRun(String(ctx.runId), ctx.cwd).write({'),
-        );
 
     expect(reviewFixRevalBody).toContain(".filter((c) => c.outcome !== 'passed')");
     expect(reviewFixRevalBody).toContain('await Promise.all(');
@@ -32,14 +42,11 @@ describe('multi-failure revalidation collection', () => {
   it('collects all failing commands in implement-step runRevalidation', () => {
     const composeSrc = readFileSync(path.join(import.meta.dirname, '..', 'compose.ts'), 'utf-8');
 
-    // Look for the ImplementStepLoop runRevalidation closure
-    // It's around line 4280
-    const implementRevalMatch = composeSrc.match(
-      /implementStepLoop = new ImplementStepLoop\(\{[\s\S]*?runRevalidation: async \(ctx\) => \{([\s\S]*?)\},[\s\S]*?\}\);/,
+    const implementRevalBody = sliceBetween(
+      composeSrc,
+      'runRevalidation: async (ctx) => {',
+      '\n        ...(runArbiter ? { runArbiter } : {}),',
     );
-
-    expect(implementRevalMatch).toBeTruthy();
-    const implementRevalBody = implementRevalMatch![1];
 
     expect(implementRevalBody).toContain(".filter((c) => c.outcome !== 'passed')");
     expect(implementRevalBody).toContain('await Promise.all(');
