@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, chmodSync, existsSync, readFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import { composeRoot, type Container } from '../../compose.js';
@@ -152,6 +153,105 @@ export function createQualityReviewPassScript(): ScriptedAgentScript {
   };
 }
 
+export function createPlanReviewSemanticScript(findingsMd: string): ScriptedAgentScript {
+  return {
+    phaseId: 'plan-review',
+    invocationType: 'initial',
+    handle: async (request) => {
+      const findingsPath = path.join(request.cwd, 'plan-review-findings.md');
+      writeFileSync(findingsPath, findingsMd, 'utf-8');
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdout: findingsMd,
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
+export function createPlanReviewOrdinaryFixScript(
+  planModifier: (currentPlan: string) => string,
+  resultJson: string,
+): ScriptedAgentScript {
+  return {
+    phaseId: 'plan-fix',
+    invocationType: 'initial',
+    handle: async (request) => {
+      const planPath = path.join(request.cwd, 'plan.md');
+      let currentPlan = '';
+      try {
+        currentPlan = readFileSync(planPath, 'utf-8');
+      } catch {}
+      const updatedPlan = planModifier(currentPlan);
+      writeFileSync(planPath, updatedPlan, 'utf-8');
+
+      const resultPath = path.join(request.cwd, 'plan-fix-result.json');
+      writeFileSync(resultPath, resultJson, 'utf-8');
+
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdoutPath: '/dev/null',
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
+export function createPlanReviewTerminalFixScript(
+  planModifier: (currentPlan: string) => string,
+  manifestModifier: (currentManifest: string) => string,
+  resultJson: string,
+): ScriptedAgentScript {
+  return {
+    phaseId: 'plan-fix',
+    invocationType: 'terminal_fix',
+    handle: async (request) => {
+      const planPath = path.join(request.cwd, 'plan.md');
+      let currentPlan = '';
+      try {
+        currentPlan = readFileSync(planPath, 'utf-8');
+      } catch {}
+      const updatedPlan = planModifier(currentPlan);
+      writeFileSync(planPath, updatedPlan, 'utf-8');
+
+      const manifestPath = path.join(request.cwd, 'task-manifest.json');
+      let currentManifest = '';
+      try {
+        currentManifest = readFileSync(manifestPath, 'utf-8');
+      } catch {}
+      const updatedManifest = manifestModifier(currentManifest);
+      writeFileSync(manifestPath, updatedManifest, 'utf-8');
+
+      const resultPath = path.join(request.cwd, 'plan-fix-result.json');
+      writeFileSync(resultPath, resultJson, 'utf-8');
+
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdoutPath: '/dev/null',
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
 export interface ScriptedAgentScript {
   phaseId?: string;
   invocationType?: string;
@@ -166,6 +266,7 @@ export interface ComposedOrchestrationHarnessOptions {
   validationCommands?: string[];
   scripts?: ScriptedAgentScript[];
   ambientGitHubRepository?: string;
+  agentConfig?: object;
 }
 
 export interface ComposedOrchestrationHarness {
@@ -273,7 +374,29 @@ export function createComposedOrchestrationHarness(
 
   initGitRepo(targetRoot, { name: 'Test User', email: 'test@example.com' });
 
-  const config = makeMinimalAgentConfig(opts.validationCommands ?? ['echo ok']);
+  const planReviewPromptsRoot = path.join(targetRoot, 'prompts', 'plan-review');
+  mkdirSync(planReviewPromptsRoot, { recursive: true });
+
+  const selfDir = path.dirname(fileURLToPath(import.meta.url));
+  const repoPromptsDir = path.join(selfDir, '..', '..', '..', '..', '..', 'prompts');
+  try {
+    const planReviewSrc = path.join(repoPromptsDir, 'plan-review', 'plan-review.md');
+    const planFixSrc = path.join(repoPromptsDir, 'plan-review', 'plan-fix.md');
+    if (existsSync(planReviewSrc)) {
+      writeFileSync(
+        path.join(planReviewPromptsRoot, 'plan-review.md'),
+        readFileSync(planReviewSrc, 'utf-8'),
+      );
+    }
+    if (existsSync(planFixSrc)) {
+      writeFileSync(
+        path.join(planReviewPromptsRoot, 'plan-fix.md'),
+        readFileSync(planFixSrc, 'utf-8'),
+      );
+    }
+  } catch {}
+
+  const config = opts.agentConfig ?? makeMinimalAgentConfig(opts.validationCommands ?? ['echo ok']);
   writeFileSync(path.join(targetRoot, '.ai-orchestrator.json'), JSON.stringify(config));
 
   const scriptPath = path.join(automationRoot, 'fake.sh');
