@@ -1,15 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { PhaseName, RunId, validationRunPassed } from '@ai-sdlc/domain';
 import {
   createComposedOrchestrationHarness,
   createReviewFailScript,
+  createReviewPassScript,
   createFixCommitsResultScript,
   createImplementPassScript,
   createSpecReviewPassScript,
   createQualityReviewPassScript,
   type ComposedOrchestrationHarness,
+  type ScriptedAgentScript,
 } from './helpers/composed-orchestration-harness.js';
 
 const FIXTURE_PATH = fileURLToPath(
@@ -18,6 +21,31 @@ const FIXTURE_PATH = fileURLToPath(
 
 function fixtureCommand(expectedRepository: string): string {
   return `node ${JSON.stringify(FIXTURE_PATH)} ${expectedRepository} check`;
+}
+
+// ValidationCommandRecord.stdoutPath is a display-only relative path (always
+// prefixed "validate/...", see ProcessValidationAdapter) that does not
+// resolve to the physical log file revalidation runs write under
+// `<runsDir>/<runDisplayId>/revalidate/...` (see runRevalidation in
+// compose.ts). Walk that directory directly to read what the revalidation
+// command actually printed.
+function collectStdoutLogPaths(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...collectStdoutLogPaths(full));
+    } else if (entry.isFile() && entry.name.endsWith('.stdout.log')) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+function readRevalidationLogContents(runsDir: string, runDisplayId: string): string {
+  const logPaths = collectStdoutLogPaths(join(runsDir, runDisplayId, 'revalidate'));
+  return logPaths.map((p) => readFileSync(p, 'utf-8')).join('\n');
 }
 
 const harnessCleanup: ComposedOrchestrationHarness[] = [];
@@ -311,7 +339,11 @@ describe('compose-validation-environment', () => {
           repoFullName: TARGET_REPO,
           issueNumber: 100,
           validationCommands: [fixtureCommand(TARGET_REPO)],
-          scripts: [createReviewFailScript(), createFixCommitsResultScript()],
+          scripts: [
+            createReviewFailScript(),
+            createFixCommitsResultScript(),
+            createReviewPassScript(),
+          ],
         });
 
         if (!harness.container.reviewFixLoop) {
@@ -337,16 +369,15 @@ describe('compose-validation-environment', () => {
         const passingRuns = validationRuns.filter((vr) => validationRunPassed(vr));
         expect(passingRuns.length).toBeGreaterThan(0);
 
-        const revalidationRun = passingRuns.find((vr) =>
-          vr.commands.some((c) => c.stdoutPath.includes('revalidate')),
+        // reviewFixLoop.execute never calls the top-level `validate` phase
+        // handler, so every ValidationRun recorded for this run originates
+        // from the loop's `runRevalidation` call site under test.
+        const logContents = readRevalidationLogContents(
+          harness.container.runsDir,
+          harness.run.displayId,
         );
-        expect(revalidationRun).toBeDefined();
-
-        if (revalidationRun && revalidationRun.commands.length > 0) {
-          const logContents = readFileSync(revalidationRun.commands[0]!.stdoutPath, 'utf-8');
-          expect(logContents).toContain(TARGET_REPO);
-          expect(logContents).toContain('sentinel-preserved');
-        }
+        expect(logContents).toContain(TARGET_REPO);
+        expect(logContents).toContain('sentinel-preserved');
       } finally {
         if (originalGithubRepo !== undefined) {
           process.env.GITHUB_REPOSITORY = originalGithubRepo;
@@ -399,17 +430,6 @@ describe('compose-validation-environment', () => {
         };
 
         const planMd = '# Plan\n\n## Task 1: Test Task\n\nImplement the test.';
-        const artifacts = harness.container.artifactRepository;
-        await artifacts.write({
-          runId: harness.run.uuid,
-          relativePath: 'task-manifest.json',
-          contents: JSON.stringify(taskManifest),
-        });
-        await artifacts.write({
-          runId: harness.run.uuid,
-          relativePath: 'plan.md',
-          contents: planMd,
-        });
 
         const implementResult = await harness.container.implementStepLoop.execute({
           runId: RunId(harness.run.uuid),
@@ -433,16 +453,15 @@ describe('compose-validation-environment', () => {
         const passingRuns = validationRuns.filter((vr) => validationRunPassed(vr));
         expect(passingRuns.length).toBeGreaterThan(0);
 
-        const revalidationRun = passingRuns.find((vr) =>
-          vr.commands.some((c) => c.stdoutPath.includes('revalidate')),
+        // implementStepLoop.execute never calls the top-level `validate`
+        // phase handler, so every ValidationRun recorded for this run
+        // originates from the loop's `runRevalidation` call site under test.
+        const logContents = readRevalidationLogContents(
+          harness.container.runsDir,
+          harness.run.displayId,
         );
-        expect(revalidationRun).toBeDefined();
-
-        if (revalidationRun && revalidationRun.commands.length > 0) {
-          const logContents = readFileSync(revalidationRun.commands[0]!.stdoutPath, 'utf-8');
-          expect(logContents).toContain(TARGET_REPO);
-          expect(logContents).toContain('sentinel-preserved');
-        }
+        expect(logContents).toContain(TARGET_REPO);
+        expect(logContents).toContain('sentinel-preserved');
       } finally {
         if (originalGithubRepo !== undefined) {
           process.env.GITHUB_REPOSITORY = originalGithubRepo;
@@ -466,14 +485,13 @@ describe('compose-validation-environment', () => {
       process.env.GITHUB_REPOSITORY = AMBIENT_REPO;
       process.env.AI_SDLC_INHERITED_SENTINEL = 'sentinel-preserved';
 
-      const failingScript: import('./helpers/composed-orchestration-harness.js').ScriptedAgentScript =
-        {
-          phaseId: 'whole-pr-review',
-          invocationType: 'initial',
-          handle: async () => {
-            throw new Error('Scripted agent failure');
-          },
-        };
+      const failingScript: ScriptedAgentScript = {
+        phaseId: 'whole-pr-review',
+        invocationType: 'initial',
+        handle: async () => {
+          throw new Error('Scripted agent failure');
+        },
+      };
 
       const harness = createHarness({
         repoFullName: TARGET_REPO,

@@ -38,6 +38,28 @@ export function createReviewFailScript(): ScriptedAgentScript {
   };
 }
 
+export function createReviewPassScript(invocationType = 'semantic_retry'): ScriptedAgentScript {
+  return {
+    phaseId: 'whole-pr-review',
+    invocationType,
+    handle: async (request) => {
+      const resultJson = JSON.stringify({ result: 'pass', findings: [] });
+      writeFileSync(path.join(request.cwd, 'result.json'), resultJson, 'utf-8');
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdoutPath: '/dev/null',
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
 export function createFixCommitsResultScript(): ScriptedAgentScript {
   return {
     phaseId: 'fix-review',
@@ -174,6 +196,9 @@ function makeMinimalAgentConfig(validationCommands: string[]): object {
       phaseProfiles: {
         'whole-pr-review': { profile: 'test' },
         'fix-review': { profile: 'test' },
+        implement: { profile: 'test' },
+        'spec-review': { profile: 'test' },
+        'quality-review': { profile: 'test' },
       },
     },
   };
@@ -185,7 +210,21 @@ function initGitRepo(repoPath: string, identity: { name: string; email: string }
   execFileSync('git', ['config', 'user.email', identity.email], { cwd: repoPath });
   execFileSync('git', ['checkout', '-b', 'main'], { cwd: repoPath });
   writeFileSync(path.join(repoPath, 'README.md'), '# Baseline\n');
-  execFileSync('git', ['add', 'README.md'], { cwd: repoPath });
+  // ReviewFixLoop's post-fix gate shells out to `pnpm -r build/typecheck` and
+  // `pnpm lint` in the worktree (apps/api/src/compose.ts runPostFixGate).
+  // Without a package.json exposing no-op scripts, `pnpm lint` fails with
+  // ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND, which trips the gate and routes
+  // the loop into a `fix-review:deterministic_fix` agent invocation the
+  // harness has no script for.
+  writeFileSync(
+    path.join(repoPath, 'package.json'),
+    JSON.stringify({
+      name: 'harness-target',
+      private: true,
+      scripts: { build: 'exit 0', typecheck: 'exit 0', lint: 'exit 0' },
+    }),
+  );
+  execFileSync('git', ['add', 'README.md', 'package.json'], { cwd: repoPath });
   execFileSync('git', ['commit', '-m', 'baseline'], { cwd: repoPath });
 }
 
