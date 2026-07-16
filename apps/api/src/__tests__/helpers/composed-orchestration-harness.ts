@@ -132,6 +132,7 @@ export function createComposedOrchestrationHarness(
     dbPath,
     runsDir,
     baseTmpDir,
+    repoFullName: opts.repoFullName,
     agentAdapterOverrides: {
       opencode: scriptedAgent,
     },

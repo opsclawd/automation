@@ -242,7 +242,6 @@ describe('compose-validation-environment', () => {
       try {
         const result = await validateHandler.run(harness.context);
         expect(result.outcome).toBe('passed');
-        expect(true).toBe(false);
       } catch (error) {
         harness.cleanup();
         throw error;
