@@ -2,7 +2,7 @@
 
 **Document status:** Living product direction record  
 **Owner:** Gary Poon Tip  
-**Last updated:** 2026-06-02
+**Last updated:** 2026-07-16
 
 ## Product thesis
 
@@ -124,33 +124,29 @@ These are product-level rules that should remain stable unless deliberately revi
 
 ## Near-term product focus
 
-The next product layer should make the existing automation easier to operate, debug, evolve, and trust.
+The M1–M8 foundation is delivered: the TypeScript pipeline is the default, repositories are registered centrally, repository-scoped leases fence execution, different repositories can run concurrently, and persisted runs can be inspected and recovered. The next product layer should prove and improve that control plane under sustained real use.
 
 Priority order:
 
-1. **Pipeline versioning**
-   - Record the exact phase sequence, prompts, skills, model profiles, validation commands, retry rules, and fallback settings used by each run.
-   - Changing prompts, skills, models, or phase order should produce a distinguishable pipeline version.
+1. **Operational reliability**
+   - Exercise restart recovery, graceful shutdown, repository health changes, and lease fencing under long-running real workloads.
+   - Turn recurring operational failures into deterministic tests and actionable failure records.
 
-2. **Durable phase attempts**
-   - Treat each phase/step execution as an attempt with inputs, outputs, logs, artifacts, exit status, failure type, model/runtime metadata, and retry relationship.
+2. **Review-to-merge reliability**
+   - Make CI state, merge readiness, review comments, and review-fix outcomes easier to understand and recover.
+   - Reduce the human interventions needed between PR creation and a merge-ready result.
 
-3. **Repository lease scheduler**
-   - Enforce one active worker per repository.
-   - Allow concurrent execution across different repositories.
-   - Detect stale leases and support dead-run recovery.
+3. **Operator control and visibility**
+   - Improve repository queues, active lease visibility, phase attempts, logs, artifacts, and recovery controls in the API and dashboard.
+   - Make risky retry/resume actions explain their scope and required confirmation before execution.
 
-4. **Review gate abstraction**
-   - Treat PR review comments, review bot results, CI/check status, and validation output as gates that decide whether the pipeline can continue.
+4. **Pipeline provenance and evolution**
+   - Strengthen the record of phase definitions, prompts, skills, model profiles, validation commands, and fallback settings used by each run.
+   - Make behavior changes comparable across pipeline versions without weakening resumability.
 
-5. **Failure taxonomy**
-   - Replace generic failure with categories such as `validation_failed`, `review_rejected`, `merge_conflict`, `agent_timeout`, `provider_error`, `ambiguous_issue`, `unsafe_change`, `no_progress`, `max_iterations`, and `blocked_external`.
-
-6. **Retry and resume controls**
-   - Support retry same phase, retry with fallback model, retry from previous phase, resume after external fix, skip with justification, cancel, and mark blocked.
-
-7. **Operations UI**
-   - Show runs, repo queues, leases, phases, attempts, logs, prompts, outputs, diffs, validation failures, review comments, retry controls, and terminal state.
+5. **Outcome measurement**
+   - Measure phase reliability, retry effectiveness, intervention count, cycle time, and cost per merge-ready PR.
+   - Use those measurements to choose runtime/model profiles and prioritize reliability work.
 
 ## Model and runtime strategy
 
@@ -206,14 +202,16 @@ Do not build these until the single-tenant control plane is dependable:
 
 ## Decision log
 
-| Date       | Decision                                                              | Rationale                                                                                     | Revisit trigger                                                                                                   |
-| ---------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| 2026-06-02 | Position the product as an AI SDLC control plane, not a coding agent. | Coding agents commoditize; orchestration, state, gates, retries, and recovery are the wedge.  | If agent runtimes provide durable, configurable, model-routed, review-gated pipelines with equivalent visibility. |
-| 2026-06-02 | Keep manual enqueue and autonomous execution.                         | Avoid unsafe arbitrary automation while preserving the leverage of end-to-end delivery.       | When repository policy, issue triage, and risk classification are mature.                                         |
-| 2026-06-02 | Enforce one active issue per repository.                              | Prevent worktree/branch contamination, duplicate work, merge conflicts, and stale plans.      | When path-aware concurrency and conflict prediction are reliable.                                                 |
-| 2026-06-02 | Scale across repositories before scaling within a repository.         | Multi-repo concurrency provides value with lower coordination risk.                           | When a single repo queue becomes the dominant bottleneck.                                                         |
-| 2026-06-02 | Treat agent runtimes as adapters behind orchestration state.          | The orchestrator must own lifecycle state, retry policy, failure semantics, and auditability. | If one runtime becomes mandatory and provides all required control-plane semantics.                               |
-| 2026-06-02 | Make review bots first-class gates.                                   | The valuable outcome is reviewed/approved PR throughput, not raw generated diffs.             | If human-only review replaces bot review or PR approval policy changes.                                           |
+| Date       | Decision                                                               | Rationale                                                                                      | Revisit trigger                                                                                                   |
+| ---------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 2026-06-02 | Position the product as an AI SDLC control plane, not a coding agent.  | Coding agents commoditize; orchestration, state, gates, retries, and recovery are the wedge.   | If agent runtimes provide durable, configurable, model-routed, review-gated pipelines with equivalent visibility. |
+| 2026-06-02 | Keep manual enqueue and autonomous execution.                          | Avoid unsafe arbitrary automation while preserving the leverage of end-to-end delivery.        | When repository policy, issue triage, and risk classification are mature.                                         |
+| 2026-06-02 | Enforce one active issue per repository.                               | Prevent worktree/branch contamination, duplicate work, merge conflicts, and stale plans.       | When path-aware concurrency and conflict prediction are reliable.                                                 |
+| 2026-06-02 | Scale across repositories before scaling within a repository.          | Multi-repo concurrency provides value with lower coordination risk.                            | When a single repo queue becomes the dominant bottleneck.                                                         |
+| 2026-06-02 | Treat agent runtimes as adapters behind orchestration state.           | The orchestrator must own lifecycle state, retry policy, failure semantics, and auditability.  | If one runtime becomes mandatory and provides all required control-plane semantics.                               |
+| 2026-06-02 | Make review bots first-class gates.                                    | The valuable outcome is reviewed/approved PR throughput, not raw generated diffs.              | If human-only review replaces bot review or PR approval policy changes.                                           |
+| 2026-07-16 | Make the TypeScript executor the default path.                         | The typed pipeline now owns the implemented issue-to-PR lifecycle; Bash remains a fallback.    | If a replacement executor reaches equivalent lifecycle and recovery coverage.                                     |
+| 2026-07-16 | Treat centralized multi-repository scheduling as delivered foundation. | Registration, namespaced state, fair dispatch, leases, recovery, and shutdown are implemented. | If operation expands beyond the current single-machine, single-tenant boundary.                                   |
 
 ## Success metrics
 
@@ -227,7 +225,7 @@ approved PRs per human intervention hour
 
 Supporting metrics:
 
-- percentage of runs reaching `READY` without manual fixes;
+- percentage of runs reaching `passed` and merge-ready without manual fixes;
 - average human actions per successful PR;
 - average failed-run diagnosis time;
 - retry success rate by phase;

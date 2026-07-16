@@ -1,5 +1,7 @@
 # Single-tenant VPS worker pool and runtime-agnostic agent adapter architecture
 
+> **Implementation status:** Accepted design record; the M1–M8 implementation is complete. Some context and illustrative filenames below describe the proposal at decision time. Use the [README](../../README.md), [operator quickstart](../quickstart.md), and [scheduler recovery guide](../operations/scheduler-recovery.md) for current commands and state paths.
+
 ## Status
 
 Accepted.
