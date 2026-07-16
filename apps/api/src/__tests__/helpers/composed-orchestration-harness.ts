@@ -153,6 +153,56 @@ export function createQualityReviewPassScript(): ScriptedAgentScript {
   };
 }
 
+export function createSpecReviewFailScript(): ScriptedAgentScript {
+  return {
+    phaseId: 'spec-review',
+    invocationType: 'initial',
+    handle: async (request) => {
+      const resultJson = JSON.stringify({
+        result: 'fail',
+        findings: [{ severity: 'P1', summary: 'Spec review test finding' }],
+      });
+      writeFileSync(path.join(request.cwd, 'result.json'), resultJson, 'utf-8');
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdoutPath: '/dev/null',
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
+export function createQualityReviewFailScript(): ScriptedAgentScript {
+  return {
+    phaseId: 'quality-review',
+    invocationType: 'initial',
+    handle: async (request) => {
+      const resultJson = JSON.stringify({
+        result: 'fail',
+        findings: [{ severity: 'P1', summary: 'Quality review test finding' }],
+      });
+      writeFileSync(path.join(request.cwd, 'result.json'), resultJson, 'utf-8');
+      return {
+        runtime: 'test' as const,
+        provider: 'test',
+        model: 'test',
+        exitCode: 0,
+        durationMs: 10,
+        stdoutPath: '/dev/null',
+        stderrPath: '/dev/null',
+        contractViolations: [],
+        outcome: 'success' as const,
+      };
+    },
+  };
+}
+
 export function createPlanReviewSemanticScript(findingsMd: string): ScriptedAgentScript {
   return {
     phaseId: 'plan-review',
@@ -267,6 +317,24 @@ export interface ComposedOrchestrationHarnessOptions {
   scripts?: ScriptedAgentScript[];
   ambientGitHubRepository?: string;
   agentConfig?: object;
+}
+
+const PADDING_SIZE = 70000;
+
+export function createLongOutputFailStdoutCommand(marker: string): string {
+  const head = `HEAD_ONLY_${marker}`;
+  const tail = `TAIL_${marker}`;
+  return `printf '${head}\\n' && printf '%${PADDING_SIZE}s' '' | tr ' ' 'x' && printf '\\n${tail}\\n' && exit 1`;
+}
+
+export function createLongOutputFailStderrCommand(marker: string): string {
+  const head = `HEAD_ONLY_${marker}`;
+  const tail = `TAIL_${marker}`;
+  return `printf '${head}\\n' && printf '%${PADDING_SIZE}s' '' | tr ' ' 'x' && printf '\\n${tail}\\n' >&2 && exit 1`;
+}
+
+export function createTwoFailureValidationCommands(): string[] {
+  return [createLongOutputFailStdoutCommand('FIRST'), createLongOutputFailStderrCommand('SECOND')];
 }
 
 export interface ComposedOrchestrationHarness {
