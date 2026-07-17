@@ -44,4 +44,22 @@ describe('validationRunPassed', () => {
   it('is false when any command timed out', () => {
     expect(validationRunPassed(run([cmd({ outcome: 'timed_out' })]))).toBe(false);
   });
+
+  it('is true when a skipped command sits alongside passing commands', () => {
+    expect(
+      validationRunPassed(run([cmd(), cmd({ command: 'pnpm test:bash', outcome: 'skipped' })])),
+    ).toBe(true);
+  });
+
+  it('is false when every command was skipped (nothing was actually verified)', () => {
+    expect(validationRunPassed(run([cmd({ outcome: 'skipped' })]))).toBe(false);
+  });
+
+  it('is false when a failing command sits alongside a skipped one', () => {
+    expect(
+      validationRunPassed(
+        run([cmd({ outcome: 'failed' }), cmd({ command: 'pnpm test:bash', outcome: 'skipped' })]),
+      ),
+    ).toBe(false);
+  });
 });

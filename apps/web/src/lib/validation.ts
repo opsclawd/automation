@@ -1,7 +1,7 @@
 export interface ValidationCommandDto {
   command: string;
   kind: string | null;
-  outcome: 'passed' | 'failed' | 'timed_out';
+  outcome: 'passed' | 'failed' | 'timed_out' | 'skipped';
   exitCode: number;
   durationMs: number;
   stdoutPath: string;
