@@ -1,6 +1,6 @@
 import type { RunId, PhaseName } from './ids.js';
 
-export type ValidationCommandOutcome = 'passed' | 'failed' | 'timed_out';
+export type ValidationCommandOutcome = 'passed' | 'failed' | 'timed_out' | 'skipped';
 
 export type ValidationCommandKind = 'build' | 'lint' | 'typecheck' | 'test' | 'other';
 
@@ -34,10 +34,14 @@ export interface ValidationRun {
 }
 
 /**
- * A ValidationRun passes iff it has at least one command and every command
- * passed. An empty command list is NOT a pass (surface as a config error
- * upstream in M5-02).
+ * A ValidationRun passes iff it has at least one executed (non-`skipped`)
+ * command and every executed command passed. `skipped` commands (e.g. a
+ * configured `pnpm <script>` whose script doesn't exist in this repo's
+ * package.json) are excluded from the pass/fail computation entirely — they
+ * neither pass nor fail the run. A command list that is empty, or where
+ * every command was skipped, is NOT a pass (nothing was actually verified).
  */
 export function validationRunPassed(v: ValidationRun): boolean {
-  return v.commands.length > 0 && v.commands.every((c) => c.outcome === 'passed');
+  const executed = v.commands.filter((c) => c.outcome !== 'skipped');
+  return executed.length > 0 && executed.every((c) => c.outcome === 'passed');
 }

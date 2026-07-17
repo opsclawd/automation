@@ -45,6 +45,20 @@ function failResult(i: number, command: string, exitCode: number) {
   };
 }
 
+function skipResult(i: number, command: string) {
+  const slug = command.replace(/^pnpm\s+/, '').replace(/[^a-z0-9]+/g, '-');
+  return {
+    command,
+    exitCode: 0,
+    durationMs: 0,
+    stdout: '',
+    stderr: 'Skipped: no "test:bash" script in package.json at /work\n',
+    stdoutPath: `validate/${i}-${slug}.stdout.log`,
+    stderrPath: `validate/${i}-${slug}.stderr.log`,
+    outcome: 'skipped' as const,
+  };
+}
+
 describe('RunValidation', () => {
   it('persists a ValidationRun with one record per command, preserving order', async () => {
     const port = new FakeValidationPort();
@@ -72,6 +86,27 @@ describe('RunValidation', () => {
     expect(persisted).not.toBeNull();
     expect(persisted!.commands).toHaveLength(2);
     expect(persisted!.completedAt).toBeDefined();
+  });
+
+  it('passes when a skipped command sits alongside passing commands, and skips no classifier', async () => {
+    const port = new FakeValidationPort();
+    port.result = [passResult(0, 'pnpm build'), skipResult(1, 'pnpm test:bash')];
+    const repo = new FakeValidationRunRepository();
+    const { useCase } = makeUseCase(port, repo);
+
+    const out = await useCase.execute({
+      runId: RUN,
+      phaseId: PhaseName('validate'),
+      cwd: '/work',
+      logDir: '/work/.ai-runs/x/validate',
+      commands: ['pnpm build', 'pnpm test:bash'],
+      timeoutSeconds: 300,
+    });
+
+    expect(out.passed).toBe(true);
+    expect(out.failure).toBeUndefined();
+    expect(out.validationRun.commands[1].outcome).toBe('skipped');
+    expect(out.validationRun.commands[1].classifier).toBeUndefined();
   });
 
   it('passes when every command passed', async () => {

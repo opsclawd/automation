@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   ValidationPort,
@@ -17,6 +17,83 @@ export function commandSlug(command: string): string {
       .replace(/^-+|-+$/g, '')
       .slice(0, 40) || 'cmd'
   );
+}
+
+// pnpm subcommands that take a bare-word argument but are not package.json
+// scripts (so `pnpm <word>` for these should never be treated as a missing
+// script — let it run and fail/succeed on its own terms).
+const PNPM_BUILTIN_SUBCOMMANDS = new Set([
+  'install',
+  'i',
+  'add',
+  'remove',
+  'rm',
+  'update',
+  'up',
+  'dlx',
+  'exec',
+  'create',
+  'init',
+  'why',
+  'list',
+  'ls',
+  'outdated',
+  'link',
+  'unlink',
+  'rebuild',
+  'prune',
+  'store',
+  'publish',
+  'pack',
+  'audit',
+  'licenses',
+  'patch',
+  'import',
+  'deploy',
+  'root',
+  'config',
+  'env',
+  'doctor',
+  'self-update',
+  'pkg',
+  'setup',
+]);
+
+/**
+ * Extracts the script name from a *bare* `pnpm <script>` / `pnpm run <script>`
+ * invocation (no extra arguments, no shell chaining). Returns undefined for
+ * anything else (env-var prefixes, `pnpm exec ...`, `&&` chains, etc.), which
+ * intentionally leaves those commands unchecked and running as before.
+ */
+export function bareScriptName(command: string): string | undefined {
+  const match = command.trim().match(/^pnpm\s+(?:run\s+)?([A-Za-z0-9:_-]+)$/);
+  const name = match?.[1];
+  if (!name || PNPM_BUILTIN_SUBCOMMANDS.has(name)) return undefined;
+  return name;
+}
+
+function packageHasScript(cwd: string, script: string): boolean {
+  try {
+    const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf-8')) as {
+      scripts?: Record<string, unknown>;
+    };
+    return Boolean(pkg.scripts && Object.hasOwn(pkg.scripts, script));
+  } catch {
+    // Can't read/parse package.json — don't block the command on our
+    // account; let it run and fail on its own terms if it's genuinely broken.
+    return true;
+  }
+}
+
+/**
+ * `pnpm <name>` also resolves to a `node_modules/.bin/<name>` binary when
+ * there's no matching package.json script (e.g. `pnpm depcruise` running the
+ * dependency-cruiser CLI directly, with no "depcruise" script defined). A
+ * command must fail *both* checks before we treat it as missing.
+ */
+function hasLocalBinary(cwd: string, name: string): boolean {
+  const bin = join(cwd, 'node_modules', '.bin', name);
+  return existsSync(bin) || (process.platform === 'win32' && existsSync(`${bin}.cmd`));
 }
 
 export class ProcessValidationAdapter implements ValidationPort {
@@ -40,6 +117,30 @@ export class ProcessValidationAdapter implements ValidationPort {
       let outcome: ValidationCommandResult['outcome'] = 'passed';
       let isTimedOut = false;
       let timeoutId: NodeJS.Timeout | undefined;
+
+      const scriptName = bareScriptName(command);
+      if (
+        scriptName !== undefined &&
+        !packageHasScript(input.cwd, scriptName) &&
+        !hasLocalBinary(input.cwd, scriptName)
+      ) {
+        stderr = `Skipped: no "${scriptName}" script or node_modules/.bin binary at ${input.cwd}\n`;
+        outcome = 'skipped';
+        const durationMs = Date.now() - started;
+        writeFileSync(stdoutAbs, stdout);
+        writeFileSync(stderrAbs, stderr);
+        results.push({
+          command,
+          exitCode: 0,
+          durationMs,
+          stdout,
+          stderr,
+          stdoutPath: stdoutRel,
+          stderrPath: stderrRel,
+          outcome,
+        });
+        continue;
+      }
 
       try {
         // POSIX-only: `detached` makes the shell a process-group leader so we
@@ -107,7 +208,8 @@ export class ProcessValidationAdapter implements ValidationPort {
       });
     }
 
-    const passed = results.length > 0 && results.every((r) => r.outcome === 'passed');
+    const executed = results.filter((r) => r.outcome !== 'skipped');
+    const passed = executed.length > 0 && executed.every((r) => r.outcome === 'passed');
     writeFileSync(
       join(input.logDir, 'validation-result.json'),
       JSON.stringify(

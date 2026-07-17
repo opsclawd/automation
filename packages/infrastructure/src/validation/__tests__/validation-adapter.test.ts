@@ -1,10 +1,10 @@
 import { afterEach, describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { ProcessValidationAdapter, commandSlug } from '../validation-adapter.js';
+import { ProcessValidationAdapter, commandSlug, bareScriptName } from '../validation-adapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -48,7 +48,89 @@ describe('commandSlug', () => {
   });
 });
 
+describe('bareScriptName', () => {
+  it('extracts the script name from bare pnpm/pnpm run invocations', () => {
+    expect(bareScriptName('pnpm test:bash')).toBe('test:bash');
+    expect(bareScriptName('pnpm run test:bash')).toBe('test:bash');
+    expect(bareScriptName('pnpm build')).toBe('build');
+  });
+
+  it('returns undefined for commands with extra arguments or chaining', () => {
+    expect(bareScriptName('pnpm exec vitest run src/foo.test.ts')).toBeUndefined();
+    expect(bareScriptName('DATABASE_URL=x pnpm exec vitest run src/foo.test.ts')).toBeUndefined();
+    expect(bareScriptName('pnpm build && pnpm test')).toBeUndefined();
+  });
+
+  it('returns undefined for known pnpm builtin subcommands', () => {
+    expect(bareScriptName('pnpm install')).toBeUndefined();
+    expect(bareScriptName('pnpm exec')).toBeUndefined();
+    expect(bareScriptName('pnpm why')).toBeUndefined();
+  });
+});
+
 describe('ProcessValidationAdapter', () => {
+  it('skips a bare pnpm <script> command whose script is absent from package.json, without running it', async () => {
+    const logDir = freshDir();
+    const cwd = freshDir();
+    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ scripts: { build: 'echo built' } }));
+    const adapter = new ProcessValidationAdapter();
+    const results = await adapter.run({
+      cwd,
+      commands: ['pnpm build', 'pnpm test:bash'],
+      timeoutSeconds: 30,
+      logDir,
+    });
+    expect(results[0].outcome).toBe('passed');
+    expect(results[1].outcome).toBe('skipped');
+    expect(results[1].exitCode).toBe(0);
+    expect(results[1].stderr).toContain('no "test:bash" script or node_modules/.bin binary');
+
+    const summary = JSON.parse(readFileSync(join(logDir, 'validation-result.json'), 'utf-8'));
+    expect(summary.passed).toBe(true);
+  });
+
+  it('does not skip a bare pnpm <name> command when a node_modules/.bin binary satisfies it, even without a matching script', async () => {
+    // Regression: `pnpm depcruise` in regime-engine has no "depcruise" script,
+    // but pnpm resolves it to node_modules/.bin/depcruise and it runs fine —
+    // the script-existence check must not treat that as "missing".
+    const logDir = freshDir();
+    const cwd = freshDir();
+    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ scripts: {} }));
+    mkdirSync(join(cwd, 'node_modules', '.bin'), { recursive: true });
+    writeFileSync(
+      join(cwd, 'node_modules', '.bin', 'depcruise'),
+      '#!/bin/sh\necho depcruise-ran\n',
+      {
+        mode: 0o755,
+      },
+    );
+    const adapter = new ProcessValidationAdapter();
+    const results = await adapter.run({
+      cwd,
+      commands: ['pnpm depcruise'],
+      timeoutSeconds: 30,
+      logDir,
+    });
+    expect(results[0].outcome).toBe('passed');
+    expect(results[0].stdout).toContain('depcruise-ran');
+  });
+
+  it('fails the run when every command is skipped (nothing was verified)', async () => {
+    const logDir = freshDir();
+    const cwd = freshDir();
+    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ scripts: {} }));
+    const adapter = new ProcessValidationAdapter();
+    await adapter.run({
+      cwd,
+      commands: ['pnpm test:bash'],
+      timeoutSeconds: 30,
+      logDir,
+    });
+    const summary = JSON.parse(readFileSync(join(logDir, 'validation-result.json'), 'utf-8'));
+    expect(summary.passed).toBe(false);
+    expect(summary.commands[0].outcome).toBe('skipped');
+  });
+
   it('runs every command without short-circuiting on failure', async () => {
     const logDir = freshDir();
     const adapter = new ProcessValidationAdapter();
