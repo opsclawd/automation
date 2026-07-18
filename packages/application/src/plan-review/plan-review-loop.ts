@@ -1148,62 +1148,75 @@ export class PlanReviewLoop {
         );
 
         const verificationCtx = { ...baseCtx, iterationIndex: verificationIteration };
-        await deps.checkDeterministicPlan(verificationCtx);
-        const snapshot = await deps.captureSnapshot(verificationCtx);
-
-        let reviewResult: PlanReviewResult | undefined;
-        let reviewAttempts = 0;
-        while (reviewAttempts <= reviewerMaxRetries) {
-          reviewAttempts += 1;
-          reviewResult = await deps.runReview(
-            {
-              ...verificationCtx,
-              metadata: {
-                iteration: verificationIteration,
-                invocation_type: reviewAttempts === 1 ? 'initial' : 'retry',
-                reviewMode: 'final_full',
-              },
-            },
-            {
-              mode: 'final_full',
-              ...(snapshot ? { snapshot } : {}),
-            },
-          );
-          if (reviewResult.agentOutcome === 'success' && reviewResult.verdict !== undefined) break;
-        }
+        const deterministicResult = await deps.checkDeterministicPlan(verificationCtx);
 
         let outcome: 'resolved' | 'unresolved' | 'failed' = 'failed';
-        if (
-          reviewResult &&
-          reviewResult.agentOutcome === 'success' &&
-          reviewResult.verdict !== undefined
-        ) {
-          const eligibleFindings = (reviewResult.findings ?? []).filter(
-            (f) => f.evidence === 'grounded',
+        let reviewResult: PlanReviewResult | undefined;
+        if (deterministicResult.diagnostic) {
+          this.emit(
+            input,
+            'plan-review.loop.post_reopen_verification.deterministic_failed',
+            'warn',
+            `post-reopen verification failed deterministic check: ${deterministicResult.diagnostic}`,
+            { diagnostic: deterministicResult.diagnostic },
           );
-          const adjustedVerdict = this.computeVerdict(reviewResult.verdict, eligibleFindings);
-          reviewResult = { ...reviewResult, verdict: adjustedVerdict };
+          outcome = 'unresolved';
+        } else {
+          const snapshot = await deps.captureSnapshot(verificationCtx);
 
-          deps.reviewStateRepository?.appendAttempt(
-            buildPlanReviewAttempt({
-              attemptId: reviewResult.invocationId,
-              runId: input.runId as string,
-              phaseId: input.phaseId as string,
-              reviewMode: 'final_full',
-              ...(reviewResult.snapshot ? { snapshot: reviewResult.snapshot } : {}),
-              ...(reviewResult.verdict ? { verdict: reviewResult.verdict } : {}),
-              now: deps.now,
-            }),
-          );
+          let reviewAttempts = 0;
+          while (reviewAttempts <= reviewerMaxRetries) {
+            reviewAttempts += 1;
+            reviewResult = await deps.runReview(
+              {
+                ...verificationCtx,
+                metadata: {
+                  iteration: verificationIteration,
+                  invocation_type: reviewAttempts === 1 ? 'initial' : 'retry',
+                  reviewMode: 'final_full',
+                },
+              },
+              {
+                mode: 'final_full',
+                ...(snapshot ? { snapshot } : {}),
+              },
+            );
+            if (reviewResult.agentOutcome === 'success' && reviewResult.verdict !== undefined)
+              break;
+          }
 
           if (
-            reviewResult.verdict === 'pass' ||
-            reviewResult.verdict === 'p2_only' ||
-            reviewResult.verdict === 'proceed_with_concerns'
+            reviewResult &&
+            reviewResult.agentOutcome === 'success' &&
+            reviewResult.verdict !== undefined
           ) {
-            outcome = 'resolved';
-          } else {
-            outcome = 'unresolved';
+            const eligibleFindings = (reviewResult.findings ?? []).filter(
+              (f) => f.evidence === 'grounded',
+            );
+            const adjustedVerdict = this.computeVerdict(reviewResult.verdict, eligibleFindings);
+            reviewResult = { ...reviewResult, verdict: adjustedVerdict };
+
+            deps.reviewStateRepository?.appendAttempt(
+              buildPlanReviewAttempt({
+                attemptId: reviewResult.invocationId,
+                runId: input.runId as string,
+                phaseId: input.phaseId as string,
+                reviewMode: 'final_full',
+                ...(reviewResult.snapshot ? { snapshot: reviewResult.snapshot } : {}),
+                ...(reviewResult.verdict ? { verdict: reviewResult.verdict } : {}),
+                now: deps.now,
+              }),
+            );
+
+            if (
+              reviewResult.verdict === 'pass' ||
+              reviewResult.verdict === 'p2_only' ||
+              reviewResult.verdict === 'proceed_with_concerns'
+            ) {
+              outcome = 'resolved';
+            } else {
+              outcome = 'unresolved';
+            }
           }
         }
 
