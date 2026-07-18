@@ -1231,7 +1231,26 @@ export class PlanReviewLoop {
               }),
             );
 
-            if (
+            const artifactDrifted =
+              snapshot !== undefined &&
+              reviewResult.snapshot !== undefined &&
+              (snapshot.planMdDigest !== reviewResult.snapshot.planMdDigest ||
+                snapshot.manifestDigest !== reviewResult.snapshot.manifestDigest);
+
+            if (artifactDrifted) {
+              this.emit(
+                input,
+                'plan-review.loop.post_reopen_verification.artifact_drift_detected',
+                'error',
+                `artifact drift detected in post-reopen verification; escalating to human`,
+                {
+                  iteration: verificationIteration,
+                  baselineDigest: snapshot.planMdDigest,
+                  verificationDigest: reviewResult.snapshot?.planMdDigest,
+                },
+              );
+              outcome = 'unresolved';
+            } else if (
               reviewResult.verdict === 'pass' ||
               reviewResult.verdict === 'p2_only' ||
               reviewResult.verdict === 'proceed_with_concerns'
