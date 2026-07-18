@@ -1236,6 +1236,8 @@ export class PlanReviewLoop {
                 })),
               },
             });
+          } else {
+            return { outcome: 'failed', loop, proceedWithConcerns: false };
           }
         }
 
