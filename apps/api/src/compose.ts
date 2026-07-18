@@ -2701,7 +2701,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         // Pre-build: refresh .d.ts files before typecheck. Non-fatal — let
         // the typecheck surface precise errors if the build actually broke.
         try {
-          execFileSync('pnpm', ['-r', 'build'], {
+          execFileSync('pnpm', ['-r', 'run', '--if-present', 'build'], {
             cwd: ctx.cwd,
             stdio: ['ignore', 'pipe', 'pipe'],
             encoding: 'utf-8',
@@ -3452,7 +3452,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       const runTypecheck = async (ctx: StepLoopContext): Promise<TypecheckResult> => {
         let buildError = '';
         try {
-          execFileSync('pnpm', ['-r', 'build'], {
+          execFileSync('pnpm', ['-r', 'run', '--if-present', 'build'], {
             cwd: ctx.cwd,
             stdio: ['ignore', 'pipe', 'pipe'],
             encoding: 'utf-8',
@@ -5062,8 +5062,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
 
         if (!hasWip) {
+          // --if-present: target repos without any build script (e.g. tsx-run
+          // pipelines) must not fail setup on ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT.
           try {
-            execFileSync('pnpm', ['-r', 'build'], {
+            execFileSync('pnpm', ['-r', 'run', '--if-present', 'build'], {
               cwd,
               stdio: ['ignore', 'pipe', 'pipe'],
               encoding: 'utf-8',
@@ -5074,8 +5076,8 @@ export function composeRoot(opts: ComposeOptions): Container {
               ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
               : '';
             const msg = err instanceof Error ? err.message : String(err);
-            console.error('[implement setup] pnpm -r build failed:', msg, stderr);
-            return { ok: false, error: `pnpm -r build failed: ${msg}${stderr}` };
+            console.error('[implement setup] pnpm -r run --if-present build failed:', msg, stderr);
+            return { ok: false, error: `pnpm -r run --if-present build failed: ${msg}${stderr}` };
           }
         }
 
