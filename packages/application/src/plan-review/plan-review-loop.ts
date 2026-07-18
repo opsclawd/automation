@@ -1152,6 +1152,7 @@ export class PlanReviewLoop {
 
         let outcome: 'resolved' | 'unresolved' | 'failed' = 'failed';
         let reviewResult: PlanReviewResult | undefined;
+        let proceedWithConcernsFromVerdict = false;
         if (deterministicResult.diagnostic) {
           this.emit(
             input,
@@ -1188,13 +1189,30 @@ export class PlanReviewLoop {
             );
             if (reviewResult.agentOutcome === 'success' && reviewResult.verdict !== undefined)
               break;
+            if (reviewAttempts <= reviewerMaxRetries) {
+              this.emit(
+                input,
+                'plan-review.reviewer.retry',
+                'warn',
+                `plan-review reviewer attempt ${reviewAttempts} failed (invocation ${reviewResult.invocationId}), retrying...`,
+                {
+                  attempt: reviewAttempts,
+                  maxAttempts: reviewerMaxRetries + 1,
+                  agentOutcome: reviewResult.agentOutcome,
+                  hasVerdict: reviewResult.verdict !== undefined,
+                  invocationId: reviewResult.invocationId,
+                },
+              );
+            }
           }
 
+          proceedWithConcernsFromVerdict = false;
           if (
             reviewResult &&
             reviewResult.agentOutcome === 'success' &&
             reviewResult.verdict !== undefined
           ) {
+            const verbatimVerdict = reviewResult.verdict;
             const eligibleFindings = (reviewResult.findings ?? []).filter(
               (f) => f.evidence === 'grounded',
             );
@@ -1219,6 +1237,7 @@ export class PlanReviewLoop {
               reviewResult.verdict === 'proceed_with_concerns'
             ) {
               outcome = 'resolved';
+              proceedWithConcernsFromVerdict = verbatimVerdict === 'proceed_with_concerns';
             } else {
               outcome = 'unresolved';
             }
@@ -1237,6 +1256,37 @@ export class PlanReviewLoop {
               },
             });
           } else {
+            this.emit(
+              input,
+              'plan-review.reviewer.failed',
+              'error',
+              `reviewer exhausted retry budget at verification iteration ${verificationIteration}`,
+              { iterationIndex: verificationIteration, attempts: reviewAttempts },
+            );
+            const verificationIterationObj: import('@ai-sdlc/domain').LoopIteration = {
+              index: verificationIteration,
+              reviewInvocationId: reviewResult?.invocationId ?? '',
+              startedAt: deps.now(),
+              completedAt: deps.now(),
+              outcome: 'failed' as const,
+            };
+            loop = {
+              ...loop,
+              iterations: [...loop.iterations, verificationIterationObj],
+            };
+            loop = exhaust(loop, deps.now());
+            deps.loops.update(loop);
+            this.emit(
+              input,
+              'plan-review.loop.iteration.completed',
+              'info',
+              `iteration ${verificationIteration} completed: failed`,
+              {
+                index: verificationIteration,
+                outcome: 'failed',
+                verification: 'post_reopen_final_full',
+              },
+            );
             return { outcome: 'failed', loop, proceedWithConcerns: false };
           }
         }
@@ -1276,7 +1326,7 @@ export class PlanReviewLoop {
           return {
             outcome: 'success',
             loop,
-            proceedWithConcerns: reviewResult?.verdict === 'proceed_with_concerns',
+            proceedWithConcerns: proceedWithConcernsFromVerdict,
             ...(reviewResult?.knownLimitations
               ? { knownLimitations: reviewResult.knownLimitations }
               : {}),
