@@ -4963,6 +4963,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
         checkDeterministicPlan: planReviewCheckDeterministicPlan,
+        captureSnapshot: (ctx) => computeSnapshot(ctx.cwd, 'final_full'),
         computeLastFixDiffCitations: (cwd, headBeforeFix) =>
           getRecentFixCitations(cwd, headBeforeFix),
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),

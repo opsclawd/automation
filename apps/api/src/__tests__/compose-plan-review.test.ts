@@ -82,6 +82,8 @@ describe('plan-review compose wiring', () => {
     expect(constructorMatch![0]).toContain(
       'checkDeterministicPlan: planReviewCheckDeterministicPlan',
     );
+    expect(constructorMatch![0]).toContain('captureSnapshot');
+    expect(constructorMatch![0]).toContain('computeSnapshot');
     expect(constructorMatch![0]).toContain('computeLastFixDiffCitations');
     expect(constructorMatch![0]).toContain('getRecentFixCitations');
   });
