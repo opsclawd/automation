@@ -1153,6 +1153,7 @@ export class PlanReviewLoop {
         let outcome: 'resolved' | 'unresolved' | 'failed' = 'failed';
         let reviewResult: PlanReviewResult | undefined;
         let proceedWithConcernsFromVerdict = false;
+        let skipTerminalFix = false;
         if (deterministicResult.diagnostic) {
           this.emit(
             input,
@@ -1250,6 +1251,7 @@ export class PlanReviewLoop {
                 },
               );
               outcome = 'unresolved';
+              skipTerminalFix = true;
             } else if (
               reviewResult.verdict === 'pass' ||
               reviewResult.verdict === 'p2_only' ||
@@ -1360,6 +1362,9 @@ export class PlanReviewLoop {
             `plan-review loop exhausted after ${loop.iterations.length} iterations`,
             { iterations: loop.iterations.length, maxIterations: loop.maxIterations },
           );
+          if (skipTerminalFix) {
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          }
           return this.escalateToTerminalFix(input, loop, 'loop_exhausted', history);
         }
       }
