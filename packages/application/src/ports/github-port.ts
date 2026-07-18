@@ -5,6 +5,13 @@ export interface GitHubIssue {
   labels: string[];
 }
 
+export interface GitHubIssueComment {
+  id: number;
+  author: string;
+  body: string;
+  createdAt: Date;
+}
+
 export interface PullRequest {
   number: number;
   url: string;
@@ -49,6 +56,7 @@ export interface PullRequestReview {
 
 export interface GitHubPort {
   getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue>;
+  listIssueComments(repoFullName: string, issueNumber: number): Promise<GitHubIssueComment[]>;
   getPr(repoFullName: string, prNumber: number): Promise<PullRequestDetail>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequest>;
   listReviewComments(repoFullName: string, prNumber: number): Promise<GitHubReviewComment[]>;

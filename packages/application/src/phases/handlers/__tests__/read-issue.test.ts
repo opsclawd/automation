@@ -68,6 +68,40 @@ describe('ReadIssueHandler', () => {
     expect(completedEvents[0].phase).toBe('read_issue');
   });
 
+  it('writes issue.md and formatted issue-comments.md when comments are present', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('acme/widgets/7', {
+      number: 7,
+      title: 'Add a thing',
+      body: 'Please add the thing.',
+      labels: ['enhancement'],
+    });
+    github.issueComments.set('acme/widgets/7', [
+      {
+        id: 101,
+        author: 'john_doe',
+        body: 'This is a comment.',
+        createdAt: new Date('2026-06-16T12:00:00Z'),
+      },
+      {
+        id: 102,
+        author: 'jane_doe',
+        body: 'Another interesting comment.',
+        createdAt: new Date('2026-06-16T13:00:00Z'),
+      },
+    ]);
+    const artifacts = new FakeArtifactStore();
+    const { ctx } = makeCtx(github, artifacts);
+
+    const result = await new ReadIssueHandler().run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const commentsContents = await artifacts.read('550e8400-e29b-41d4-a716-446655440000', 'issue-comments.md');
+    expect(commentsContents).toBe(
+      '## Comment by john_doe\n\nThis is a comment.\n\n## Comment by jane_doe\n\nAnother interesting comment.\n'
+    );
+  });
+
   it('returns blocked when the issue has the ai:blocked label', async () => {
     const github = new FakeGitHubPort();
     github.issues.set('acme/widgets/7', {

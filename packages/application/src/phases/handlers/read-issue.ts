@@ -1,7 +1,7 @@
 import { PhaseName } from '@ai-sdlc/domain';
 import type { Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
-import type { GitHubIssue } from '../../ports/github-port.js';
+import type { GitHubIssue, GitHubIssueComment } from '../../ports/github-port.js';
 import { createEventEmitter } from '../handler.js';
 
 export class ReadIssueHandler implements PhaseHandler {
@@ -12,8 +12,10 @@ export class ReadIssueHandler implements PhaseHandler {
     emit('read_issue.started', 'info', 'reading issue');
 
     let issue: GitHubIssue;
+    let comments: GitHubIssueComment[];
     try {
       issue = await ctx.github.getIssue(ctx.repoFullName, ctx.issueNumber);
+      comments = await ctx.github.listIssueComments(ctx.repoFullName, ctx.issueNumber);
     } catch (e) {
       const failure: Failure = {
         runUuid: ctx.runUuid,
@@ -46,7 +48,11 @@ export class ReadIssueHandler implements PhaseHandler {
 
     const issueMd = issue.body ? `# ${issue.title}\n\n${issue.body}\n` : `# ${issue.title}\n`;
 
-    let result = await this.writeArtifact(ctx, emit, 'issue-comments.md', '');
+    const commentsMd = comments.length > 0
+      ? comments.map((c) => `## Comment by ${c.author}\n\n${c.body}\n`).join('\n')
+      : '';
+
+    let result = await this.writeArtifact(ctx, emit, 'issue-comments.md', commentsMd);
     if (result) return result;
 
     result = await this.writeArtifact(ctx, emit, 'issue.md', issueMd);
