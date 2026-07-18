@@ -109,6 +109,8 @@ export class PlanReviewLoop {
     const options = { ...(deps.options ?? {}), ...(input.options ?? {}) };
     let bonusIterationUsed = false;
     let finalFullGrantUsed = false;
+    let pendingPostReopenVerification = false;
+    let postReopenVerificationUsed = false;
 
     let loop = createLoop({
       id: deps.idFactory(),
@@ -497,15 +499,17 @@ export class PlanReviewLoop {
 
       loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
 
-      if (reviewMode === 'initial_full' && review.snapshot) {
-        iter1Snapshot = review.snapshot;
-        this.emit(
-          input,
-          'plan-review.snapshot.captured',
-          'info',
-          `captured iteration-1 snapshot for delta-scoped passes`,
-          { snapshot: iter1Snapshot },
-        );
+      if (reviewMode === 'initial_full') {
+        iter1Snapshot = review.snapshot ?? (await deps.captureSnapshot(ctx));
+        if (iter1Snapshot) {
+          this.emit(
+            input,
+            'plan-review.snapshot.captured',
+            'info',
+            `captured iteration-1 snapshot for delta-scoped passes`,
+            { snapshot: iter1Snapshot },
+          );
+        }
       }
 
       // --- EVIDENCE-BOUND GATE + OUT-OF-SCOPE DROP (#716) ---
@@ -832,6 +836,7 @@ export class PlanReviewLoop {
       }
 
       if (finalFullPhase && review.verdict === 'p1_found') {
+        pendingPostReopenVerification = finalFullGrantUsed;
         this.emit(
           input,
           'plan-review.loop.final_review.finding_reopens_cycle',
@@ -906,6 +911,7 @@ export class PlanReviewLoop {
         fix.verdict === undefined ||
         fix.verdict === 'cannot_fix'
       ) {
+        pendingPostReopenVerification = false;
         loop = completeIteration(loop, {
           outcome: 'unresolved',
           fixInvocationId: fix.invocationId,
@@ -932,6 +938,7 @@ export class PlanReviewLoop {
       // --- CONTRADICTION DETECTION ---
       const reviewFailed = review.verdict === 'p1_found';
       if (fix.verdict === 'done_no_fixes_needed' && reviewFailed) {
+        pendingPostReopenVerification = false;
         this.emit(
           input,
           'plan-review.review.contradiction.detected',
@@ -1116,6 +1123,251 @@ export class PlanReviewLoop {
         `iteration ${iterationIndex} completed: fixed`,
         { index: iterationIndex, outcome: 'fixed' },
       );
+
+      const shouldVerifyPostReopen =
+        pendingPostReopenVerification &&
+        finalFullGrantUsed &&
+        !postReopenVerificationUsed &&
+        iterationIndex === loop.maxIterations;
+
+      if (shouldVerifyPostReopen) {
+        pendingPostReopenVerification = false;
+        postReopenVerificationUsed = true;
+
+        const verificationIteration = loop.iterations.length + 1;
+        this.emit(
+          input,
+          'plan-review.loop.post_reopen_verification.started',
+          'info',
+          `post-reopen verification started`,
+          {
+            fixedIteration: iterationIndex,
+            verificationIteration,
+            reason: 'reopened_final_full_fix_at_boundary',
+          },
+        );
+
+        const verificationCtx = { ...baseCtx, iterationIndex: verificationIteration };
+        const deterministicResult = await deps.checkDeterministicPlan(verificationCtx);
+
+        let outcome: 'resolved' | 'unresolved' | 'failed' = 'failed';
+        let reviewResult: PlanReviewResult | undefined;
+        let proceedWithConcernsFromVerdict = false;
+        let skipTerminalFix = false;
+        if (deterministicResult.diagnostic) {
+          this.emit(
+            input,
+            'plan-review.loop.post_reopen_verification.deterministic_failed',
+            'warn',
+            `post-reopen verification failed deterministic check: ${deterministicResult.diagnostic}`,
+            { diagnostic: deterministicResult.diagnostic },
+          );
+          outcome = 'unresolved';
+          history.push({
+            type: 'deterministic_check',
+            iterationIndex: verificationIteration,
+            data: { diagnostic: deterministicResult.diagnostic },
+          });
+        } else {
+          const snapshot = await deps.captureSnapshot(verificationCtx);
+
+          let reviewAttempts = 0;
+          while (reviewAttempts <= reviewerMaxRetries) {
+            reviewAttempts += 1;
+            reviewResult = await deps.runReview(
+              {
+                ...verificationCtx,
+                metadata: {
+                  iteration: verificationIteration,
+                  invocation_type: reviewAttempts === 1 ? 'initial' : 'retry',
+                  reviewMode: 'final_full',
+                },
+              },
+              {
+                mode: 'final_full',
+                ...(snapshot ? { snapshot } : {}),
+              },
+            );
+            if (reviewResult.agentOutcome === 'success' && reviewResult.verdict !== undefined)
+              break;
+            if (reviewAttempts <= reviewerMaxRetries) {
+              this.emit(
+                input,
+                'plan-review.reviewer.retry',
+                'warn',
+                `plan-review reviewer attempt ${reviewAttempts} failed (invocation ${reviewResult.invocationId}), retrying...`,
+                {
+                  attempt: reviewAttempts,
+                  maxAttempts: reviewerMaxRetries + 1,
+                  agentOutcome: reviewResult.agentOutcome,
+                  hasVerdict: reviewResult.verdict !== undefined,
+                  invocationId: reviewResult.invocationId,
+                },
+              );
+            }
+          }
+
+          proceedWithConcernsFromVerdict = false;
+          if (
+            reviewResult &&
+            reviewResult.agentOutcome === 'success' &&
+            reviewResult.verdict !== undefined
+          ) {
+            const verbatimVerdict = reviewResult.verdict;
+            const eligibleFindings = (reviewResult.findings ?? []).filter(
+              (f) => f.evidence === 'grounded',
+            );
+            const adjustedVerdict = this.computeVerdict(reviewResult.verdict, eligibleFindings);
+            reviewResult = { ...reviewResult, verdict: adjustedVerdict };
+
+            deps.reviewStateRepository?.appendAttempt(
+              buildPlanReviewAttempt({
+                attemptId: reviewResult.invocationId,
+                runId: input.runId as string,
+                phaseId: input.phaseId as string,
+                reviewMode: 'final_full',
+                ...(reviewResult.snapshot ? { snapshot: reviewResult.snapshot } : {}),
+                ...(reviewResult.verdict ? { verdict: reviewResult.verdict } : {}),
+                now: deps.now,
+              }),
+            );
+
+            const artifactDrifted =
+              snapshot !== undefined &&
+              reviewResult.snapshot !== undefined &&
+              (snapshot.planMdDigest !== reviewResult.snapshot.planMdDigest ||
+                snapshot.manifestDigest !== reviewResult.snapshot.manifestDigest);
+
+            if (artifactDrifted) {
+              this.emit(
+                input,
+                'plan-review.loop.post_reopen_verification.artifact_drift_detected',
+                'error',
+                `artifact drift detected in post-reopen verification; escalating to human`,
+                {
+                  iteration: verificationIteration,
+                  baselineDigest: snapshot.planMdDigest,
+                  verificationDigest: reviewResult.snapshot?.planMdDigest,
+                },
+              );
+              outcome = 'unresolved';
+              skipTerminalFix = true;
+            } else if (
+              reviewResult.verdict === 'pass' ||
+              reviewResult.verdict === 'p2_only' ||
+              reviewResult.verdict === 'proceed_with_concerns'
+            ) {
+              outcome = 'resolved';
+              proceedWithConcernsFromVerdict = verbatimVerdict === 'proceed_with_concerns';
+            } else {
+              outcome = 'unresolved';
+            }
+            history.push({
+              type: 'review',
+              iterationIndex: verificationIteration,
+              data: {
+                mode: 'final_full' as const,
+                findings: (reviewResult.findings ?? []).map((f) => ({
+                  severity: f.severity,
+                  citation: f.citation,
+                  failureScenario: f.failureScenario,
+                  evidence: f.evidence,
+                  disposition: 'still_open' as const,
+                })),
+              },
+            });
+          } else {
+            this.emit(
+              input,
+              'plan-review.reviewer.failed',
+              'error',
+              `reviewer exhausted retry budget at verification iteration ${verificationIteration}`,
+              { iterationIndex: verificationIteration, attempts: reviewAttempts },
+            );
+            const verificationIterationObj: import('@ai-sdlc/domain').LoopIteration = {
+              index: verificationIteration,
+              reviewInvocationId: reviewResult?.invocationId ?? '',
+              startedAt: deps.now(),
+              completedAt: deps.now(),
+              outcome: 'failed' as const,
+            };
+            loop = {
+              ...loop,
+              iterations: [...loop.iterations, verificationIterationObj],
+            };
+            loop = exhaust(loop, deps.now());
+            deps.loops.update(loop);
+            this.emit(
+              input,
+              'plan-review.loop.iteration.completed',
+              'info',
+              `iteration ${verificationIteration} completed: failed`,
+              {
+                index: verificationIteration,
+                outcome: 'failed',
+                verification: 'post_reopen_final_full',
+              },
+            );
+            return { outcome: 'failed', loop, proceedWithConcerns: false };
+          }
+        }
+
+        const verificationIterationObj: import('@ai-sdlc/domain').LoopIteration = {
+          index: verificationIteration,
+          reviewInvocationId: reviewResult?.invocationId ?? '',
+          startedAt: deps.now(),
+          completedAt: deps.now(),
+          outcome,
+        };
+
+        loop = {
+          ...loop,
+          iterations: [...loop.iterations, verificationIterationObj],
+        };
+
+        this.emit(
+          input,
+          'plan-review.loop.iteration.completed',
+          'info',
+          `iteration ${verificationIteration} completed: ${outcome}`,
+          {
+            index: verificationIteration,
+            outcome,
+            verification: 'post_reopen_final_full',
+          },
+        );
+
+        if (outcome === 'resolved') {
+          loop = {
+            ...loop,
+            status: 'converged',
+            completedAt: deps.now(),
+          };
+          deps.loops.update(loop);
+          return {
+            outcome: 'success',
+            loop,
+            proceedWithConcerns: proceedWithConcernsFromVerdict,
+            ...(reviewResult?.knownLimitations
+              ? { knownLimitations: reviewResult.knownLimitations }
+              : {}),
+          };
+        } else {
+          loop = exhaust(loop, deps.now());
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'plan-review.loop.exhausted',
+            'error',
+            `plan-review loop exhausted after ${loop.iterations.length} iterations`,
+            { iterations: loop.iterations.length, maxIterations: loop.maxIterations },
+          );
+          if (skipTerminalFix) {
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          }
+          return this.escalateToTerminalFix(input, loop, 'loop_exhausted', history);
+        }
+      }
 
       if (iterationIndex === loop.maxIterations && !finalFullGrantUsed) {
         const syncResult = await checkAndFixDeterministic({

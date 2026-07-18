@@ -275,6 +275,8 @@ export interface PlanReviewLoopDeps {
   reviewStateRepository?: ReviewStateRepositoryPort;
   terminalFixProfile?: string | undefined;
   validateTerminalFix?: ((ctx: PlanReviewContext) => Promise<TerminalValidationResult>) | undefined;
+  /** Capture plan artifacts immediately before a read-only verification pass. */
+  captureSnapshot: (ctx: PlanReviewContext) => Promise<PlanReviewSnapshot | undefined>;
 }
 
 export interface TerminalValidationResult {

@@ -13,6 +13,7 @@ import type {
   PlanReviewStepOptions,
   PlanReviewFinding,
   DeterministicPlanCheckResult,
+  PlanReviewSnapshot,
 } from '../types.js';
 import type { ArbiterResult } from '../../implement-step/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
@@ -75,6 +76,11 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       signatureBlastRadiusFailures: [],
     }),
     computeLastFixDiffCitations: (_cwd: string, _headBeforeFix: string | undefined) => [],
+    captureSnapshot: async (_ctx: PlanReviewContext): Promise<PlanReviewSnapshot | undefined> => ({
+      planMdDigest: 'test-snapshot-digest',
+      planMdPath: '/wt/plan.md',
+      capturedAt: '2026-07-08T00:00:00.000Z',
+    }),
     runArbiter: undefined,
     loops: new FakeLoopRepository(),
     events: bus,
@@ -1053,7 +1059,9 @@ describe('PlanReviewLoop', () => {
     expect(out.loop.iterations[2]?.kind).toBe('review');
     expect(out.loop.iterations[3]?.kind).toBe('review');
     expect(out.loop.iterations[3]?.outcome).toBe('resolved');
-    expect(events.some((e) => e.type === 'plan-review.loop.final_review.budget_extended')).toBe(true);
+    expect(events.some((e) => e.type === 'plan-review.loop.final_review.budget_extended')).toBe(
+      true,
+    );
     expect(reviewCalls).toBe(3);
     expect(fixCalls).toBe(2);
   });
@@ -1938,74 +1946,162 @@ describe('PlanReviewLoop budget extension (#repro)', () => {
     // Iteration 3: final_full (pass) -> success
     expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.status).toBe('converged');
-    expect(events.some((e) => e.type === 'plan-review.loop.final_review.budget_extended')).toBe(true);
+    expect(events.some((e) => e.type === 'plan-review.loop.final_review.budget_extended')).toBe(
+      true,
+    );
   });
 });
 
-  it('proceed_with_concerns at max iterations grants extension and succeeds after final_full', async () => {
-    let reviewCalls = 0;
-    const { deps, events } = makeDeps({
-      runReview: async (): Promise<PlanReviewResult> => {
-        reviewCalls += 1;
-        // Iteration 1: initial_full (p1_found)
-        // Iteration 2: intermediate_delta (proceed_with_concerns)
-        // Iteration 3: final_full (pass)
-        return {
-          invocationId: `rev-${reviewCalls}`,
-          agentOutcome: 'success',
-          verdict: reviewCalls === 1 ? 'p1_found' : reviewCalls === 2 ? 'proceed_with_concerns' : 'pass',
-          findings: reviewCalls === 1 ? groundedP1Findings() : [],
-          knownLimitations: reviewCalls === 2 ? 'some limitations' : undefined,
-        };
-      },
+it('proceed_with_concerns at max iterations grants extension and succeeds after final_full', async () => {
+  let reviewCalls = 0;
+  const { deps, events } = makeDeps({
+    runReview: async (): Promise<PlanReviewResult> => {
+      reviewCalls += 1;
+      // Iteration 1: initial_full (p1_found)
+      // Iteration 2: intermediate_delta (proceed_with_concerns)
+      // Iteration 3: final_full (pass)
+      return {
+        invocationId: `rev-${reviewCalls}`,
+        agentOutcome: 'success',
+        verdict:
+          reviewCalls === 1 ? 'p1_found' : reviewCalls === 2 ? 'proceed_with_concerns' : 'pass',
+        findings: reviewCalls === 1 ? groundedP1Findings() : [],
+        knownLimitations: reviewCalls === 2 ? 'some limitations' : undefined,
+      };
+    },
+    runFix: async (): Promise<PlanFixResult> => ({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+    }),
+  });
+
+  const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+  expect(out.outcome).toBe('success');
+  expect(out.proceedWithConcerns).toBe(false); // pass on final_full wins
+  expect(out.loop.iterations).toHaveLength(3);
+  expect(events.some((e) => e.type === 'plan-review.loop.final_review.budget_extended')).toBe(true);
+});
+
+it('one-time budget extension is not granted twice', async () => {
+  let reviewCalls = 0;
+  const { deps, events } = makeDeps({
+    runReview: async (): Promise<PlanReviewResult> => {
+      reviewCalls += 1;
+      // Iter 1: p1_found -> fix
+      // Iter 2: pass -> extension granted (maxIter=3)
+      // Iter 3 (final_full): p1_found -> reopen (iter1Snapshot=undefined, forceInitialFull=true)
+      // Iter 4: initial_full (pass) -> no more extension, loop exhausted
+      return {
+        invocationId: `rev-${reviewCalls}`,
+        agentOutcome: 'success',
+        verdict: reviewCalls === 1 || reviewCalls === 3 ? 'p1_found' : 'pass',
+        findings: reviewCalls === 1 || reviewCalls === 3 ? groundedP1Findings() : [],
+      };
+    },
+    runFix: async (): Promise<PlanFixResult> => ({
+      invocationId: `fix-${reviewCalls}`,
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+    }),
+  });
+
+  const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+  expect(out.outcome).toBe('success');
+  expect(out.loop.status).toBe('converged');
+  const extensionEvents = events.filter(
+    (e) => e.type === 'plan-review.loop.final_review.budget_extended',
+  );
+  expect(extensionEvents).toHaveLength(1);
+  expect(events.some((e) => e.type === 'plan-review.loop.post_reopen_verification.started')).toBe(
+    true,
+  );
+});
+
+it('exhaustion with extension used', async () => {
+  let reviewCalls = 0;
+  const { deps, events } = makeDeps({
+    runReview: async (): Promise<PlanReviewResult> => {
+      reviewCalls += 1;
+      return {
+        invocationId: `rev-${reviewCalls}`,
+        agentOutcome: 'success',
+        verdict: 'p1_found',
+        findings: groundedP1Findings(),
+      };
+    },
+    runFix: async (): Promise<PlanFixResult> => ({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+    }),
+  });
+
+  const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+  expect(out.outcome).toBe('needs_human_review');
+  expect(out.loop.iterations).toHaveLength(2); // 1st review fail -> fix, 2nd review fail -> exhaust
+  expect(events.some((e) => e.type === 'plan-review.loop.exhausted')).toBe(true);
+});
+
+describe('Task 1: snapshot seam - post-reopen verification', () => {
+  it('verifies that captureSnapshot is called on initial_full p1_found before fix', async () => {
+    let captureSnapshotCalls = 0;
+    let snapshotCaptured: PlanReviewSnapshot | undefined;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => ({
+        invocationId: 'rev-1',
+        agentOutcome: 'success',
+        verdict: 'p1_found',
+        findings: groundedP1Findings(),
+      }),
       runFix: async (): Promise<PlanFixResult> => ({
         invocationId: 'fix-1',
         agentOutcome: 'success',
         verdict: 'done_with_fixes',
       }),
+      captureSnapshot: async (): Promise<PlanReviewSnapshot> => {
+        captureSnapshotCalls += 1;
+        snapshotCaptured = {
+          planMdDigest: 'test-digest',
+          planMdPath: 'plan.md',
+          capturedAt: '2026-07-08T00:00:00.000Z',
+        };
+        return snapshotCaptured;
+      },
     });
-
-    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
-    expect(out.outcome).toBe('success');
-    expect(out.proceedWithConcerns).toBe(false); // pass on final_full wins
-    expect(out.loop.iterations).toHaveLength(3);
-    expect(events.some((e) => e.type === 'plan-review.loop.final_review.budget_extended')).toBe(true);
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('needs_human_review');
+    expect(captureSnapshotCalls).toBeGreaterThan(0);
+    expect(snapshotCaptured).toBeDefined();
   });
 
-  it('one-time budget extension is not granted twice', async () => {
-    let reviewCalls = 0;
-    const { deps, events } = makeDeps({
-      runReview: async (): Promise<PlanReviewResult> => {
-        reviewCalls += 1;
-        // Iter 1: p1_found -> fix
-        // Iter 2: pass -> extension granted (maxIter=3)
-        // Iter 3 (final_full): p1_found -> reopen (iter1Snapshot=undefined, forceInitialFull=true)
-        // Iter 4: initial_full (pass) -> no more extension, loop exhausted
-        return {
-          invocationId: `rev-${reviewCalls}`,
-          agentOutcome: 'success',
-          verdict: (reviewCalls === 1 || reviewCalls === 3) ? 'p1_found' : 'pass',
-          findings: (reviewCalls === 1 || reviewCalls === 3) ? groundedP1Findings() : [],
-        };
-      },
+  it('verifies that iter1Snapshot from captureSnapshot is used for post-reopen verification', async () => {
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => ({
+        invocationId: 'rev-1',
+        agentOutcome: 'success',
+        verdict: 'p1_found',
+        findings: groundedP1Findings(),
+      }),
       runFix: async (): Promise<PlanFixResult> => ({
-        invocationId: `fix-${reviewCalls}`,
+        invocationId: 'fix-1',
         agentOutcome: 'success',
         verdict: 'done_with_fixes',
       }),
+      captureSnapshot: async (): Promise<PlanReviewSnapshot> => ({
+        planMdDigest: 'test-digest',
+        planMdPath: 'plan.md',
+        capturedAt: '2026-07-08T00:00:00.000Z',
+      }),
     });
-
-    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
     expect(out.outcome).toBe('needs_human_review');
     expect(out.loop.status).toBe('exhausted');
-    const extensionEvents = events.filter((e) => e.type === 'plan-review.loop.final_review.budget_extended');
-    expect(extensionEvents).toHaveLength(1);
-    expect(events.some((e) => e.type === 'plan-review.loop.exhausted')).toBe(true);
   });
 
-  it('exhaustion with extension used', async () => {
+  it('verifies that when final_full still shows p1 after reopen, outcome is needs_human_review', async () => {
     let reviewCalls = 0;
-    const { deps, events } = makeDeps({
+    const { deps } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
         return {
@@ -2020,10 +2116,921 @@ describe('PlanReviewLoop budget extension (#repro)', () => {
         agentOutcome: 'success',
         verdict: 'done_with_fixes',
       }),
+      captureSnapshot: async (): Promise<PlanReviewSnapshot> => ({
+        planMdDigest: 'test-digest',
+        planMdPath: 'plan.md',
+        capturedAt: '2026-07-08T00:00:00.000Z',
+      }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+  });
+
+  describe('post-reopen final_full verification — transition', () => {
+    it('reopened final_full boundary fix runs one review-only final_full verification and converges', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const reviewModes: string[] = [];
+      const { deps, events } = makeDeps({
+        runReview: async (_ctx, opts): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          if (opts?.mode) {
+            reviewModes.push(opts.mode);
+          } else {
+            reviewModes.push('initial_full');
+          }
+          if (reviewCalls === 1) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'p1_found',
+              findings: groundedP1Findings(),
+            };
+          } else if (reviewCalls === 2) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'pass',
+              findings: [],
+            };
+          } else if (reviewCalls === 3) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'p1_found',
+              findings: groundedP1Findings(),
+            };
+          } else {
+            // reviewCalls === 4
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'pass',
+              findings: [],
+            };
+          }
+        },
+        runFix: async (): Promise<PlanFixResult> => {
+          fixCalls++;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('success');
+      expect(reviewCalls).toBe(4);
+      expect(fixCalls).toBe(2);
+      expect(reviewModes).toEqual([
+        'initial_full',
+        'intermediate_delta',
+        'final_full',
+        'final_full',
+      ]);
+      expect(
+        events.filter((event) => event.type === 'plan-review.loop.final_review.budget_extended'),
+      ).toHaveLength(1);
+      expect(
+        events.filter(
+          (event) => event.type === 'plan-review.loop.post_reopen_verification.started',
+        ),
+      ).toHaveLength(1);
+
+      expect(out.loop.iterations).toHaveLength(4);
+      expect(out.loop.iterations[3]?.outcome).toBe('resolved');
+
+      const verificationStarted = events.find(
+        (e) => e.type === 'plan-review.loop.post_reopen_verification.started',
+      );
+      expect(verificationStarted?.metadata).toMatchObject({
+        fixedIteration: 3,
+        verificationIteration: 4,
+        reason: 'reopened_final_full_fix_at_boundary',
+      });
+
+      const completedEvents = events.filter(
+        (e) => e.type === 'plan-review.loop.iteration.completed',
+      );
+      expect(completedEvents[3]?.metadata).toMatchObject({
+        index: 4,
+        outcome: 'resolved',
+        verification: 'post_reopen_final_full',
+      });
     });
 
-    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
-    expect(out.outcome).toBe('needs_human_review');
-    expect(out.loop.iterations).toHaveLength(2); // 1st review fail -> fix, 2nd review fail -> exhaust
-    expect(events.some((e) => e.type === 'plan-review.loop.exhausted')).toBe(true);
+    it('persistent P1 verification runs at most once and never invokes another ordinary fixer', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const reviewModes: string[] = [];
+      const { deps, events } = makeDeps({
+        runReview: async (_ctx, opts): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          if (opts?.mode) {
+            reviewModes.push(opts.mode);
+          } else {
+            reviewModes.push('initial_full');
+          }
+          if (reviewCalls === 1) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'p1_found',
+              findings: groundedP1Findings(),
+            };
+          } else if (reviewCalls === 2) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'pass',
+              findings: [],
+            };
+          } else if (reviewCalls === 3) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'p1_found',
+              findings: groundedP1Findings(),
+            };
+          } else {
+            // reviewCalls === 4
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'p1_found',
+              findings: groundedP1Findings(),
+            };
+          }
+        },
+        runFix: async (): Promise<PlanFixResult> => {
+          fixCalls++;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('needs_human_review');
+      expect(reviewCalls).toBe(4);
+      expect(fixCalls).toBe(2);
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(4);
+      expect(out.loop.iterations[3]?.outcome).toBe('unresolved');
+      expect(
+        events.filter((e) => e.type === 'plan-review.loop.post_reopen_verification.started'),
+      ).toHaveLength(1);
+
+      const completedEvents = events.filter(
+        (e) => e.type === 'plan-review.loop.iteration.completed',
+      );
+      expect(completedEvents[3]?.metadata).toMatchObject({
+        index: 4,
+        outcome: 'unresolved',
+        verification: 'post_reopen_final_full',
+      });
+    });
+
+    it('fixed exhaustion not triggered by reopened final_full does not receive post-reopen verification', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const { deps, events } = makeDeps({
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success',
+            verdict: 'p1_found',
+            findings: groundedP1Findings(),
+          };
+        },
+        runFix: async (): Promise<PlanFixResult> => {
+          fixCalls++;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('needs_human_review');
+      expect(reviewCalls).toBe(3);
+      expect(fixCalls).toBe(2);
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(
+        events.filter((e) => e.type === 'plan-review.loop.post_reopen_verification.started'),
+      ).toHaveLength(0);
+    });
   });
+
+  describe('post-reopen final_full verification — verdicts', () => {
+    function makePostReopenVerdictSequence(
+      verdictSequence: Array<'pass' | 'p2_only' | 'proceed_with_concerns'>,
+    ) {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const runReview = async (): Promise<PlanReviewResult> => {
+        reviewCalls++;
+        if (reviewCalls === 1) {
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'p1_found' as const,
+            findings: groundedP1Findings(),
+          };
+        } else if (reviewCalls === 2) {
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+            findings: [],
+          };
+        } else if (reviewCalls === 3) {
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'p1_found' as const,
+            findings: groundedP1Findings(),
+          };
+        } else {
+          const idx = reviewCalls - 4;
+          const verdict = verdictSequence[idx] ?? 'pass';
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict,
+            findings: [],
+            knownLimitations:
+              verdict === 'proceed_with_concerns' ? 'post-reopen known limitations' : undefined,
+          };
+        }
+      };
+      const runFix = async (): Promise<PlanFixResult> => {
+        fixCalls++;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        };
+      };
+      return { runReview, runFix, getReviewCalls: () => reviewCalls, getFixCalls: () => fixCalls };
+    }
+
+    it('post-reopen verification pass and p2_only converge without concerns', async () => {
+      const { runReview, runFix, getReviewCalls, getFixCalls } = makePostReopenVerdictSequence([
+        'pass',
+      ]);
+      const { deps, events } = makeDeps({ runReview, runFix });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+
+      expect(out.outcome).toBe('success');
+      expect(out.proceedWithConcerns).toBe(false);
+      expect(out.loop.status).toBe('converged');
+      expect(getReviewCalls()).toBe(4);
+      expect(getFixCalls()).toBe(2);
+
+      const verificationStarted = events.find(
+        (e) => e.type === 'plan-review.loop.post_reopen_verification.started',
+      );
+      expect(verificationStarted).toBeDefined();
+
+      const lastIteration = out.loop.iterations[out.loop.iterations.length - 1];
+      expect(lastIteration?.outcome).toBe('resolved');
+
+      const completedEvents = events.filter(
+        (e) => e.type === 'plan-review.loop.iteration.completed',
+      );
+      const verificationCompleted = completedEvents.find(
+        (e) => e.metadata?.verification === 'post_reopen_final_full',
+      );
+      expect(verificationCompleted?.metadata).toMatchObject({
+        outcome: 'resolved',
+      });
+    });
+
+    it('post-reopen verification p2_only converges without concerns', async () => {
+      const { runReview, runFix, getReviewCalls, getFixCalls } = makePostReopenVerdictSequence([
+        'p2_only',
+      ]);
+      const { deps } = makeDeps({ runReview, runFix });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+
+      expect(out.outcome).toBe('success');
+      expect(out.proceedWithConcerns).toBe(false);
+      expect(out.loop.status).toBe('converged');
+      expect(getReviewCalls()).toBe(4);
+      expect(getFixCalls()).toBe(2);
+
+      const lastIteration = out.loop.iterations[out.loop.iterations.length - 1];
+      expect(lastIteration?.outcome).toBe('resolved');
+    });
+
+    it('post-reopen verification proceed_with_concerns preserves known limitations', async () => {
+      const { runReview, runFix, getReviewCalls, getFixCalls } = makePostReopenVerdictSequence([
+        'proceed_with_concerns',
+      ]);
+      const { deps, events } = makeDeps({ runReview, runFix });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+
+      expect(out.outcome).toBe('success');
+      expect(out.proceedWithConcerns).toBe(true);
+      expect(out.knownLimitations).toBe('post-reopen known limitations');
+      expect(out.loop.status).toBe('converged');
+      expect(getReviewCalls()).toBe(4);
+      expect(getFixCalls()).toBe(2);
+
+      const lastIteration = out.loop.iterations[out.loop.iterations.length - 1];
+      expect(lastIteration?.outcome).toBe('resolved');
+
+      const completedEvents = events.filter(
+        (e) => e.type === 'plan-review.loop.iteration.completed',
+      );
+      const verificationCompleted = completedEvents.find(
+        (e) => e.metadata?.verification === 'post_reopen_final_full',
+      );
+      expect(verificationCompleted?.metadata?.outcome).toBe('resolved');
+    });
+
+    it('post-reopen verification retries reviewer failures up to the configured budget', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const { deps, events } = makeDeps({
+        reviewerMaxRetries: 2,
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          if (reviewCalls === 1) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else if (reviewCalls === 2) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+            };
+          } else if (reviewCalls === 3) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else if (reviewCalls === 4) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'failed' as const,
+              verdict: undefined,
+            };
+          } else {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+            };
+          }
+        },
+        runFix: async (): Promise<PlanFixResult> => {
+          fixCalls++;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+
+      expect(out.outcome).toBe('success');
+      expect(out.loop.status).toBe('converged');
+      expect(reviewCalls).toBe(5);
+      expect(fixCalls).toBe(2);
+
+      const retryEvents = events.filter((e) => e.type === 'plan-review.reviewer.retry');
+      expect(retryEvents.length).toBeGreaterThanOrEqual(1);
+
+      const lastIteration = out.loop.iterations[out.loop.iterations.length - 1];
+      expect(lastIteration?.outcome).toBe('resolved');
+    });
+
+    it('post-reopen verification reviewer exhaustion records failed and cannot succeed', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const { deps, events } = makeDeps({
+        reviewerMaxRetries: 1,
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          if (reviewCalls === 1) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else if (reviewCalls === 2) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+            };
+          } else if (reviewCalls === 3) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'failed' as const,
+              verdict: undefined,
+            };
+          }
+        },
+        runFix: async (): Promise<PlanFixResult> => {
+          fixCalls++;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+
+      expect(out.outcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      expect(reviewCalls).toBe(5);
+      expect(fixCalls).toBe(2);
+
+      const failedEvents = events.filter((e) => e.type === 'plan-review.reviewer.failed');
+      expect(failedEvents.length).toBe(1);
+
+      const lastIteration = out.loop.iterations[out.loop.iterations.length - 1];
+      expect(lastIteration?.outcome).toBe('failed');
+
+      const completedEvents = events.filter(
+        (e) => e.type === 'plan-review.loop.iteration.completed',
+      );
+      const verificationCompleted = completedEvents.find(
+        (e) => e.metadata?.verification === 'post_reopen_final_full',
+      );
+      expect(verificationCompleted?.metadata?.outcome).toBe('failed');
+    });
+  });
+
+  describe('post-reopen final_full verification — safety', () => {
+    it('post-reopen deterministic failure skips captureSnapshot and semantic verification and escalates', async () => {
+      let verificationCaptureSnapshotCalls = 0;
+      let reviewModes: string[] = [];
+      let checkCalls = 0;
+      const { deps, events } = makeDeps({
+        runReview: async (_ctx, opts): Promise<PlanReviewResult> => {
+          const mode = opts?.mode ?? 'initial_full';
+          reviewModes.push(mode);
+          if (reviewModes.length === 1) {
+            return {
+              invocationId: `rev-${reviewModes.length}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+              snapshot: {
+                planMdDigest: 'iter1-snapshot',
+                planMdPath: '/wt/plan.md',
+                capturedAt: '2026-07-08T00:00:00.000Z',
+              },
+            };
+          } else if (reviewModes.length === 2) {
+            return {
+              invocationId: `rev-${reviewModes.length}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+            };
+          } else if (reviewModes.length === 3) {
+            return {
+              invocationId: `rev-${reviewModes.length}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else {
+            return {
+              invocationId: `rev-${reviewModes.length}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+            };
+          }
+        },
+        runFix: async (): Promise<PlanFixResult> => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        checkDeterministicPlan: async (_ctx): Promise<DeterministicPlanCheckResult> => {
+          checkCalls++;
+          if (checkCalls >= 5) {
+            return {
+              diagnostic: 'post-reopen deterministic failure',
+              signatureBlastRadiusFailures: [],
+            };
+          }
+          return { diagnostic: null, signatureBlastRadiusFailures: [] };
+        },
+        captureSnapshot: async (): Promise<PlanReviewSnapshot> => {
+          verificationCaptureSnapshotCalls++;
+          return {
+            planMdDigest: 'post-fix-baseline',
+            planMdPath: '/wt/plan.md',
+            capturedAt: '2026-07-08T00:00:00.000Z',
+          };
+        },
+      });
+
+      await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(verificationCaptureSnapshotCalls).toBe(0);
+
+      const deterministicFailedEvent = events.find(
+        (e) => e.type === 'plan-review.loop.post_reopen_verification.deterministic_failed',
+      );
+      expect(deterministicFailedEvent).toBeDefined();
+
+      const verificationStarted = events.find(
+        (e) => e.type === 'plan-review.loop.post_reopen_verification.started',
+      );
+      expect(verificationStarted).toBeDefined();
+    });
+
+    it('post-reopen verification compares against a fresh post-fix snapshot and succeeds on matching digests', async () => {
+      let snapshotCaptured: PlanReviewSnapshot | undefined;
+      const reviewSnapshots: Array<PlanReviewSnapshot | undefined> = [];
+      let reviewCalls = 0;
+      const { deps, events } = makeDeps({
+        runReview: async (_ctx, opts): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          reviewSnapshots.push(opts?.snapshot);
+          if (reviewCalls === 1) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+              snapshot: {
+                planMdDigest: 'iter1-snapshot',
+                planMdPath: '/wt/plan.md',
+                capturedAt: '2026-07-08T00:00:00.000Z',
+              },
+            };
+          } else if (reviewCalls === 2) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+            };
+          } else if (reviewCalls === 3) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+              snapshot: {
+                planMdDigest: 'post-fix-baseline',
+                planMdPath: '/wt/plan.md',
+                capturedAt: '2026-07-08T00:00:00.000Z',
+              },
+            };
+          }
+        },
+        runFix: async (): Promise<PlanFixResult> => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        captureSnapshot: async (): Promise<PlanReviewSnapshot> => {
+          snapshotCaptured = {
+            planMdDigest: 'post-fix-baseline',
+            planMdPath: '/wt/plan.md',
+            capturedAt: '2026-07-08T00:00:00.000Z',
+          };
+          return snapshotCaptured;
+        },
+        checkDeterministicPlan: async (): Promise<DeterministicPlanCheckResult> => ({
+          diagnostic: null,
+          signatureBlastRadiusFailures: [],
+        }),
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('success');
+      expect(out.loop.status).toBe('converged');
+
+      expect(snapshotCaptured).toBeDefined();
+      expect(snapshotCaptured?.planMdDigest).toBe('post-fix-baseline');
+
+      const verificationStarted = events.find(
+        (e) => e.type === 'plan-review.loop.post_reopen_verification.started',
+      );
+      expect(verificationStarted).toBeDefined();
+      expect(verificationStarted?.metadata?.verificationIteration).toBe(4);
+
+      const lastIteration = out.loop.iterations[out.loop.iterations.length - 1];
+      expect(lastIteration?.outcome).toBe('resolved');
+    });
+
+    it('post-reopen verification artifact mutation requires human review even when verdict is pass', async () => {
+      const reviewSnapshots: Array<PlanReviewSnapshot | undefined> = [];
+      let reviewCalls = 0;
+      const { deps, events } = makeDeps({
+        runReview: async (_ctx, opts): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          reviewSnapshots.push(opts?.snapshot);
+          if (reviewCalls === 1) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+              snapshot: {
+                planMdDigest: 'iter1-snapshot',
+                planMdPath: '/wt/plan.md',
+                capturedAt: '2026-07-08T00:00:00.000Z',
+              },
+            };
+          } else if (reviewCalls === 2) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+            };
+          } else if (reviewCalls === 3) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+              snapshot: {
+                planMdDigest: 'different-digest',
+                planMdPath: '/wt/plan.md',
+                capturedAt: '2026-07-08T00:00:00.000Z',
+              },
+            };
+          }
+        },
+        runFix: async (): Promise<PlanFixResult> => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        captureSnapshot: async (): Promise<PlanReviewSnapshot> => ({
+          planMdDigest: 'post-fix-baseline',
+          planMdPath: '/wt/plan.md',
+          capturedAt: '2026-07-08T00:00:00.000Z',
+        }),
+        checkDeterministicPlan: async (): Promise<DeterministicPlanCheckResult> => ({
+          diagnostic: null,
+          signatureBlastRadiusFailures: [],
+        }),
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('needs_human_review');
+      expect(out.loop.status).toBe('exhausted');
+
+      const lastIteration = out.loop.iterations[out.loop.iterations.length - 1];
+      expect(lastIteration?.outcome).toBe('unresolved');
+
+      const driftEvent = events.find(
+        (e) => e.type === 'plan-review.loop.post_reopen_verification.artifact_drift_detected',
+      );
+      expect(driftEvent).toBeDefined();
+    });
+
+    it('post-reopen verification persists a final_full attempt with its invocation id and returned snapshot', async () => {
+      const fakeRepo = new FakeReviewStateRepository();
+      let verificationInvocationId: string | undefined;
+      const reviewModes: string[] = [];
+
+      const { deps } = makeDeps({
+        reviewStateRepository: fakeRepo,
+        runReview: async (_ctx, opts): Promise<PlanReviewResult> => {
+          const mode = opts?.mode ?? 'initial_full';
+          reviewModes.push(mode);
+          const isVerification =
+            mode === 'final_full' && reviewModes.filter((m) => m === 'final_full').length > 1;
+          if (isVerification && !verificationInvocationId) {
+            verificationInvocationId = `rev-${reviewModes.length}`;
+          }
+          if (reviewModes.length === 1) {
+            return {
+              invocationId: `rev-${reviewModes.length}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else if (reviewModes.length === 2) {
+            return {
+              invocationId: `rev-${reviewModes.length}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+            };
+          } else if (reviewModes.length === 3) {
+            return {
+              invocationId: `rev-${reviewModes.length}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else {
+            return {
+              invocationId: `rev-${reviewModes.length}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+              snapshot: {
+                planMdDigest: 'post-fix-baseline',
+                planMdPath: '/wt/plan.md',
+                capturedAt: '2026-07-08T00:00:00.000Z',
+              },
+            };
+          }
+        },
+        runFix: async (): Promise<PlanFixResult> => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        captureSnapshot: async (): Promise<PlanReviewSnapshot> => ({
+          planMdDigest: 'post-fix-baseline',
+          planMdPath: '/wt/plan.md',
+          capturedAt: '2026-07-08T00:00:00.000Z',
+        }),
+        checkDeterministicPlan: async (): Promise<DeterministicPlanCheckResult> => ({
+          diagnostic: null,
+          signatureBlastRadiusFailures: [],
+        }),
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('success');
+
+      const attempts = fakeRepo.listAttempts('run-1', 'plan-review', 'plan-review');
+      const verificationAttempt = attempts.find((a) => a.attemptId === verificationInvocationId);
+      expect(verificationAttempt).toBeDefined();
+      expect(verificationAttempt?.reviewMode).toBe('final_full');
+      expect(verificationAttempt?.snapshot?.identity).toBe('post-fix-baseline');
+    });
+
+    it('existing non-reopened exhaustion still enters terminal fix', async () => {
+      let terminalFixCalled = false;
+      let runFixCalls = 0;
+      const { deps, events } = makeDeps({
+        runReview: async (): Promise<PlanReviewResult> => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
+        }),
+        runFix: async (_ctx, opts): Promise<PlanFixResult> => {
+          runFixCalls++;
+          if (opts.isTerminalFix) {
+            terminalFixCalled = true;
+            return {
+              invocationId: 'fix-terminal',
+              agentOutcome: 'success' as const,
+              verdict: 'done_with_fixes' as const,
+            };
+          }
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+        terminalFixProfile: 'terminal-fix-profile',
+        validateTerminalFix: async () => ({
+          passed: true,
+          diagnostics: [],
+          changedArtifacts: {},
+          summary: 'Valid change',
+        }),
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('success');
+      expect(terminalFixCalled).toBe(true);
+      expect(runFixCalls).toBe(2);
+
+      expect(
+        events.filter((e) => e.type === 'plan-review.loop.post_reopen_verification.started'),
+      ).toHaveLength(0);
+    });
+
+    it('post-reopen verification emits one extension and one verification event', async () => {
+      let reviewCalls = 0;
+      const { deps, events } = makeDeps({
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          if (reviewCalls === 1) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else if (reviewCalls === 2) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+            };
+          } else if (reviewCalls === 3) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'p1_found' as const,
+              findings: groundedP1Findings(),
+            };
+          } else {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              findings: [],
+            };
+          }
+        },
+        runFix: async (): Promise<PlanFixResult> => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        checkDeterministicPlan: async (): Promise<DeterministicPlanCheckResult> => ({
+          diagnostic: null,
+          signatureBlastRadiusFailures: [],
+        }),
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('success');
+
+      const budgetExtensionEvents = events.filter(
+        (e) => e.type === 'plan-review.loop.final_review.budget_extended',
+      );
+      expect(budgetExtensionEvents).toHaveLength(1);
+
+      const verificationStartedEvents = events.filter(
+        (e) => e.type === 'plan-review.loop.post_reopen_verification.started',
+      );
+      expect(verificationStartedEvents).toHaveLength(1);
+
+      const completedEvents = events.filter(
+        (e) => e.type === 'plan-review.loop.iteration.completed',
+      );
+      const verificationCompleted = completedEvents.find(
+        (e) => e.metadata?.verification === 'post_reopen_final_full',
+      );
+      expect(verificationCompleted).toBeDefined();
+      expect(verificationCompleted?.metadata).toMatchObject({
+        outcome: 'resolved',
+        verification: 'post_reopen_final_full',
+      });
+    });
+  });
+});
