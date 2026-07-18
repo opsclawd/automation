@@ -88,6 +88,26 @@ describe('plan-review compose wiring', () => {
     expect(constructorMatch![0]).toContain('getRecentFixCitations');
   });
 
+  it('planReviewRunReview appends final_full scope when options contain only mode and snapshot', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const reviewFnMatch = composeSrc.match(
+      /const planReviewRunReview[\s\S]*?(?=const planReviewRunFix)/,
+    );
+    expect(reviewFnMatch).toBeTruthy();
+    const fnSrc = reviewFnMatch![0];
+    expect(fnSrc).toContain('buildPlanReviewReviewScopeBlock');
+    expect(fnSrc).not.toContain(
+      'reviewOpts.prevFindings !== undefined || reviewOpts.recentFixCitations !== undefined',
+    );
+    expect(fnSrc).toMatch(
+      /if\s*\(\s*reviewOpts\s*!==\s*undefined\s*&&\s*ctx\.iterationIndex\s*>=\s*2\s*\)/,
+    );
+    expect(fnSrc).toMatch(/scopeBlock\.length\s*>\s*0/);
+  });
+
   it('planReviewRunFix forwards the deterministic diagnostic in vars and sets deterministic_fix invocation_type', () => {
     const composeSrc = readFileSync(
       path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),

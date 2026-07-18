@@ -4475,13 +4475,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         // the base prompt. NEVER substitute promptBody — that would discard
         // the plan.md/design.md artifact content and WORKSPACE_CONSTRAINTS
         // block the base prompt template renders.
-        if (
-          reviewOpts !== undefined &&
-          ctx.iterationIndex >= 2 &&
-          (reviewOpts.prevFindings !== undefined || reviewOpts.recentFixCitations !== undefined)
-        ) {
+        if (reviewOpts !== undefined && ctx.iterationIndex >= 2) {
           const scopeBlock = buildPlanReviewReviewScopeBlock(reviewOpts);
-          promptBody = `${promptBody}\n\n${scopeBlock}`;
+          if (scopeBlock.length > 0) {
+            promptBody = `${promptBody}\n\n${scopeBlock}`;
+          }
         }
         writeFileSync(promptPath, promptBody, 'utf-8');
 
