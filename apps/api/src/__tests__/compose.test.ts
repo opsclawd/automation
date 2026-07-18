@@ -1249,7 +1249,7 @@ exit 1
     const typecheckFnMatch = composeSrc.match(/const runTypecheck[\s\S]*?(?=const runSpecReview)/);
     expect(typecheckFnMatch).toBeTruthy();
     const fnSrc = typecheckFnMatch![0];
-    const buildIdx = fnSrc.indexOf("'-r', 'build'");
+    const buildIdx = fnSrc.indexOf("'-r', 'run', '--if-present', 'build'");
     const typecheckIdx = fnSrc.indexOf("'-r', 'typecheck'");
     expect(buildIdx).toBeGreaterThan(-1);
     expect(typecheckIdx).toBeGreaterThan(-1);
@@ -1271,7 +1271,7 @@ exit 1
     );
     expect(gateFnMatch).toBeTruthy();
     const fnSrc = gateFnMatch![0];
-    const buildIdx = fnSrc.indexOf("'-r', 'build'");
+    const buildIdx = fnSrc.indexOf("'-r', 'run', '--if-present', 'build'");
     const typecheckIdx = fnSrc.indexOf("'-r', 'typecheck'");
     expect(buildIdx).toBeGreaterThan(-1);
     expect(typecheckIdx).toBeGreaterThan(-1);
