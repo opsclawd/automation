@@ -1161,6 +1161,11 @@ export class PlanReviewLoop {
             { diagnostic: deterministicResult.diagnostic },
           );
           outcome = 'unresolved';
+          history.push({
+            type: 'deterministic_check',
+            iterationIndex: verificationIteration,
+            data: { diagnostic: deterministicResult.diagnostic },
+          });
         } else {
           const snapshot = await deps.captureSnapshot(verificationCtx);
 
@@ -1217,6 +1222,20 @@ export class PlanReviewLoop {
             } else {
               outcome = 'unresolved';
             }
+            history.push({
+              type: 'review',
+              iterationIndex: verificationIteration,
+              data: {
+                mode: 'final_full' as const,
+                findings: (reviewResult.findings ?? []).map((f) => ({
+                  severity: f.severity,
+                  citation: f.citation,
+                  failureScenario: f.failureScenario,
+                  evidence: f.evidence,
+                  disposition: 'still_open' as const,
+                })),
+              },
+            });
           }
         }
 
