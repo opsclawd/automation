@@ -2367,6 +2367,8 @@ describe('Task 1: snapshot seam - post-reopen verification', () => {
             agentOutcome: 'success' as const,
             verdict,
             findings: [],
+            knownLimitations:
+              verdict === 'proceed_with_concerns' ? 'post-reopen known limitations' : undefined,
           };
         }
       };
@@ -2442,6 +2444,7 @@ describe('Task 1: snapshot seam - post-reopen verification', () => {
 
       expect(out.outcome).toBe('success');
       expect(out.proceedWithConcerns).toBe(true);
+      expect(out.knownLimitations).toBe('post-reopen known limitations');
       expect(out.loop.status).toBe('converged');
       expect(getReviewCalls()).toBe(4);
       expect(getFixCalls()).toBe(2);
