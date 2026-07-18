@@ -12,12 +12,93 @@
 #      fixer's deterministic verification with a green tree (run 0207d0d0,
 #      issue #760).
 #   3. Ensure REPO_ROOT is on main and up to date with origin/main.
-#   4. Hand off to `orchestrator run` with any args this script received.
+#   4. Run the same freshness check against every repository the run may
+#      execute on: an explicit --target-repo-root argument, or otherwise all
+#      enabled registered repositories in the control-plane DB. Target repos
+#      are checked with untracked files ignored — orchestrator state dirs
+#      (.ai-runs, .ai-worktrees, .ai-tmp) live there untracked by design.
+#   5. Hand off to `orchestrator run` with any args this script received.
 #
 # Usage: scripts/preflight.sh --issue 680 [any other `orchestrator run` flags]
-set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Ensure the checkout at $1 is clean, on branch $2, and fast-forwarded to
+# origin/$2. $3 selects dirtiness scope: "strict" fails on untracked files
+# too; "ignore" only fails on tracked changes.
+preflight_check_repo() {
+  local repo_root=$1 branch=$2 untracked=${3:-strict}
+
+  local status_args=(status --porcelain)
+  if [[ "$untracked" == "ignore" ]]; then
+    status_args+=(--untracked-files=no)
+  fi
+  if [[ -n "$(git -C "$repo_root" "${status_args[@]}")" ]]; then
+    echo "ERROR: $repo_root has uncommitted changes. Refusing to switch/pull $branch." >&2
+    git -C "$repo_root" status --short >&2
+    return 1
+  fi
+
+  local current_branch
+  current_branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD)
+  if [[ "$current_branch" != "$branch" ]]; then
+    echo "On '$current_branch', switching to $branch..."
+    git -C "$repo_root" checkout -q "$branch"
+  fi
+
+  echo "Fetching origin/$branch..."
+  git -C "$repo_root" fetch -q origin "$branch"
+
+  local local_sha remote_sha
+  local_sha=$(git -C "$repo_root" rev-parse "$branch")
+  remote_sha=$(git -C "$repo_root" rev-parse "origin/$branch")
+  if [[ "$local_sha" != "$remote_sha" ]]; then
+    if git -C "$repo_root" merge-base --is-ancestor "$branch" "origin/$branch"; then
+      echo "$branch is behind origin/$branch, fast-forwarding..."
+      git -C "$repo_root" merge -q --ff-only "origin/$branch"
+    else
+      echo "ERROR: $branch has diverged from origin/$branch in $repo_root. Resolve manually before running." >&2
+      return 1
+    fi
+  else
+    echo "$branch is up to date."
+  fi
+}
+
+# Emit one "path|branch" line per repository the run may execute against.
+# An explicit --target-repo-root argument wins (legacy single-target mode;
+# branch left empty for the caller to resolve). Otherwise every enabled
+# registered repository in the control-plane DB at $1.
+preflight_target_repos() {
+  local db=$1
+  shift
+  local prev="" arg
+  for arg in "$@"; do
+    if [[ "$prev" == "--target-repo-root" ]]; then
+      echo "$arg|"
+      return 0
+    fi
+    if [[ "$arg" == --target-repo-root=* ]]; then
+      echo "${arg#--target-repo-root=}|"
+      return 0
+    fi
+    prev=$arg
+  done
+
+  [[ -f "$db" ]] || return 0
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "WARN: sqlite3 not found; skipping registered-repo git checks." >&2
+    return 0
+  fi
+  sqlite3 "$db" "SELECT local_base_path || '|' || default_branch FROM repositories WHERE enabled = 1;" 2>/dev/null || true
+}
+
+# When sourced (tests), expose the functions above without executing.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
+set -euo pipefail
 
 echo "==> Killing orphaned vitest/node worker processes..."
 orphans=$(ps -eo pid,ppid,cmd | awk '$2==1 && $0~/vitest|node \(vitest/ {print $1}')
@@ -66,33 +147,27 @@ fi
 echo "/tmp OK (${tmp_avail_mb}MB free)."
 
 echo "==> Checking REPO_ROOT git state ($REPO_ROOT)..."
-if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
-  echo "ERROR: $REPO_ROOT has uncommitted changes. Refusing to switch/pull main." >&2
-  git -C "$REPO_ROOT" status --short >&2
-  exit 1
-fi
+preflight_check_repo "$REPO_ROOT" main strict
 
-current_branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)
-if [[ "$current_branch" != "main" ]]; then
-  echo "On '$current_branch', switching to main..."
-  git -C "$REPO_ROOT" checkout -q main
-fi
-
-echo "==> Fetching origin/main..."
-git -C "$REPO_ROOT" fetch -q origin main
-
-local_sha=$(git -C "$REPO_ROOT" rev-parse main)
-remote_sha=$(git -C "$REPO_ROOT" rev-parse origin/main)
-if [[ "$local_sha" != "$remote_sha" ]]; then
-  if git -C "$REPO_ROOT" merge-base --is-ancestor main origin/main; then
-    echo "main is behind origin/main, fast-forwarding..."
-    git -C "$REPO_ROOT" merge -q --ff-only origin/main
-  else
-    echo "ERROR: main has diverged from origin/main. Resolve manually before running." >&2
-    exit 1
+echo "==> Checking target repository git state..."
+targets_checked=0
+while IFS='|' read -r target_root target_branch; do
+  [[ -z "$target_root" ]] && continue
+  [[ "$target_root" == "$REPO_ROOT" ]] && continue
+  if [[ ! -d "$target_root" ]]; then
+    echo "WARN: target repo $target_root does not exist; skipping git check." >&2
+    continue
   fi
-else
-  echo "main is up to date."
+  if [[ -z "$target_branch" ]]; then
+    target_branch=$(git -C "$target_root" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+    target_branch=${target_branch:-main}
+  fi
+  echo "--> $target_root (branch $target_branch)"
+  preflight_check_repo "$target_root" "$target_branch" ignore
+  targets_checked=$((targets_checked + 1))
+done < <(preflight_target_repos "$REPO_ROOT/.ai-runs/orchestrator.sqlite" "$@")
+if [[ "$targets_checked" -eq 0 ]]; then
+  echo "No separate target repositories to check."
 fi
 
 echo "==> Starting orchestrator run..."
