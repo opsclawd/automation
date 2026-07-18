@@ -1249,7 +1249,7 @@ exit 1
     const typecheckFnMatch = composeSrc.match(/const runTypecheck[\s\S]*?(?=const runSpecReview)/);
     expect(typecheckFnMatch).toBeTruthy();
     const fnSrc = typecheckFnMatch![0];
-    const buildIdx = fnSrc.indexOf("'-r', 'build'");
+    const buildIdx = fnSrc.indexOf("'-r', 'run', '--if-present', 'build'");
     const typecheckIdx = fnSrc.indexOf("'-r', 'typecheck'");
     expect(buildIdx).toBeGreaterThan(-1);
     expect(typecheckIdx).toBeGreaterThan(-1);
@@ -1271,7 +1271,7 @@ exit 1
     );
     expect(gateFnMatch).toBeTruthy();
     const fnSrc = gateFnMatch![0];
-    const buildIdx = fnSrc.indexOf("'-r', 'build'");
+    const buildIdx = fnSrc.indexOf("'-r', 'run', '--if-present', 'build'");
     const typecheckIdx = fnSrc.indexOf("'-r', 'typecheck'");
     expect(buildIdx).toBeGreaterThan(-1);
     expect(typecheckIdx).toBeGreaterThan(-1);
@@ -1479,7 +1479,11 @@ exit 1
         expect.any(Object),
       );
       // pnpm -r build runs because there are no WIP commits
-      expect(execSpy).toHaveBeenCalledWith('pnpm', ['-r', 'build'], expect.any(Object));
+      expect(execSpy).toHaveBeenCalledWith(
+        'pnpm',
+        ['-r', 'run', '--if-present', 'build'],
+        expect.any(Object),
+      );
 
       logBetweenSpy.mockRestore();
       execSpy.mockRestore();
@@ -1519,7 +1523,11 @@ exit 1
         expect.any(Object),
       );
       // pnpm -r build is skipped because logBetween returned a commit
-      expect(execSpy).not.toHaveBeenCalledWith('pnpm', ['-r', 'build'], expect.any(Object));
+      expect(execSpy).not.toHaveBeenCalledWith(
+        'pnpm',
+        ['-r', 'run', '--if-present', 'build'],
+        expect.any(Object),
+      );
 
       logBetweenSpy.mockRestore();
       execSpy.mockRestore();
@@ -1560,7 +1568,11 @@ exit 1
         expect.any(Object),
       );
       // pnpm -r build ALSO runs because logBetween threw — hasWip defaults to false
-      expect(execSpy).toHaveBeenCalledWith('pnpm', ['-r', 'build'], expect.any(Object));
+      expect(execSpy).toHaveBeenCalledWith(
+        'pnpm',
+        ['-r', 'run', '--if-present', 'build'],
+        expect.any(Object),
+      );
       // The swallowed error is logged at warn level so operators can diagnose
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining('[implement setup] logBetween failed'),
