@@ -20,10 +20,14 @@ const repositoryRelativePathSchema = z
     { message: 'declaration_file must use forward slashes, not backslashes' },
   );
 
-export const signatureChangeSchema = z.object({
-  declaration_file: repositoryRelativePathSchema,
-  symbol: z.string().trim().min(1, { message: 'symbol must be a non-empty string' }),
-});
+export const signatureChangeSchema = z
+  .object({
+    declaration_file: repositoryRelativePathSchema,
+    symbol: z.string().trim().min(1, { message: 'symbol must be a non-empty string' }),
+    change: z.enum(['modified', 'not_modified']).optional().default('modified'),
+    note: z.string().optional(),
+  })
+  .strict();
 
 export const taskManifestEntryV1Schema = z
   .object({

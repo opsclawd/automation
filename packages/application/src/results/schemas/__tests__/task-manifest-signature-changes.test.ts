@@ -2,6 +2,132 @@ import { describe, expect, it } from 'vitest';
 import { taskManifestSchema } from '../task-manifest.js';
 
 describe('signature_changes in task-manifest V2', () => {
+  describe('describes modified and not-modified annotations', () => {
+    it('defaults an omitted change annotation to modified', () => {
+      const manifest = {
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Add signature tracking',
+            expected_files: ['packages/core/src/api.ts'],
+            signature_changes: [
+              { declaration_file: 'packages/core/src/api.ts', symbol: 'createClient' },
+            ],
+          },
+        ],
+      };
+      const parsed = taskManifestSchema.parse(manifest);
+      expect(parsed.tasks[0].signature_changes![0]).toMatchObject({
+        declaration_file: 'packages/core/src/api.ts',
+        symbol: 'createClient',
+        change: 'modified',
+      });
+    });
+
+    it('preserves a not_modified annotation and note', () => {
+      const manifest = {
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Track reference-only symbol',
+            expected_files: ['packages/core/src/api.ts'],
+            signature_changes: [
+              {
+                declaration_file: 'packages/core/src/api.ts',
+                symbol: 'ERROR_CODES',
+                change: 'not_modified',
+                note: 'INSIGHT_RUN_CONFLICT remains part of the public shape',
+              },
+            ],
+          },
+        ],
+      };
+      const parsed = taskManifestSchema.parse(manifest);
+      expect(parsed.tasks[0].signature_changes![0]).toMatchObject({
+        declaration_file: 'packages/core/src/api.ts',
+        symbol: 'ERROR_CODES',
+        change: 'not_modified',
+        note: 'INSIGHT_RUN_CONFLICT remains part of the public shape',
+      });
+    });
+
+    it('accepts an explicit modified annotation', () => {
+      const manifest = {
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Modify signature',
+            expected_files: ['packages/core/src/api.ts'],
+            signature_changes: [
+              {
+                declaration_file: 'packages/core/src/api.ts',
+                symbol: 'createClient',
+                change: 'modified',
+              },
+            ],
+          },
+        ],
+      };
+      const parsed = taskManifestSchema.parse(manifest);
+      expect(parsed.tasks[0].signature_changes![0]).toMatchObject({
+        declaration_file: 'packages/core/src/api.ts',
+        symbol: 'createClient',
+        change: 'modified',
+      });
+    });
+
+    it('rejects an unsupported change annotation', () => {
+      const manifest = {
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Bad change type',
+            expected_files: ['packages/core/src/api.ts'],
+            signature_changes: [
+              {
+                declaration_file: 'packages/core/src/api.ts',
+                symbol: 'createClient',
+                change: 'reference_only',
+              },
+            ],
+          },
+        ],
+      };
+      expect(() => taskManifestSchema.parse(manifest)).toThrow();
+    });
+
+    it('rejects unknown signature change fields instead of stripping them', () => {
+      const manifest = {
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Unknown field',
+            expected_files: ['packages/core/src/api.ts'],
+            signature_changes: [
+              {
+                declaration_file: 'packages/core/src/api.ts',
+                symbol: 'createClient',
+                change: 'modified',
+                rationale: 'unsupported field',
+              },
+            ],
+          },
+        ],
+      };
+      expect(() => taskManifestSchema.parse(manifest)).toThrow();
+    });
+  });
+
   describe('parses valid V2 function and interface-member signature changes', () => {
     it('accepts a top-level function signature change', () => {
       const manifest = {
