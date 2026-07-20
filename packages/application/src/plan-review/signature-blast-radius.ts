@@ -35,11 +35,13 @@ function collectSignatureChangesFromTask(task: TaskManifestEntryV2): DeclaredTas
   if (!task.signature_changes) {
     return [];
   }
-  return task.signature_changes.map((sc) => ({
-    n: task.n,
-    declarationFile: normalizeFile(sc.declaration_file),
-    symbol: sc.symbol,
-  }));
+  return task.signature_changes
+    .filter((sc) => sc.change !== 'not_modified')
+    .map((sc) => ({
+      n: task.n,
+      declarationFile: normalizeFile(sc.declaration_file),
+      symbol: sc.symbol,
+    }));
 }
 
 export function collectDeclaredSignatureChanges(

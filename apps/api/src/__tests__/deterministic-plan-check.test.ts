@@ -118,6 +118,48 @@ describe('createDeterministicPlanCheck', () => {
     expect(signatureAnalyzer.analyze).not.toHaveBeenCalled();
   });
 
+  it('skips analyzer I/O when all signature annotations are not_modified', async () => {
+    const readPlanMd = vi.fn().mockResolvedValue('some plan markdown');
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          files: ['src/errors.ts'],
+          signature_changes: [
+            {
+              declaration_file: 'src/errors.ts',
+              symbol: 'ERROR_CODES',
+              change: 'not_modified',
+              note: 'The retained code remains consumed by canonical handlers',
+            },
+          ],
+        },
+      ],
+    };
+    const readManifest = vi.fn().mockResolvedValue(JSON.stringify(manifest));
+    const validatePlanTaskList = vi.fn().mockReturnValue({ success: true });
+    const signatureAnalyzer: SignatureReferenceAnalyzerPort = {
+      analyze: vi.fn(),
+    };
+
+    const check = createDeterministicPlanCheck({
+      readPlanMd,
+      readManifest,
+      validatePlanTaskList,
+      signatureAnalyzer,
+    });
+
+    const result = await check(dummyCtx);
+    expect(result).toEqual({
+      diagnostic: null,
+      signatureBlastRadiusFailures: [],
+    });
+    expect(signatureAnalyzer.analyze).not.toHaveBeenCalled();
+  });
+
   it('skips analyzer I/O if there are no declared changes', async () => {
     const readPlanMd = vi.fn().mockResolvedValue('some plan markdown');
     // version 2 but no signature changes

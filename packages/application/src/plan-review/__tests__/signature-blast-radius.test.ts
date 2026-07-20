@@ -29,6 +29,25 @@ function makeAnalysis(
 
 describe('signature-blast-radius', () => {
   describe('collectDeclaredSignatureChanges', () => {
+    it('excludes not_modified entries while retaining modified and legacy entries', () => {
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['src/api.ts'],
+        signature_changes: [
+          { declaration_file: 'src/api.ts', symbol: 'changed', change: 'modified' },
+          { declaration_file: 'src/api.ts', symbol: 'stable', change: 'not_modified' },
+          { declaration_file: 'src/api.ts', symbol: 'legacy' },
+        ],
+      });
+
+      const changes = collectDeclaredSignatureChanges(manifest);
+      expect(changes).toHaveLength(2);
+      expect(changes).toContainEqual({ n: 1, declarationFile: 'src/api.ts', symbol: 'changed' });
+      expect(changes).toContainEqual({ n: 1, declarationFile: 'src/api.ts', symbol: 'legacy' });
+      expect(changes).not.toContainEqual({ n: 1, declarationFile: 'src/api.ts', symbol: 'stable' });
+    });
+
     it('extracts signature changes from V2 tasks with task number', () => {
       const manifest = makeManifest(
         {
@@ -267,6 +286,71 @@ describe('signature-blast-radius', () => {
       const result = evaluateSignatureBlastRadius(manifest, analyses);
       expect(result.pass).toBe(true);
       expect(result.failures).toEqual([]);
+    });
+
+    it('ignores analyzer results for not_modified references', () => {
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['src/api.ts', 'src/consumer.ts'],
+        signature_changes: [
+          { declaration_file: 'src/api.ts', symbol: 'stable', change: 'not_modified' },
+        ],
+      });
+
+      const analyses = makeAnalysis(
+        [{ declarationFile: 'src/api.ts', symbol: 'stable' }],
+        [[{ file: 'src/consumer.ts', line: 10, column: 1, kind: 'call' }]],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(true);
+      expect(result.failures).toEqual([]);
+    });
+
+    it('still enforces uncovered references for modified entries in a mixed manifest', () => {
+      const manifest = makeManifest(
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['src/api.ts'],
+          signature_changes: [
+            { declaration_file: 'src/api.ts', symbol: 'changed', change: 'modified' },
+            { declaration_file: 'src/api.ts', symbol: 'stable', change: 'not_modified' },
+          ],
+        },
+        {
+          n: 2,
+          title: 'Task 2',
+          expected_files: ['src/other.ts'],
+        },
+      );
+
+      const analyses = makeAnalysis(
+        [
+          { declarationFile: 'src/api.ts', symbol: 'changed' },
+          { declarationFile: 'src/api.ts', symbol: 'stable' },
+        ],
+        [
+          [{ file: 'src/consumer.ts', line: 10, column: 1, kind: 'call' }],
+          [{ file: 'src/consumer.ts', line: 20, column: 1, kind: 'call' }],
+        ],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(false);
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toMatchObject({
+        taskN: 1,
+        symbol: 'changed',
+        declarationFile: 'src/api.ts',
+      });
+      expect(result.failures[0].uncoveredReferences).toContainEqual({
+        file: 'src/consumer.ts',
+        line: 10,
+        column: 1,
+        kind: 'call',
+      });
     });
 
     it('still fails when the missing declaration file is not owned by the changing or a later task', () => {
