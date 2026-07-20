@@ -50,7 +50,9 @@ Write `task-manifest.json` as a JSON file with this exact structure:
       "signature_changes": [
         {
           "declaration_file": "path/to/declaration.ts",
-          "symbol": "ExportedSymbolName"
+          "symbol": "ExportedSymbolName",
+          "change": "modified",
+          "note": "Why this declaration is listed"
         }
       ],
       "invariants": [
@@ -73,7 +75,12 @@ Fields:
 - `tasks[].title`: one-line summary matching the prose task header
 - `tasks[].expected_files`: files the task touches (optional but encouraged)
 - `tasks[].validation_commands`: commands to verify task completion (optional but encouraged)
-- `tasks[].signature_changes`: REQUIRED when the task changes the surface of an exported API (parameter-list, return-type, overload-set, required-generic parameter, or required-member-shape). Each entry names a repository-relative declaration file and the exact symbol being changed. Declaration files MUST be in `expected_files` (or legacy `files`). This field is nullish (optional) when no exported-API signatures change.
+- `tasks[].signature_changes`: REQUIRED when the task changes the surface of an exported API (parameter-list, return-type, overload-set, required-generic parameter, or required-member-shape). Each entry names a repository-relative declaration file and the exact symbol being changed. Declaration files MUST be in `expected_files` (or legacy `files`). This field is nullish (optional) when no exported-API signatures change. Each `signature_changes` entry supports the following fields:
+  - `declaration_file` (required): repository-relative path to the declaration file
+  - `symbol` (required): exact exported symbol name being changed
+  - `change` (optional): either `"modified"` (default) or `"not_modified"` — defaults to `"modified"` when omitted for backward compatibility. A symbol listed only because it is referenced for context but deliberately stable MUST set `"change": "not_modified"`; omitting that reference from the manifest and explaining stability in `plan.md` prose also remains valid. `not_modified` entries are retained for traceability but skipped by signature blast-radius enforcement.
+  - `note` (optional): explanatory text describing why this declaration is listed
+  - Unknown fields in a `signature_changes` entry are rejected.
 - `tasks[].invariants`: behavioral invariants to be implemented as tests first (REQUIRED for stateful/logic-heavy tasks)
 
 The manifest is the machine-readable source of truth for task boundaries. `plan.md` remains the human-readable document with full prose.
