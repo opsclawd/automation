@@ -69,6 +69,33 @@ describe('signature_changePrompts', () => {
       expect(template).toContain('PORT/INTERFACE CHANGES');
       expect(template).toContain('same task');
     });
+
+    it('documents modified and not_modified signature annotations', () => {
+      const template = readFileSync(
+        new URL('../../../../prompts/plan-write/plan-write.md', import.meta.url),
+        'utf-8',
+      );
+      expect(template).toContain('"change": "modified"');
+      expect(template).toContain('"not_modified"');
+      expect(template).toContain('"note"');
+    });
+
+    it('requires reference-only signature entries to use not_modified', () => {
+      const template = readFileSync(
+        new URL('../../../../prompts/plan-write/plan-write.md', import.meta.url),
+        'utf-8',
+      );
+      expect(template).toContain('referenced for context');
+      expect(template).toContain('MUST set `"change": "not_modified"`');
+    });
+
+    it('documents strict signature entry validation', () => {
+      const template = readFileSync(
+        new URL('../../../../prompts/plan-write/plan-write.md', import.meta.url),
+        'utf-8',
+      );
+      expect(template).toContain('Unknown fields in a `signature_changes` entry are rejected');
+    });
   });
 
   describe('prompts/plan-write/plan-write-repair.md', () => {
