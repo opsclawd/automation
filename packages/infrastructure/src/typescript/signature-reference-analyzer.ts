@@ -60,13 +60,22 @@ function canonicalizePath(path: string): string {
   return ts.sys.useCaseSensitiveFileNames ? canonical : canonical.toLowerCase();
 }
 
-function relativeToRoot(root: string, filePath: string): string {
-  const canonicalRoot = canonicalizePath(root);
-  const normalizedFile = normalizePath(filePath);
-  if (normalizedFile.startsWith(canonicalRoot + '/')) {
-    return normalizedFile.slice(canonicalRoot.length + 1);
+const canonicalRootCache = new Map<string, string>();
+
+function getCanonicalRoot(root: string): string {
+  if (!canonicalRootCache.has(root)) {
+    canonicalRootCache.set(root, canonicalizePath(root));
   }
-  return normalizedFile;
+  return canonicalRootCache.get(root)!;
+}
+
+function relativeToRoot(root: string, filePath: string): string {
+  const canonicalRoot = getCanonicalRoot(root);
+  const canonicalFile = canonicalizePath(filePath);
+  if (canonicalFile.startsWith(canonicalRoot + '/')) {
+    return filePath.slice(canonicalRoot.length + 1);
+  }
+  return filePath;
 }
 
 // Only checks path segments *below* root against EXCLUDED_DIRS. Checking the
