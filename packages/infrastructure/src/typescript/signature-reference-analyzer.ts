@@ -45,8 +45,14 @@ function normalizePath(path: string): string {
   return path.replace(/\\/g, '/');
 }
 
+const canonicalPathCache = new Map<string, string>();
+
 function canonicalizePath(path: string): string {
   const normalized = normalizePath(path);
+  if (canonicalPathCache.has(normalized)) {
+    return canonicalPathCache.get(normalized)!;
+  }
+
   let canonical = normalized;
 
   if (ts.sys.realpath) {
@@ -57,16 +63,13 @@ function canonicalizePath(path: string): string {
     }
   }
 
-  return ts.sys.useCaseSensitiveFileNames ? canonical : canonical.toLowerCase();
+  canonical = ts.sys.useCaseSensitiveFileNames ? canonical : canonical.toLowerCase();
+  canonicalPathCache.set(normalized, canonical);
+  return canonical;
 }
 
-const canonicalRootCache = new Map<string, string>();
-
 function getCanonicalRoot(root: string): string {
-  if (!canonicalRootCache.has(root)) {
-    canonicalRootCache.set(root, canonicalizePath(root));
-  }
-  return canonicalRootCache.get(root)!;
+  return canonicalizePath(root);
 }
 
 function relativeToRoot(root: string, filePath: string): string {
@@ -79,6 +82,9 @@ function relativeToRoot(root: string, filePath: string): string {
   const canonicalFile = canonicalizePath(filePath);
   if (canonicalFile.startsWith(canonicalRoot + '/')) {
     return canonicalFile.slice(canonicalRoot.length + 1);
+  }
+  if (canonicalFile === canonicalizePath(normalizedFile)) {
+    return filePath;
   }
   return canonicalFile;
 }
