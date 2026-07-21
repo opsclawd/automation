@@ -135,20 +135,22 @@ export function evaluateSignatureBlastRadius(
     }
 
     if (analysis.unresolvedDiagnostic) {
-      // "Declaration file not found" and "Could not resolve symbol" are both
-      // expected, not errors, when the declaration file is itself owned by
-      // the changing task or a later task: plan-review runs before implement,
-      // so a brand-new file — or a brand-new symbol added to an existing,
-      // task-owned file — legitimately does not exist in the worktree yet.
-      // A symbol that doesn't exist yet has zero existing callers by
-      // construction — there is nothing for the blast-radius check to find,
-      // and no plan edit can "resolve" either diagnostic. (Other unresolved
-      // diagnostics — a missing worktree, no source files, a symbol that
-      // exists in an *unowned* file, a program that fails to load a file
-      // that genuinely exists on disk — are not exempted; those indicate a
-      // real plan defect or a real analyzer/environment problem.)
+      // "Declaration file not found", "Could not load source file", and
+      // "Could not resolve symbol" are all expected, not errors, when the
+      // declaration file is itself owned by the changing task or a later
+      // task: plan-review runs before implement, so a brand-new file — or a
+      // brand-new symbol added to an existing, task-owned file — legitimately
+      // does not exist in the worktree yet. A symbol that doesn't exist yet
+      // has zero existing callers by construction — there is nothing for the
+      // blast-radius check to find, and no plan edit can "resolve" any of
+      // these three diagnostics. (Other analyzer/environment diagnostics —
+      // a missing worktree, no source files, a symbol that exists in an
+      // *unowned* file, a program that fails to load a file that genuinely
+      // exists on disk — are not exempted; those indicate a real plan
+      // defect or a real analyzer/environment problem.)
       const isNotYetCreatedInOwnedFile =
         (analysis.unresolvedDiagnostic.startsWith('Declaration file not found:') ||
+          analysis.unresolvedDiagnostic.startsWith('Could not load source file:') ||
           analysis.unresolvedDiagnostic.startsWith('Could not resolve symbol')) &&
         isFileOwnedByChangingOrLaterTask(change.declarationFile, changeInfo.n, manifest);
 

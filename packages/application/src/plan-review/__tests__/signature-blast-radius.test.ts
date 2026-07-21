@@ -450,6 +450,71 @@ describe('signature-blast-radius', () => {
       });
     });
 
+    it('passes when an owned declaration file reports Could not load source file', () => {
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['packages/application/src/dto/policyInsights.ts'],
+        signature_changes: [
+          {
+            declaration_file: 'packages/application/src/dto/policyInsights.ts',
+            symbol: 'PolicyInsightsDto',
+          },
+        ],
+      });
+
+      const analyses = makeAnalysis(
+        [
+          {
+            declarationFile: 'packages/application/src/dto/policyInsights.ts',
+            symbol: 'PolicyInsightsDto',
+          },
+        ],
+        [[]],
+        ['Could not load source file: packages/application/src/dto/policyInsights.ts'],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(true);
+      expect(result.failures).toEqual([]);
+    });
+
+    it('still fails when an unowned declaration file reports Could not load source file', () => {
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['apps/api/src/cli.ts'],
+        signature_changes: [
+          {
+            declaration_file: 'packages/application/src/dto/policyInsights.ts',
+            symbol: 'PolicyInsightsDto',
+          },
+        ],
+      });
+
+      const analyses = makeAnalysis(
+        [
+          {
+            declarationFile: 'packages/application/src/dto/policyInsights.ts',
+            symbol: 'PolicyInsightsDto',
+          },
+        ],
+        [[]],
+        ['Could not load source file: packages/application/src/dto/policyInsights.ts'],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(false);
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toMatchObject({
+        taskN: 1,
+        symbol: 'PolicyInsightsDto',
+        declarationFile: 'packages/application/src/dto/policyInsights.ts',
+        unresolvedDiagnostic:
+          'Could not load source file: packages/application/src/dto/policyInsights.ts',
+      });
+    });
+
     it('groups and sorts failures by task symbol file and location', () => {
       const manifest = makeManifest({
         n: 1,
