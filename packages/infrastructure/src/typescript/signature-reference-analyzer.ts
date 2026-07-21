@@ -45,11 +45,26 @@ function normalizePath(path: string): string {
   return path.replace(/\\/g, '/');
 }
 
+function canonicalizePath(path: string): string {
+  const normalized = normalizePath(path);
+  let canonical = normalized;
+
+  if (ts.sys.realpath) {
+    try {
+      canonical = normalizePath(ts.sys.realpath(normalized));
+    } catch {
+      canonical = normalized;
+    }
+  }
+
+  return ts.sys.useCaseSensitiveFileNames ? canonical : canonical.toLowerCase();
+}
+
 function relativeToRoot(root: string, filePath: string): string {
-  const normalizedRoot = normalizePath(root);
+  const canonicalRoot = canonicalizePath(root);
   const normalizedFile = normalizePath(filePath);
-  if (normalizedFile.startsWith(normalizedRoot + '/')) {
-    return normalizedFile.slice(normalizedRoot.length + 1);
+  if (normalizedFile.startsWith(canonicalRoot + '/')) {
+    return normalizedFile.slice(canonicalRoot.length + 1);
   }
   return normalizedFile;
 }
@@ -503,6 +518,8 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
         }));
       }
 
+      let canonicalSourceFiles: Map<string, ts.SourceFile> | undefined;
+
       const results: SignatureReferenceAnalysis[] = [];
 
       for (const change of changes) {
@@ -538,7 +555,13 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
           continue;
         }
 
-        const sourceFile = program.getSourceFile(resolvedPath);
+        let sourceFile = program.getSourceFile(resolvedPath);
+        if (!sourceFile) {
+          canonicalSourceFiles ??= new Map(
+            program.getSourceFiles().map((file) => [canonicalizePath(file.fileName), file]),
+          );
+          sourceFile = canonicalSourceFiles.get(canonicalizePath(resolvedPath));
+        }
         if (!sourceFile) {
           results.push({
             change,
