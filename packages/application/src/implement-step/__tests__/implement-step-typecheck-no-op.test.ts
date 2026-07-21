@@ -19,6 +19,7 @@ import type { GitPort } from '../../ports/git-port.js';
 function makeFakeGitPort(opts: {
   headSha?: string | string[];
   statusOutput?: string | string[];
+  diffOutput?: string | string[];
   headShaThrows?: boolean;
   statusThrows?: boolean;
 }): GitPort {
@@ -34,6 +35,12 @@ function makeFakeGitPort(opts: {
       ? opts.statusOutput
       : [opts.statusOutput]
     : [''];
+  let diffIndex = 0;
+  const diffs = opts.diffOutput
+    ? Array.isArray(opts.diffOutput)
+      ? opts.diffOutput
+      : [opts.diffOutput]
+    : [''];
 
   return {
     createWorktree: async () => undefined,
@@ -48,7 +55,13 @@ function makeFakeGitPort(opts: {
       return val;
     },
     resetHard: async () => undefined,
-    diff: async () => '',
+    diff: async () => {
+      const val = diffs[diffIndex];
+      if (diffIndex < diffs.length - 1) {
+        diffIndex++;
+      }
+      return val;
+    },
     diffStat: async () => '',
     addAll: async () => undefined,
     commit: async () => 'sha-new',
@@ -162,13 +175,13 @@ function createHarness(
 }
 
 describe('ImplementStepLoop typecheck retry no-op detection', () => {
-  it('short-circuits a successful retry when HEAD and status are unchanged', async () => {
+  it('short-circuits a successful retry when HEAD and diff are unchanged', async () => {
     let typecheckCalls = 0;
     let implementCalls = 0;
 
     const git = makeFakeGitPort({
       headSha: ['sha-before', 'sha-before'],
-      statusOutput: ['', ''],
+      diffOutput: ['', ''],
     });
 
     const { loop, events } = createHarness({
@@ -217,7 +230,7 @@ describe('ImplementStepLoop typecheck retry no-op detection', () => {
 
     const git = makeFakeGitPort({
       headSha: ['sha-1', 'sha-2', 'sha-2', 'sha-2'],
-      statusOutput: ['', '', '', ''],
+      diffOutput: ['', '', '', ''],
     });
 
     const { loop, events } = createHarness({
@@ -238,12 +251,48 @@ describe('ImplementStepLoop typecheck retry no-op detection', () => {
     expect(events.find((event) => event.type === 'step.typecheck.retry_no_op')).toBeUndefined();
   });
 
-  it('re-runs typecheck when the retry changes working-tree status', async () => {
+  it('re-runs typecheck when the retry changes working-tree diff', async () => {
     let typecheckCalls = 0;
 
     const git = makeFakeGitPort({
       headSha: ['sha-1', 'sha-1', 'sha-1', 'sha-1'],
-      statusOutput: ['', ' M file.ts', ' M file.ts', ' M file.ts'],
+      diffOutput: [
+        '',
+        '--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new',
+        '--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new',
+        '--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new',
+      ],
+    });
+
+    const { loop, events } = createHarness({
+      git,
+      runTypecheck: async () => {
+        typecheckCalls++;
+        if (typecheckCalls === 1) {
+          return { outcome: 'fail', output: 'error TS2322: Type error' };
+        }
+        return { outcome: 'pass', output: '' };
+      },
+    });
+
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('success');
+    expect(typecheckCalls).toBe(3);
+    expect(events.find((event) => event.type === 'step.typecheck.retry_no_op')).toBeUndefined();
+  });
+
+  it('re-runs typecheck when file is already dirty but content changes during retry', async () => {
+    let typecheckCalls = 0;
+
+    const git = makeFakeGitPort({
+      headSha: ['sha-1', 'sha-1', 'sha-1', 'sha-1'],
+      diffOutput: [
+        '--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old-content\n+fixed-content',
+        '--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old-content\n+different-content',
+        '--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old-content\n+different-content',
+        '--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old-content\n+different-content',
+      ],
     });
 
     const { loop, events } = createHarness({
@@ -321,7 +370,7 @@ describe('ImplementStepLoop typecheck retry no-op detection', () => {
 
     const git = makeFakeGitPort({
       headSha: ['sha-1', 'sha-2', 'sha-3'],
-      statusOutput: ['', '', ''],
+      diffOutput: ['', '', ''],
     });
 
     const { loop, events } = createHarness({
@@ -388,7 +437,7 @@ describe('ImplementStepLoop typecheck retry no-op detection', () => {
 
     const git = makeFakeGitPort({
       headSha: ['sha-before', 'sha-before'],
-      statusOutput: ['', ''],
+      diffOutput: ['', ''],
     });
 
     const longExcerpt = 'A'.repeat(2500);

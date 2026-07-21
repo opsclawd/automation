@@ -113,7 +113,7 @@ function normalizeTypecheckOutput(output: string): string {
 
 interface GitStateSnapshot {
   head: string;
-  status: string;
+  diff: string;
 }
 
 async function captureGitState(
@@ -122,8 +122,8 @@ async function captureGitState(
 ): Promise<GitStateSnapshot | undefined> {
   if (!git) return undefined;
   try {
-    const [head, status] = await Promise.all([git.headCommitSha(cwd), git.status(cwd)]);
-    return { head, status };
+    const [head, diff] = await Promise.all([git.headCommitSha(cwd), git.diff(cwd, 'HEAD')]);
+    return { head, diff };
   } catch {
     return undefined;
   }
@@ -678,7 +678,7 @@ export class ImplementStepLoop {
         gitStateBefore !== undefined &&
         gitStateAfter !== undefined &&
         gitStateBefore.head === gitStateAfter.head &&
-        gitStateBefore.status === gitStateAfter.status;
+        gitStateBefore.diff === gitStateAfter.diff;
 
       if (retryProducedNoChangesThisAttempt) {
         retryProducedNoChanges = true;
