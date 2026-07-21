@@ -70,12 +70,17 @@ function getCanonicalRoot(root: string): string {
 }
 
 function relativeToRoot(root: string, filePath: string): string {
+  const normalizedRoot = normalizePath(root);
+  const normalizedFile = normalizePath(filePath);
+  if (normalizedFile.startsWith(normalizedRoot + '/')) {
+    return normalizedFile.slice(normalizedRoot.length + 1);
+  }
   const canonicalRoot = getCanonicalRoot(root);
   const canonicalFile = canonicalizePath(filePath);
   if (canonicalFile.startsWith(canonicalRoot + '/')) {
-    return filePath.slice(canonicalRoot.length + 1);
+    return canonicalFile.slice(canonicalRoot.length + 1);
   }
-  return filePath;
+  return canonicalFile;
 }
 
 // Only checks path segments *below* root against EXCLUDED_DIRS. Checking the
