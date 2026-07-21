@@ -82,6 +82,35 @@ describe('signature_changes in task-manifest V2', () => {
       });
     });
 
+    it('accepts and preserves an added annotation for a brand-new exported symbol', () => {
+      const manifest = {
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Create a new exported use case',
+            expected_files: ['packages/core/src/new-use-case.ts'],
+            signature_changes: [
+              {
+                declaration_file: 'packages/core/src/new-use-case.ts',
+                symbol: 'createNewUseCase',
+                change: 'added',
+              },
+            ],
+          },
+        ],
+      };
+
+      const parsed = taskManifestSchema.parse(manifest);
+
+      expect(parsed.tasks[0].signature_changes![0]).toMatchObject({
+        declaration_file: 'packages/core/src/new-use-case.ts',
+        symbol: 'createNewUseCase',
+        change: 'added',
+      });
+    });
+
     it('rejects an unsupported change annotation', () => {
       const manifest = {
         version: 2,
