@@ -331,7 +331,7 @@ describe('createDeterministicPlanCheck', () => {
 
     const result = await check(dummyCtx);
     expect(result.diagnostic).toBe(
-      'structural mismatch error\n\nTask 1 changes fooFunc, but these reference files are not declared by Task 1 or a later task:\n  (unresolved: Could not create TypeScript program)',
+      'structural mismatch error\n\nTask 1 changes fooFunc, but the check could not run:\n  (unresolved: Could not create TypeScript program)',
     );
   });
 });

@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as ts from 'typescript';
 import type {
   DeclaredSignatureChange,
   SignatureReferenceAnalysis,
@@ -634,6 +635,129 @@ worktreeRootFunc();
       expect(results[0]!.references).toContainEqual(
         expect.objectContaining({ file: 'src/caller.ts', kind: 'call' }),
       );
+    });
+
+    it('when exact Program lookup misses but canonical paths match, it resolves the declaration and references', async () => {
+      const physicalRoot = mkdtempSync(join(tmpdir(), 'sig-ref-analyzer-physical-'));
+      tempRoots.push(physicalRoot);
+      const srcDir = join(physicalRoot, 'src');
+      mkdirSync(srcDir, { recursive: true });
+
+      writePackageJson(physicalRoot, 'canonical-test');
+      writeFileSync(
+        join(srcDir, 'lib.ts'),
+        `
+export function pathStable() {}
+`,
+      );
+      writeFileSync(
+        join(srcDir, 'caller.ts'),
+        `
+import { pathStable } from './lib.js';
+pathStable();
+`,
+      );
+      writeFileSync(
+        join(physicalRoot, 'tsconfig.json'),
+        JSON.stringify(makeMinimalTsconfig('./src'), null, 2),
+      );
+
+      const symlinkRoot = mkdtempSync(join(tmpdir(), 'sig-ref-analyzer-symlink-'));
+      tempRoots.push(symlinkRoot);
+      symlinkSync(physicalRoot, join(symlinkRoot, 'worktreeRoot'));
+
+      const worktreeRoot = join(symlinkRoot, 'worktreeRoot');
+      const resolvedPhysicalRoot = realpathSync(worktreeRoot);
+
+      const originalReadDirectory = ts.sys.readDirectory;
+      const originalRealpath = ts.sys.realpath;
+
+      let readDirSpy: ReturnType<typeof vi.spyOn> | undefined;
+      let realpathSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+      try {
+        readDirSpy = vi
+          .spyOn(ts.sys, 'readDirectory')
+          .mockImplementation((path, extensions, excludes, includes, depth) => {
+            let searchPath = path;
+            if (path.startsWith(symlinkRoot)) {
+              searchPath = resolvedPhysicalRoot;
+            }
+            return originalReadDirectory?.(searchPath, extensions, excludes, includes, depth) ?? [];
+          });
+
+        if (ts.sys.realpath) {
+          realpathSpy = vi.spyOn(ts.sys, 'realpath').mockImplementation((path) => {
+            if (path.startsWith(worktreeRoot)) {
+              return originalRealpath!(path.replace(worktreeRoot, resolvedPhysicalRoot));
+            }
+            if (path.startsWith(symlinkRoot)) {
+              return originalRealpath!(path.replace(symlinkRoot, resolvedPhysicalRoot));
+            }
+            return originalRealpath!(path);
+          });
+        }
+
+        const results = await runAnalyzer(worktreeRoot, [
+          { declarationFile: 'src/lib.ts', symbol: 'pathStable' },
+        ]);
+
+        expect(results).toHaveLength(1);
+        const result = results[0]!;
+        expect(result.unresolvedDiagnostic).toBeUndefined();
+        expect(result.declaration).toEqual(expect.objectContaining({ file: 'src/lib.ts' }));
+        expect(result.references).toContainEqual(
+          expect.objectContaining({ file: 'src/caller.ts', kind: 'call' }),
+        );
+      } finally {
+        readDirSpy?.mockRestore();
+        realpathSpy?.mockRestore();
+      }
+    });
+
+    it('when no exact or canonical Program path matches, it reports Could not load source file', async () => {
+      const root = makeRoot();
+      const srcDir = join(root, 'src');
+      mkdirSync(srcDir, { recursive: true });
+
+      writePackageJson(root, 'true-miss-test');
+      writeFileSync(
+        join(srcDir, 'lib.ts'),
+        `
+export function trulyMissing() {}
+`,
+      );
+      writeFileSync(
+        join(srcDir, 'caller.ts'),
+        `
+const unrelated = 1;
+`,
+      );
+      writeFileSync(
+        join(root, 'tsconfig.json'),
+        JSON.stringify(makeMinimalTsconfig('./src'), null, 2),
+      );
+
+      const originalReadDirectory = ts.sys.readDirectory;
+      const spy = vi
+        .spyOn(ts.sys, 'readDirectory')
+        .mockImplementation((path, extensions, excludes, includes, depth) => {
+          const result = originalReadDirectory(path, extensions, excludes, includes, depth);
+          return result.filter((file) => !file.includes('lib.ts'));
+        });
+
+      try {
+        const results = await runAnalyzer(root, [
+          { declarationFile: 'src/lib.ts', symbol: 'trulyMissing' },
+        ]);
+
+        expect(results).toHaveLength(1);
+        const result = results[0]!;
+        expect(result.references).toEqual([]);
+        expect(result.unresolvedDiagnostic).toBe('Could not load source file: src/lib.ts');
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });

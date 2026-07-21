@@ -450,6 +450,71 @@ describe('signature-blast-radius', () => {
       });
     });
 
+    it('passes when an owned declaration file reports Could not load source file', () => {
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['packages/application/src/dto/policyInsights.ts'],
+        signature_changes: [
+          {
+            declaration_file: 'packages/application/src/dto/policyInsights.ts',
+            symbol: 'PolicyInsightsDto',
+          },
+        ],
+      });
+
+      const analyses = makeAnalysis(
+        [
+          {
+            declarationFile: 'packages/application/src/dto/policyInsights.ts',
+            symbol: 'PolicyInsightsDto',
+          },
+        ],
+        [[]],
+        ['Could not load source file: packages/application/src/dto/policyInsights.ts'],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(true);
+      expect(result.failures).toEqual([]);
+    });
+
+    it('still fails when an unowned declaration file reports Could not load source file', () => {
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['apps/api/src/cli.ts'],
+        signature_changes: [
+          {
+            declaration_file: 'packages/application/src/dto/policyInsights.ts',
+            symbol: 'PolicyInsightsDto',
+          },
+        ],
+      });
+
+      const analyses = makeAnalysis(
+        [
+          {
+            declarationFile: 'packages/application/src/dto/policyInsights.ts',
+            symbol: 'PolicyInsightsDto',
+          },
+        ],
+        [[]],
+        ['Could not load source file: packages/application/src/dto/policyInsights.ts'],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(false);
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toMatchObject({
+        taskN: 1,
+        symbol: 'PolicyInsightsDto',
+        declarationFile: 'packages/application/src/dto/policyInsights.ts',
+        unresolvedDiagnostic:
+          'Could not load source file: packages/application/src/dto/policyInsights.ts',
+      });
+    });
+
     it('groups and sorts failures by task symbol file and location', () => {
       const manifest = makeManifest({
         n: 1,
@@ -578,7 +643,7 @@ describe('signature-blast-radius', () => {
       expect(rendered).toContain('apps/api/src/compose.ts:5510:13');
     });
 
-    it('renders unresolved diagnostic as failure', () => {
+    it('renders unresolved-only failures as a check that could not run', () => {
       const failures = [
         {
           taskN: 1,
@@ -590,8 +655,34 @@ describe('signature-blast-radius', () => {
       ];
 
       const rendered = renderSignatureBlastRadiusDiagnostic(failures);
-      expect(rendered).toMatch(/Task 1 changes WorkerLeasePort\.heartbeat/);
-      expect(rendered).toMatch(/Could not resolve declaration/);
+      expect(rendered).toMatch(
+        /^Task 1 changes WorkerLeasePort\.heartbeat, but the check could not run:/,
+      );
+      expect(rendered).toContain(
+        '(unresolved: Could not resolve declaration for WorkerLeasePort.heartbeat)',
+      );
+      expect(rendered).not.toContain('these reference files are not declared');
+    });
+
+    it('keeps the undeclared-reference header when uncovered references exist', () => {
+      const failures = [
+        {
+          taskN: 3,
+          symbol: 'WorkerLeasePort.heartbeat',
+          declarationFile: 'apps/api/src/cli.ts',
+          uncoveredReferences: [
+            { file: 'apps/api/src/cli.ts', line: 84, column: 7, kind: 'call' as const },
+            { file: 'apps/api/src/compose.ts', line: 5510, column: 13, kind: 'call' as const },
+          ],
+        },
+      ];
+
+      const rendered = renderSignatureBlastRadiusDiagnostic(failures);
+      expect(rendered).toMatch(
+        /Task 3 changes WorkerLeasePort\.heartbeat, but these reference files are not declared by Task 3 or a later task/,
+      );
+      expect(rendered).toContain('apps/api/src/cli.ts:84:7');
+      expect(rendered).toContain('apps/api/src/compose.ts:5510:13');
     });
 
     it('returns null when no failures', () => {

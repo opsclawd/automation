@@ -45,29 +45,59 @@ function normalizePath(path: string): string {
   return path.replace(/\\/g, '/');
 }
 
-function relativeToRoot(root: string, filePath: string): string {
+function canonicalizePath(path: string, cache: Map<string, string>): string {
+  const normalized = normalizePath(path);
+  if (cache.has(normalized)) {
+    return cache.get(normalized)!;
+  }
+
+  let canonical = normalized;
+
+  if (ts.sys.realpath) {
+    try {
+      canonical = normalizePath(ts.sys.realpath(normalized));
+    } catch {
+      canonical = normalized;
+    }
+  }
+
+  canonical = ts.sys.useCaseSensitiveFileNames ? canonical : canonical.toLowerCase();
+  cache.set(normalized, canonical);
+  return canonical;
+}
+
+function relativeToRoot(
+  root: string,
+  filePath: string,
+  canonicalize: (path: string) => string,
+): string {
   const normalizedRoot = normalizePath(root);
   const normalizedFile = normalizePath(filePath);
   if (normalizedFile.startsWith(normalizedRoot + '/')) {
     return normalizedFile.slice(normalizedRoot.length + 1);
   }
-  return normalizedFile;
+  const canonicalRoot = canonicalize(root);
+  const canonicalFile = canonicalize(filePath);
+  if (canonicalFile.startsWith(canonicalRoot + '/')) {
+    return canonicalFile.slice(canonicalRoot.length + 1);
+  }
+  if (canonicalFile === canonicalize(normalizedFile)) {
+    return filePath;
+  }
+  return canonicalFile;
 }
 
-// Only checks path segments *below* root against EXCLUDED_DIRS. Checking the
-// full absolute path would wrongly exclude everything when root itself sits
-// inside a directory that happens to share a name with an excluded dir — e.g.
-// the orchestrator's own worktrees live at <repo>/.ai-worktrees/issue-N/, and
-// .ai-worktrees is excluded specifically to avoid recursing into *nested*
-// worktrees while scanning a normal repo root, not to blank out a scan whose
-// root is itself inside one.
-function isExcludedPath(path: string, root: string): boolean {
-  const rel = relativeToRoot(root, path);
+function isExcludedPath(
+  path: string,
+  root: string,
+  canonicalize: (path: string) => string,
+): boolean {
+  const rel = relativeToRoot(root, path, canonicalize);
   const parts = rel.split('/');
   return parts.some((part) => EXCLUDED_DIRS.has(part));
 }
 
-function discoverSourceFiles(root: string): string[] {
+function discoverSourceFiles(root: string, canonicalize: (path: string) => string): string[] {
   const files: string[] = [];
 
   function walk(dir: string): void {
@@ -80,7 +110,7 @@ function discoverSourceFiles(root: string): string[] {
 
     for (const entry of entries) {
       const fullPath = normalizePath(entry);
-      if (isExcludedPath(fullPath, root)) continue;
+      if (isExcludedPath(fullPath, root, canonicalize)) continue;
 
       if (ts.sys.fileExists?.(fullPath)) {
         const ext = fullPath.slice(fullPath.lastIndexOf('.'));
@@ -95,11 +125,14 @@ function discoverSourceFiles(root: string): string[] {
   return files;
 }
 
-function getPathMappings(root: string): Record<string, string[]> {
+function getPathMappings(
+  root: string,
+  canonicalize: (path: string) => string,
+): Record<string, string[]> {
   const paths: Record<string, string[]> = {};
 
   function scan(dir: string) {
-    if (isExcludedPath(dir, root)) return;
+    if (isExcludedPath(dir, root, canonicalize)) return;
     let entries: string[];
     try {
       entries = readdirSync(dir);
@@ -119,7 +152,7 @@ function getPathMappings(root: string): Record<string, string[]> {
       try {
         const pkgJson = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
         if (pkgJson.name) {
-          const relDir = relativeToRoot(root, dir);
+          const relDir = relativeToRoot(root, dir, canonicalize);
           const srcDir = join(dir, 'src');
           let targetPath = relDir;
           try {
@@ -147,8 +180,12 @@ function getPathMappings(root: string): Record<string, string[]> {
   scan(root);
   return paths;
 }
-function createLanguageServiceHost(root: string, files: string[]): ts.LanguageServiceHost {
-  const compilerOptions = getCompilerOptions(root);
+function createLanguageServiceHost(
+  root: string,
+  files: string[],
+  canonicalize: (path: string) => string,
+): ts.LanguageServiceHost {
+  const compilerOptions = getCompilerOptions(root, canonicalize);
   const snapCache = new Map<string, ts.IScriptSnapshot>();
 
   return {
@@ -176,7 +213,10 @@ function createLanguageServiceHost(root: string, files: string[]): ts.LanguageSe
   };
 }
 
-function getCompilerOptions(root: string): ts.CompilerOptions {
+function getCompilerOptions(
+  root: string,
+  canonicalize: (path: string) => string,
+): ts.CompilerOptions {
   const configPath = ts.findConfigFile(root, ts.sys.fileExists, 'tsconfig.json');
   let options: ts.CompilerOptions = {};
   if (configPath) {
@@ -195,7 +235,7 @@ function getCompilerOptions(root: string): ts.CompilerOptions {
   options.baseUrl = root;
   options.paths = {
     ...options.paths,
-    ...getPathMappings(root),
+    ...getPathMappings(root, canonicalize),
   };
 
   return options;
@@ -412,6 +452,7 @@ function collectReferences(
   fileName: string,
   pos: number,
   root: string,
+  canonicalize: (path: string) => string,
 ): SignatureReferenceLocation[] {
   const references: SignatureReferenceLocation[] = [];
 
@@ -424,7 +465,7 @@ function collectReferences(
 
       const entryFileName = normalizePath(entry.fileName);
 
-      if (isExcludedPath(entryFileName, root)) continue;
+      if (isExcludedPath(entryFileName, root, canonicalize)) continue;
 
       const sourceFile = program.getSourceFile(entryFileName);
       if (!sourceFile) continue;
@@ -438,7 +479,7 @@ function collectReferences(
       const { line, character } = ts.getLineAndCharacterOfPosition(sourceFile, entryStart);
 
       references.push({
-        file: relativeToRoot(root, entryFileName),
+        file: relativeToRoot(root, entryFileName, canonicalize),
         line: line + 1,
         column: character + 1,
         kind,
@@ -483,7 +524,10 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
         }));
       }
 
-      const sourceFiles = discoverSourceFiles(root);
+      const canonicalPathCache = new Map<string, string>();
+      const canonicalize = (path: string) => canonicalizePath(path, canonicalPathCache);
+
+      const sourceFiles = discoverSourceFiles(root, canonicalize);
       if (sourceFiles.length === 0) {
         return changes.map((change) => ({
           change,
@@ -492,7 +536,7 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
         }));
       }
 
-      const host = createLanguageServiceHost(root, sourceFiles);
+      const host = createLanguageServiceHost(root, sourceFiles, canonicalize);
       const languageService = ts.createLanguageService(host, ts.createDocumentRegistry());
       const program = languageService.getProgram();
       if (!program) {
@@ -502,6 +546,8 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
           unresolvedDiagnostic: `Could not create TypeScript program`,
         }));
       }
+
+      let canonicalSourceFiles: Map<string, ts.SourceFile> | undefined;
 
       const results: SignatureReferenceAnalysis[] = [];
 
@@ -538,7 +584,13 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
           continue;
         }
 
-        const sourceFile = program.getSourceFile(resolvedPath);
+        let sourceFile = program.getSourceFile(resolvedPath);
+        if (!sourceFile) {
+          canonicalSourceFiles ??= new Map(
+            program.getSourceFiles().map((file) => [canonicalize(file.fileName), file]),
+          );
+          sourceFile = canonicalSourceFiles.get(canonicalize(resolvedPath));
+        }
         if (!sourceFile) {
           results.push({
             change,
@@ -567,6 +619,7 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
           sourceFile.fileName,
           pos,
           root,
+          canonicalize,
         );
 
         const result: SignatureReferenceAnalysis = {
@@ -575,7 +628,7 @@ export function createSignatureReferenceAnalyzer(): SignatureReferenceAnalyzerPo
         };
         if (declaration) {
           result.declaration = {
-            file: relativeToRoot(root, normalizePath(declaration.file)),
+            file: relativeToRoot(root, normalizePath(declaration.file), canonicalize),
             line: declaration.line,
             column: declaration.column,
           };
