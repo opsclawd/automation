@@ -111,6 +111,29 @@ function normalizeTypecheckOutput(output: string): string {
     .toLowerCase();
 }
 
+interface GitStateSnapshot {
+  head: string;
+  diff: string;
+  status: string;
+}
+
+async function captureGitState(
+  git: ImplementStepLoopDeps['git'],
+  cwd: string,
+): Promise<GitStateSnapshot | undefined> {
+  if (!git) return undefined;
+  try {
+    const [head, diff, status] = await Promise.all([
+      git.headCommitSha(cwd),
+      git.diff(cwd, 'HEAD'),
+      git.status(cwd),
+    ]);
+    return { head, diff, status };
+  } catch {
+    return undefined;
+  }
+}
+
 function getDirtyDimensions(
   dirtyDimensions: Record<DimensionName, DimensionState>,
 ): DimensionName[] {
@@ -519,6 +542,7 @@ export class ImplementStepLoop {
     let tcResult = await deps.runTypecheck(baseCtx);
     const maxTypeCheckRetries = input.maxTypeCheckRetries ?? DEFAULT_MAX_TYPE_CHECK_RETRIES;
     let typecheckRetryCount = 0;
+    let retryProducedNoChanges = false;
     const stallHistory: string[] = [];
     const scopeSet: Set<string> = new Set();
     const taskEntry = input.manifest?.tasks?.[input.stepIndex - 1];
@@ -541,6 +565,7 @@ export class ImplementStepLoop {
             attempt: typecheckRetryCount,
             fingerprint: currFingerprint.slice(0, 500),
             stallHistorySize,
+            retryProducedNoChanges: false,
           },
         );
         this.emit(
@@ -548,7 +573,12 @@ export class ImplementStepLoop {
           'step.typecheck.failed',
           'error',
           `step ${input.stepIndex} failed typecheck gate (stalled)`,
-          { index: input.stepIndex, output: tcResult.output.slice(0, 2000), stalled: true },
+          {
+            index: input.stepIndex,
+            output: tcResult.output.slice(0, 2000),
+            stalled: true,
+            retryProducedNoChanges: false,
+          },
         );
         this.emit(input, 'loop.iteration.started', 'info', 'typecheck stalled', {
           index: iterationIndex,
@@ -614,6 +644,8 @@ export class ImplementStepLoop {
         },
       );
 
+      const gitStateBefore = await captureGitState(deps.git, baseCtx.cwd);
+
       const retryImplementResult = await this.runImplementWithFallback(
         input,
         {
@@ -646,16 +678,56 @@ export class ImplementStepLoop {
         return { outcome: 'failed', loop };
       }
 
+      const gitStateAfter = await captureGitState(deps.git, baseCtx.cwd);
+      const retryProducedNoChangesThisAttempt =
+        gitStateBefore !== undefined &&
+        gitStateAfter !== undefined &&
+        gitStateBefore.head === gitStateAfter.head &&
+        gitStateBefore.diff === gitStateAfter.diff &&
+        gitStateBefore.status === gitStateAfter.status;
+
+      if (retryProducedNoChangesThisAttempt) {
+        retryProducedNoChanges = true;
+        this.emit(
+          input,
+          'step.typecheck.retry_no_op',
+          'error',
+          `step ${input.stepIndex} typecheck retry ${typecheckRetryCount} produced no changes`,
+          {
+            index: input.stepIndex,
+            attempt: typecheckRetryCount,
+            invocationId: retryImplementResult.invocationId,
+            transcriptExcerpt: retryImplementResult.transcriptExcerpt?.slice(0, 2000) ?? '',
+            retryProducedNoChanges: true,
+          },
+        );
+        break;
+      }
+
       tcResult = await deps.runTypecheck(baseCtx);
     }
 
     if (tcResult.outcome === 'fail') {
+      if (retryProducedNoChanges) {
+        this.emit(
+          input,
+          'step.typecheck.stalled',
+          'error',
+          `step ${input.stepIndex} typecheck retry produced no changes`,
+          {
+            index: input.stepIndex,
+            attempt: typecheckRetryCount,
+            fingerprint: this.fingerprintTypecheck(tcResult).slice(0, 500),
+            retryProducedNoChanges: true,
+          },
+        );
+      }
       this.emit(
         input,
         'step.typecheck.failed',
         'error',
         `step ${input.stepIndex} failed typecheck gate`,
-        { index: input.stepIndex, output: tcResult.output.slice(0, 2000) },
+        { index: input.stepIndex, output: tcResult.output.slice(0, 2000), retryProducedNoChanges },
       );
       const finalIterationIndex = typecheckRetryCount + 1;
       this.emit(input, 'loop.iteration.started', 'info', 'typecheck gate failed', {

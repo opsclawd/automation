@@ -3442,6 +3442,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         return {
           invocationId,
           agentOutcome,
+          transcriptExcerpt: await readTail(result.stdoutPath, 2000),
         };
       };
 

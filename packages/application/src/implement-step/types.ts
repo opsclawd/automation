@@ -25,6 +25,8 @@ export interface StepLoopContext {
 export interface ImplementResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
+  /** Bounded tail of the agent transcript for retry diagnostics. */
+  transcriptExcerpt?: string;
 }
 
 export interface ImplementStepOptions {
