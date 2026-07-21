@@ -643,7 +643,7 @@ describe('signature-blast-radius', () => {
       expect(rendered).toContain('apps/api/src/compose.ts:5510:13');
     });
 
-    it('renders unresolved diagnostic as failure', () => {
+    it('renders unresolved-only failures as a check that could not run', () => {
       const failures = [
         {
           taskN: 1,
@@ -655,8 +655,34 @@ describe('signature-blast-radius', () => {
       ];
 
       const rendered = renderSignatureBlastRadiusDiagnostic(failures);
-      expect(rendered).toMatch(/Task 1 changes WorkerLeasePort\.heartbeat/);
-      expect(rendered).toMatch(/Could not resolve declaration/);
+      expect(rendered).toMatch(
+        /^Task 1 changes WorkerLeasePort\.heartbeat, but the check could not run:/,
+      );
+      expect(rendered).toContain(
+        '(unresolved: Could not resolve declaration for WorkerLeasePort.heartbeat)',
+      );
+      expect(rendered).not.toContain('these reference files are not declared');
+    });
+
+    it('keeps the undeclared-reference header when uncovered references exist', () => {
+      const failures = [
+        {
+          taskN: 3,
+          symbol: 'WorkerLeasePort.heartbeat',
+          declarationFile: 'apps/api/src/cli.ts',
+          uncoveredReferences: [
+            { file: 'apps/api/src/cli.ts', line: 84, column: 7, kind: 'call' as const },
+            { file: 'apps/api/src/compose.ts', line: 5510, column: 13, kind: 'call' as const },
+          ],
+        },
+      ];
+
+      const rendered = renderSignatureBlastRadiusDiagnostic(failures);
+      expect(rendered).toMatch(
+        /Task 3 changes WorkerLeasePort\.heartbeat, but these reference files are not declared by Task 3 or a later task/,
+      );
+      expect(rendered).toContain('apps/api/src/cli.ts:84:7');
+      expect(rendered).toContain('apps/api/src/compose.ts:5510:13');
     });
 
     it('returns null when no failures', () => {

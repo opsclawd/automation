@@ -223,9 +223,11 @@ export function renderSignatureBlastRadiusDiagnostic(
   const lines: string[] = [];
 
   for (const failure of failures) {
-    lines.push(
-      `Task ${failure.taskN} changes ${failure.symbol}, but these reference files are not declared by Task ${failure.taskN} or a later task:`,
-    );
+    const header =
+      failure.uncoveredReferences.length === 0 && failure.unresolvedDiagnostic !== undefined
+        ? `Task ${failure.taskN} changes ${failure.symbol}, but the check could not run:`
+        : `Task ${failure.taskN} changes ${failure.symbol}, but these reference files are not declared by Task ${failure.taskN} or a later task:`;
+    lines.push(header);
 
     if (failure.unresolvedDiagnostic) {
       lines.push(`  (unresolved: ${failure.unresolvedDiagnostic})`);
