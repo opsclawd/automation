@@ -1894,6 +1894,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     error: (msg, ...args) => console.error(msg, ...args),
   };
 
+  const phaseRepository = new PhaseRepository(db);
   const workerLeaseRepository = new WorkerLeaseRepository(db);
   const jobQueue: JobQueuePort = new JobQueueRepository(db, registryBackedRepo);
 
@@ -1901,6 +1902,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     // Sweep orphaned runs before any new run starts
     const sweep = new SweepOrphanedRuns({
       runRepository,
+      phaseRepository,
       isProcessAlive: checkPid,
     });
     const sweepResult = sweep.execute();
@@ -2003,7 +2005,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     );
   }
 
-  const phaseRepository = new PhaseRepository(db);
   const eventRepository = new EventRepository(db, repoId);
   const eventRepositoryFactory: EventRepositoryFactory = (rId: RepositoryId) =>
     new EventRepository(db, rId);

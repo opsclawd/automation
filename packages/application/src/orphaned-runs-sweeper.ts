@@ -109,7 +109,7 @@ export class OrphanedRunsSweeper {
         continue;
       }
 
-      const expectedStatus = run.status; // 'failed' from SweepOrphanedRuns
+      const expectedStatus = run.status; // Inferred status from SweepOrphanedRuns
       try {
         // Atomically transition failed -> running. resumeRun clears
         // completedAt / failureReason and preserves completedPhases +
@@ -191,7 +191,7 @@ export class OrphanedRunsSweeper {
     return result;
   }
 
-  // Restore the run's status from `failed` (set by SweepOrphanedRuns) back to
+  // Restore the run's status from the inferred status (set by SweepOrphanedRuns) back to
   // its pre-sweep status. Used on every path where the sweeper decides not to
   // (or cannot) enqueue a resume job, so `findActiveRuns()` will return the
   // run on the next sweep tick.
@@ -208,7 +208,7 @@ export class OrphanedRunsSweeper {
           failureReason: null,
           currentPhase: null,
         },
-        'failed',
+        entry.run.status,
       );
     } catch (restoreErr) {
       this.deps.logger.error(
@@ -220,7 +220,7 @@ export class OrphanedRunsSweeper {
 
   // Restore the run from `running` (the post-enqueue status) back to its
   // pre-sweep status when enqueue failed after we had already committed the
-  // `failed -> running` transition.
+  // inferred status -> running transition.
   private restoreRunToPreSweepAtomic(entry: SweepOrphanedRunEntry, reason: 'enqueueError'): void {
     const rolled = this.deps.runRepository.atomicUpdateByUuid(
       entry.uuid,
