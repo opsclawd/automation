@@ -94,6 +94,65 @@ describe('plan-tasks parsing and validation', () => {
         );
       }
     });
+
+    it('accepts a V2 manifest with an added signature annotation', () => {
+      const json = JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Create an exported use case',
+            expected_files: ['src/application/new-use-case.ts'],
+            signature_changes: [
+              {
+                declaration_file: 'src/application/new-use-case.ts',
+                symbol: 'createNewUseCase',
+                change: 'added',
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = parseTaskManifest(json);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.manifest.version).toBe(2);
+        expect(result.manifest.tasks[0]?.signature_changes?.[0]?.change).toBe('added');
+      }
+    });
+
+    it('surfaces indexed V2 schema issues instead of a generic union error', () => {
+      const json = JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Invalid annotation',
+            expected_files: ['src/application/api.ts'],
+            signature_changes: [
+              {
+                declaration_file: 'src/application/api.ts',
+                symbol: 'createClient',
+                change: 'reference_only',
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = parseTaskManifest(json);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain('tasks.0.signature_changes.0.change');
+        expect(result.error).toContain('reference_only');
+        expect(result.error).not.toBe('manifest validation failed: : Invalid input');
+      }
+    });
   });
 
   describe('extractTaskBody', () => {

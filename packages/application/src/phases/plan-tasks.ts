@@ -1,5 +1,5 @@
 import type { EventBusPort } from '../ports.js';
-import { taskManifestSchema } from '../results/schemas/task-manifest.js';
+import { taskManifestV1Schema, taskManifestV2Schema } from '../results/schemas/task-manifest.js';
 import type { TaskManifest, TaskManifestEntry } from '../results/schemas/task-manifest.js';
 
 export { TaskManifest, TaskManifestEntry };
@@ -286,7 +286,8 @@ export function parseTaskManifest(json: string): TaskManifestValidationResult {
     return { success: false, error: 'manifest version must be 1' };
   }
 
-  const result = taskManifestSchema.safeParse(parsed);
+  const schema = parsedObj.version === 2 ? taskManifestV2Schema : taskManifestV1Schema;
+  const result = schema.safeParse(parsed);
   if (!result.success) {
     if (
       result.error.issues.some(
