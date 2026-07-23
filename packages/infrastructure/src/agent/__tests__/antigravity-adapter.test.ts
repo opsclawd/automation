@@ -904,6 +904,23 @@ exit 0
     }
   });
 
+  it('resolves the gemini-3.6-flash-low label (added when the 3.6 tier shipped)', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd, { model: 'gemini-3.6-flash-low' }));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      expect(args).toContain('Gemini 3.6 Flash (Low)');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
   it('inserts --model between --print-timeout and --print', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
