@@ -28,6 +28,7 @@ import {
   ReapOrphanedTestWorkers,
   FairRepositoryScheduler,
   runClaimedJob,
+  SweepOrphanedRuns,
   checkPid,
   type ArtifactGuardPort,
 } from '@ai-sdlc/application';
@@ -1571,10 +1572,30 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 });
               }
 
-              const phases = c.phaseRepository.listByRun(opts.uuid);
+              let phases = c.phaseRepository.listByRun(opts.uuid);
+              let reconciledRun = run;
+              if (run.status === 'running') {
+                const reconciler = new SweepOrphanedRuns({
+                  runRepository: c.runRepository,
+                  phaseRepository: c.phaseRepository,
+                  isProcessAlive: checkPid,
+                  now: () => new Date(),
+                });
+                const entry = reconciler.reconcile(run);
+                if (entry) {
+                  const refreshedRun = c.runRepository.findByUuid(opts.uuid);
+                  if (!refreshedRun) {
+                    console.error(`Error: run ${opts.uuid} not found after reconciliation.`);
+                    process.exit(EXIT_INTERNAL_ERROR);
+                  }
+                  reconciledRun = refreshedRun;
+                  phases = c.phaseRepository.listByRun(opts.uuid);
+                }
+              }
+
               const plan = planRunRecoveryAction({
                 action: opts.fromPhase ? 'resume' : 'retry',
-                run,
+                run: reconciledRun,
                 phases,
                 ...(opts.fromPhase ? { fromPhase: opts.fromPhase } : {}),
               });
@@ -1607,6 +1628,19 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;
               const heartbeatIntervalMs =
                 buildOpts?.lease?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+
+              const didReconcile = reconciledRun !== run;
+              if (didReconcile) {
+                const existingLease = c.workerLeaseRepository.current(repoId);
+                if (existingLease && existingLease.runId === opts.uuid) {
+                  c.workerLeaseRepository.release({
+                    repoId,
+                    workerId: existingLease.workerId,
+                    runId: existingLease.runId,
+                    leaseToken: existingLease.leaseToken,
+                  });
+                }
+              }
 
               let acquiredLease;
               try {
