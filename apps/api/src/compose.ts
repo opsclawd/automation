@@ -276,6 +276,7 @@ import {
   PLAN_FIX_RESULT_ARTIFACT,
   buildPlanReviewFixPrompt,
 } from './plan-review-prompts.js';
+import { buildTaskValidationCommands } from './task-validation-commands.js';
 import { WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
 
 async function readTail(filePath: string, maxBytes: number = 65536): Promise<string> {
@@ -4266,16 +4267,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             const manifestRaw = await artifacts.read(String(ctx.runId), 'task-manifest.json');
             const manifest = parseTaskManifest(manifestRaw);
             if (manifest.success) {
-              const taskIndex = (ctx as StepLoopContext).stepIndex;
-              const task = manifest.manifest.tasks.find((t) => t.n === taskIndex);
-              if (task) {
-                if (manifest.manifest.version === 2) {
-                  taskValidationCommands =
-                    (task as { validation_commands?: string[] }).validation_commands ?? [];
-                } else {
-                  taskValidationCommands = (task as { validation?: string[] }).validation ?? [];
-                }
-              }
+              taskValidationCommands = buildTaskValidationCommands(
+                manifest.manifest,
+                (ctx as StepLoopContext).stepIndex,
+              );
             }
           } catch {
             // Task manifest might not be present or parseable; fall back to global only
