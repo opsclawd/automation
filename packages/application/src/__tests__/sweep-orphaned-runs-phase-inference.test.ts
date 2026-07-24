@@ -382,7 +382,7 @@ describe('SweepOrphanedRuns phase inference', () => {
     expect(after?.status).toBe('running');
   });
 
-  it('enqueues from the blocked inferred status', async () => {
+  it('skips enqueueing and leaves the run blocked for the blocked inferred status', async () => {
     const { OrphanedRunsSweeper } = await import('../orphaned-runs-sweeper.js');
     const { createRun, RepositoryId } = await import('@ai-sdlc/domain');
     const { blockRun } = await import('@ai-sdlc/domain');
@@ -443,7 +443,7 @@ describe('SweepOrphanedRuns phase inference', () => {
     expect(leases.current(repoId)).toBeUndefined();
   });
 
-  it('restores the blocked status after an enqueue failure', async () => {
+  it('leaves the blocked status untouched without attempting to enqueue', async () => {
     const { OrphanedRunsSweeper } = await import('../orphaned-runs-sweeper.js');
     const { createRun, RepositoryId } = await import('@ai-sdlc/domain');
     const { blockRun } = await import('@ai-sdlc/domain');
@@ -487,9 +487,7 @@ describe('SweepOrphanedRuns phase inference', () => {
     const leases = new FakeWorkerLeasePort(new FakeWorkerRegistryPort());
     const eventBus = new FakeEventBus();
 
-    vi.spyOn(queue, 'enqueue').mockImplementationOnce(() => {
-      throw new Error('enqueue DB write failed');
-    });
+    const enqueueSpy = vi.spyOn(queue, 'enqueue');
 
     const sweeper = new OrphanedRunsSweeper({
       runRepository: repo,
@@ -504,13 +502,14 @@ describe('SweepOrphanedRuns phase inference', () => {
       { uuid: 'o-blocked-restore', run: blockedRun, previousPid: 99999, previousStatus: 'running' },
     ]);
 
+    expect(enqueueSpy).not.toHaveBeenCalled();
     expect(result.enqueued).toBe(0);
     expect(result.enqueueErrors).toHaveLength(0);
     const after = repo.findByUuid('o-blocked-restore');
     expect(after?.status).toBe('blocked');
   });
 
-  it('enqueues from the needs_human_review inferred status', async () => {
+  it('skips enqueueing and leaves the run needs_human_review for the needs_human_review inferred status', async () => {
     const { OrphanedRunsSweeper } = await import('../orphaned-runs-sweeper.js');
     const { createRun, RepositoryId } = await import('@ai-sdlc/domain');
     const { markRunNeedsHumanReview } = await import('@ai-sdlc/domain');
@@ -571,7 +570,7 @@ describe('SweepOrphanedRuns phase inference', () => {
     expect(leases.current(repoId)).toBeUndefined();
   });
 
-  it('restores the needs_human_review status after an enqueue failure', async () => {
+  it('leaves the needs_human_review status untouched without attempting to enqueue', async () => {
     const { OrphanedRunsSweeper } = await import('../orphaned-runs-sweeper.js');
     const { createRun, RepositoryId } = await import('@ai-sdlc/domain');
     const { markRunNeedsHumanReview } = await import('@ai-sdlc/domain');
@@ -615,9 +614,7 @@ describe('SweepOrphanedRuns phase inference', () => {
     const leases = new FakeWorkerLeasePort(new FakeWorkerRegistryPort());
     const eventBus = new FakeEventBus();
 
-    vi.spyOn(queue, 'enqueue').mockImplementationOnce(() => {
-      throw new Error('enqueue DB write failed');
-    });
+    const enqueueSpy = vi.spyOn(queue, 'enqueue');
 
     const sweeper = new OrphanedRunsSweeper({
       runRepository: repo,
@@ -632,6 +629,7 @@ describe('SweepOrphanedRuns phase inference', () => {
       { uuid: 'o-nhr-restore', run: nhrRun, previousPid: 99999, previousStatus: 'running' },
     ]);
 
+    expect(enqueueSpy).not.toHaveBeenCalled();
     expect(result.enqueued).toBe(0);
     expect(result.enqueueErrors).toHaveLength(0);
     const after = repo.findByUuid('o-nhr-restore');
