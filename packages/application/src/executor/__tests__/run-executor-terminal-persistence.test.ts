@@ -214,10 +214,11 @@ describe('RunExecutor terminal persistence', () => {
       const startIdx = updateCalls.findIndex((c) => c.includes('starting'));
       const completeIdx = updateCalls.findIndex((c) => c.includes('completed'));
 
-      (expect(startIdx).toBeGreaterThanOrEqual(0), `Expected start marker for ${outcome}`);
-      (expect(completeIdx).toBeGreaterThanOrEqual(0), `Expected complete marker for ${outcome}`);
-      (expect(completeIdx).toBeGreaterThan(startIdx),
-        `Complete should come after start for ${outcome}`);
+      expect(startIdx, `Expected start marker for ${outcome}`).toBeGreaterThanOrEqual(0);
+      expect(completeIdx, `Expected complete marker for ${outcome}`).toBeGreaterThanOrEqual(0);
+      expect(completeIdx, `Complete should come after start for ${outcome}`).toBeGreaterThan(
+        startIdx,
+      );
     }
   });
 
