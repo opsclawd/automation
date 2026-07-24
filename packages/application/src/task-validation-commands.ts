@@ -1,4 +1,4 @@
-import type { TaskManifest } from '@ai-sdlc/application';
+import type { TaskManifest } from './phases/index.js';
 
 const DIRECT_VITEST_RUN =
   /^(?:(?:pnpm|npx)(?:\s+exec)?\s+)?vitest\s+run\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))((?:\s+.*)?)$/;

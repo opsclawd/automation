@@ -165,6 +165,7 @@ import {
   type RepositoryAvailabilityPort,
   type AgentPort,
   type ValidationPort,
+  buildTaskValidationCommands,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -276,7 +277,6 @@ import {
   PLAN_FIX_RESULT_ARTIFACT,
   buildPlanReviewFixPrompt,
 } from './plan-review-prompts.js';
-import { buildTaskValidationCommands } from './task-validation-commands.js';
 import { WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
 
 async function readTail(filePath: string, maxBytes: number = 65536): Promise<string> {

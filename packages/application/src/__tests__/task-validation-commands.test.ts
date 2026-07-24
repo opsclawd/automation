@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildTaskValidationCommands } from '../task-validation-commands.js';
-import type { TaskManifest } from '@ai-sdlc/application';
+import type { TaskManifest } from '../phases/index.js';
 
 interface ManifestWithOptions {
   commands?: string[];
