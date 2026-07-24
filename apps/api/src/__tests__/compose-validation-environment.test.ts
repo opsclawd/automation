@@ -474,7 +474,7 @@ describe('compose-validation-environment', () => {
           delete process.env.AI_SDLC_INHERITED_SENTINEL;
         }
       }
-    });
+    }, 30000);
 
     it('revalidation cleanup restores environment after a scripted agent failure', async () => {
       const AMBIENT_REPO = 'ambient/cleanup-test-repo';

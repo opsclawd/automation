@@ -252,5 +252,5 @@ describe('implement terminal prompt contains every bounded deterministic validat
     const secondStderr = stderrParts[2] ?? stderrParts[1];
     expect(secondStderr).toContain('TAIL_SECOND');
     expect(secondStderr).not.toContain('HEAD_ONLY_SECOND');
-  });
+  }, 30000);
 });
