@@ -110,6 +110,28 @@ export class OrphanedRunsSweeper {
       }
 
       const expectedStatus = run.status; // Inferred status from SweepOrphanedRuns
+
+      if (expectedStatus === 'blocked' || expectedStatus === 'needs_human_review') {
+        if (leaseAcquired && acquiredLease) {
+          try {
+            this.deps.leases.release({
+              repoId: run.repoId,
+              workerId: 'orphan-sweeper' as unknown as WorkerId,
+              runId: run.uuid as RunId,
+              leaseToken: acquiredLease.leaseToken,
+            });
+          } catch (relErr) {
+            if (!(relErr instanceof LeaseOwnershipLostError)) {
+              this.deps.logger.error(
+                `OrphanedRunsSweeper: Failed to release lease for ${run.uuid}:`,
+                relErr,
+              );
+            }
+          }
+        }
+        continue;
+      }
+
       try {
         // Atomically transition failed -> running. resumeRun clears
         // completedAt / failureReason and preserves completedPhases +

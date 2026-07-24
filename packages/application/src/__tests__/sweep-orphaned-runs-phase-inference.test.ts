@@ -438,8 +438,8 @@ describe('SweepOrphanedRuns phase inference', () => {
       { uuid: 'o-blocked', run: blockedRun, previousPid: 99999, previousStatus: 'running' },
     ]);
 
-    expect(result.enqueued).toBe(1);
-    expect(repo.findByUuid('o-blocked')?.status).toBe('running');
+    expect(result.enqueued).toBe(0);
+    expect(repo.findByUuid('o-blocked')?.status).toBe('blocked');
     expect(leases.current(repoId)).toBeUndefined();
   });
 
@@ -505,9 +505,9 @@ describe('SweepOrphanedRuns phase inference', () => {
     ]);
 
     expect(result.enqueued).toBe(0);
-    expect(result.enqueueErrors).toHaveLength(1);
+    expect(result.enqueueErrors).toHaveLength(0);
     const after = repo.findByUuid('o-blocked-restore');
-    expect(after?.status).toBe('running');
+    expect(after?.status).toBe('blocked');
   });
 
   it('enqueues from the needs_human_review inferred status', async () => {
@@ -566,8 +566,8 @@ describe('SweepOrphanedRuns phase inference', () => {
       { uuid: 'o-nhr', run: nhrRun, previousPid: 99999, previousStatus: 'running' },
     ]);
 
-    expect(result.enqueued).toBe(1);
-    expect(repo.findByUuid('o-nhr')?.status).toBe('running');
+    expect(result.enqueued).toBe(0);
+    expect(repo.findByUuid('o-nhr')?.status).toBe('needs_human_review');
     expect(leases.current(repoId)).toBeUndefined();
   });
 
@@ -633,8 +633,8 @@ describe('SweepOrphanedRuns phase inference', () => {
     ]);
 
     expect(result.enqueued).toBe(0);
-    expect(result.enqueueErrors).toHaveLength(1);
+    expect(result.enqueueErrors).toHaveLength(0);
     const after = repo.findByUuid('o-nhr-restore');
-    expect(after?.status).toBe('running');
+    expect(after?.status).toBe('needs_human_review');
   });
 });

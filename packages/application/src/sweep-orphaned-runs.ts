@@ -25,6 +25,8 @@ export class SweepOrphanedRuns {
   constructor(private readonly deps: SweepOrphanedRunsDeps) {}
 
   reconcile(run: RunRecord): SweepOrphanedRunEntry | undefined {
+    if (run.status !== 'running') return undefined;
+
     const now = this.deps.now ?? (() => new Date());
 
     if (run.pid === undefined || run.pid === null) {
@@ -56,12 +58,17 @@ export class SweepOrphanedRuns {
         ? latestPhase.status
         : 'failed';
 
+    const failureReasonToUse =
+      inferredStatus === 'blocked' || inferredStatus === 'needs_human_review'
+        ? (run.failureReason ?? failureReason)
+        : failureReason;
+
     const updated = this.deps.runRepository.atomicUpdateByUuid(
       run.uuid,
       {
         status: inferredStatus,
         completedAt,
-        failureReason,
+        failureReason: failureReasonToUse,
         currentPhase: null,
       },
       run.status,
@@ -71,7 +78,12 @@ export class SweepOrphanedRuns {
     const { currentPhase: _currentPhase, ...runWithoutPhase } = run;
     return {
       uuid: run.uuid,
-      run: { ...runWithoutPhase, status: inferredStatus, completedAt, failureReason },
+      run: {
+        ...runWithoutPhase,
+        status: inferredStatus,
+        completedAt,
+        failureReason: failureReasonToUse,
+      },
       previousPid,
       previousStatus,
     };
