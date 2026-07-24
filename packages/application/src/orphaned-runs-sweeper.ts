@@ -230,7 +230,7 @@ export class OrphanedRunsSweeper {
         failureReason: null,
         currentPhase: null,
       },
-      entry.run.status,
+      'running',
     );
     if (!rolled) {
       this.deps.logger.error(
