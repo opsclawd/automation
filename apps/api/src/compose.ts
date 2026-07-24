@@ -5563,14 +5563,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         events: eventBus,
         registry: phaseRegistry,
         contextFactory: buildContext,
-        logger: {
-          debug: (msg: string, ...args: unknown[]) =>
-            /* eslint-disable-line no-console */ console.debug(msg, ...args),
-          info: (msg: string, ...args: unknown[]) =>
-            /* eslint-disable-line no-console */ console.info(msg, ...args),
-          warn: (msg: string, ...args: unknown[]) => console.warn(msg, ...args),
-          error: (msg: string, ...args: unknown[]) => console.error(msg, ...args),
-        },
+        logger,
       });
     }
   } catch (err) {

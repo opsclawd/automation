@@ -232,17 +232,17 @@ export function installSignalHandlers(
           completedAt: new Date(),
           failureReason: `interrupted by ${signal}`,
         });
+        // eslint-disable-next-line no-console
+        console.debug(
+          'terminal status write completed',
+          `issueNumber=${issueNumber}`,
+          'status=cancelled',
+          `applied=${applied}`,
+        );
       } catch (err) {
         console.error('Terminal status write failed', err);
         applied = false;
       }
-      // eslint-disable-next-line no-console
-      console.debug(
-        'terminal status write completed',
-        `issueNumber=${issueNumber}`,
-        'status=cancelled',
-        `applied=${applied}`,
-      );
     }
     onCleanup?.();
   };
@@ -823,15 +823,34 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 finalJobAfterAbort &&
                 !['succeeded', 'failed', 'cancelled'].includes(finalJobAfterAbort.status)
               ) {
-                c.runRepository.atomicUpdateByUuid(
-                  run.uuid,
-                  {
-                    status: 'cancelled',
-                    completedAt: new Date(),
-                    failureReason: 'aborted during scheduler run',
-                  },
-                  'running',
+                // eslint-disable-next-line no-console
+                console.debug(
+                  'terminal status write starting',
+                  `runUuid=${run.uuid}`,
+                  'status=cancelled',
                 );
+                let applied = true;
+                try {
+                  applied = c.runRepository.atomicUpdateByUuid(
+                    run.uuid,
+                    {
+                      status: 'cancelled',
+                      completedAt: new Date(),
+                      failureReason: 'aborted during scheduler run',
+                    },
+                    'running',
+                  );
+                  // eslint-disable-next-line no-console
+                  console.debug(
+                    'terminal status write completed',
+                    `runUuid=${run.uuid}`,
+                    'status=cancelled',
+                    `applied=${applied}`,
+                  );
+                } catch (err) {
+                  console.error('Terminal status write failed', err);
+                  applied = false;
+                }
               }
             }
 

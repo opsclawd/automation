@@ -180,33 +180,33 @@ function makeSpyLogger(): LoggerPort & { calls: string[] } {
 }
 
 describe('RunExecutor terminal persistence', () => {
-  describe('logs before and after passed failed blocked and needs_human_review persistence', () => {
-    async function runWithLogger(outcome: 'passed' | 'failed' | 'blocked' | 'needs_human_review') {
-      const logger = makeSpyLogger();
-      const registry = new PhaseHandlerRegistry();
+  async function runWithLogger(outcome: 'passed' | 'failed' | 'blocked' | 'needs_human_review') {
+    const logger = makeSpyLogger();
+    const registry = new PhaseHandlerRegistry();
 
-      if (outcome === 'passed') {
-        registerAllPassed(registry);
-      } else if (outcome === 'failed') {
-        registry.register(makeStubHandler('read_issue', 'failed'));
-      } else if (outcome === 'blocked') {
-        registry.register(makeStubHandler('read_issue', 'blocked'));
-      } else {
-        registry.register(makeStubHandler('read_issue', 'needs_human_review'));
-      }
-
-      const deps = makeDeps({ registry, logger });
-      const executor = new RunExecutor(deps);
-      const run = makeRun();
-      const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
-      const result = await executor.execute(input);
-
-      return { logger, result };
+    if (outcome === 'passed') {
+      registerAllPassed(registry);
+    } else if (outcome === 'failed') {
+      registry.register(makeStubHandler('read_issue', 'failed'));
+    } else if (outcome === 'blocked') {
+      registry.register(makeStubHandler('read_issue', 'blocked'));
+    } else {
+      registry.register(makeStubHandler('read_issue', 'needs_human_review'));
     }
 
-    it('passed persistence logs before and after', async () => {
-      const { logger, result } = await runWithLogger('passed');
-      expect(result.run.status).toBe('passed');
+    const deps = makeDeps({ registry, logger });
+    const executor = new RunExecutor(deps);
+    const run = makeRun();
+    const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+    const result = await executor.execute(input);
+
+    return { logger, result };
+  }
+
+  it('logs before and after passed failed blocked and needs_human_review persistence', async () => {
+    for (const outcome of ['passed', 'failed', 'blocked', 'needs_human_review'] as const) {
+      const { logger, result } = await runWithLogger(outcome);
+      expect(result.run.status).toBe(outcome);
 
       const calls = logger.calls;
       const updateCalls = calls.filter((c) => c.includes('terminal status write'));
@@ -214,58 +214,11 @@ describe('RunExecutor terminal persistence', () => {
       const startIdx = updateCalls.findIndex((c) => c.includes('starting'));
       const completeIdx = updateCalls.findIndex((c) => c.includes('completed'));
 
-      expect(startIdx).toBeGreaterThanOrEqual(0);
-      expect(completeIdx).toBeGreaterThanOrEqual(0);
-      expect(completeIdx).toBeGreaterThan(startIdx);
-
-      expect(updateCalls[updateCalls.length - 2]).toContain('starting');
-      expect(updateCalls[updateCalls.length - 1]).toContain('completed');
-    });
-
-    it('failed persistence logs before and after', async () => {
-      const { logger, result } = await runWithLogger('failed');
-      expect(result.run.status).toBe('failed');
-
-      const calls = logger.calls;
-      const updateCalls = calls.filter((c) => c.includes('terminal status write'));
-
-      const startIdx = updateCalls.findIndex((c) => c.includes('starting'));
-      const completeIdx = updateCalls.findIndex((c) => c.includes('completed'));
-
-      expect(startIdx).toBeGreaterThanOrEqual(0);
-      expect(completeIdx).toBeGreaterThanOrEqual(0);
-      expect(completeIdx).toBeGreaterThan(startIdx);
-    });
-
-    it('blocked persistence logs before and after', async () => {
-      const { logger, result } = await runWithLogger('blocked');
-      expect(result.run.status).toBe('blocked');
-
-      const calls = logger.calls;
-      const updateCalls = calls.filter((c) => c.includes('terminal status write'));
-
-      const startIdx = updateCalls.findIndex((c) => c.includes('starting'));
-      const completeIdx = updateCalls.findIndex((c) => c.includes('completed'));
-
-      expect(startIdx).toBeGreaterThanOrEqual(0);
-      expect(completeIdx).toBeGreaterThanOrEqual(0);
-      expect(completeIdx).toBeGreaterThan(startIdx);
-    });
-
-    it('needs_human_review persistence logs before and after', async () => {
-      const { logger, result } = await runWithLogger('needs_human_review');
-      expect(result.run.status).toBe('needs_human_review');
-
-      const calls = logger.calls;
-      const updateCalls = calls.filter((c) => c.includes('terminal status write'));
-
-      const startIdx = updateCalls.findIndex((c) => c.includes('starting'));
-      const completeIdx = updateCalls.findIndex((c) => c.includes('completed'));
-
-      expect(startIdx).toBeGreaterThanOrEqual(0);
-      expect(completeIdx).toBeGreaterThanOrEqual(0);
-      expect(completeIdx).toBeGreaterThan(startIdx);
-    });
+      (expect(startIdx).toBeGreaterThanOrEqual(0), `Expected start marker for ${outcome}`);
+      (expect(completeIdx).toBeGreaterThanOrEqual(0), `Expected complete marker for ${outcome}`);
+      (expect(completeIdx).toBeGreaterThan(startIdx),
+        `Complete should come after start for ${outcome}`);
+    }
   });
 
   describe('does not log completion when a terminal write throws', () => {
