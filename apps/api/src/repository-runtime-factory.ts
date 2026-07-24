@@ -10,6 +10,7 @@ import type {
   LoopRepositoryPort,
   AgentInvocationPort,
   ValidationRunRepositoryPort,
+  PhaseRepositoryPort,
 } from '@ai-sdlc/application/ports';
 import type { EventRepositoryPort, FailureRepositoryPort } from '@ai-sdlc/application';
 import { RepositoryRuntimePaths } from './repository-runtime-paths.js';
@@ -49,6 +50,7 @@ export interface RepositoryOperationalRuntime {
   readonly repository: Repository;
   readonly paths: RepositoryRuntimePaths;
   readonly runRepository: RunRepositoryPort;
+  readonly phaseRepository: PhaseRepositoryPort;
   readonly workerRegistry: WorkerRegistryPort;
   readonly workerLeaseRepository: WorkerLeasePort;
   readonly workerLoopDeps: RepositoryRuntimeLoopDeps;

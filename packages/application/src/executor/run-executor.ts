@@ -17,7 +17,7 @@ import {
   assertInputsAvailable,
   MissingRequiredInputError,
 } from '../phases/phase-definitions.js';
-import type { RunRepositoryPort, FailureRepositoryPort } from '../ports.js';
+import type { RunRepositoryPort, FailureRepositoryPort, LoggerPort } from '../ports.js';
 import type { PhaseRepositoryPort } from '../ports/phase-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { PhaseHandlerRegistryPort } from '../ports/phase-handler-registry-port.js';
@@ -30,6 +30,7 @@ export interface RunExecutorDeps {
   registry: PhaseHandlerRegistryPort;
   contextFactory: (run: Run) => PhaseHandlerContext;
   now?: () => Date;
+  logger?: LoggerPort;
 }
 
 export interface ExecuteRunInput {
@@ -413,7 +414,12 @@ export class RunExecutor {
 
     // All phases passed — mark run passed
     const finalRun = passRun(currentRun, now());
-    this.deps.runRepository.update(run.uuid, { status: 'passed', completedAt: now() });
+    this.terminalStatusWrite(run.uuid, 'passed', {
+      status: 'passed',
+      currentPhase: null,
+      completedAt: now(),
+      failureReason: null,
+    });
     this.emit(
       run.displayId,
       run.uuid,
@@ -454,12 +460,17 @@ export class RunExecutor {
       this.deps.phaseRepository.insert(phase);
     }
     this.deps.failureRepository.insert(failure);
-    this.deps.runRepository.update(run.uuid, {
-      status: 'failed',
-      currentPhase: null,
-      completedAt: at,
-      failureReason: failure.message,
-    });
+    this.terminalStatusWrite(
+      run.uuid,
+      'failed',
+      {
+        status: 'failed',
+        currentPhase: null,
+        completedAt: at,
+        failureReason: failure.message,
+      },
+      phaseDef.name as string,
+    );
     phases.push({ phase: phaseDef.name, status: 'failed', failure });
     this.emit(
       run.displayId,
@@ -506,12 +517,17 @@ export class RunExecutor {
     phase.completedAt = at;
     this.deps.phaseRepository.update(phase);
     this.deps.failureRepository.insert(failure);
-    this.deps.runRepository.update(run.uuid, {
-      status: 'blocked',
-      currentPhase: null,
-      completedAt: at,
-      failureReason: failure.message,
-    });
+    this.terminalStatusWrite(
+      run.uuid,
+      'blocked',
+      {
+        status: 'blocked',
+        currentPhase: null,
+        completedAt: at,
+        failureReason: failure.message,
+      },
+      phaseDef.name as string,
+    );
     phases.push({ phase: phaseDef.name, status: 'blocked', failure });
     this.emit(
       run.displayId,
@@ -557,12 +573,17 @@ export class RunExecutor {
     phase.completedAt = at;
     this.deps.phaseRepository.update(phase);
     this.deps.failureRepository.insert(failure);
-    this.deps.runRepository.update(run.uuid, {
-      status: 'needs_human_review',
-      currentPhase: run.currentPhase ?? null,
-      completedAt: at,
-      failureReason: failure.message,
-    });
+    this.terminalStatusWrite(
+      run.uuid,
+      'needs_human_review',
+      {
+        status: 'needs_human_review',
+        currentPhase: run.currentPhase ?? null,
+        completedAt: at,
+        failureReason: failure.message,
+      },
+      phaseDef.name as string,
+    );
     phases.push({ phase: phaseDef.name, status: 'needs_human_review', failure });
     this.emit(
       run.displayId,
@@ -643,7 +664,7 @@ export class RunExecutor {
     };
     const run = failRun(currentRun, failure.message, at);
     this.deps.failureRepository.insert(failure);
-    this.deps.runRepository.update(run.uuid, {
+    this.terminalStatusWrite(run.uuid, 'failed', {
       status: 'failed',
       currentPhase: null,
       completedAt: at,
@@ -684,6 +705,33 @@ export class RunExecutor {
 
   private phaseId(runUuid: string, phaseName: PhaseName): string {
     return `${runUuid}-${String(phaseName)}`;
+  }
+
+  private terminalStatusWrite(
+    runUuid: string,
+    status: 'passed' | 'failed' | 'blocked' | 'needs_human_review',
+    patch: {
+      status: 'passed' | 'failed' | 'blocked' | 'needs_human_review';
+      currentPhase?: string | null;
+      completedAt: Date;
+      failureReason?: string | null;
+    },
+    phase?: string,
+  ): void {
+    const operationName = `terminal status write`;
+    this.deps.logger?.debug(
+      `${operationName} starting`,
+      `runUuid=${runUuid}`,
+      `status=${status}`,
+      phase !== undefined ? `phase=${phase}` : 'phase=final',
+    );
+    this.deps.runRepository.update(runUuid, patch);
+    this.deps.logger?.debug(
+      `${operationName} completed`,
+      `runUuid=${runUuid}`,
+      `status=${status}`,
+      phase !== undefined ? `phase=${phase}` : 'phase=final',
+    );
   }
 
   private emit(

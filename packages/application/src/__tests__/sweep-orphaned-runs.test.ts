@@ -182,7 +182,7 @@ describe('SweepOrphanedRuns', () => {
       displayId: 'issue-11-20260513-000000',
       issueNumber: 11,
       type: 'issue_to_pr',
-      status: 'waiting',
+      status: 'running',
       completedPhases: [],
       startedAt: new Date('2026-05-13T18:00:00Z'),
       pid: 222,
