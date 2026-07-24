@@ -115,6 +115,14 @@ export class OrphanedRunsSweeper {
         // Runs recovered into 'blocked' or 'needs_human_review' need a human,
         // not an automatic resume - leave them as-is and release the lease.
         if (expectedStatus === 'blocked' || expectedStatus === 'needs_human_review') {
+          this.deps.eventBus.publish(run.uuid, {
+            runId: run.uuid,
+            level: 'info',
+            type: 'orchestrator.run.recovered_from_orphan',
+            message: `Run recovered from orphaned pid ${entry.previousPid} but requires human review`,
+            timestamp: this.deps.now().toISOString(),
+            metadata: { previousPid: entry.previousPid, inferredStatus: expectedStatus },
+          });
           continue;
         }
 

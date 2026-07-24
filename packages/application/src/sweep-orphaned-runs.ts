@@ -43,18 +43,19 @@ export class SweepOrphanedRuns {
 
     const phases = this.deps.phaseRepository?.listByRun(run.uuid) ?? [];
     const latestPhase = phases
-      .filter((p) => p.completedAt !== undefined)
+      .filter((p) => p.startedAt !== undefined)
       .sort((a, b) => {
-        const aTime = a.completedAt!.getTime();
-        const bTime = b.completedAt!.getTime();
+        const aTime = a.startedAt!.getTime();
+        const bTime = b.startedAt!.getTime();
         if (aTime !== bTime) return bTime - aTime;
-        const aStart = a.startedAt?.getTime() ?? 0;
-        const bStart = b.startedAt?.getTime() ?? 0;
-        return bStart - aStart;
+        const aCompleted = a.completedAt?.getTime() ?? 0;
+        const bCompleted = b.completedAt?.getTime() ?? 0;
+        return bCompleted - aCompleted;
       })[0];
 
     const inferredStatus =
-      latestPhase?.status === 'needs_human_review' || latestPhase?.status === 'blocked'
+      latestPhase?.completedAt !== undefined &&
+      (latestPhase?.status === 'needs_human_review' || latestPhase?.status === 'blocked')
         ? latestPhase.status
         : 'failed';
 
