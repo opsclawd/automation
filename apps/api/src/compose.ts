@@ -6336,6 +6336,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
             const orphanScan = new SweepOrphanedRuns({
               runRepository: runtime.runRepository,
+              phaseRepository: runtime.phaseRepository,
               isProcessAlive: checkPid,
               now: () => new Date(),
             }).execute();

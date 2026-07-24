@@ -5,6 +5,7 @@ import {
   openDatabase,
   applyMigrations,
   RunRepository,
+  PhaseRepository,
   JobQueueRepository,
   WorkerLeaseRepository,
   WorkerRegistryRepository,
@@ -85,6 +86,7 @@ export async function composeRepositoryOperationalRuntime(
   }
 
   const runRepository = new RunRepository(operationalDb, '', '');
+  const phaseRepository = new PhaseRepository(operationalDb);
   const workerLeaseRepository = new WorkerLeaseRepository(operationalDb);
   const jobQueue = new JobQueueRepository(operationalDb, {
     findById: (id: RepositoryId) => {
@@ -137,6 +139,7 @@ export async function composeRepositoryOperationalRuntime(
     repository,
     paths,
     runRepository,
+    phaseRepository,
     workerRegistry,
     workerLeaseRepository,
     eventRepository,

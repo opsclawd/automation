@@ -218,9 +218,9 @@ export class OrphanedRunsSweeper {
     }
   }
 
-  // Restore the run from `running` (the post-enqueue status) back to its
+  // Restore the run from the inferred status (set by resumeRun) back to its
   // pre-sweep status when enqueue failed after we had already committed the
-  // inferred status -> running transition.
+  // inferred status transition.
   private restoreRunToPreSweepAtomic(entry: SweepOrphanedRunEntry, reason: 'enqueueError'): void {
     const rolled = this.deps.runRepository.atomicUpdateByUuid(
       entry.uuid,
@@ -230,7 +230,7 @@ export class OrphanedRunsSweeper {
         failureReason: null,
         currentPhase: null,
       },
-      'running',
+      entry.run.status,
     );
     if (!rolled) {
       this.deps.logger.error(

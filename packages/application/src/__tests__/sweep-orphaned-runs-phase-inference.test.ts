@@ -381,4 +381,260 @@ describe('SweepOrphanedRuns phase inference', () => {
     const after = repo.findByUuid('o-blocked');
     expect(after?.status).toBe('running');
   });
+
+  it('enqueues from the blocked inferred status', async () => {
+    const { OrphanedRunsSweeper } = await import('../orphaned-runs-sweeper.js');
+    const { createRun, RepositoryId } = await import('@ai-sdlc/domain');
+    const { blockRun } = await import('@ai-sdlc/domain');
+    const { FakeJobQueuePort } = await import('../test-doubles/fake-job-queue-port.js');
+    const { FakeWorkerLeasePort } = await import('../test-doubles/fake-worker-lease-port.js');
+    const { FakeWorkerRegistryPort } = await import('../test-doubles/fake-worker-registry-port.js');
+    const { FakeRepositoryPort } = await import('../test-doubles/fake-repository-port.js');
+    const { FakeEventBus } = await import('../test-doubles/fake-event-bus.js');
+
+    const fixed = fixedNow();
+    const repoId = RepositoryId('owner/repo');
+
+    const created = createRun({
+      uuid: 'o-blocked',
+      displayId: 'issue-blocked-20260710-000000',
+      repoId,
+      issueNumber: 1,
+      startedAt: new Date('2026-07-09T00:00:00Z'),
+    });
+    const blockedRun = blockRun(
+      { ...created, completedPhases: [] },
+      'orphaned: process 99999 no longer running',
+      fixed,
+    );
+
+    const repo = new FakeRunRepository();
+    repo.addRun(blockedRun);
+
+    const queue = new FakeJobQueuePort(
+      new FakeRepositoryPort([
+        {
+          id: repoId,
+          fullName: 'owner/repo',
+          localBasePath: '/tmp/owner-repo',
+          defaultBranch: 'main',
+          enabled: true,
+        } as never,
+      ]),
+    );
+    const leases = new FakeWorkerLeasePort(new FakeWorkerRegistryPort());
+    const eventBus = new FakeEventBus();
+
+    const sweeper = new OrphanedRunsSweeper({
+      runRepository: repo,
+      leases,
+      queue,
+      eventBus,
+      now: () => fixed,
+      logger: { error: () => {} },
+    });
+
+    const result = await sweeper.execute([
+      { uuid: 'o-blocked', run: blockedRun, previousPid: 99999, previousStatus: 'running' },
+    ]);
+
+    expect(result.enqueued).toBe(1);
+    expect(repo.findByUuid('o-blocked')?.status).toBe('running');
+    expect(leases.current(repoId)).toBeUndefined();
+  });
+
+  it('restores the blocked status after an enqueue failure', async () => {
+    const { OrphanedRunsSweeper } = await import('../orphaned-runs-sweeper.js');
+    const { createRun, RepositoryId } = await import('@ai-sdlc/domain');
+    const { blockRun } = await import('@ai-sdlc/domain');
+    const { FakeJobQueuePort } = await import('../test-doubles/fake-job-queue-port.js');
+    const { FakeWorkerLeasePort } = await import('../test-doubles/fake-worker-lease-port.js');
+    const { FakeWorkerRegistryPort } = await import('../test-doubles/fake-worker-registry-port.js');
+    const { FakeRepositoryPort } = await import('../test-doubles/fake-repository-port.js');
+    const { FakeEventBus } = await import('../test-doubles/fake-event-bus.js');
+    const { vi } = await import('vitest');
+
+    const fixed = fixedNow();
+    const repoId = RepositoryId('owner/repo');
+
+    const created = createRun({
+      uuid: 'o-blocked-restore',
+      displayId: 'issue-blocked-restore-20260710-000000',
+      repoId,
+      issueNumber: 1,
+      startedAt: new Date('2026-07-09T00:00:00Z'),
+    });
+    const blockedRun = blockRun(
+      { ...created, completedPhases: [] },
+      'orphaned: process 99999 no longer running',
+      fixed,
+    );
+
+    const repo = new FakeRunRepository();
+    repo.addRun(blockedRun);
+
+    const queue = new FakeJobQueuePort(
+      new FakeRepositoryPort([
+        {
+          id: repoId,
+          fullName: 'owner/repo',
+          localBasePath: '/tmp/owner-repo',
+          defaultBranch: 'main',
+          enabled: true,
+        } as never,
+      ]),
+    );
+    const leases = new FakeWorkerLeasePort(new FakeWorkerRegistryPort());
+    const eventBus = new FakeEventBus();
+
+    vi.spyOn(queue, 'enqueue').mockImplementationOnce(() => {
+      throw new Error('enqueue DB write failed');
+    });
+
+    const sweeper = new OrphanedRunsSweeper({
+      runRepository: repo,
+      leases,
+      queue,
+      eventBus,
+      now: () => fixed,
+      logger: { error: () => {} },
+    });
+
+    const result = await sweeper.execute([
+      { uuid: 'o-blocked-restore', run: blockedRun, previousPid: 99999, previousStatus: 'running' },
+    ]);
+
+    expect(result.enqueued).toBe(0);
+    expect(result.enqueueErrors).toHaveLength(1);
+    const after = repo.findByUuid('o-blocked-restore');
+    expect(after?.status).toBe('running');
+  });
+
+  it('enqueues from the needs_human_review inferred status', async () => {
+    const { OrphanedRunsSweeper } = await import('../orphaned-runs-sweeper.js');
+    const { createRun, RepositoryId } = await import('@ai-sdlc/domain');
+    const { markRunNeedsHumanReview } = await import('@ai-sdlc/domain');
+    const { FakeJobQueuePort } = await import('../test-doubles/fake-job-queue-port.js');
+    const { FakeWorkerLeasePort } = await import('../test-doubles/fake-worker-lease-port.js');
+    const { FakeWorkerRegistryPort } = await import('../test-doubles/fake-worker-registry-port.js');
+    const { FakeRepositoryPort } = await import('../test-doubles/fake-repository-port.js');
+    const { FakeEventBus } = await import('../test-doubles/fake-event-bus.js');
+
+    const fixed = fixedNow();
+    const repoId = RepositoryId('owner/repo');
+
+    const created = createRun({
+      uuid: 'o-nhr',
+      displayId: 'issue-nhr-20260710-000000',
+      repoId,
+      issueNumber: 1,
+      startedAt: new Date('2026-07-09T00:00:00Z'),
+    });
+    const nhrRun = markRunNeedsHumanReview(
+      { ...created, completedPhases: [] },
+      'orphaned: process 99999 no longer running',
+      fixed,
+    );
+
+    const repo = new FakeRunRepository();
+    repo.addRun(nhrRun);
+
+    const queue = new FakeJobQueuePort(
+      new FakeRepositoryPort([
+        {
+          id: repoId,
+          fullName: 'owner/repo',
+          localBasePath: '/tmp/owner-repo',
+          defaultBranch: 'main',
+          enabled: true,
+        } as never,
+      ]),
+    );
+    const leases = new FakeWorkerLeasePort(new FakeWorkerRegistryPort());
+    const eventBus = new FakeEventBus();
+
+    const sweeper = new OrphanedRunsSweeper({
+      runRepository: repo,
+      leases,
+      queue,
+      eventBus,
+      now: () => fixed,
+      logger: { error: () => {} },
+    });
+
+    const result = await sweeper.execute([
+      { uuid: 'o-nhr', run: nhrRun, previousPid: 99999, previousStatus: 'running' },
+    ]);
+
+    expect(result.enqueued).toBe(1);
+    expect(repo.findByUuid('o-nhr')?.status).toBe('running');
+    expect(leases.current(repoId)).toBeUndefined();
+  });
+
+  it('restores the needs_human_review status after an enqueue failure', async () => {
+    const { OrphanedRunsSweeper } = await import('../orphaned-runs-sweeper.js');
+    const { createRun, RepositoryId } = await import('@ai-sdlc/domain');
+    const { markRunNeedsHumanReview } = await import('@ai-sdlc/domain');
+    const { FakeJobQueuePort } = await import('../test-doubles/fake-job-queue-port.js');
+    const { FakeWorkerLeasePort } = await import('../test-doubles/fake-worker-lease-port.js');
+    const { FakeWorkerRegistryPort } = await import('../test-doubles/fake-worker-registry-port.js');
+    const { FakeRepositoryPort } = await import('../test-doubles/fake-repository-port.js');
+    const { FakeEventBus } = await import('../test-doubles/fake-event-bus.js');
+    const { vi } = await import('vitest');
+
+    const fixed = fixedNow();
+    const repoId = RepositoryId('owner/repo');
+
+    const created = createRun({
+      uuid: 'o-nhr-restore',
+      displayId: 'issue-nhr-restore-20260710-000000',
+      repoId,
+      issueNumber: 1,
+      startedAt: new Date('2026-07-09T00:00:00Z'),
+    });
+    const nhrRun = markRunNeedsHumanReview(
+      { ...created, completedPhases: [] },
+      'orphaned: process 99999 no longer running',
+      fixed,
+    );
+
+    const repo = new FakeRunRepository();
+    repo.addRun(nhrRun);
+
+    const queue = new FakeJobQueuePort(
+      new FakeRepositoryPort([
+        {
+          id: repoId,
+          fullName: 'owner/repo',
+          localBasePath: '/tmp/owner-repo',
+          defaultBranch: 'main',
+          enabled: true,
+        } as never,
+      ]),
+    );
+    const leases = new FakeWorkerLeasePort(new FakeWorkerRegistryPort());
+    const eventBus = new FakeEventBus();
+
+    vi.spyOn(queue, 'enqueue').mockImplementationOnce(() => {
+      throw new Error('enqueue DB write failed');
+    });
+
+    const sweeper = new OrphanedRunsSweeper({
+      runRepository: repo,
+      leases,
+      queue,
+      eventBus,
+      now: () => fixed,
+      logger: { error: () => {} },
+    });
+
+    const result = await sweeper.execute([
+      { uuid: 'o-nhr-restore', run: nhrRun, previousPid: 99999, previousStatus: 'running' },
+    ]);
+
+    expect(result.enqueued).toBe(0);
+    expect(result.enqueueErrors).toHaveLength(1);
+    const after = repo.findByUuid('o-nhr-restore');
+    expect(after?.status).toBe('running');
+  });
 });
