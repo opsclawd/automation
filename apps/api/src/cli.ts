@@ -203,7 +203,7 @@ function startTestWorkerReaper(
   return { stop: () => clearInterval(timer) };
 }
 
-function installSignalHandlers(
+export function installSignalHandlers(
   runRepository: {
     findByIssueNumber(repoId: RepositoryId, n: number): { pid?: number | null } | undefined;
     updateStatusByIssueNumber(
@@ -219,11 +219,30 @@ function installSignalHandlers(
   const cleanup = async (signal: string) => {
     const existing = runRepository.findByIssueNumber(repoId, issueNumber);
     if (existing && existing.pid === process.pid) {
-      runRepository.updateStatusByIssueNumber(repoId, issueNumber, {
-        status: 'cancelled',
-        completedAt: new Date(),
-        failureReason: `interrupted by ${signal}`,
-      });
+      // eslint-disable-next-line no-console
+      console.debug(
+        'terminal status write starting',
+        `issueNumber=${issueNumber}`,
+        'status=cancelled',
+      );
+      let applied = true;
+      try {
+        applied = runRepository.updateStatusByIssueNumber(repoId, issueNumber, {
+          status: 'cancelled',
+          completedAt: new Date(),
+          failureReason: `interrupted by ${signal}`,
+        });
+      } catch (err) {
+        console.error('Terminal status write failed', err);
+        applied = false;
+      }
+      // eslint-disable-next-line no-console
+      console.debug(
+        'terminal status write completed',
+        `issueNumber=${issueNumber}`,
+        'status=cancelled',
+        `applied=${applied}`,
+      );
     }
     onCleanup?.();
   };
@@ -752,15 +771,34 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   // 'queued' is a no-op: the workerLoop's first tick will reclaim naturally.
                 }
                 workerHeartbeat?.stop();
-                c.runRepository.atomicUpdateByUuid(
-                  run.uuid,
-                  {
-                    status: 'cancelled',
-                    completedAt: new Date(),
-                    failureReason: `interrupted by ${signal}`,
-                  },
-                  'running',
+                // eslint-disable-next-line no-console
+                console.debug(
+                  'terminal status write starting',
+                  `runUuid=${run.uuid}`,
+                  'status=cancelled',
                 );
+                let applied = true;
+                try {
+                  applied = c.runRepository.atomicUpdateByUuid(
+                    run.uuid,
+                    {
+                      status: 'cancelled',
+                      completedAt: new Date(),
+                      failureReason: `interrupted by ${signal}`,
+                    },
+                    'running',
+                  );
+                  // eslint-disable-next-line no-console
+                  console.debug(
+                    'terminal status write completed',
+                    `runUuid=${run.uuid}`,
+                    'status=cancelled',
+                    `applied=${applied}`,
+                  );
+                } catch (err) {
+                  console.error('Terminal status write failed', err);
+                  applied = false;
+                }
                 unsubscribe?.();
               } finally {
                 process.exit(exitCode);
@@ -814,15 +852,35 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               finalRun.status === 'running' &&
               (finalJob?.status === 'failed' || finalJob?.status === 'cancelled')
             ) {
-              c.runRepository.atomicUpdateByUuid(
-                run.uuid,
-                {
-                  status: 'failed',
-                  completedAt: new Date(),
-                  failureReason: 'worker loop terminated without finalizing run',
-                },
-                'running',
+              // eslint-disable-next-line no-console
+              console.debug(
+                'terminal status write starting',
+                `runUuid=${run.uuid}`,
+                'status=failed',
+                'reason=worker_loop_terminated',
               );
+              let applied = true;
+              try {
+                applied = c.runRepository.atomicUpdateByUuid(
+                  run.uuid,
+                  {
+                    status: 'failed',
+                    completedAt: new Date(),
+                    failureReason: 'worker loop terminated without finalizing run',
+                  },
+                  'running',
+                );
+                // eslint-disable-next-line no-console
+                console.debug(
+                  'terminal status write completed',
+                  `runUuid=${run.uuid}`,
+                  'status=failed',
+                  `applied=${applied}`,
+                );
+              } catch (err) {
+                console.error('Terminal status write failed', err);
+                applied = false;
+              }
               finalRun = c.runRepository.findByUuid(run.uuid) ?? finalRun;
             }
 
@@ -864,15 +922,35 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // the next attempt. atomicUpdateByUuid is a no-op if the run was
             // never inserted or was already finalized by workerLoop.
             const failureReason = err instanceof Error ? err.message : String(err);
-            c.runRepository.atomicUpdateByUuid(
-              run.uuid,
-              {
-                status: 'failed',
-                completedAt: new Date(),
-                failureReason,
-              },
-              'running',
+            // eslint-disable-next-line no-console
+            console.debug(
+              'terminal status write starting',
+              `runUuid=${run.uuid}`,
+              'status=failed',
+              `reason=${failureReason}`,
             );
+            let applied = true;
+            try {
+              applied = c.runRepository.atomicUpdateByUuid(
+                run.uuid,
+                {
+                  status: 'failed',
+                  completedAt: new Date(),
+                  failureReason,
+                },
+                'running',
+              );
+              // eslint-disable-next-line no-console
+              console.debug(
+                'terminal status write completed',
+                `runUuid=${run.uuid}`,
+                'status=failed',
+                `applied=${applied}`,
+              );
+            } catch (err2) {
+              console.error('Terminal status write failed', err2);
+              applied = false;
+            }
             // Only suggest resuming if the run row actually exists —
             // insertIfNoActive may have thrown before inserting it.
             if (c.runRepository.findByUuid(run.uuid)) {
