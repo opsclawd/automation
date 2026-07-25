@@ -75,6 +75,8 @@ export interface OpenCodeAdapterOptions {
   repoRoot?: string;
 }
 
+const AUTO_APPROVE_PHASES = new Set(['implement', 'fix-review']);
+
 export class OpenCodeAgentAdapter implements AgentPort {
   constructor(private readonly opts: OpenCodeAdapterOptions) {}
 
@@ -131,6 +133,9 @@ export class OpenCodeAgentAdapter implements AgentPort {
             ? AbortSignal.any(signals)
             : undefined;
       const args = ['run'];
+      if (AUTO_APPROVE_PHASES.has(request.phaseId)) {
+        args.push('--dangerously-skip-permissions');
+      }
       if (request.model) {
         const modelArg = request.provider ? `${request.provider}/${request.model}` : request.model;
         args.push('--model', modelArg);
