@@ -11,7 +11,7 @@
  *
  * The single legal cross-layer composition point is apps/api/src/compose.ts.
  *
- * Run: pnpm depcruise
+ * Run: pnpm boundaries
  */
 module.exports = {
   forbidden: [

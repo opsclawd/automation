@@ -12,6 +12,10 @@ describe('validation commands drift guard (#514)', () => {
     ) as { validation: { commands: string[] } };
     const commands = new Set(config.validation.commands);
 
+    const packageJson = JSON.parse(readFileSync(resolve(REPO_ROOT, 'package.json'), 'utf-8')) as {
+      scripts: Record<string, string>;
+    };
+
     const ciYaml = readFileSync(resolve(REPO_ROOT, '.github/workflows/ci.yml'), 'utf-8');
 
     // CI test steps that must have a corresponding validation command.
@@ -22,7 +26,7 @@ describe('validation commands drift guard (#514)', () => {
       'pnpm -r typecheck',
       'pnpm test',
       'pnpm test:bash',
-      'pnpm depcruise',
+      'pnpm boundaries',
     ];
 
     for (const step of requiredCiSteps) {
@@ -38,5 +42,8 @@ describe('validation commands drift guard (#514)', () => {
         `.ai-orchestrator.json missing validation command for CI step: ${step}`,
       ).toBe(true);
     }
+
+    expect(packageJson.scripts.boundaries).toBe('depcruise . --config .dependency-cruiser.cjs');
+    expect(packageJson.scripts.depcruise).toBeUndefined();
   });
 });

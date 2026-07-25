@@ -47,7 +47,7 @@ shared  <--  domain  <--  application  <--  apps/api (composition root)
                           infrastructure  <--  apps/api
 ```
 
-**Hard rules — enforced by `pnpm depcruise` in CI:**
+**Hard rules — enforced by `pnpm boundaries` in CI:**
 
 - `packages/application/**` MUST NOT import `@ai-sdlc/infrastructure`.
   - If you need a side effect (DB write, file I/O, subprocess), define a **port**
@@ -67,7 +67,7 @@ rule. Define a port instead. See `packages/application/src/ports.ts` for the
 existing pattern (`RunRepositoryPort`, `RunDirectoryFactory`, `RunBashScriptFn`).
 
 **Verifying locally before pushing:** see "Before opening a PR" at the top of
-this file — also add `pnpm depcruise` (layer + circular-dep check) when
+this file — also add `pnpm boundaries` (layer + circular-dep check) when
 touching imports across `packages/`/`apps/` boundaries.
 
 **Shell tests** for `scripts/` belong in `scripts/lib/__tests__/*.bats` — anything

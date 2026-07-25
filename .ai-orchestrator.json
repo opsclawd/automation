@@ -6,7 +6,7 @@
       "pnpm typecheck",
       "pnpm test",
       "pnpm test:bash",
-      "pnpm depcruise"
+      "pnpm boundaries"
     ],
     "timeout": 300
   },
