@@ -326,9 +326,15 @@ describe('PlanReviewLoop', () => {
     // The trailing final review is a fresh full-plan review, NOT a
     // delta-scoped re-review (#716, design §4 Assumption 9) — its job is
     // to catch anything missed by the iterative loop. We check that it runs
-    // with mode final_full without prevFindings or recentFixCitations constraints.
+    // with mode final_full without prevFindings or recentFixCitations constraints,
+    // grounded against the freshly captured post-fix snapshot (#824).
     expect(reviewOptions[2]).toEqual({
       mode: 'final_full',
+      snapshot: {
+        planMdDigest: 'test-snapshot-digest',
+        planMdPath: '/wt/plan.md',
+        capturedAt: '2026-07-08T00:00:00.000Z',
+      },
     });
   });
 
