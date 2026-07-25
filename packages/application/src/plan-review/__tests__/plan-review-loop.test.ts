@@ -326,9 +326,15 @@ describe('PlanReviewLoop', () => {
     // The trailing final review is a fresh full-plan review, NOT a
     // delta-scoped re-review (#716, design §4 Assumption 9) — its job is
     // to catch anything missed by the iterative loop. We check that it runs
-    // with mode final_full without prevFindings or recentFixCitations constraints.
+    // with mode final_full without prevFindings or recentFixCitations constraints,
+    // grounded against the freshly captured post-fix snapshot (#824).
     expect(reviewOptions[2]).toEqual({
       mode: 'final_full',
+      snapshot: {
+        planMdDigest: 'test-snapshot-digest',
+        planMdPath: '/wt/plan.md',
+        capturedAt: '2026-07-08T00:00:00.000Z',
+      },
     });
   });
 
@@ -1298,46 +1304,178 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
     );
   });
 
-  it('artifact digest drift in final_full review escalates to human review even when verdict is pass', async () => {
-    let reviewCalls = 0;
-    const { deps } = makeDeps({
-      maxIterations: 1,
-      runReview: async (): Promise<PlanReviewResult> => {
-        reviewCalls += 1;
-        if (reviewCalls === 1) {
+  describe('final_full grant drift baseline', () => {
+    it('captures the post-fix snapshot before final_full and does not report the fix as drift', async () => {
+      let reviewCalls = 0;
+      let fixCompleted = false;
+      let finalReviewStarted = false;
+      let captureSnapshotCalls = 0;
+      const { deps, events } = makeDeps({
+        maxIterations: 1,
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls += 1;
+          if (reviewCalls === 1) {
+            return {
+              invocationId: 'rev-1',
+              agentOutcome: 'success',
+              verdict: 'p1_found',
+              findings: groundedP1Findings(),
+              snapshot: {
+                planMdDigest: 'digest-before-fix',
+                planMdPath: '/wt/plan.md',
+                capturedAt: '2026-07-08T00:00:00.000Z',
+              },
+            };
+          }
+          finalReviewStarted = true;
           return {
-            invocationId: `rev-${reviewCalls}`,
-            agentOutcome: 'success' as const,
-            verdict: 'p1_found' as const,
-            findings: groundedP1Findings(),
+            invocationId: 'rev-2',
+            agentOutcome: 'success',
+            verdict: 'pass',
+            findings: [],
             snapshot: {
-              planMdDigest: 'digest-before-fix',
+              planMdDigest: 'digest-after-fix',
               planMdPath: '/wt/plan.md',
               capturedAt: '2026-07-08T00:00:00.000Z',
             },
           };
-        }
-        return {
-          invocationId: `rev-${reviewCalls}`,
-          agentOutcome: 'success' as const,
-          verdict: 'pass' as const,
-          findings: [],
-          snapshot: {
+        },
+        runFix: async (): Promise<PlanFixResult> => {
+          fixCompleted = true;
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+          };
+        },
+        captureSnapshot: async (): Promise<PlanReviewSnapshot> => {
+          captureSnapshotCalls += 1;
+          expect(fixCompleted).toBe(true);
+          expect(finalReviewStarted).toBe(false);
+          return {
             planMdDigest: 'digest-after-fix',
             planMdPath: '/wt/plan.md',
             capturedAt: '2026-07-08T00:00:00.000Z',
-          },
-        };
-      },
-      runFix: async (): Promise<PlanFixResult> => ({
-        invocationId: 'fix-1',
-        agentOutcome: 'success' as const,
-        verdict: 'done_with_fixes' as const,
-      }),
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+      expect(captureSnapshotCalls).toBe(1);
+      expect(out.outcome).toBe('success');
+      expect(out.loop.status).toBe('converged');
+      expect(
+        events.some(
+          (event) => event.type === 'plan-review.loop.final_review.artifact_drift_detected',
+        ),
+      ).toBe(false);
     });
-    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
-    expect(out.outcome).toBe('needs_human_review');
-    expect(out.loop.status).toBe('exhausted');
+
+    it('escalates when the plan digest changes during final_full review', async () => {
+      let reviewCalls = 0;
+      const { deps, events } = makeDeps({
+        maxIterations: 1,
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls += 1;
+          return reviewCalls === 1
+            ? {
+                invocationId: 'rev-1',
+                agentOutcome: 'success',
+                verdict: 'p1_found',
+                findings: groundedP1Findings(),
+                snapshot: {
+                  planMdDigest: 'digest-before-fix',
+                  planMdPath: '/wt/plan.md',
+                  capturedAt: '2026-07-08T00:00:00.000Z',
+                },
+              }
+            : {
+                invocationId: 'rev-2',
+                agentOutcome: 'success',
+                verdict: 'pass',
+                findings: [],
+                snapshot: {
+                  planMdDigest: 'digest-out-of-band',
+                  planMdPath: '/wt/plan.md',
+                  capturedAt: '2026-07-08T00:00:00.000Z',
+                },
+              };
+        },
+        runFix: async (): Promise<PlanFixResult> => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+        }),
+        captureSnapshot: async (): Promise<PlanReviewSnapshot> => ({
+          planMdDigest: 'digest-after-fix',
+          planMdPath: '/wt/plan.md',
+          capturedAt: '2026-07-08T00:00:00.000Z',
+        }),
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      const driftEvent = events.find(
+        (event) => event.type === 'plan-review.loop.final_review.artifact_drift_detected',
+      );
+
+      expect(out.outcome).toBe('needs_human_review');
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations.at(-1)?.outcome).toBe('unresolved');
+      expect(driftEvent?.metadata).toMatchObject({
+        preFinalDigest: 'digest-after-fix',
+        finalDigest: 'digest-out-of-band',
+      });
+    });
+
+    it('continues to verdict handling when the fresh baseline snapshot is unavailable', async () => {
+      let reviewCalls = 0;
+      const { deps, events } = makeDeps({
+        maxIterations: 1,
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls += 1;
+          return reviewCalls === 1
+            ? {
+                invocationId: 'rev-1',
+                agentOutcome: 'success',
+                verdict: 'p1_found',
+                findings: groundedP1Findings(),
+                snapshot: {
+                  planMdDigest: 'digest-before-fix',
+                  planMdPath: '/wt/plan.md',
+                  capturedAt: '2026-07-08T00:00:00.000Z',
+                },
+              }
+            : {
+                invocationId: 'rev-2',
+                agentOutcome: 'success',
+                verdict: 'pass',
+                findings: [],
+                snapshot: {
+                  planMdDigest: 'digest-after-fix',
+                  planMdPath: '/wt/plan.md',
+                  capturedAt: '2026-07-08T00:00:00.000Z',
+                },
+              };
+        },
+        runFix: async (): Promise<PlanFixResult> => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+        }),
+        captureSnapshot: async (): Promise<undefined> => undefined,
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+      expect(out.outcome).toBe('success');
+      expect(out.loop.status).toBe('converged');
+      expect(
+        events.some(
+          (event) => event.type === 'plan-review.loop.final_review.artifact_drift_detected',
+        ),
+      ).toBe(false);
+    });
   });
 
   it('reviewStateRepository.appendAttempt is called for each review', async () => {

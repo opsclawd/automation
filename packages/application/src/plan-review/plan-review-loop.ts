@@ -1383,7 +1383,7 @@ export class PlanReviewLoop {
         const finalIterationIndex = loop.iterations.length + 1;
         const finalCtx: PlanReviewContext = { ...baseCtx, iterationIndex: finalIterationIndex };
         finalFullPhase = true;
-        preFinalFullSnapshot = review.snapshot;
+        preFinalFullSnapshot = await deps.captureSnapshot(finalCtx);
 
         this.emit(
           input,
