@@ -69,41 +69,18 @@ describe('bareScriptName', () => {
 });
 
 describe('ProcessValidationAdapter', () => {
-  it('skips a bare pnpm <script> command whose script is absent from package.json, without running it', async () => {
+  it('skips a bare pnpm <name> command when only a node_modules/.bin binary satisfies it', async () => {
     const logDir = freshDir();
     const cwd = freshDir();
-    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ scripts: { build: 'echo built' } }));
-    const adapter = new ProcessValidationAdapter();
-    const results = await adapter.run({
-      cwd,
-      commands: ['pnpm build', 'pnpm test:bash'],
-      timeoutSeconds: 30,
-      logDir,
-    });
-    expect(results[0].outcome).toBe('passed');
-    expect(results[1].outcome).toBe('skipped');
-    expect(results[1].exitCode).toBe(0);
-    expect(results[1].stderr).toContain('no "test:bash" script or node_modules/.bin binary');
-
-    const summary = JSON.parse(readFileSync(join(logDir, 'validation-result.json'), 'utf-8'));
-    expect(summary.passed).toBe(true);
-  });
-
-  it('does not skip a bare pnpm <name> command when a node_modules/.bin binary satisfies it, even without a matching script', async () => {
-    // Regression: `pnpm depcruise` in regime-engine has no "depcruise" script,
-    // but pnpm resolves it to node_modules/.bin/depcruise and it runs fine —
-    // the script-existence check must not treat that as "missing".
-    const logDir = freshDir();
-    const cwd = freshDir();
+    const binaryMarker = join(cwd, 'binary-ran');
     writeFileSync(join(cwd, 'package.json'), JSON.stringify({ scripts: {} }));
     mkdirSync(join(cwd, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(
       join(cwd, 'node_modules', '.bin', 'depcruise'),
-      '#!/bin/sh\necho depcruise-ran\n',
-      {
-        mode: 0o755,
-      },
+      `#!/bin/sh\ntouch "${binaryMarker}"\n`,
+      { mode: 0o755 },
     );
+
     const adapter = new ProcessValidationAdapter();
     const results = await adapter.run({
       cwd,
@@ -111,8 +88,34 @@ describe('ProcessValidationAdapter', () => {
       timeoutSeconds: 30,
       logDir,
     });
-    expect(results[0].outcome).toBe('passed');
-    expect(results[0].stdout).toContain('depcruise-ran');
+
+    expect(results[0].outcome).toBe('skipped');
+    expect(results[0].exitCode).toBe(0);
+    expect(results[0].stderr).toContain('no "depcruise" script in package.json');
+    expect(existsSync(binaryMarker)).toBe(false);
+  });
+
+  it('executes declared scripts, skips missing scripts, and passes when every executed command passes', async () => {
+    const logDir = freshDir();
+    const cwd = freshDir();
+    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ scripts: { build: 'echo built' } }));
+
+    const adapter = new ProcessValidationAdapter();
+    const results = await adapter.run({
+      cwd,
+      commands: ['pnpm test:bash', 'pnpm build'],
+      timeoutSeconds: 30,
+      logDir,
+    });
+
+    expect(results[0].outcome).toBe('skipped');
+    expect(results[0].exitCode).toBe(0);
+    expect(results[0].stderr).toContain('no "test:bash" script in package.json');
+    expect(results[1].outcome).toBe('passed');
+    expect(results[1].stdout).toContain('built');
+
+    const summary = JSON.parse(readFileSync(join(logDir, 'validation-result.json'), 'utf-8'));
+    expect(summary.passed).toBe(true);
   });
 
   it('fails the run when every command is skipped (nothing was verified)', async () => {
