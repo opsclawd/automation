@@ -383,4 +383,4 @@ pnpm lint
 pnpm -r test
 ```
 
-When changing imports across packages or apps, also run `pnpm depcruise`.
+When changing imports across packages or apps, also run `pnpm boundaries`.

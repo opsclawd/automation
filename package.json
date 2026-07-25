@@ -18,7 +18,7 @@
     "typecheck": "pnpm -r typecheck",
     "compare-runs": "tsx scripts/compare-runs.ts",
     "run:preflight": "scripts/preflight.sh",
-    "depcruise": "depcruise . --config .dependency-cruiser.cjs",
+    "boundaries": "depcruise . --config .dependency-cruiser.cjs",
     "prepare": "husky || true"
   },
   "lint-staged": {

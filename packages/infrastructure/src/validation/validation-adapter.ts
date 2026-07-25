@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   ValidationPort,
@@ -85,17 +85,6 @@ function packageHasScript(cwd: string, script: string): boolean {
   }
 }
 
-/**
- * `pnpm <name>` also resolves to a `node_modules/.bin/<name>` binary when
- * there's no matching package.json script (e.g. `pnpm depcruise` running the
- * dependency-cruiser CLI directly, with no "depcruise" script defined). A
- * command must fail *both* checks before we treat it as missing.
- */
-function hasLocalBinary(cwd: string, name: string): boolean {
-  const bin = join(cwd, 'node_modules', '.bin', name);
-  return existsSync(bin) || (process.platform === 'win32' && existsSync(`${bin}.cmd`));
-}
-
 export class ProcessValidationAdapter implements ValidationPort {
   async run(input: RunValidationInput): Promise<ValidationCommandResult[]> {
     const prefix = input.logPathPrefix ?? 'validate';
@@ -119,12 +108,8 @@ export class ProcessValidationAdapter implements ValidationPort {
       let timeoutId: NodeJS.Timeout | undefined;
 
       const scriptName = bareScriptName(command);
-      if (
-        scriptName !== undefined &&
-        !packageHasScript(input.cwd, scriptName) &&
-        !hasLocalBinary(input.cwd, scriptName)
-      ) {
-        stderr = `Skipped: no "${scriptName}" script or node_modules/.bin binary at ${input.cwd}\n`;
+      if (scriptName !== undefined && !packageHasScript(input.cwd, scriptName)) {
+        stderr = `Skipped: no "${scriptName}" script in package.json at ${input.cwd}\n`;
         outcome = 'skipped';
         const durationMs = Date.now() - started;
         writeFileSync(stdoutAbs, stdout);

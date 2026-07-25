@@ -1404,7 +1404,7 @@ export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptIn
     '---',
     '',
     '**CRITICAL: Do NOT run any of the following commands.**',
-    '- Do NOT run npm/pnpm/yarn/bun build, test, lint, typecheck, depcruise, or test:bash',
+    '- Do NOT run npm/pnpm/yarn/bun build, test, lint, typecheck, boundaries, or test:bash',
     '- Do NOT run any shell scripts that invoke tests or linters',
     '- Do NOT run npm/pnpm/yarn/bun install or any package manager commands',
     '- Do NOT verify your fix - the orchestrator handles all verification deterministically',
