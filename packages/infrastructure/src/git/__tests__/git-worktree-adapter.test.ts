@@ -627,6 +627,7 @@ describe('status()', () => {
     expect(statusAfter).toContain('M  README.md');
     expect(statusAfter).toContain('A  new.txt');
     // porcelain status M  means staged modification,  M (with space before) means unstaged.
+    // porcelain status M  means staged modification,  M (with space before) means unstaged.
     // wait, git status --porcelain:
     // "M " = staged modification
     // " M" = unstaged modification
@@ -641,5 +642,67 @@ describe('status()', () => {
     await git(repo, ['add', 'README.md']);
     const result = await adapter.status(repo);
     expect(result).toContain('M  README.md');
+  });
+});
+
+describe('changedFiles()', () => {
+  it('returns normalized paths committed in the requested range', async () => {
+    const repo = await makeTempRepo();
+    const initialSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await mkdir(join(repo, 'src'), { recursive: true });
+    await writeFile(join(repo, 'src', 'changed.ts'), 'export const a = 1;\n');
+    await writeFile(join(repo, 'src', 'renamed.ts'), 'export const b = 2;\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'add src files']);
+    const committedSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    const files = await adapter.changedFiles!(repo, initialSha, committedSha);
+    expect(files).toEqual(['src/changed.ts', 'src/renamed.ts']);
+  });
+
+  it('excludes uncommitted working tree changes from the committed range', async () => {
+    const repo = await makeTempRepo();
+    const initialSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await mkdir(join(repo, 'src'), { recursive: true });
+    await writeFile(join(repo, 'src', 'changed.ts'), 'export const a = 1;\n');
+    await writeFile(join(repo, 'src', 'renamed.ts'), 'export const b = 2;\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'add src files']);
+    const committedSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await writeFile(join(repo, 'src', 'uncommitted.ts'), 'export const c = 3;\n');
+
+    const files = await adapter.changedFiles!(repo, initialSha, committedSha);
+    expect(files).toEqual(['src/changed.ts', 'src/renamed.ts']);
+    expect(files).not.toContain('src/uncommitted.ts');
+  });
+
+  it('honors the explicit head bound', async () => {
+    const repo = await makeTempRepo();
+    const initialSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await mkdir(join(repo, 'src'), { recursive: true });
+    await writeFile(join(repo, 'src', 'changed.ts'), 'export const a = 1;\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'commit 1']);
+    const headBoundSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await writeFile(join(repo, 'src', 'later.ts'), 'export const d = 4;\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'commit 2']);
+
+    const files = await adapter.changedFiles!(repo, initialSha, headBoundSha);
+    expect(files).toEqual(['src/changed.ts']);
+    expect(files).not.toContain('src/later.ts');
+  });
+
+  it('returns an empty array for an empty committed range', async () => {
+    const repo = await makeTempRepo();
+    const committedSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    const files = await adapter.changedFiles!(repo, committedSha, committedSha);
+    expect(files).toEqual([]);
   });
 });

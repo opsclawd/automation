@@ -189,6 +189,15 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     await git(cwd, ['reset', '--hard', baseBranch]);
   }
 
+  async changedFiles(cwd: string, base: string, head = 'HEAD'): Promise<string[]> {
+    const output = await git(cwd, ['diff', '--name-only', `${base}..${head}`]);
+    return output
+      .split('\n')
+      .map((path) => path.trim().replace(/\\/g, '/'))
+      .filter(Boolean)
+      .sort();
+  }
+
   async seedArtifactExcludes(cwd: string): Promise<void> {
     const gitCommonDir = await git(cwd, ['rev-parse', '--git-common-dir']);
     const excludeFile = isAbsolute(gitCommonDir)
@@ -271,7 +280,8 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
 
     const matchPattern = (file: string, pattern: string): boolean => {
       if (pattern.includes('*')) {
-        const regexStr = '^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
+        const regexStr =
+          '^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
         const regex = new RegExp(regexStr);
         return regex.test(file);
       }
@@ -286,12 +296,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
       // ignore
     }
 
-    const allCandidates = new Set([
-      ...physicalFiles,
-      ...stagedSet,
-      ...committedSet,
-      ...trackedSet,
-    ]);
+    const allCandidates = new Set([...physicalFiles, ...stagedSet, ...committedSet, ...trackedSet]);
 
     const resolvedArtifacts = new Set<string>();
     for (const candidate of allCandidates) {
