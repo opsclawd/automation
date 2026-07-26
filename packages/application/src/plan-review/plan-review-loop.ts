@@ -248,6 +248,7 @@ export class PlanReviewLoop {
             `cannot run deterministic fix: loop budget exhausted`,
             {},
           );
+          lastDeterministicDiagnostic = checkResult.diagnostic;
           return { success: false, loop };
         }
 
@@ -1060,6 +1061,7 @@ export class PlanReviewLoop {
               loop,
               'arbiter_' + arbiterResult.outcome,
               history,
+              lastDeterministicDiagnostic,
             );
           }
           this.emit(
@@ -1365,7 +1367,13 @@ export class PlanReviewLoop {
           if (skipTerminalFix) {
             return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
           }
-          return this.escalateToTerminalFix(input, loop, 'loop_exhausted', history);
+          return this.escalateToTerminalFix(
+            input,
+            loop,
+            'loop_exhausted',
+            history,
+            lastDeterministicDiagnostic,
+          );
         }
       }
 
@@ -1378,7 +1386,13 @@ export class PlanReviewLoop {
         if (!syncResult.success) {
           loop = exhaust(loop, deps.now());
           deps.loops.update(loop);
-          return this.escalateToTerminalFix(input, loop, 'loop_exhausted', history);
+          return this.escalateToTerminalFix(
+            input,
+            loop,
+            'loop_exhausted',
+            history,
+            lastDeterministicDiagnostic,
+          );
         }
         const finalIterationIndex = loop.iterations.length + 1;
         const finalCtx: PlanReviewContext = { ...baseCtx, iterationIndex: finalIterationIndex };
@@ -1960,6 +1974,7 @@ export class PlanReviewLoop {
                 loop,
                 'arbiter_' + arbiterResult.outcome,
                 history,
+                lastDeterministicDiagnostic,
               );
             }
           }
@@ -1996,7 +2011,13 @@ export class PlanReviewLoop {
       `plan-review loop exhausted after ${loop.iterations.length} iterations`,
       { iterations: loop.iterations.length, maxIterations: loop.maxIterations },
     );
-    return this.escalateToTerminalFix(input, loop, 'loop_exhausted', history);
+    return this.escalateToTerminalFix(
+      input,
+      loop,
+      'loop_exhausted',
+      history,
+      lastDeterministicDiagnostic,
+    );
   }
 
   private async escalateToTerminalFix(
@@ -2004,6 +2025,7 @@ export class PlanReviewLoop {
     loop: Loop,
     triggerReason: string,
     history: HistoryItem[],
+    lastDeterministicDiagnostic: string | null,
   ): Promise<PlanReviewLoopResult> {
     const { deps } = this;
     if (!deps.terminalFixProfile) {
@@ -2038,6 +2060,9 @@ export class PlanReviewLoop {
       isTerminalFix: true,
       triggerReason,
       historyContext: formattedHistory,
+      ...(lastDeterministicDiagnostic
+        ? { deterministicDiagnostic: lastDeterministicDiagnostic }
+        : {}),
       metadata: {
         invocation_type: 'terminal_fix',
       },
@@ -2045,6 +2070,24 @@ export class PlanReviewLoop {
 
     if (fixResult.agentOutcome === 'failed') {
       return { outcome: 'failed', loop, proceedWithConcerns: false };
+    }
+
+    if (fixResult.verdict === 'done_no_fixes_needed' && lastDeterministicDiagnostic !== null) {
+      const checkResult = await deps.checkDeterministicPlan(fixCtx);
+      if (checkResult.diagnostic === lastDeterministicDiagnostic) {
+        this.emit(
+          input,
+          'plan-review.terminal_fix.rejected',
+          'warn',
+          `Terminal fix rejected: fixer declared done_no_fixes_needed but the deterministic check still fails identically (${checkResult.diagnostic})`,
+          {
+            diagnostics: [checkResult.diagnostic],
+            changedArtifacts: {},
+            summary: `Terminal fix rejected: fixer declared done_no_fixes_needed but the deterministic check still fails identically`,
+          },
+        );
+        return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+      }
     }
 
     if (deps.validateTerminalFix) {

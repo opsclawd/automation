@@ -1803,6 +1803,57 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
       expect(out.outcome).toBe('success'); // Gated recovery handles it, it does not call terminal fix.
       expect(runFixCalls).toBe(1); // only the regular fix ran
     });
+
+    it('rejects terminal fixer declaring done_no_fixes_needed if the deterministic check still fails identically', async () => {
+      let runFixOpts: PlanFixOptions | undefined;
+      let checkDeterministicCalls = 0;
+
+      const { deps, events } = makeDeps({
+        terminalFixProfile: 'terminal-fix-profile',
+        checkDeterministicPlan: async (_ctx) => {
+          checkDeterministicCalls++;
+          if (checkDeterministicCalls === 1) {
+            return {
+              diagnostic: null,
+              signatureBlastRadiusFailures: [],
+            };
+          }
+          return {
+            diagnostic: 'signature blast radius failed',
+            signatureBlastRadiusFailures: [],
+          };
+        },
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success',
+          verdict: 'p1_found',
+          findings: groundedP1Findings(),
+        }),
+        runFix: async (_ctx, opts) => {
+          runFixOpts = opts;
+          if (opts.isTerminalFix) {
+            return {
+              invocationId: 'fix-terminal',
+              agentOutcome: 'success',
+              verdict: 'done_no_fixes_needed',
+            };
+          }
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('needs_human_review');
+      expect(runFixOpts).toBeDefined();
+      expect(runFixOpts?.isTerminalFix).toBe(true);
+      expect(runFixOpts?.deterministicDiagnostic).toBe('signature blast radius failed');
+      expect(checkDeterministicCalls).toBeGreaterThan(1);
+      expect(events.some((e) => e.type === 'plan-review.terminal_fix.rejected')).toBe(true);
+    });
   });
 
   describe('deterministic plan behavioral invariants', () => {
