@@ -11,6 +11,7 @@ interface StepRow {
   status: string;
   started_at: string | null;
   completed_at: string | null;
+  initial_pre_step_head: string | null;
 }
 
 const PHASE_ORDER: Record<string, number> = {
@@ -32,14 +33,16 @@ export class SqliteStepRepository implements StepRepositoryPort {
   upsert(step: Step): void {
     this.db
       .prepare(
-        `INSERT INTO steps (id, run_id, phase_id, idx, title, status, started_at, completed_at)
-         VALUES (@id, @run_id, @phase_id, @idx, @title, @status, @started_at, @completed_at)
+        `INSERT INTO steps (id, run_id, phase_id, idx, title, status, started_at, completed_at, initial_pre_step_head)
+         VALUES (@id, @run_id, @phase_id, @idx, @title, @status, @started_at, @completed_at, @initial_pre_step_head)
          ON CONFLICT(run_id, phase_id, idx) DO UPDATE SET
            id = excluded.id,
            title = excluded.title,
            status = excluded.status,
            started_at = excluded.started_at,
-           completed_at = excluded.completed_at`,
+           completed_at = excluded.completed_at,
+           initial_pre_step_head =
+             COALESCE(steps.initial_pre_step_head, excluded.initial_pre_step_head)`,
       )
       .run({
         id: step.id,
@@ -50,6 +53,7 @@ export class SqliteStepRepository implements StepRepositoryPort {
         status: step.status,
         started_at: step.startedAt?.toISOString() ?? null,
         completed_at: step.completedAt?.toISOString() ?? null,
+        initial_pre_step_head: step.initialPreStepHead ?? null,
       });
   }
 
@@ -83,5 +87,6 @@ function rowToStep(r: StepRow): Step {
     status: r.status as StepStatus,
     ...(r.started_at !== null ? { startedAt: new Date(r.started_at) } : {}),
     ...(r.completed_at !== null ? { completedAt: new Date(r.completed_at) } : {}),
+    ...(r.initial_pre_step_head !== null ? { initialPreStepHead: r.initial_pre_step_head } : {}),
   };
 }

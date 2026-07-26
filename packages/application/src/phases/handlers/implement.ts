@@ -204,11 +204,15 @@ export class ImplementHandler implements PhaseHandler {
         continue;
       }
 
+      const existingStep = existing.find(
+        (candidate) => candidate.phaseId === 'implement' && candidate.index === d.index,
+      );
+
       const task = manifest?.tasks.find((t) => t.n === d.index);
       const declaredFiles = declaredTaskFiles(task);
 
-      let preStepHead: string | undefined;
-      if (declaredFiles.length > 0) {
+      let preStepHead = existingStep?.initialPreStepHead;
+      if (declaredFiles.length > 0 && preStepHead === undefined) {
         try {
           if (!ctx.git?.headCommitSha) {
             throw new Error('ctx.git.headCommitSha is not available');
@@ -218,7 +222,7 @@ export class ImplementHandler implements PhaseHandler {
           const message = e instanceof Error ? e.message : String(e);
           const startedAt = ctx.now();
           const step: Step = {
-            id: ctx.idFactory?.() ?? `${ctx.runUuid}:implement:${d.index}`,
+            id: existingStep?.id ?? ctx.idFactory?.() ?? `${ctx.runUuid}:implement:${d.index}`,
             runId: ctx.runUuid,
             phaseId: this.phase,
             index: d.index,
@@ -262,13 +266,14 @@ export class ImplementHandler implements PhaseHandler {
 
       const startedAt = ctx.now();
       const step: Step = {
-        id: ctx.idFactory?.() ?? `${ctx.runUuid}:implement:${d.index}`,
+        id: existingStep?.id ?? ctx.idFactory?.() ?? `${ctx.runUuid}:implement:${d.index}`,
         runId: ctx.runUuid,
         phaseId: this.phase,
         index: d.index,
         title: d.title,
         status: 'running',
         startedAt,
+        ...(preStepHead !== undefined ? { initialPreStepHead: preStepHead } : {}),
       };
       this.opts.steps.upsert(step);
       emit('step.started', 'info', `step ${d.index}/${totalSteps}: ${d.title}`, {

@@ -26,7 +26,7 @@ function insertRun(runs: RunRepository, uuid: string) {
 }
 
 describe('SqliteStepRepository', () => {
-  it('round-trips a step', () => {
+  it('round-trips initialPreStepHead', () => {
     const db = freshDb();
     const repo = new SqliteStepRepository(db);
     const runs = new RunRepository(db);
@@ -41,6 +41,7 @@ describe('SqliteStepRepository', () => {
       status: 'success',
       startedAt: new Date('2026-05-13T00:01:00Z'),
       completedAt: new Date('2026-05-13T00:05:00Z'),
+      initialPreStepHead: 'baseline-sha',
     });
 
     const steps = repo.listForRun('r1');
@@ -55,6 +56,46 @@ describe('SqliteStepRepository', () => {
     expect(steps[0].startedAt!.toISOString()).toBe('2026-05-13T00:01:00.000Z');
     expect(steps[0].completedAt).toBeInstanceOf(Date);
     expect(steps[0].completedAt!.toISOString()).toBe('2026-05-13T00:05:00.000Z');
+    expect(steps[0].initialPreStepHead).toBe('baseline-sha');
+    db.close();
+  });
+
+  it('does not overwrite an existing initialPreStepHead during upsert', () => {
+    const db = freshDb();
+    const repo = new SqliteStepRepository(db);
+    const runs = new RunRepository(db);
+    insertRun(runs, 'r1');
+
+    repo.upsert({
+      id: 's1',
+      runId: 'r1',
+      phaseId: 'implement',
+      index: 0,
+      title: 'Write the foo module',
+      status: 'running',
+      initialPreStepHead: 'baseline-sha',
+    });
+
+    repo.upsert({
+      id: 's1',
+      runId: 'r1',
+      phaseId: 'implement',
+      index: 0,
+      title: 'Write the foo module',
+      status: 'running',
+      initialPreStepHead: 'later-sha',
+    });
+
+    repo.upsert({
+      id: 's1',
+      runId: 'r1',
+      phaseId: 'implement',
+      index: 0,
+      title: 'Write the foo module',
+      status: 'success',
+    });
+
+    expect(repo.findByIndex('r1', 'implement', 0)?.initialPreStepHead).toBe('baseline-sha');
     db.close();
   });
 
