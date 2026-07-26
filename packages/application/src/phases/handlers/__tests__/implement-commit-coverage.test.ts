@@ -391,4 +391,45 @@ describe('ImplementHandler Commit Coverage', () => {
       { cwd: '/tmp/wt', base: 'head-before-step-2', head: 'head-after-step-2' },
     ]);
   });
+
+  it('reference_files are excluded from commit coverage', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: use a reference']),
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task 1: use a reference',
+            expected_files: ['src/changed.ts'],
+            reference_files: ['src/read-only.ts'],
+          },
+        ],
+      }),
+    });
+
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|post-step', ['src/changed.ts']);
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'post-step');
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(events.some((event) => event.type === 'step.completed')).toBe(true);
+    expect(events.some((event) => event.type === 'step.uncommitted_files')).toBe(false);
+  });
 });
