@@ -41,6 +41,10 @@ describe('validationRunPassed', () => {
     expect(validationRunPassed(run([cmd(), cmd({ outcome: 'failed', exitCode: 1 })]))).toBe(false);
   });
 
+  it('is false when any command has parse_error', () => {
+    expect(validationRunPassed(run([cmd({ outcome: 'parse_error', exitCode: 2 })]))).toBe(false);
+  });
+
   it('is false when any command timed out', () => {
     expect(validationRunPassed(run([cmd({ outcome: 'timed_out' })]))).toBe(false);
   });

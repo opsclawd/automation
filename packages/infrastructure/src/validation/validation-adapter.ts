@@ -5,6 +5,7 @@ import type {
   ValidationPort,
   RunValidationInput,
   ValidationCommandResult,
+  ValidationCommand,
 } from '@ai-sdlc/application/ports';
 
 export function commandSlug(command: string): string {
@@ -83,6 +84,14 @@ function packageHasScript(cwd: string, script: string): boolean {
     // account; let it run and fail on its own terms if it's genuinely broken.
     return true;
   }
+}
+
+function isShellParseError(command: ValidationCommand, exitCode: number, stderr: string): boolean {
+  if (typeof command !== 'string') return false;
+  if (exitCode !== 2) return false;
+  return /unexpected EOF while looking for matching|unterminated quoted string|syntax error(?::| near unexpected token)/i.test(
+    stderr,
+  );
 }
 
 export class ProcessValidationAdapter implements ValidationPort {
@@ -168,6 +177,8 @@ export class ProcessValidationAdapter implements ValidationPort {
         if (isTimedOut) {
           outcome = 'timed_out';
           exitCode = r.exitCode ?? 124;
+        } else if (isShellParseError(command, exitCode, stderr)) {
+          outcome = 'parse_error';
         } else if (r.failed) {
           outcome = 'failed';
           exitCode = r.exitCode ?? 1;

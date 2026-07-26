@@ -49,6 +49,28 @@ describe('summarizeValidationFailure', () => {
     expect(s).toMatch(/timed out after 1500ms/i);
   });
 
+  it('summarizes a shell parse error with stderr detail', () => {
+    const s = summarizeValidationFailure({
+      outcome: 'parse_error',
+      durationMs: 10,
+      stderr: 'sh: 1: Syntax error: Unterminated quoted string\n',
+      stdout: '',
+    });
+    expect(s).toBe(
+      'Command failed to parse (shell syntax error): sh: 1: Syntax error: Unterminated quoted string',
+    );
+  });
+
+  it('summarizes a shell parse error with empty output', () => {
+    const s = summarizeValidationFailure({
+      outcome: 'parse_error',
+      durationMs: 10,
+      stderr: '',
+      stdout: '',
+    });
+    expect(s).toBe('Command failed to parse (shell syntax error)');
+  });
+
   it('uses the tail of stderr for a failure', () => {
     const s = summarizeValidationFailure({
       outcome: 'failed',

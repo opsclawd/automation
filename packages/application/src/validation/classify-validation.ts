@@ -46,6 +46,12 @@ export function summarizeValidationFailure(input: {
   if (input.outcome === 'timed_out') {
     return `timed out after ${input.durationMs}ms`;
   }
+  if (input.outcome === 'parse_error') {
+    const detail = tail(input.stderr.length > 0 ? input.stderr : input.stdout);
+    return detail.length > 0
+      ? `Command failed to parse (shell syntax error): ${detail}`
+      : 'Command failed to parse (shell syntax error)';
+  }
   const body = input.stderr.trim().length > 0 ? input.stderr : input.stdout;
   const t = tail(body);
   return t.length > 0 ? t : 'command failed with no captured output';

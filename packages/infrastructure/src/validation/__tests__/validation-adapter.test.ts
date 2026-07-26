@@ -330,4 +330,60 @@ describe('ProcessValidationAdapter', () => {
     expect(results[0].stdout).toContain('owner/legacy-repo');
     expect(results[0].stdout).toContain('legacy-shell-active');
   });
+
+  it('classifies an unmatched legacy shell quote as parse_error', async () => {
+    const logDir = freshDir();
+    const adapter = new ProcessValidationAdapter();
+    const results = await adapter.run({
+      cwd: process.cwd(),
+      commands: ["printf '%s\\n' 'unterminated"],
+      timeoutSeconds: 30,
+      logDir,
+    });
+    expect(results[0].exitCode).toBe(2);
+    expect(results[0].outcome).toBe('parse_error');
+  });
+
+  it('keeps an ordinary exit code 2 tool failure as failed', async () => {
+    const logDir = freshDir();
+    const adapter = new ProcessValidationAdapter();
+    const results = await adapter.run({
+      cwd: process.cwd(),
+      commands: [`${process.execPath} -e "process.exit(2)"`],
+      timeoutSeconds: 30,
+      logDir,
+    });
+    expect(results[0].exitCode).toBe(2);
+    expect(results[0].outcome).toBe('failed');
+  });
+
+  it('does not classify argv stderr as a shell parse error', async () => {
+    const logDir = freshDir();
+    const adapter = new ProcessValidationAdapter();
+    const results = await adapter.run({
+      cwd: process.cwd(),
+      commands: [
+        [process.execPath, '-e', "process.stderr.write('syntax error'); process.exit(2)"],
+      ] as ValidationCommand[],
+      timeoutSeconds: 30,
+      logDir,
+    });
+    expect(results[0].exitCode).toBe(2);
+    expect(results[0].outcome).toBe('failed');
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps timeout precedence over shell parse detection',
+    async () => {
+      const logDir = freshDir();
+      const adapter = new ProcessValidationAdapter();
+      const results = await adapter.run({
+        cwd: process.cwd(),
+        commands: ['sh -c "echo \'syntax error\' >&2; sleep 5"'],
+        timeoutSeconds: 1,
+        logDir,
+      });
+      expect(results[0].outcome).toBe('timed_out');
+    },
+  );
 });

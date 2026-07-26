@@ -81,7 +81,7 @@ export class RunValidation {
       stderrPath: r.stderrPath,
       outcome: r.outcome,
       kind: classifyCommandKind(r.command),
-      ...(r.outcome === 'failed' || r.outcome === 'timed_out'
+      ...(r.outcome === 'failed' || r.outcome === 'timed_out' || r.outcome === 'parse_error'
         ? {
             classifier: summarizeValidationFailure({
               outcome: r.outcome,
