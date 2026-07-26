@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { ImplementHandler } from '../implement.js';
 import type { StepRunContext, StepRunResult } from '../implement.js';
-import { RunId } from '@ai-sdlc/domain';
+import { RunId, PhaseName } from '@ai-sdlc/domain';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeStepRepository } from '../../../test-doubles/fake-step-repository.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
@@ -41,7 +41,7 @@ function planMd(tasks: string[]): string {
 }
 
 describe('ImplementHandler Commit Coverage', () => {
-  it('committed V2 expected files allow step completion', async () => {
+  it('persists the first pre-step HEAD before running a declared-file step', async () => {
     const artifacts = new FakeArtifactStore();
     const git = new FakeGitPort();
     const manifest = {
@@ -73,6 +73,10 @@ describe('ImplementHandler Commit Coverage', () => {
     git.changedFilesResults.set('pre-step|post-step', ['src/a.ts', 'src/b.ts']);
 
     const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      expect(steps.listForRun(RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'))[0]).toMatchObject({
+        status: 'running',
+        initialPreStepHead: 'pre-step',
+      });
       git.headByCwd.set(ctx.cwd, 'post-step');
       return { outcome: 'success' };
     });
@@ -83,6 +87,10 @@ describe('ImplementHandler Commit Coverage', () => {
     const all = steps.listForRun(RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
     expect(all).toHaveLength(1);
     expect(all[0]?.status).toBe('success');
+    expect(all[0]?.initialPreStepHead).toBe('pre-step');
+    expect(git.changedFilesCalls).toEqual([
+      { cwd: '/tmp/wt', base: 'pre-step', head: 'post-step' },
+    ]);
 
     const completed = events.filter((e) => e.type === 'step.completed');
     expect(completed).toHaveLength(1);
@@ -273,6 +281,8 @@ describe('ImplementHandler Commit Coverage', () => {
 
     expect(result.outcome).toBe('passed');
     expect(git.changedFilesCalls).toHaveLength(0);
+    const all = steps.listForRun(RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
+    expect(all[0]?.initialPreStepHead).toBeUndefined();
     const completed = events.filter((e) => e.type === 'step.completed');
     expect(completed).toHaveLength(1);
   });
@@ -319,6 +329,7 @@ describe('ImplementHandler Commit Coverage', () => {
     const all = steps.listForRun(RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
     expect(all).toHaveLength(1);
     expect(all[0]?.status).toBe('failed');
+    expect(all[0]?.initialPreStepHead).toBe('pre-step');
 
     const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
     expect(uncommitted).toHaveLength(1);
@@ -330,7 +341,7 @@ describe('ImplementHandler Commit Coverage', () => {
     expect(failed).toHaveLength(1);
   });
 
-  it('resumed step uses a fresh per-attempt baseline', async () => {
+  it('resumed step reuses its persisted initial pre-step HEAD', async () => {
     const artifacts = new FakeArtifactStore();
     const git = new FakeGitPort();
     const manifest = {
@@ -344,7 +355,7 @@ describe('ImplementHandler Commit Coverage', () => {
         },
         {
           n: 2,
-          title: 'Task 2: to do',
+          title: 'Task 2: resume',
           expected_files: ['src/step2.ts'],
         },
       ],
@@ -352,7 +363,7 @@ describe('ImplementHandler Commit Coverage', () => {
     await artifacts.write({
       runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       relativePath: 'plan.md',
-      contents: planMd(['Task 1: already done', 'Task 2: to do']),
+      contents: planMd(['Task 1: already done', 'Task 2: resume']),
     });
     await artifacts.write({
       runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -371,15 +382,27 @@ describe('ImplementHandler Commit Coverage', () => {
       startedAt: new Date(),
       completedAt: new Date(),
     });
+    steps.upsert({
+      id: 'step-2',
+      runId: RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'),
+      phaseId: 'implement',
+      index: 2,
+      title: 'Task 2: resume',
+      status: 'failed',
+      initialPreStepHead: 'head-before-first-attempt',
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
 
     const { ctx } = makeCtx(artifacts, git);
 
-    // Initial HEAD before step 2 runs
-    git.headByCwd.set(ctx.cwd, 'head-before-step-2');
-    git.changedFilesResults.set('head-before-step-2|head-after-step-2', ['src/step2.ts']);
+    git.headByCwd.set(ctx.cwd, 'head-after-prior-attempt');
+    const headCommitSha = vi.spyOn(git, 'headCommitSha');
+    git.changedFilesResults.set('head-before-first-attempt|head-after-prior-attempt', [
+      'src/step2.ts',
+    ]);
 
     const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
-      git.headByCwd.set(ctx.cwd, 'head-after-step-2');
       return { outcome: 'success' };
     });
 
@@ -388,7 +411,16 @@ describe('ImplementHandler Commit Coverage', () => {
     expect(result.outcome).toBe('passed');
     expect(runStep).toHaveBeenCalledTimes(1);
     expect(git.changedFilesCalls).toEqual([
-      { cwd: '/tmp/wt', base: 'head-before-step-2', head: 'head-after-step-2' },
+      {
+        cwd: '/tmp/wt',
+        base: 'head-before-first-attempt',
+        head: 'head-after-prior-attempt',
+      },
     ]);
+    expect(headCommitSha).toHaveBeenCalledTimes(1);
+    expect(
+      steps.findByIndex(RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'), PhaseName('implement'), 2)
+        ?.initialPreStepHead,
+    ).toBe('head-before-first-attempt');
   });
 });
