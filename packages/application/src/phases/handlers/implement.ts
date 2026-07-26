@@ -21,25 +21,43 @@ export interface LintTaskSizeResult {
   oversized: OversizedTask[];
 }
 
+function normalizeTaskPath(path: unknown): string {
+  if (typeof path !== 'string') return '';
+  return path
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^(\.\/|\/)+/, '');
+}
+
+function isNotModifiedSignatureChange(
+  entry: unknown,
+): entry is { declaration_file: string; change: 'not_modified' } {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    (entry as Record<string, unknown>).change === 'not_modified' &&
+    typeof (entry as Record<string, unknown>).declaration_file === 'string'
+  );
+}
+
 function declaredTaskFiles(task: unknown): string[] {
   if (!task || typeof task !== 'object') return [];
   const record = task as Record<string, unknown>;
   const expectedFiles = Array.isArray(record.expected_files) ? record.expected_files : [];
   const files = Array.isArray(record.files) ? record.files : [];
-  const rawPaths = [...expectedFiles, ...files];
-  const stringPaths = rawPaths.filter((p): p is string => typeof p === 'string');
-  return [
-    ...new Set(
-      stringPaths
-        .map((path) =>
-          path
-            .trim()
-            .replace(/\\/g, '/')
-            .replace(/^(\.\/|\/)+/, ''),
-        )
-        .filter(Boolean),
-    ),
-  ];
+  const signatureChanges = Array.isArray(record.signature_changes) ? record.signature_changes : [];
+
+  const notModifiedDeclarations = new Set(
+    signatureChanges
+      .filter(isNotModifiedSignatureChange)
+      .map((entry) => normalizeTaskPath(entry.declaration_file))
+      .filter(Boolean),
+  );
+  const requiredExpectedFiles = expectedFiles
+    .map(normalizeTaskPath)
+    .filter((path) => path && !notModifiedDeclarations.has(path));
+  const requiredLegacyFiles = files.map(normalizeTaskPath).filter(Boolean);
+  return [...new Set([...requiredExpectedFiles, ...requiredLegacyFiles])];
 }
 
 export interface StepRunContext {
