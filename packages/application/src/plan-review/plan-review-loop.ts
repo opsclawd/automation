@@ -190,6 +190,7 @@ export class PlanReviewLoop {
 
     let lastDeterministicDiagnostic: string | null = null;
     let lastDeterministicWasUnresolvedWithNoChanges = false;
+    let consecutiveIdenticalDiagnosticCount = 0;
 
     const checkAndFixDeterministic = async (
       currentCtx: PlanReviewContext,
@@ -199,6 +200,23 @@ export class PlanReviewLoop {
         const checkResult = await deps.checkDeterministicPlan(localCtx);
         if (!checkResult.diagnostic) {
           return { success: true, loop };
+        }
+
+        if (checkResult.diagnostic === lastDeterministicDiagnostic) {
+          consecutiveIdenticalDiagnosticCount += 1;
+        } else {
+          consecutiveIdenticalDiagnosticCount = 1;
+        }
+
+        if (consecutiveIdenticalDiagnosticCount >= 3) {
+          this.emit(
+            input,
+            'plan-review.deterministic_check.short_circuited',
+            'warn',
+            `this deterministic check cannot be satisfied by iterative fixing — likely an additive-change false positive: ${checkResult.diagnostic}`,
+            { diagnostic: checkResult.diagnostic },
+          );
+          return { success: false, loop };
         }
 
         if (

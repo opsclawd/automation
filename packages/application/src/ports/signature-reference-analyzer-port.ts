@@ -1,6 +1,7 @@
 export interface DeclaredSignatureChange {
   declarationFile: string;
   symbol: string;
+  breaking?: boolean;
 }
 
 export type SignatureReferenceKind = 'call' | 'construct' | 'value';

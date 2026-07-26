@@ -120,6 +120,26 @@ describe('signature-blast-radius', () => {
       expect(result.failures).toEqual([]);
     });
 
+    it('ignores analyzer results for non-breaking signature changes (breaking: false)', () => {
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Task 1',
+        expected_files: ['src/api.ts', 'src/consumer.ts'],
+        signature_changes: [
+          { declaration_file: 'src/api.ts', symbol: 'someOptionalSymbol', breaking: false },
+        ],
+      });
+
+      const analyses = makeAnalysis(
+        [{ declarationFile: 'src/api.ts', symbol: 'someOptionalSymbol' }],
+        [[{ file: 'src/consumer.ts', line: 10, column: 1, kind: 'call' }]],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(true);
+      expect(result.failures).toEqual([]);
+    });
+
     it('passes when a reference belongs to a later task', () => {
       const manifest = makeManifest(
         {

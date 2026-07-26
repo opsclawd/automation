@@ -965,10 +965,12 @@ describe('PlanReviewLoop', () => {
           verdict: 'pass' as const,
         };
       },
-      checkDeterministicPlan: async (_ctx) => ({
-        diagnostic: 'manifest tasks missing from plan.md prose: Task 2',
-        signatureBlastRadiusFailures: [],
-      }),
+      checkDeterministicPlan: async (_ctx) => {
+        return {
+          diagnostic: `manifest tasks missing from plan.md prose: Task ${fixCalls}`,
+          signatureBlastRadiusFailures: [],
+        };
+      },
       runFix: async (): Promise<PlanFixResult> => {
         fixCalls += 1;
         return {
@@ -1957,6 +1959,38 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
       expect(checkCalls).toBe(2); // First attempt, then suppressed second attempt
       expect(fixCalls).toBe(1); // Only one fix attempt
       expect(events.some((e) => e.type === 'plan-review.deterministic_check.suppressed')).toBe(
+        true,
+      );
+    });
+
+    it('consecutive identical deterministic diagnostics short-circuit and escalate after 2 fix attempts', async () => {
+      let checkCalls = 0;
+      let fixCalls = 0;
+      const { deps, events } = makeDeps({
+        runReview: async (): Promise<PlanReviewResult> => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        checkDeterministicPlan: async (_ctx): Promise<DeterministicPlanCheckResult> => {
+          checkCalls += 1;
+          return { diagnostic: 'identical failure', signatureBlastRadiusFailures: [] };
+        },
+        runFix: async (_ctx, _opts): Promise<PlanFixResult> => {
+          fixCalls += 1;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+      });
+      const out = await new PlanReviewLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('needs_human_review');
+      // 1st check -> fails -> 1st fix -> 2nd check -> fails -> 2nd fix -> 3rd check (consecutiveIdenticalDiagnosticCount reaches 3) -> short circuit
+      expect(checkCalls).toBe(3);
+      expect(fixCalls).toBe(2);
+      expect(events.some((e) => e.type === 'plan-review.deterministic_check.short_circuited')).toBe(
         true,
       );
     });

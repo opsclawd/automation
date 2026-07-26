@@ -26,6 +26,35 @@ describe('signature_changes in task-manifest V2', () => {
       });
     });
 
+    it('accepts optional breaking boolean annotation', () => {
+      const manifest = {
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Additive change',
+            expected_files: ['packages/core/src/api.ts'],
+            signature_changes: [
+              {
+                declaration_file: 'packages/core/src/api.ts',
+                symbol: 'createClient',
+                change: 'modified',
+                breaking: false,
+              },
+            ],
+          },
+        ],
+      };
+      const parsed = taskManifestSchema.parse(manifest);
+      expect(parsed.tasks[0].signature_changes![0]).toMatchObject({
+        declaration_file: 'packages/core/src/api.ts',
+        symbol: 'createClient',
+        change: 'modified',
+        breaking: false,
+      });
+    });
+
     it('preserves a not_modified annotation and note', () => {
       const manifest = {
         version: 2,

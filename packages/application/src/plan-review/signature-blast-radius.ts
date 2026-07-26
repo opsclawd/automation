@@ -37,11 +37,17 @@ function collectSignatureChangesFromTask(task: TaskManifestEntryV2): DeclaredTas
   }
   return task.signature_changes
     .filter((sc) => sc.change !== 'not_modified')
-    .map((sc) => ({
-      n: task.n,
-      declarationFile: normalizeFile(sc.declaration_file),
-      symbol: sc.symbol,
-    }));
+    .map((sc) => {
+      const change: DeclaredTaskSignatureChange = {
+        n: task.n,
+        declarationFile: normalizeFile(sc.declaration_file),
+        symbol: sc.symbol,
+      };
+      if (sc.breaking !== undefined) {
+        change.breaking = sc.breaking;
+      }
+      return change;
+    });
 }
 
 export function collectDeclaredSignatureChanges(
@@ -132,6 +138,11 @@ export function evaluateSignatureBlastRadius(
         uncoveredReferences: [],
       };
       grouped.set(key, entry);
+    }
+
+    if (changeInfo.breaking === false) {
+      // Exempt non-breaking signature changes from blast-radius analysis completely
+      continue;
     }
 
     if (analysis.unresolvedDiagnostic) {
