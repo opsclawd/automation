@@ -2434,6 +2434,25 @@ describe('ImplementStepLoop', () => {
     expect(holisticEvent?.metadata.findings).toBe(2);
   });
 
+  it('preserves extraction failure metadata in history entries', async () => {
+    const history = makeInMemoryImplementHistory();
+    const deps = makeDeps({
+      loopHistory: history.port,
+      runSpecReview: async (): Promise<SpecReviewResult> => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'contract_violation',
+        classification: 'unrecoverable_artifact',
+        violationCode: 'MISSING_REQUIRED_ARTIFACT',
+        detail: 'result.json missing',
+      }),
+    });
+    await new ImplementStepLoop(deps).execute(baseInput());
+    expect(history.entries).toHaveLength(1);
+    expect(history.entries[0]?.specReview.classification).toBe('unrecoverable_artifact');
+    expect(history.entries[0]?.specReview.violationCode).toBe('MISSING_REQUIRED_ARTIFACT');
+    expect(history.entries[0]?.specReview.detail).toBe('result.json missing');
+  });
+
   it('returns needs_human_review when typecheck regresses and revertFix is unavailable (#671)', async () => {
     let tcCalls = 0;
     const deps = makeDeps({

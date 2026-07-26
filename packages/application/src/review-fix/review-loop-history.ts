@@ -37,6 +37,15 @@ export function formatReviewLoopHistoryForPrompt(
       if (entry.review.verdict) {
         lines.push(`  Verdict: ${entry.review.verdict}`);
       }
+      if (entry.review.classification) {
+        lines.push(`  Classification: ${entry.review.classification}`);
+      }
+      if (entry.review.violationCode) {
+        lines.push(`  Violation Code: ${entry.review.violationCode}`);
+      }
+      if (entry.review.detail) {
+        lines.push(`  Detail: ${entry.review.detail}`);
+      }
       if (entry.review.offendingFindings && entry.review.offendingFindings.length > 0) {
         lines.push('  Offending Findings:');
         const disposition =
@@ -85,6 +94,15 @@ export function formatReviewLoopHistoryForPrompt(
       if (entry.fix) {
         if (entry.fix.verdict) {
           lines.push(`  Verdict: ${entry.fix.verdict}`);
+        }
+        if (entry.fix.classification) {
+          lines.push(`  Classification: ${entry.fix.classification}`);
+        }
+        if (entry.fix.violationCode) {
+          lines.push(`  Violation Code: ${entry.fix.violationCode}`);
+        }
+        if (entry.fix.detail) {
+          lines.push(`  Detail: ${entry.fix.detail}`);
         }
         if (entry.fix.headBeforeFix) {
           lines.push(`  Head before fix: ${entry.fix.headBeforeFix}`);

@@ -123,11 +123,17 @@ export interface ImplementStepHistoryEntry {
     verdict?: 'pass' | 'fail';
     invocationId?: string;
     findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
+    classification?: string;
+    violationCode?: string;
+    detail?: string;
   };
   qualityReview: {
     verdict?: 'pass' | 'fail';
     invocationId?: string;
     findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
+    classification?: string;
+    violationCode?: string;
+    detail?: string;
   };
   fix?: {
     verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
@@ -135,6 +141,9 @@ export interface ImplementStepHistoryEntry {
     headBeforeFix?: string;
     summary?: string;
     rebuttal?: string;
+    classification?: string;
+    violationCode?: string;
+    detail?: string;
   };
   /** ruling from a contradiction or final review arbiter */
   arbiter?: {

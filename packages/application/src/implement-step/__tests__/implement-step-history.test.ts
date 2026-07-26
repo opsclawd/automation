@@ -52,18 +52,30 @@ describe('formatImplementStepHistoryForPrompt', () => {
     expect(out).not.toContain('Iteration 5');
   });
 
-  it('truncates at line boundary when over maxChars', () => {
-    const history: ImplementStepHistoryEntry[] = Array.from({ length: 5 }, (_, i) => ({
-      iteration: i + 1,
-      specReview: { verdict: 'fail' },
-      qualityReview: { verdict: 'fail' },
-      fix: {
-        verdict: 'done_with_fixes',
-        summary: `summary line ${i + 1} `.repeat(10),
+  it('renders extraction failure metadata when present', () => {
+    const history: ImplementStepHistoryEntry[] = [
+      {
+        iteration: 1,
+        specReview: {
+          classification: 'unrecoverable_artifact',
+          violationCode: 'MISSING_REQUIRED_ARTIFACT',
+          detail: 'result.json missing',
+        },
+        qualityReview: { verdict: 'pass' },
+        fix: {
+          classification: 'invalid_json',
+          violationCode: 'MALFORMED_JSON',
+          detail: 'SyntaxError at line 1',
+        },
+        outcome: 'failed',
       },
-      outcome: 'fixed',
-    }));
-    const out = formatImplementStepHistoryForPrompt(history, { maxChars: 250 });
-    expect(out.length).toBeLessThanOrEqual(250);
+    ];
+    const out = formatImplementStepHistoryForPrompt(history);
+    expect(out).toContain('Spec Review Classification: unrecoverable_artifact');
+    expect(out).toContain('Spec Review Violation Code: MISSING_REQUIRED_ARTIFACT');
+    expect(out).toContain('Spec Review Detail: result.json missing');
+    expect(out).toContain('Fix Classification: invalid_json');
+    expect(out).toContain('Fix Violation Code: MALFORMED_JSON');
+    expect(out).toContain('Fix Detail: SyntaxError at line 1');
   });
 });

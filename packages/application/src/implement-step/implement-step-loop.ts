@@ -459,6 +459,13 @@ export class ImplementStepLoop {
             ? { invocationId: specReview.invocationId }
             : {}),
           ...(specReview.findings !== undefined ? { findings: specReview.findings } : {}),
+          ...(specReview.classification !== undefined
+            ? { classification: specReview.classification }
+            : {}),
+          ...(specReview.violationCode !== undefined
+            ? { violationCode: specReview.violationCode }
+            : {}),
+          ...(specReview.detail !== undefined ? { detail: specReview.detail } : {}),
         },
         qualityReview: {
           ...(qualityReview.verdict !== undefined ? { verdict: qualityReview.verdict } : {}),
@@ -466,6 +473,13 @@ export class ImplementStepLoop {
             ? { invocationId: qualityReview.invocationId }
             : {}),
           ...(qualityReview.findings !== undefined ? { findings: qualityReview.findings } : {}),
+          ...(qualityReview.classification !== undefined
+            ? { classification: qualityReview.classification }
+            : {}),
+          ...(qualityReview.violationCode !== undefined
+            ? { violationCode: qualityReview.violationCode }
+            : {}),
+          ...(qualityReview.detail !== undefined ? { detail: qualityReview.detail } : {}),
         },
         ...(fix
           ? {
@@ -475,6 +489,9 @@ export class ImplementStepLoop {
                 ...(fix.headBeforeFix !== undefined ? { headBeforeFix: fix.headBeforeFix } : {}),
                 ...(fix.summary !== undefined ? { summary: fix.summary } : {}),
                 ...(fix.rebuttal !== undefined ? { rebuttal: fix.rebuttal } : {}),
+                ...(fix.classification !== undefined ? { classification: fix.classification } : {}),
+                ...(fix.violationCode !== undefined ? { violationCode: fix.violationCode } : {}),
+                ...(fix.detail !== undefined ? { detail: fix.detail } : {}),
               },
             }
           : {}),
@@ -1035,6 +1052,16 @@ export class ImplementStepLoop {
       if (specReview.agentOutcome !== 'success' || specReview.verdict === undefined) {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            { invocationId: '', agentOutcome: 'success' },
+            undefined,
+            undefined,
+            'failed',
+          ),
+        );
         this.emitIterationCompleted(input, iterationIndex, 'failed');
         return { outcome: 'failed', loop };
       }
@@ -1146,6 +1173,16 @@ export class ImplementStepLoop {
       if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            qualityReview,
+            undefined,
+            undefined,
+            'failed',
+          ),
+        );
         this.emitIterationCompleted(input, iterationIndex, 'failed');
         return { outcome: 'failed', loop };
       }

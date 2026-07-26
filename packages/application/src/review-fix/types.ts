@@ -186,6 +186,9 @@ export interface ReviewLoopHistoryEntry {
     offendingFindings?: Array<{ severity: string; summary: string }>;
     excerpt?: string;
     reviewedCommitSha?: string;
+    classification?: string;
+    violationCode?: string;
+    detail?: string;
   };
   fix?: {
     verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
@@ -194,6 +197,10 @@ export interface ReviewLoopHistoryEntry {
     summary?: string;
     deterministicDiagnostic?: string;
     attemptKind?: 'standard' | 'deterministic';
+    rebuttal?: string;
+    classification?: string;
+    violationCode?: string;
+    detail?: string;
   };
   revalidation?: {
     passed: boolean;
