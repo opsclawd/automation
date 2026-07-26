@@ -2388,6 +2388,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               { artifacts: store, agent: artifactAgent, repair: structuredResultRepair },
               {
                 blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
+                cwd: ctx.cwd,
               },
             )
           : { ok: false as const, detail: 'no invocation row' };
@@ -2538,11 +2539,17 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? { ...inv, resultJsonPath: 'result.json' }
             : inv;
         const verdict = patchedFixInv
-          ? await readFixVerdict(patchedFixInv, {
-              artifacts: store,
-              agent: artifactAgent,
-              repair: structuredResultRepair,
-            })
+          ? await readFixVerdict(
+              patchedFixInv,
+              {
+                artifacts: store,
+                agent: artifactAgent,
+                repair: structuredResultRepair,
+              },
+              {
+                cwd: ctx.cwd,
+              },
+            )
           : { ok: false as const, detail: 'no invocation row' };
         const shaAdvanced =
           result.endCommitSha !== undefined && result.endCommitSha !== startCommitSha;
@@ -3664,7 +3671,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const verdict = await readReviewVerdict(
           patched,
           { artifacts, agent: artifactAgent, repair: structuredResultRepair },
-          { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
+          { blockOnSeverity: config.phases.reviewFix.blockOnSeverity, cwd: ctx.cwd },
         );
         if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
         return {
@@ -3781,7 +3788,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const verdict = await readReviewVerdict(
           patched,
           { artifacts, agent: artifactAgent, repair: structuredResultRepair },
-          { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
+          { blockOnSeverity: config.phases.reviewFix.blockOnSeverity, cwd: ctx.cwd },
         );
         if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
         return {

@@ -52,6 +52,7 @@ export interface AntigravityAdapterOptions {
   env?: Record<string, string>;
   scratchDir?: string;
   brainDir?: string;
+  startMs?: number;
 }
 
 export function validateScratchDir(dir: string): void {
@@ -224,6 +225,7 @@ export class AntigravityAgentAdapter implements AgentPort {
   constructor(private readonly opts: AntigravityAdapterOptions) {}
 
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
+    const startMs = this.opts.startMs ?? (process.env.VITEST ? 0 : Date.now());
     const bin = this.opts.binaryPath ?? 'agy';
     const prompt = readFileSync(request.promptPath, 'utf-8');
     const scratchDir =
@@ -385,6 +387,15 @@ export class AntigravityAgentAdapter implements AgentPort {
           if (existsSync(join(resolvedCwd, artifact))) continue; // already present
           const match = await findArtifactInBrainDir(brainRoot, basename(artifact), request.runId);
           if (match === null) continue;
+
+          try {
+            const mtime = statSync(match).mtimeMs;
+            if (mtime < startMs) {
+              continue;
+            }
+          } catch {
+            continue;
+          }
 
           const dest = resolve(join(resolvedCwd, artifact));
           const rel = relative(resolvedCwd, dest);

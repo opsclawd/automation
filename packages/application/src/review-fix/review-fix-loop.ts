@@ -582,10 +582,44 @@ export class ReviewFixLoop {
         invocation_type: iterationIndex === 1 ? 'initial' : 'semantic_retry',
         reviewMode,
       };
-      const review = await deps.runReview(
-        ctx,
-        Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
-      );
+
+      const reviewerMaxRetries = deps.reviewerMaxRetries ?? 2;
+      let reviewAttempts = 0;
+      let review: ReviewStepResult;
+      do {
+        reviewAttempts += 1;
+        review = await deps.runReview(
+          {
+            ...ctx,
+            metadata: {
+              ...ctx.metadata,
+              invocation_type: reviewAttempts === 1
+                ? (ctx.metadata?.invocation_type as string)
+                : 'retry',
+            },
+          },
+          Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
+        );
+        if (review.agentOutcome === 'success' && review.verdict !== undefined) {
+          break;
+        }
+        if (reviewAttempts <= reviewerMaxRetries) {
+          this.emit(
+            input,
+            'review-fix.reviewer.retry',
+            'warn',
+            `review-fix reviewer attempt ${reviewAttempts} failed (invocation ${review.invocationId}), retrying...`,
+            {
+              attempt: reviewAttempts,
+              maxAttempts: reviewerMaxRetries + 1,
+              agentOutcome: review.agentOutcome,
+              hasVerdict: review.verdict !== undefined,
+              invocationId: review.invocationId,
+            },
+          );
+        }
+      } while (reviewAttempts <= reviewerMaxRetries);
+
       if (review.offendingFindings) {
         lastOffendingFindings = review.offendingFindings;
       }

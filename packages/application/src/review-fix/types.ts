@@ -168,6 +168,7 @@ export interface ReviewFixLoopDeps {
     reviewResult: ReviewStepResult,
     fixResult: FixStepResult,
   ) => Promise<ArbiterResult>;
+  reviewerMaxRetries?: number;
 }
 
 export type ReviewLoopHistoryAudience = 'reviewer' | 'fixer';

@@ -164,6 +164,7 @@ describe('ReviewFixLoop', () => {
   it('records review outcome before invoking cleanArtifacts hook on review agent failure', async () => {
     const orderLog: string[] = [];
     const deps = makeDeps({
+      reviewerMaxRetries: 0,
       runReview: async () => {
         orderLog.push('runReview');
         return { invocationId: 'r-fail', agentOutcome: 'failed' as const };
@@ -2122,5 +2123,48 @@ describe('ReviewFixLoop auto-commit fallback', () => {
     expect(attempts).toBe(2);
     expect(events.find((e) => e.type === 'fix.auto_commit.retry')).toBeDefined();
     expect(events.find((e) => e.type === 'fix.auto_commit.failed')).toBeDefined();
+  });
+
+  it('retries reviewer when it fails, and succeeds if a retry passes', async () => {
+    const { events, bus } = collectEvents();
+    let reviewAttempts = 0;
+    const deps = makeDeps({
+      events: bus,
+      reviewerMaxRetries: 2,
+      runReview: async () => {
+        reviewAttempts += 1;
+        if (reviewAttempts === 1) {
+          return { invocationId: 'r-fail', agentOutcome: 'failed' as const };
+        }
+        return {
+          invocationId: 'r-success',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        };
+      },
+    });
+
+    const out = await new ReviewFixLoop(deps).execute(baseInput());
+    expect(out.phaseOutcome).toBe('passed');
+    expect(reviewAttempts).toBe(2);
+    expect(events.filter((e) => e.type === 'review-fix.reviewer.retry')).toHaveLength(1);
+  });
+
+  it('fails the phase if reviewer retries are exhausted', async () => {
+    const { events, bus } = collectEvents();
+    let reviewAttempts = 0;
+    const deps = makeDeps({
+      events: bus,
+      reviewerMaxRetries: 2,
+      runReview: async () => {
+        reviewAttempts += 1;
+        return { invocationId: `r-fail-${reviewAttempts}`, agentOutcome: 'failed' as const };
+      },
+    });
+
+    const out = await new ReviewFixLoop(deps).execute(baseInput());
+    expect(out.phaseOutcome).toBe('failed');
+    expect(reviewAttempts).toBe(3); // 1 initial + 2 retries
+    expect(events.filter((e) => e.type === 'review-fix.reviewer.retry')).toHaveLength(2);
   });
 });
