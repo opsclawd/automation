@@ -31,6 +31,7 @@ import * as workerRepoBinding from './migrations/0028-worker-repository-binding.
 import * as eventRepoId from './migrations/0029-operational-event-repository-id.js';
 import * as fenceWorkerLeases from './migrations/0030-fence-worker-leases.js';
 import * as fenceJobClaims from './migrations/0031-fence-job-claims.js';
+import * as addInitialPreStepHead from './migrations/0032-add-initial-pre-step-head.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -64,6 +65,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: eventRepoId.version, sql: eventRepoId.sql },
   { version: fenceWorkerLeases.version, sql: fenceWorkerLeases.sql },
   { version: fenceJobClaims.version, sql: fenceJobClaims.sql },
+  { version: addInitialPreStepHead.version, sql: addInitialPreStepHead.sql },
 ];
 
 export function registerCustomFunctions(db: Db): void {

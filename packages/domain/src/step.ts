@@ -13,6 +13,8 @@ export interface Step {
   status: StepStatus;
   startedAt?: Date;
   completedAt?: Date;
+  /** Commit at HEAD immediately before this Step's first declared-file attempt. */
+  initialPreStepHead?: string;
 }
 
 export interface CreateStepInput {
