@@ -2383,12 +2383,17 @@ export function composeRoot(opts: ComposeOptions): Container {
           : inv
             ? { ...inv, resultJsonPath: 'result.json' }
             : inv;
+        const transcriptEvidence = result.stdoutPath
+          ? await readTail(result.stdoutPath)
+          : undefined;
         const verdict = patchedInv
           ? await readReviewVerdict(
               patchedInv,
               { artifacts: store, agent: artifactAgent, repair: structuredResultRepair },
               {
                 blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
+                cwd: ctx.cwd,
+                ...(transcriptEvidence ? { transcriptEvidence } : {}),
               },
             )
           : {
@@ -2431,7 +2436,11 @@ export function composeRoot(opts: ComposeOptions): Container {
                   ? { offendingFindings: verdict.offendingFindings }
                   : {}),
               }
-            : {}),
+            : {
+                classification: verdict.classification,
+                violationCode: verdict.violationCode,
+                detail: verdict.detail,
+              }),
           reviewedCommitSha: startCommitSha,
         };
       };
@@ -2600,6 +2609,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           ...(verdict.ok && verdict.verdict !== undefined ? { verdict: verdict.verdict } : {}),
           ...(headBeforeFix !== undefined ? { headBeforeFix } : {}),
           ...(verdict.ok && verdict.rebuttal !== undefined ? { rebuttal: verdict.rebuttal } : {}),
+          ...(!verdict.ok
+            ? {
+                classification: verdict.classification,
+                violationCode: verdict.violationCode,
+                detail: verdict.detail,
+              }
+            : {}),
         };
       };
 
@@ -3672,10 +3688,17 @@ export function composeRoot(opts: ComposeOptions): Container {
           SPEC_REVIEW_RESULT_ARTIFACT,
           { mode: scope.mode, startCommitSha },
         );
+        const specTranscriptEvidence = result.stdoutPath
+          ? await readTail(result.stdoutPath)
+          : undefined;
         const verdict = await readReviewVerdict(
           patched,
           { artifacts, agent: artifactAgent, repair: structuredResultRepair },
-          { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
+          {
+            blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
+            cwd: ctx.cwd,
+            ...(specTranscriptEvidence ? { transcriptEvidence: specTranscriptEvidence } : {}),
+          },
         );
         if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
         return {
@@ -3789,10 +3812,17 @@ export function composeRoot(opts: ComposeOptions): Container {
           { mode: scope.mode, startCommitSha },
         );
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+        const qualityTranscriptEvidence = result.stdoutPath
+          ? await readTail(result.stdoutPath)
+          : undefined;
         const verdict = await readReviewVerdict(
           patched,
           { artifacts, agent: artifactAgent, repair: structuredResultRepair },
-          { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
+          {
+            blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
+            cwd: ctx.cwd,
+            ...(qualityTranscriptEvidence ? { transcriptEvidence: qualityTranscriptEvidence } : {}),
+          },
         );
         if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
         return {

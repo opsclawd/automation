@@ -45,6 +45,9 @@ export interface ReviewStepResult {
   snapshot?: ReviewSnapshot;
   metadata?: Record<string, unknown>;
   mode?: ReviewMode;
+  classification?: string;
+  violationCode?: string;
+  detail?: string;
 }
 
 export interface FixStepResult {
@@ -60,6 +63,9 @@ export interface FixStepResult {
    */
   rebuttal?: string;
   metadata?: Record<string, unknown>;
+  classification?: string;
+  violationCode?: string;
+  detail?: string;
 }
 
 export interface RevalidationResult {
