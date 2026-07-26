@@ -190,9 +190,9 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
   }
 
   async changedFiles(cwd: string, base: string, head = 'HEAD'): Promise<string[]> {
-    const output = await git(cwd, ['diff', '--name-only', `${base}..${head}`]);
+    const output = await git(cwd, ['diff', '-z', '--name-only', `${base}..${head}`]);
     return output
-      .split('\n')
+      .split('\0')
       .map((path) => path.trim().replace(/\\/g, '/'))
       .filter(Boolean)
       .sort();

@@ -28,7 +28,18 @@ function declaredTaskFiles(task: unknown): string[] {
   const files = Array.isArray(record.files) ? record.files : [];
   const rawPaths = [...expectedFiles, ...files];
   const stringPaths = rawPaths.filter((p): p is string => typeof p === 'string');
-  return [...new Set(stringPaths.map((path) => path.trim().replace(/\\/g, '/')).filter(Boolean))];
+  return [
+    ...new Set(
+      stringPaths
+        .map((path) =>
+          path
+            .trim()
+            .replace(/\\/g, '/')
+            .replace(/^(\.\/|\/)+/, ''),
+        )
+        .filter(Boolean),
+    ),
+  ];
 }
 
 export interface StepRunContext {
@@ -216,6 +227,10 @@ export class ImplementHandler implements PhaseHandler {
             startedAt,
             completedAt: ctx.now(),
           };
+          emit('step.started', 'info', `step ${d.index}/${totalSteps}: ${d.title}`, {
+            index: d.index,
+            total: totalSteps,
+          });
           this.opts.steps.upsert(step);
           emit(
             'step.uncommitted_files',
@@ -364,6 +379,7 @@ export class ImplementHandler implements PhaseHandler {
               emit,
               'invalid_result',
               `step ${d.index} (${d.title}) did not commit declared files: ${missingFiles.join(', ')}`,
+              'Ensure the implementation commits all files declared in expected_files.',
             );
           }
         }
