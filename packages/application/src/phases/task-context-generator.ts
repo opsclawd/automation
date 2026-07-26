@@ -127,11 +127,15 @@ export class TaskContextGenerator {
       const t2 = task as TaskManifestEntryV2;
       if (
         (t2.expected_files && t2.expected_files.length > 0) ||
+        (t2.reference_files && t2.reference_files.length > 0) ||
         (t2.relevant_symbols && t2.relevant_symbols.length > 0)
       ) {
         let targetContent = '## Repository Targets\n\n';
         if (t2.expected_files && t2.expected_files.length > 0) {
           targetContent += `### Expected Files\n${t2.expected_files.map((f) => `- ${f}`).join('\n')}\n\n`;
+        }
+        if (t2.reference_files && t2.reference_files.length > 0) {
+          targetContent += `### Reference Files\n${t2.reference_files.map((f) => `- ${f}`).join('\n')}\n\n`;
         }
         if (t2.relevant_symbols && t2.relevant_symbols.length > 0) {
           targetContent += `### Relevant Symbols\n${t2.relevant_symbols.map((s) => `- ${s}`).join('\n')}\n\n`;

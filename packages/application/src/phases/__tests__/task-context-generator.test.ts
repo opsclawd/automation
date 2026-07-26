@@ -22,6 +22,7 @@ describe('TaskContextGenerator', () => {
         design_sections: ['Data Model'],
         depends_on: [1],
         expected_files: ['src/index.ts'],
+        reference_files: ['src/read-only.ts'],
         relevant_symbols: ['MyClass'],
         validation_commands: ['npm test'],
         migration_constraints: ['No breaking changes'],
@@ -83,6 +84,7 @@ Something else.
     expect(result.content).not.toContain('Other Section');
     expect(result.content).toContain('### Task 1 Summary\n\nImplemented the base class.');
     expect(result.content).toContain('### Expected Files\n- src/index.ts');
+    expect(result.content).toContain('### Reference Files\n- src/read-only.ts');
     expect(result.content).toContain('### Relevant Symbols\n- MyClass');
     expect(result.content).toContain('## Validation Commands\n\n```bash\nnpm test\n```');
     expect(result.content).toContain(
