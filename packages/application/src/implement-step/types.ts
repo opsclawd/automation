@@ -82,6 +82,9 @@ export interface SpecReviewResult {
   findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
   snapshot?: ReviewSnapshot;
   mode?: ReviewMode;
+  classification?: string;
+  violationCode?: string;
+  detail?: string;
 }
 
 export interface QualityReviewResult {
@@ -91,6 +94,9 @@ export interface QualityReviewResult {
   findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
   snapshot?: ReviewSnapshot;
   mode?: ReviewMode;
+  classification?: string;
+  violationCode?: string;
+  detail?: string;
 }
 
 export interface FixResult {
@@ -101,6 +107,9 @@ export interface FixResult {
   /** Commit SHA captured by the adapter before invoking the fix agent (#671). */
   headBeforeFix?: string;
   summary?: string;
+  classification?: string;
+  violationCode?: string;
+  detail?: string;
 }
 
 /**

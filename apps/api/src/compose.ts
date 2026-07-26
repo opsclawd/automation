@@ -3700,7 +3700,14 @@ export function composeRoot(opts: ComposeOptions): Container {
             ...(specTranscriptEvidence ? { transcriptEvidence: specTranscriptEvidence } : {}),
           },
         );
-        if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
+        if (!verdict.ok)
+          return {
+            invocationId,
+            agentOutcome: 'contract_violation' as const,
+            classification: verdict.classification,
+            violationCode: verdict.violationCode,
+            detail: verdict.detail,
+          };
         return {
           invocationId,
           agentOutcome: 'success' as const,
@@ -3824,7 +3831,14 @@ export function composeRoot(opts: ComposeOptions): Container {
             ...(qualityTranscriptEvidence ? { transcriptEvidence: qualityTranscriptEvidence } : {}),
           },
         );
-        if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
+        if (!verdict.ok)
+          return {
+            invocationId,
+            agentOutcome: 'contract_violation' as const,
+            classification: verdict.classification,
+            violationCode: verdict.violationCode,
+            detail: verdict.detail,
+          };
         return {
           invocationId,
           agentOutcome: 'success' as const,
@@ -3954,8 +3968,16 @@ export function composeRoot(opts: ComposeOptions): Container {
         return {
           invocationId,
           agentOutcome: fixVerdict.ok ? ('success' as const) : ('contract_violation' as const),
-          ...(fixVerdict.ok ? { verdict: fixVerdict.verdict } : {}),
-          ...(fixVerdict.ok && fixVerdict.rebuttal ? { rebuttal: fixVerdict.rebuttal } : {}),
+          ...(fixVerdict.ok
+            ? {
+                verdict: fixVerdict.verdict,
+                ...(fixVerdict.rebuttal ? { rebuttal: fixVerdict.rebuttal } : {}),
+              }
+            : {
+                classification: fixVerdict.classification,
+                violationCode: fixVerdict.violationCode,
+                detail: fixVerdict.detail,
+              }),
           headBeforeFix: startCommitSha,
         };
       };

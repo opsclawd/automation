@@ -5,7 +5,11 @@ import os from 'node:os';
 import { execSync } from 'node:child_process';
 import { composeRoot } from '../compose.js';
 import { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
-import { CONTRACT_VIOLATION_CODES, type ReviewFixLoopDeps } from '@ai-sdlc/application';
+import {
+  CONTRACT_VIOLATION_CODES,
+  type ReviewFixLoopDeps,
+  type ImplementStepLoopDeps,
+} from '@ai-sdlc/application';
 import type { AgentPort, AgentInvocationRequest } from '@ai-sdlc/application/ports';
 
 const tempDirs: string[] = [];
@@ -263,5 +267,220 @@ describe('compose review and fix failure metadata & transcript evidence forwardi
     // The key test is verifying transcript evidence was read and passed along without error.
     expect(res.classification).toBe('serialization_artifact');
     expect(res.violationCode).toBe(CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON);
+  });
+
+  it('runSpecReview returns classification, violationCode, and detail when verdict extraction fails', async () => {
+    const cwd = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'verdict-test-')));
+    execSync('git init', { cwd, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd, stdio: 'ignore' });
+    execSync('git config user.name "test"', { cwd, stdio: 'ignore' });
+    writeFileSync(path.join(cwd, 'readme.md'), '# test');
+    execSync('git add readme.md && git commit -m "initial"', { cwd, stdio: 'ignore' });
+    writeConfig(cwd);
+
+    const fakeAgent = {
+      invoke: async (_req: AgentInvocationRequest) => {
+        return {
+          runtime: 'opencode' as const,
+          provider: 'anthropic',
+          model: 'claude-3-5-sonnet',
+          exitCode: 0,
+          durationMs: 10,
+          stdoutPath: path.join(cwd, 'stdout.log'),
+          stderrPath: path.join(cwd, 'stderr.log'),
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      },
+    };
+
+    const container = composeRoot({
+      repoRoot: cwd,
+      scriptPath: '/bin/true',
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      agentAdapterOverrides: { opencode: fakeAgent as unknown as AgentPort },
+    });
+
+    const runUuid = 'run-verdict-4';
+    container.runRepository.insertIfNoActive({
+      uuid: runUuid,
+      displayId: '4',
+      type: 'issue_to_pr',
+      issueNumber: 4,
+      repoId: RepositoryId('owner/repo'),
+      phaseId: PhaseName('implement'),
+      status: 'in_progress',
+      startedAt: new Date(),
+      completedPhases: [],
+    });
+
+    const implLoop = container.implementStepLoop as unknown as { deps: ImplementStepLoopDeps };
+    expect(implLoop).toBeDefined();
+
+    const ctx = {
+      loopId: 'loop-1',
+      runId: RunId(runUuid),
+      phaseId: PhaseName('implement'),
+      repoId: 'owner/repo',
+      cwd,
+      stepIndex: 1,
+      stepTitle: 'Step 1',
+      iterationIndex: 1,
+      manifest: { schema_version: 1, tasks: [] },
+      planMd: '# Plan',
+    };
+
+    const res = await implLoop.deps.runSpecReview(
+      ctx,
+      { outcome: 'pass', output: '' },
+      { mode: 'initial_full' },
+    );
+
+    expect(res.agentOutcome).toBe('contract_violation');
+    expect(res.classification).toBe('unrecoverable_artifact');
+    expect(res.violationCode).toBe(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+    expect(res.detail).toBeDefined();
+  });
+
+  it('runQualityReview returns classification, violationCode, and detail when verdict extraction fails', async () => {
+    const cwd = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'verdict-test-')));
+    execSync('git init', { cwd, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd, stdio: 'ignore' });
+    execSync('git config user.name "test"', { cwd, stdio: 'ignore' });
+    writeFileSync(path.join(cwd, 'readme.md'), '# test');
+    execSync('git add readme.md && git commit -m "initial"', { cwd, stdio: 'ignore' });
+    writeConfig(cwd);
+
+    const fakeAgent = {
+      invoke: async (_req: AgentInvocationRequest) => {
+        return {
+          runtime: 'opencode' as const,
+          provider: 'anthropic',
+          model: 'claude-3-5-sonnet',
+          exitCode: 0,
+          durationMs: 10,
+          stdoutPath: path.join(cwd, 'stdout.log'),
+          stderrPath: path.join(cwd, 'stderr.log'),
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      },
+    };
+
+    const container = composeRoot({
+      repoRoot: cwd,
+      scriptPath: '/bin/true',
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      agentAdapterOverrides: { opencode: fakeAgent as unknown as AgentPort },
+    });
+
+    const runUuid = 'run-verdict-5';
+    container.runRepository.insertIfNoActive({
+      uuid: runUuid,
+      displayId: '5',
+      type: 'issue_to_pr',
+      issueNumber: 5,
+      repoId: RepositoryId('owner/repo'),
+      phaseId: PhaseName('implement'),
+      status: 'in_progress',
+      startedAt: new Date(),
+      completedPhases: [],
+    });
+
+    const implLoop = container.implementStepLoop as unknown as { deps: ImplementStepLoopDeps };
+    expect(implLoop).toBeDefined();
+
+    const ctx = {
+      loopId: 'loop-1',
+      runId: RunId(runUuid),
+      phaseId: PhaseName('implement'),
+      repoId: 'owner/repo',
+      cwd,
+      stepIndex: 1,
+      stepTitle: 'Step 1',
+      iterationIndex: 1,
+      manifest: { schema_version: 1, tasks: [] },
+      planMd: '# Plan',
+    };
+
+    const res = await implLoop.deps.runQualityReview(
+      ctx,
+      { outcome: 'pass', output: '' },
+      { mode: 'initial_full' },
+    );
+
+    expect(res.agentOutcome).toBe('contract_violation');
+    expect(res.classification).toBe('unrecoverable_artifact');
+    expect(res.violationCode).toBe(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+    expect(res.detail).toBeDefined();
+  });
+
+  it('implRunFix returns classification, violationCode, and detail when verdict extraction fails', async () => {
+    const cwd = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'verdict-test-')));
+    execSync('git init', { cwd, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd, stdio: 'ignore' });
+    execSync('git config user.name "test"', { cwd, stdio: 'ignore' });
+    writeFileSync(path.join(cwd, 'readme.md'), '# test');
+    execSync('git add readme.md && git commit -m "initial"', { cwd, stdio: 'ignore' });
+    writeConfig(cwd);
+
+    const fakeAgent = {
+      invoke: async (_req: AgentInvocationRequest) => {
+        return {
+          runtime: 'opencode' as const,
+          provider: 'anthropic',
+          model: 'claude-3-5-sonnet',
+          exitCode: 0,
+          durationMs: 10,
+          stdoutPath: path.join(cwd, 'stdout.log'),
+          stderrPath: path.join(cwd, 'stderr.log'),
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      },
+    };
+
+    const container = composeRoot({
+      repoRoot: cwd,
+      scriptPath: '/bin/true',
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      agentAdapterOverrides: { opencode: fakeAgent as unknown as AgentPort },
+    });
+
+    const runUuid = 'run-verdict-6';
+    container.runRepository.insertIfNoActive({
+      uuid: runUuid,
+      displayId: '6',
+      type: 'issue_to_pr',
+      issueNumber: 6,
+      repoId: RepositoryId('owner/repo'),
+      phaseId: PhaseName('implement'),
+      status: 'in_progress',
+      startedAt: new Date(),
+      completedPhases: [],
+    });
+
+    const implLoop = container.implementStepLoop as unknown as { deps: ImplementStepLoopDeps };
+    expect(implLoop).toBeDefined();
+
+    const ctx = {
+      loopId: 'loop-1',
+      runId: RunId(runUuid),
+      phaseId: PhaseName('implement'),
+      repoId: 'owner/repo',
+      cwd,
+      stepIndex: 1,
+      stepTitle: 'Step 1',
+      iterationIndex: 1,
+      manifest: { schema_version: 1, tasks: [] },
+      planMd: '# Plan',
+    };
+
+    const res = await implLoop.deps.runFix(ctx, { useFallback: false });
+
+    expect(res.agentOutcome).toBe('contract_violation');
+    expect(res.classification).toBe('unrecoverable_artifact');
+    expect(res.violationCode).toBe(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+    expect(res.detail).toBeDefined();
   });
 });
