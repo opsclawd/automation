@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import type { ValidationCommand } from '@ai-sdlc/application/ports';
 import { ProcessValidationAdapter, commandSlug, bareScriptName } from '../validation-adapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -292,5 +293,41 @@ describe('ProcessValidationAdapter', () => {
         delete process.env.AI_SDLC_INHERITED_SENTINEL;
       }
     }
+  });
+
+  it('executes argv validation commands without shell expansion', async () => {
+    const logDir = freshDir();
+    const adapter = new ProcessValidationAdapter();
+    const bracketedPath = 'apps/app/app/position/[id].tsx';
+    const results = await adapter.run({
+      cwd: process.cwd(),
+      commands: [
+        [process.execPath, '-e', 'console.log(process.argv[1])', bracketedPath],
+      ] as ValidationCommand[],
+      timeoutSeconds: 30,
+      logDir,
+    });
+    expect(results[0].outcome).toBe('passed');
+    expect(results[0].stdout.trim()).toBe(bracketedPath);
+    expect(results[0].command).toBe(
+      `${process.execPath} -e console.log(process.argv[1]) ${bracketedPath}`,
+    );
+  });
+
+  it('continues to execute legacy string validation commands through the shell', async () => {
+    const logDir = freshDir();
+    const adapter = new ProcessValidationAdapter();
+    const results = await adapter.run({
+      cwd: process.cwd(),
+      commands: ['echo $GITHUB_REPOSITORY; echo legacy-shell-active'],
+      timeoutSeconds: 30,
+      logDir,
+      env: {
+        GITHUB_REPOSITORY: 'owner/legacy-repo',
+      },
+    });
+    expect(results[0].outcome).toBe('passed');
+    expect(results[0].stdout).toContain('owner/legacy-repo');
+    expect(results[0].stdout).toContain('legacy-shell-active');
   });
 });

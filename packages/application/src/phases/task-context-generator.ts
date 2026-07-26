@@ -145,7 +145,10 @@ export class TaskContextGenerator {
     if (input.manifest.version === 2) {
       const t2 = task as TaskManifestEntryV2;
       if (t2.validation_commands && t2.validation_commands.length > 0) {
-        const valContent = `## Validation Commands\n\n\`\`\`bash\n${t2.validation_commands.join('\n')}\n\`\`\`\n\n`;
+        const rendered = t2.validation_commands.map((command) =>
+          Array.isArray(command) ? JSON.stringify(command) : command,
+        );
+        const valContent = `## Validation Commands\n\n\`\`\`bash\n${rendered.join('\n')}\n\`\`\`\n\n`;
         sections.push(valContent);
         diagnostics.componentSizes['validation'] = valContent.length;
       }

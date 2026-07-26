@@ -165,6 +165,7 @@ import {
   type RepositoryAvailabilityPort,
   type AgentPort,
   type ValidationPort,
+  type ValidationCommand,
   buildTaskValidationCommands,
   CONTRACT_VIOLATION_CODES,
 } from '@ai-sdlc/application';
@@ -4374,7 +4375,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         runFix: implRunFix,
         runRevalidation: async (ctx) => {
           const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
-          let taskValidationCommands: string[] = [];
+          let taskValidationCommands: ValidationCommand[] = [];
           try {
             const manifestRaw = await artifacts.read(String(ctx.runId), 'task-manifest.json');
             const manifest = parseTaskManifest(manifestRaw);

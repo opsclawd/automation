@@ -224,4 +224,23 @@ describe('RunValidation', () => {
       timeoutSeconds: 300,
     });
   });
+
+  it('forwards nested argv validation commands unchanged to ValidationPort', async () => {
+    const port = new FakeValidationPort();
+    port.result = [passResult(0, 'pnpm build')];
+    const repo = new FakeValidationRunRepository();
+    const { useCase } = makeUseCase(port, repo);
+
+    const argvCommand = ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'];
+    await useCase.execute({
+      runId: RUN,
+      phaseId: PhaseName('validate'),
+      cwd: '/work',
+      logDir: '/d',
+      commands: ['pnpm build', argvCommand],
+      timeoutSeconds: 300,
+    });
+
+    expect(port.lastInput?.commands).toEqual(['pnpm build', argvCommand]);
+  });
 });

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { buildTaskValidationCommands } from '../task-validation-commands.js';
 import type { TaskManifest } from '../phases/index.js';
 
+import type { ValidationCommand } from '../ports/validation-port.js';
+
 interface ManifestWithOptions {
-  commands?: string[];
+  commands?: ValidationCommand[];
   expectedFiles?: string[];
   legacyFiles?: string[];
 }
@@ -24,7 +26,7 @@ function manifestWith(options: ManifestWithOptions): TaskManifest {
   };
 }
 
-function manifestWithCommands(commands: string[]): TaskManifest {
+function manifestWithCommands(commands: ValidationCommand[]): TaskManifest {
   return manifestWith({ commands });
 }
 
@@ -175,6 +177,61 @@ describe('buildTaskValidationCommands', () => {
     expect(result).toEqual([
       "test -f 'drizzle/0001_v1.sql' || { printf '%s\\n' 'Required migration file was never created: drizzle/0001_v1.sql' >&2; exit 1; }",
       'pnpm test',
+    ]);
+  });
+
+  it('adds strict no-tests handling to literal argv vitest commands', () => {
+    const commands: ValidationCommand[] = [
+      ['vitest', 'run', 'src/foo.test.ts'],
+      ['pnpm', 'vitest', 'run', 'src/foo.spec.tsx', '--reporter=verbose'],
+      ['pnpm', 'exec', 'vitest', 'run', 'src/foo.test.mts', '--passWithNoTests'],
+      ['npx', 'vitest', 'run', 'src/foo.test.js', '--passWithNoTests=true'],
+    ];
+
+    expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual([
+      ['vitest', 'run', 'src/foo.test.ts', '--passWithNoTests=false'],
+      [
+        'pnpm',
+        'vitest',
+        'run',
+        'src/foo.spec.tsx',
+        '--reporter=verbose',
+        '--passWithNoTests=false',
+      ],
+      ['pnpm', 'exec', 'vitest', 'run', 'src/foo.test.mts', '--passWithNoTests=false'],
+      ['npx', 'vitest', 'run', 'src/foo.test.js', '--passWithNoTests=false'],
+    ]);
+  });
+
+  it('preserves broad and unsupported argv validation commands', () => {
+    const commands: ValidationCommand[] = [
+      ['vitest', 'run'],
+      ['vitest', 'run', 'src/*.test.ts'],
+      ['vitest', 'run', 'src'],
+      ['vitest', 'run', '--project', 'unit'],
+      ['vitest', 'run', 'src/a.test.ts', 'src/b.test.ts'],
+      ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
+    ];
+
+    expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual(commands);
+  });
+
+  it('preserves mixed validation command order and representation', () => {
+    const manifest = manifestWith({
+      expectedFiles: ['drizzle/0001_root.sql'],
+      commands: [
+        'pnpm lint',
+        ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
+        ['vitest', 'run', 'src/foo.test.ts'],
+      ],
+    });
+
+    const result = buildTaskValidationCommands(manifest, 1);
+    expect(result).toEqual([
+      "test -f 'drizzle/0001_root.sql' || { printf '%s\\n' 'Required migration file was never created: drizzle/0001_root.sql' >&2; exit 1; }",
+      'pnpm lint',
+      ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
+      ['vitest', 'run', 'src/foo.test.ts', '--passWithNoTests=false'],
     ]);
   });
 });

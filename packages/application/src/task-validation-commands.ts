@@ -1,4 +1,5 @@
 import type { TaskManifest } from './phases/index.js';
+import type { ValidationCommand } from './ports/validation-port.js';
 
 const DIRECT_VITEST_RUN =
   /^(?:(?:pnpm|npx)(?:\s+exec)?\s+)?vitest\s+run\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))((?:\s+.*)?)$/;
@@ -16,7 +17,7 @@ function migrationExistenceGuard(path: string): string {
   return `test -f ${shellQuote(path)} || { printf '%s\\n' ${shellQuote(message)} >&2; exit 1; }`;
 }
 
-function makeLiteralVitestCommandStrict(command: string): string {
+function makeLiteralVitestStringStrict(command: string): string {
   const match = DIRECT_VITEST_RUN.exec(command);
   if (!match) return command;
 
@@ -37,13 +38,84 @@ function makeLiteralVitestCommandStrict(command: string): string {
   return `${command} --passWithNoTests=false`;
 }
 
-export function buildTaskValidationCommands(manifest: TaskManifest, taskNumber: number): string[] {
+function parseVitestArgv(command: string[]): { target: string; trailing: string[] } | null {
+  if (command.length < 3) return null;
+  if (command[0] === 'vitest' && command[1] === 'run') {
+    return { target: command[2]!, trailing: command.slice(3) };
+  }
+  if (
+    command.length >= 4 &&
+    command[0] === 'pnpm' &&
+    command[1] === 'vitest' &&
+    command[2] === 'run'
+  ) {
+    return { target: command[3]!, trailing: command.slice(4) };
+  }
+  if (
+    command.length >= 5 &&
+    command[0] === 'pnpm' &&
+    command[1] === 'exec' &&
+    command[2] === 'vitest' &&
+    command[3] === 'run'
+  ) {
+    return { target: command[4]!, trailing: command.slice(5) };
+  }
+  if (
+    command.length >= 4 &&
+    command[0] === 'npx' &&
+    command[1] === 'vitest' &&
+    command[2] === 'run'
+  ) {
+    return { target: command[3]!, trailing: command.slice(4) };
+  }
+  return null;
+}
+
+function makeLiteralVitestArgvStrict(command: string[]): string[] {
+  const parsed = parseVitestArgv(command);
+  if (!parsed) return command;
+
+  const { target, trailing } = parsed;
+  if (
+    !LITERAL_TEST_FILE.test(target) ||
+    GLOB_METACHARACTERS.test(target) ||
+    trailing.some((arg) => !arg.startsWith('-'))
+  ) {
+    return command;
+  }
+
+  const passWithNoTestsIdx = command.findIndex((arg) =>
+    /^--passWithNoTests(?:=(?:true|false))?$/.test(arg),
+  );
+
+  if (passWithNoTestsIdx !== -1) {
+    return command
+      .map((arg, idx) => (idx === passWithNoTestsIdx ? '--passWithNoTests=false' : arg))
+      .filter(
+        (arg, idx) =>
+          idx === passWithNoTestsIdx || !/^--passWithNoTests(?:=(?:true|false))?$/.test(arg),
+      );
+  }
+
+  return [...command, '--passWithNoTests=false'];
+}
+
+function makeLiteralVitestCommandStrict(command: ValidationCommand): ValidationCommand {
+  return Array.isArray(command)
+    ? makeLiteralVitestArgvStrict(command)
+    : makeLiteralVitestStringStrict(command);
+}
+
+export function buildTaskValidationCommands(
+  manifest: TaskManifest,
+  taskNumber: number,
+): ValidationCommand[] {
   const task = manifest.tasks.find((candidate) => candidate.n === taskNumber);
   if (!task) return [];
 
-  let commands: string[];
+  let commands: ValidationCommand[];
   if (manifest.version === 2) {
-    commands = (task as { validation_commands?: string[] }).validation_commands ?? [];
+    commands = (task as { validation_commands?: ValidationCommand[] }).validation_commands ?? [];
   } else {
     commands = (task as { validation?: string[] }).validation ?? [];
   }
