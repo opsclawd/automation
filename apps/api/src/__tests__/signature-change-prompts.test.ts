@@ -11,6 +11,15 @@ describe('signature_changePrompts', () => {
       expect(template).toContain('signature_changes');
     });
 
+    it('documents the reference_files JSON field for V2 tasks', () => {
+      const template = readFileSync(
+        new URL('../../../../prompts/plan-write/plan-write.md', import.meta.url),
+        'utf-8',
+      );
+      expect(template).toContain('"reference_files": ["path/to/read-only.ts"]');
+      expect(template).toContain('- `tasks[].reference_files`: read-only files');
+    });
+
     it('requires signature_changes for parameter-list changes to exported APIs', () => {
       const template = readFileSync(
         new URL('../../../../prompts/plan-write/plan-write.md', import.meta.url),

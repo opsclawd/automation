@@ -46,6 +46,7 @@ Write `task-manifest.json` as a JSON file with this exact structure:
       "n": 1,
       "title": "Short task title",
       "expected_files": ["path/to/file1", "path/to/file2"],
+      "reference_files": ["path/to/read-only.ts"],
       "validation_commands": ["command to verify", ["pnpm", "exec", "eslint", "apps/app/app/position/[id].tsx"]],
       "signature_changes": [
         {
@@ -74,6 +75,7 @@ Fields:
 - `tasks[].n`: sequential 1-indexed task number
 - `tasks[].title`: one-line summary matching the prose task header
 - `tasks[].expected_files`: files the task touches (optional but encouraged)
+- `tasks[].reference_files`: read-only files the task reads or consults for context, but does not modify or commit (optional)
 - `tasks[].validation_commands`: commands to verify task completion (optional but encouraged). Entries may be shell command strings (e.g. `"pnpm lint"`) or argv arrays of non-empty strings (e.g. `["pnpm", "exec", "eslint", "apps/app/app/position/[id].tsx"]`) to execute without shell expansion when paths contain brackets or special characters.
 - `tasks[].signature_changes`: REQUIRED when the task changes the surface of an exported API (parameter-list, return-type, overload-set, required-generic parameter, or required-member-shape). Each entry names a repository-relative declaration file and the exact symbol being changed. Declaration files MUST be in `expected_files` (or legacy `files`). This field is nullish (optional) when no exported-API signatures change. Each `signature_changes` entry supports the following fields:
   - `declaration_file` (required): repository-relative path to the declaration file
