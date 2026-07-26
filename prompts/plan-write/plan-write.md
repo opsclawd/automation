@@ -79,6 +79,7 @@ Fields:
   - `declaration_file` (required): repository-relative path to the declaration file
   - `symbol` (required): exact exported symbol name being changed
   - `change` (optional): either `"modified"` (default) or `"not_modified"` — defaults to `"modified"` when omitted for backward compatibility. A symbol listed only because it is referenced for context but deliberately stable MUST set `"change": "not_modified"`; omitting that reference from the manifest and explaining stability in `plan.md` prose also remains valid. `not_modified` entries are retained for traceability but skipped by signature blast-radius enforcement.
+  - `breaking` (optional): a boolean indicating whether the signature change is backward-compatible/additive (`false`) or a breaking structural change (`true`). Defaults to `true` when omitted. Non-breaking signature changes (such as adding an optional field or method) should declare `"breaking": false` to be exempt from mandatory signature blast-radius reference checks.
   - `note` (optional): explanatory text describing why this declaration is listed
   - Unknown fields in a `signature_changes` entry are rejected.
 - `tasks[].invariants`: behavioral invariants to be implemented as tests first (REQUIRED for stateful/logic-heavy tasks)

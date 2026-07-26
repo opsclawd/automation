@@ -25,6 +25,7 @@ export const signatureChangeSchema = z
     declaration_file: repositoryRelativePathSchema,
     symbol: z.string().trim().min(1, { message: 'symbol must be a non-empty string' }),
     change: z.enum(['added', 'modified', 'not_modified']).optional().default('modified'),
+    breaking: z.boolean().optional(),
     note: z.string().optional(),
   })
   .strict();
