@@ -251,7 +251,7 @@ describe('OpenCodeAgentAdapter', () => {
     if (existsSync(stdinLogFile)) rmSync(stdinLogFile);
   });
 
-  it.each(['implement', 'fix-review'])(
+  it.each(['implement', 'fix-review', 'implement-task-1', 'fix-review-task-2'])(
     'adds --dangerously-skip-permissions for mutating phase %s',
     async (phaseId) => {
       const cwd = makeWorktree();
