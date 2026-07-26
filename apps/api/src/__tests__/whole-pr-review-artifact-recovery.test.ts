@@ -411,4 +411,112 @@ describe('whole-pr-review artifact recovery at composition boundary', () => {
       cleanup();
     }
   });
+
+  it('marks the second primary reviewer request as semantic_retry when retrying a serialization artifact failure', async () => {
+    const { worktree, cleanup } = createWorktreeEnvironment();
+    try {
+      const requests: AgentInvocationRequest[] = [];
+
+      const fakeAgent: AgentPort = {
+        invoke: async (req: AgentInvocationRequest) => {
+          requests.push(req);
+
+          if (req.profile === 'repair-profile') {
+            return {
+              runtime: 'opencode',
+              provider: 'anthropic',
+              model: 'claude-3-5-sonnet',
+              exitCode: 1,
+              durationMs: 10,
+              stdoutPath: path.join(os.tmpdir(), `repair-stdout-${Math.random()}.log`),
+              stderrPath: path.join(os.tmpdir(), `repair-stderr-${Math.random()}.log`),
+              contractViolations: [],
+              outcome: 'failed',
+            };
+          }
+
+          if (requests.filter((r) => r.profile === 'reviewer-profile').length === 1) {
+            const stdoutPath = path.join(os.tmpdir(), `stdout-${Math.random()}.log`);
+            writeFileSync(stdoutPath, 'Review completed but missing required result artifacts');
+            return {
+              runtime: 'opencode',
+              provider: 'anthropic',
+              model: 'claude-3-5-sonnet',
+              exitCode: 0,
+              durationMs: 10,
+              stdoutPath,
+              stderrPath: path.join(os.tmpdir(), `stderr-${Math.random()}.log`),
+              contractViolations: [],
+              outcome: 'success',
+            };
+          }
+
+          writeFileSync(
+            path.join(req.cwd, 'result.json'),
+            JSON.stringify({ result: 'pass', findings: [] }),
+          );
+          writeFileSync(path.join(req.cwd, 'code-review.md'), '# Code Review\nPassed on retry.');
+          return {
+            runtime: 'opencode',
+            provider: 'anthropic',
+            model: 'claude-3-5-sonnet',
+            exitCode: 0,
+            durationMs: 10,
+            stdoutPath: path.join(os.tmpdir(), `stdout-${Math.random()}.log`),
+            stderrPath: path.join(os.tmpdir(), `stderr-${Math.random()}.log`),
+            contractViolations: [],
+            outcome: 'success',
+          };
+        },
+      };
+
+      const container = composeRoot({
+        repoRoot: worktree,
+        scriptPath: '/bin/true',
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        agentAdapterOverrides: { opencode: fakeAgent },
+      });
+
+      const runUuid = 'run-recovery-5';
+      container.runRepository.insertIfNoActive({
+        uuid: runUuid,
+        displayId: '5',
+        type: 'issue_to_pr',
+        issueNumber: 5,
+        repoId: RepositoryId('owner/repo'),
+        phaseId: PhaseName('whole-pr-review'),
+        status: 'in_progress',
+        startedAt: new Date(),
+        completedPhases: [],
+      });
+
+      const result = await container.reviewFixLoop!.execute({
+        runId: RunId(runUuid),
+        phaseId: PhaseName('review-fix'),
+        repoId: 'owner/repo',
+        cwd: worktree,
+        maxIterations: 1,
+        reviewProfile: 'reviewer-profile' as import('@ai-sdlc/domain').AgentProfileName,
+        fixProfile: 'reviewer-profile' as import('@ai-sdlc/domain').AgentProfileName,
+      });
+
+      expect(result.phaseOutcome).toBe('passed');
+
+      const reviewerRequests = requests.filter((r) => r.profile === 'reviewer-profile');
+      expect(reviewerRequests).toHaveLength(2);
+
+      expect(reviewerRequests[0].metadata?.invocation_type).toBe('initial');
+      expect(reviewerRequests[0].retryIntent).toBeUndefined();
+
+      expect(reviewerRequests[1].metadata?.invocation_type).toBe('semantic_retry');
+      expect(reviewerRequests[1].retryIntent?.classification).toBe('semantic');
+
+      const repairRequests = requests.filter((r) => r.profile === 'repair-profile');
+      if (repairRequests.length > 0) {
+        expect(repairRequests[0].metadata?.invocation_type).toBe('serialization_repair');
+      }
+    } finally {
+      cleanup();
+    }
+  });
 });

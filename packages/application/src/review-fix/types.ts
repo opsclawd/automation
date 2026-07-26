@@ -13,6 +13,9 @@ import type {
   ReviewStateRepositoryPort,
 } from '../review-state/types.js';
 import type { ArbiterResult } from '../results/schemas/arbiter.js';
+import type { ExtractResultOutcome } from '../results/extract-result.js';
+
+type ExtractResultFailure = Extract<ExtractResultOutcome, { ok: false }>;
 
 export interface StepContext {
   loopId: string;
@@ -46,7 +49,8 @@ export interface ReviewStepResult {
   metadata?: Record<string, unknown>;
   mode?: ReviewMode;
   classification?: string;
-  violationCode?: string;
+  failureClassification?: ExtractResultFailure['classification'];
+  violationCode?: ExtractResultFailure['violationCode'];
   detail?: string;
 }
 
@@ -230,6 +234,7 @@ export interface ReviewStepOptions {
   mode?: ReviewMode;
   unresolvedRecords?: ReviewFindingRecord[];
   dispositionHistory?: DispositionHistoryEntry[];
+  artifactRecoveryRetry?: boolean;
 }
 
 export interface ReviewFixLoopInput {

@@ -2320,6 +2320,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           opts_ && 'unresolvedRecords' in opts_ ? opts_.unresolvedRecords : undefined;
         const dispositionHistory =
           opts_ && 'dispositionHistory' in opts_ ? opts_.dispositionHistory : undefined;
+        const artifactRecoveryRetry =
+          opts_ && 'artifactRecoveryRetry' in opts_ ? Boolean(opts_.artifactRecoveryRetry) : false;
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -2342,7 +2344,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         })
           .toString()
           .trim();
-        const isSemanticRetry = ctx.iterationIndex > 1;
+        const isSemanticRetry = ctx.iterationIndex > 1 || artifactRecoveryRetry;
         const result = await artifactAgent.invoke({
           profile: AgentProfileName(reviewProfileName),
           promptPath,
@@ -2462,6 +2464,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               }
             : {
                 classification: verdict.classification,
+                failureClassification: verdict.classification,
                 violationCode: verdict.violationCode,
                 detail: verdict.detail,
               }),

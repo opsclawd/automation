@@ -582,10 +582,32 @@ export class ReviewFixLoop {
         invocation_type: iterationIndex === 1 ? 'initial' : 'semantic_retry',
         reviewMode,
       };
-      const review = await deps.runReview(
+      let review = await deps.runReview(
         ctx,
         Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
       );
+
+      if (
+        review.verdict === undefined &&
+        review.failureClassification === 'serialization_artifact'
+      ) {
+        this.emit(
+          input,
+          'review.artifact_recovery_retry',
+          'warn',
+          `retrying serialization artifact failure in review loop iteration ${iterationIndex}`,
+          {
+            iterationIndex,
+            previousInvocationId: review.invocationId,
+            violationCode: review.violationCode,
+          },
+        );
+        await this.runCleanArtifacts(ctx);
+        review = await deps.runReview(ctx, {
+          ...reviewOptions,
+          artifactRecoveryRetry: true,
+        });
+      }
       if (review.offendingFindings) {
         lastOffendingFindings = review.offendingFindings;
       }
