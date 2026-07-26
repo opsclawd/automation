@@ -1,4 +1,10 @@
-import type { RunId, PhaseName, AgentProfileName, Loop } from '@ai-sdlc/domain';
+import type {
+  RunId,
+  PhaseName,
+  AgentProfileName,
+  Loop,
+  ValidationCommandOutcome,
+} from '@ai-sdlc/domain';
 import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
@@ -76,6 +82,7 @@ export interface RevalidationResult {
   passed: boolean;
   category?: string; // 'build' | 'lint' | 'typecheck' | 'test' | 'other'
   failureDetail?: string | undefined;
+  outcome?: ValidationCommandOutcome;
 }
 
 export interface ArchitectPlanTask {

@@ -2702,6 +2702,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           validationRunId: vr.validationRun.id,
           passed: vr.passed,
           ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
+          ...(failedCommand?.outcome ? { outcome: failedCommand.outcome } : {}),
           failureDetail,
         };
       };
@@ -4436,6 +4437,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             validationRunId: vr.validationRun.id,
             passed: vr.passed,
             ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
+            ...(failedCommand?.outcome ? { outcome: failedCommand.outcome } : {}),
             failureDetail,
           };
         },

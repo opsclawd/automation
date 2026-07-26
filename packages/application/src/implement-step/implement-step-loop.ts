@@ -30,9 +30,19 @@ import type {
 } from './types.js';
 import type { ReviewAttempt, ReviewDimensionState, ReviewSnapshot } from '../review-state/types.js';
 import { verifyFixCommit, type FixCommitVerification } from '../fix-commit-verifier.js';
+import type { RevalidationResult } from '../review-fix/types.js';
 
 function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function terminalVerificationFailureMessage(
+  base: string,
+  revalidation: RevalidationResult | undefined,
+): string {
+  return revalidation?.outcome === 'parse_error'
+    ? `${base}: Command failed to parse (shell syntax error)`
+    : base;
 }
 
 // Decide what to pass into the implement agent's retry prompt given the raw
@@ -2256,13 +2266,14 @@ export class ImplementStepLoop {
 
       // Deterministic pre-verification: typecheck + validation commands + tests.
       const preTcResult = await deps.runTypecheck(baseCtx);
+      let preRevalidationResult: RevalidationResult | undefined;
       let preRevalidationPassed = true;
       let preRevalidationDetail: string | undefined;
 
       if (preTcResult.outcome === 'pass' && deps.runRevalidation) {
-        const revalResult = await deps.runRevalidation(baseCtx);
-        preRevalidationPassed = revalResult.passed;
-        preRevalidationDetail = revalResult.failureDetail;
+        preRevalidationResult = await deps.runRevalidation(baseCtx);
+        preRevalidationPassed = preRevalidationResult.passed;
+        preRevalidationDetail = preRevalidationResult.failureDetail;
       }
 
       let terminalDeterministicFailures: string | undefined;
@@ -2372,16 +2383,23 @@ export class ImplementStepLoop {
       if (!producedWork && isTerminalRebuttal) {
         // Rebuttals cannot clear deterministic failures.
         if (preTcResult.outcome === 'fail' || !preRevalidationPassed) {
+          const baseMsg = `terminal fixer rebutted the outstanding findings but the tree has pre-existing deterministic failures that must be fixed`;
           this.emit(
             input,
             'step.terminal_fix.rejected',
             'warn',
-            `terminal fixer rebutted the outstanding findings but the tree has pre-existing deterministic failures that must be fixed`,
+            terminalVerificationFailureMessage(baseMsg, preRevalidationResult),
             {
               profile: deps.terminalFixProfile,
               priorIterations: loop.iterations.length,
               typecheckOutcome: preTcResult.outcome,
               revalidationPassed: preRevalidationPassed,
+              ...(preRevalidationResult?.outcome === 'parse_error'
+                ? {
+                    revalidationOutcome: preRevalidationResult.outcome,
+                    revalidationFailureDetail: preRevalidationResult.failureDetail,
+                  }
+                : {}),
             },
           );
           return { outcome: 'needs_human_review', loop };
@@ -2408,12 +2426,14 @@ export class ImplementStepLoop {
 
       // Deterministic verification: typecheck + validation commands + tests.
       let tcResult: TypecheckResult;
+      let postRevalidationResult: RevalidationResult | undefined;
       let revalidationPassed = true;
       let revalidationDurationMs = 0;
 
       if (!producedWork && isTerminalRebuttal) {
         // Optimization: reuse pre-verify result for rebuttals on an identical tree.
         tcResult = preTcResult;
+        postRevalidationResult = preRevalidationResult;
         revalidationPassed = preRevalidationPassed;
       } else {
         // The auto-commit path already typechecked this exact tree content;
@@ -2422,8 +2442,8 @@ export class ImplementStepLoop {
 
         if (tcResult.outcome === 'pass' && deps.runRevalidation) {
           const revalStart = deps.now();
-          const revalResult = await deps.runRevalidation(baseCtx);
-          revalidationPassed = revalResult.passed;
+          postRevalidationResult = await deps.runRevalidation(baseCtx);
+          revalidationPassed = postRevalidationResult.passed;
           revalidationDurationMs = deps.now().getTime() - revalStart.getTime();
         }
       }
@@ -2454,11 +2474,12 @@ export class ImplementStepLoop {
         );
         return { outcome: 'success', loop };
       }
+      const baseMsg = `terminal fix rejected: deterministic verification failed`;
       this.emit(
         input,
         'step.terminal_fix.rejected',
         'warn',
-        `terminal fix rejected: deterministic verification failed`,
+        terminalVerificationFailureMessage(baseMsg, postRevalidationResult),
         {
           profile: deps.terminalFixProfile,
           priorIterations: loop.iterations.length,
@@ -2466,6 +2487,12 @@ export class ImplementStepLoop {
           revalidationPassed,
           headAdvanced,
           autoCommitted,
+          ...(postRevalidationResult?.outcome === 'parse_error'
+            ? {
+                revalidationOutcome: postRevalidationResult.outcome,
+                revalidationFailureDetail: postRevalidationResult.failureDetail,
+              }
+            : {}),
         },
       );
       return { outcome: 'needs_human_review', loop };
