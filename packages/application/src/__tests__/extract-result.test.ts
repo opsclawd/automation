@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { FakeArtifactStore, FakeStructuredResultRepair } from '../test-doubles/index.js';
 import { extractResult } from '../results/extract-result.js';
 import { PHASE_RESULT_REGISTRY } from '../results/phase-registry.js';
+import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
 
 function makeInvocation(overrides: Partial<AgentInvocation> = {}): AgentInvocation {
   return {
@@ -84,6 +85,60 @@ describe('extractResult coordinator', () => {
     expect(outcome.ok).toBe(true);
   });
 
+  it('passes bounded transcript evidence and cwd to structured-result repair', async () => {
+    const artifacts = new FakeArtifactStore();
+    const repair = new FakeStructuredResultRepair();
+    repair.response = { outcome: 'failed' };
+
+    await extractResult({
+      invocation: makeInvocation({ phaseId: PhaseName('whole-pr-review'), stdoutPath }),
+      ports: { artifacts, repair },
+      cwd: '/worktree',
+      transcriptEvidence: 'bounded reviewer findings',
+    });
+
+    expect(repair.calls[0]?.cwd).toBe('/worktree');
+    expect(repair.calls[0]?.transcriptEvidence).toBe('bounded reviewer findings');
+  });
+
+  it('preserves serialization_artifact when transcript-backed repair fails', async () => {
+    const artifacts = new FakeArtifactStore();
+    const repair = new FakeStructuredResultRepair();
+    repair.response = { outcome: 'failed' };
+
+    const outcome = await extractResult({
+      invocation: makeInvocation({ phaseId: PhaseName('whole-pr-review'), stdoutPath }),
+      ports: { artifacts, repair },
+      cwd: '/worktree',
+      transcriptEvidence: 'bounded reviewer findings',
+    });
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      classification: 'serialization_artifact',
+      violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+    });
+  });
+
+  it('returns unrecoverable_artifact without invoking repair when stdout has no evidence', async () => {
+    const artifacts = new FakeArtifactStore();
+    const repair = new FakeStructuredResultRepair();
+
+    const outcome = await extractResult({
+      invocation: makeInvocation({
+        phaseId: PhaseName('whole-pr-review'),
+        stdoutPath: '/nonexistent-stdout',
+      }),
+      ports: { artifacts, repair },
+    });
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      classification: 'unrecoverable_artifact',
+    });
+    expect(repair.calls).toHaveLength(0);
+  });
+
   describe.each(PHASE_TESTS)('phase=$phase', ({ phase, validJson, invalidJson }) => {
     it('valid data has no repair', async () => {
       const artifacts = new FakeArtifactStore();
@@ -158,7 +213,7 @@ describe('extractResult coordinator', () => {
 
       expect(outcome.ok).toBe(false);
       if (!outcome.ok) {
-        expect(outcome.classification).toBe('unrecoverable_artifact');
+        expect(outcome.classification).toBe('serialization_artifact');
       }
       expect(repair.calls).toHaveLength(1);
     });
@@ -181,7 +236,7 @@ describe('extractResult coordinator', () => {
 
       expect(outcome.ok).toBe(false);
       if (!outcome.ok) {
-        expect(outcome.classification).toBe('unrecoverable_artifact');
+        expect(outcome.classification).toBe('serialization_artifact');
       }
       expect(repair.calls).toHaveLength(1);
     });
@@ -314,7 +369,7 @@ describe('extractResult coordinator', () => {
     });
 
     expect(outcome.ok).toBe(false);
-    expect(outcome.classification).toBe('unrecoverable_artifact');
+    expect(outcome.classification).toBe('serialization_artifact');
     expect(repair.calls).toHaveLength(1);
     expect(revalidateCalls).toBe(1);
   });
