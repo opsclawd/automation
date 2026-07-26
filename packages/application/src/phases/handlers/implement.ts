@@ -40,6 +40,15 @@ function isNotModifiedSignatureChange(
   );
 }
 
+function isNonNotModifiedSignatureChange(entry: unknown): entry is { declaration_file: string } {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    (entry as Record<string, unknown>).change !== 'not_modified' &&
+    typeof (entry as Record<string, unknown>).declaration_file === 'string'
+  );
+}
+
 function declaredTaskFiles(task: unknown): string[] {
   if (!task || typeof task !== 'object') return [];
   const record = task as Record<string, unknown>;
@@ -53,9 +62,17 @@ function declaredTaskFiles(task: unknown): string[] {
       .map((entry) => normalizeTaskPath(entry.declaration_file))
       .filter(Boolean),
   );
+  const modifiedDeclarations = new Set(
+    signatureChanges
+      .filter(isNonNotModifiedSignatureChange)
+      .map((entry) => normalizeTaskPath(entry.declaration_file))
+      .filter(Boolean),
+  );
   const requiredExpectedFiles = expectedFiles
     .map(normalizeTaskPath)
-    .filter((path) => path && !notModifiedDeclarations.has(path));
+    .filter(
+      (path) => path && !(notModifiedDeclarations.has(path) && !modifiedDeclarations.has(path)),
+    );
   const requiredLegacyFiles = files.map(normalizeTaskPath).filter(Boolean);
   return [...new Set([...requiredExpectedFiles, ...requiredLegacyFiles])];
 }

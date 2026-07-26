@@ -620,4 +620,53 @@ describe('ImplementHandler Commit Coverage', () => {
       missingFiles: ['src/shared.ts'],
     });
   });
+
+  it('file with both not_modified and modified signature changes remains required for commit coverage', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: mixed signature changes for same file']),
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task 1: mixed signature changes for same file',
+            expected_files: ['src/shared.ts'],
+            signature_changes: [
+              { declaration_file: 'src/shared.ts', symbol: 'baz', change: 'not_modified' },
+              { declaration_file: 'src/shared.ts', symbol: 'bar', change: 'modified' },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|post-step', []);
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'post-step');
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
+    expect(uncommitted).toHaveLength(1);
+    expect(uncommitted[0]?.metadata).toMatchObject({
+      expectedFiles: ['src/shared.ts'],
+      missingFiles: ['src/shared.ts'],
+    });
+  });
 });
