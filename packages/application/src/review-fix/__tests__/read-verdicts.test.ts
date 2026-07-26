@@ -79,6 +79,48 @@ describe('readReviewVerdict', () => {
     });
     expect(agent.invocations).toHaveLength(0);
   });
+
+  it('forwards cwd and transcript evidence from readReviewVerdict to repair', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'read-verdicts-test-'));
+    const stdoutPath = join(tempDir, 'stdout.log');
+    writeFileSync(stdoutPath, 'evidence');
+
+    try {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'run-1',
+        relativePath: 'result.json',
+        contents: 'malformed json',
+      });
+
+      const repair = new FakeStructuredResultRepair();
+      repair.response = async () => {
+        await artifacts.write({
+          runId: 'run-1',
+          relativePath: 'result.json',
+          contents: JSON.stringify({ result: 'pass', findings: [] }),
+        });
+        return { outcome: 'repaired', repairInvocationId: AgentInvocationId('rep-123') };
+      };
+
+      const agent = new FakeAgentPort();
+      const inv = invocation('whole-pr-review', 'result.json');
+      inv.stdoutPath = stdoutPath;
+
+      const v = await readReviewVerdict(
+        inv,
+        { artifacts, repair, agent },
+        { cwd: '/some/cwd', transcriptEvidence: 'review findings tail' },
+      );
+
+      expect(v).toEqual({ ok: true, verdict: 'pass' });
+      expect(repair.calls).toHaveLength(1);
+      expect(repair.calls[0]?.cwd).toBe('/some/cwd');
+      expect(repair.calls[0]?.transcriptEvidence).toBe('review findings tail');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('readFixVerdict', () => {
@@ -156,7 +198,7 @@ describe('readFixVerdict', () => {
     }
   });
 
-  it('forwards cwd and transcript evidence from readReviewVerdict to repair', async () => {
+  it('forwards cwd and transcript evidence from readFixVerdict to repair', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'read-verdicts-test-'));
     const stdoutPath = join(tempDir, 'stdout.log');
     writeFileSync(stdoutPath, 'evidence');
@@ -174,25 +216,25 @@ describe('readFixVerdict', () => {
         await artifacts.write({
           runId: 'run-1',
           relativePath: 'result.json',
-          contents: JSON.stringify({ result: 'pass', findings: [] }),
+          contents: JSON.stringify({ result: 'done_with_fixes' }),
         });
         return { outcome: 'repaired', repairInvocationId: AgentInvocationId('rep-123') };
       };
 
       const agent = new FakeAgentPort();
-      const inv = invocation('whole-pr-review', 'result.json');
+      const inv = invocation('fix-review', 'result.json');
       inv.stdoutPath = stdoutPath;
 
-      const v = await readReviewVerdict(
+      const v = await readFixVerdict(
         inv,
         { artifacts, repair, agent },
-        { cwd: '/some/cwd', transcriptEvidence: 'review findings tail' },
+        { cwd: '/some/cwd', transcriptEvidence: 'fix findings tail' },
       );
 
-      expect(v).toEqual({ ok: true, verdict: 'pass' });
+      expect(v).toEqual({ ok: true, verdict: 'done_with_fixes' });
       expect(repair.calls).toHaveLength(1);
       expect(repair.calls[0]?.cwd).toBe('/some/cwd');
-      expect(repair.calls[0]?.transcriptEvidence).toBe('review findings tail');
+      expect(repair.calls[0]?.transcriptEvidence).toBe('fix findings tail');
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
