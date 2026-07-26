@@ -1,5 +1,5 @@
 import type { AgentInvocation } from '@ai-sdlc/domain';
-import { extractResult } from '../results/extract-result.js';
+import { extractResult, type ExtractResultOutcome } from '../results/extract-result.js';
 import type { ArtifactStore, StructuredResultRepairPort } from '../ports.js';
 import type { WholePrReviewResult } from '../results/schemas/whole-pr-review.js';
 import type { FixReviewResult } from '../results/schemas/fix-review.js';
@@ -47,6 +47,8 @@ function allKnownSeveritiesBelowThreshold(
   });
 }
 
+type ExtractResultFailure = Extract<ExtractResultOutcome, { ok: false }>;
+
 export type VerdictOutcome<V> =
   | {
       ok: true;
@@ -55,15 +57,32 @@ export type VerdictOutcome<V> =
       offendingFindings?: Array<{ severity: string; summary: string }>;
       rebuttal?: string;
     }
-  | { ok: false; detail: string };
+  | {
+      ok: false;
+      detail: string;
+      classification: ExtractResultFailure['classification'];
+      violationCode: ExtractResultFailure['violationCode'];
+    };
 
 export async function readReviewVerdict(
   invocation: AgentInvocation,
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
-  opts?: { blockOnSeverity?: string; cwd?: string },
+  opts?: { blockOnSeverity?: string; cwd?: string; transcriptEvidence?: string },
 ): Promise<VerdictOutcome<'pass' | 'fail'>> {
-  const r = await extractResult({ invocation, ports, cwd: opts?.cwd });
-  if (!r.ok) return { ok: false, detail: r.detail };
+  const r = await extractResult({
+    invocation,
+    ports,
+    cwd: opts?.cwd,
+    transcriptEvidence: opts?.transcriptEvidence,
+  });
+  if (!r.ok) {
+    return {
+      ok: false,
+      detail: r.detail,
+      classification: r.classification,
+      violationCode: r.violationCode,
+    };
+  }
   const result = r.result as WholePrReviewResult;
 
   if (opts?.blockOnSeverity && result.findings.length > 0) {
@@ -116,7 +135,14 @@ export async function readFixVerdict(
     cwd: opts?.cwd,
     repairExpectedHead: opts?.repairExpectedHead,
   });
-  if (!r.ok) return { ok: false, detail: r.detail };
+  if (!r.ok) {
+    return {
+      ok: false,
+      detail: r.detail,
+      classification: r.classification,
+      violationCode: r.violationCode,
+    };
+  }
   const fixResult = r.result as FixReviewResult;
   return {
     ok: true,

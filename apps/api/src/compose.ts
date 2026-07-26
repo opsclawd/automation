@@ -166,6 +166,7 @@ import {
   type AgentPort,
   type ValidationPort,
   buildTaskValidationCommands,
+  CONTRACT_VIOLATION_CODES,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -2390,7 +2391,12 @@ export function composeRoot(opts: ComposeOptions): Container {
                 blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
               },
             )
-          : { ok: false as const, detail: 'no invocation row' };
+          : {
+              ok: false as const,
+              detail: 'no invocation row',
+              classification: 'unrecoverable_artifact' as const,
+              violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+            };
         // Preserve review artifacts to a stable per-iteration path so they
         // survive subsequent iterations that overwrite result.json and
         // code-review.md in the worktree.
@@ -2543,7 +2549,12 @@ export function composeRoot(opts: ComposeOptions): Container {
               agent: artifactAgent,
               repair: structuredResultRepair,
             })
-          : { ok: false as const, detail: 'no invocation row' };
+          : {
+              ok: false as const,
+              detail: 'no invocation row',
+              classification: 'unrecoverable_artifact' as const,
+              violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+            };
         const shaAdvanced =
           result.endCommitSha !== undefined && result.endCommitSha !== startCommitSha;
         // Preserve fix artifacts to a stable per-iteration path before

@@ -8,6 +8,7 @@ import { FakeArtifactStore } from '../../test-doubles/fake-artifact-store.js';
 import { FakeAgentPort } from '../../test-doubles/fake-agent-port.js';
 import { FakeStructuredResultRepair } from '../../test-doubles/fake-structured-result-repair.js';
 import { readReviewVerdict, readFixVerdict } from '../read-verdicts.js';
+import { CONTRACT_VIOLATION_CODES } from '../../ports/contract-violation-codes.js';
 
 function invocation(phase: string, resultJsonPath?: string): AgentInvocation {
   return {
@@ -46,14 +47,36 @@ describe('readReviewVerdict', () => {
     expect(v).toEqual({ ok: true, verdict: 'pass' });
   });
 
-  it('returns not-ok when result.json is missing (no LLM fallback)', async () => {
+  it('does not add failure metadata to a successful verdict', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'pass', findings: [] }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(invocation('whole-pr-review', 'result.json'), {
+      artifacts,
+      agent,
+    });
+    expect(v).toEqual({ ok: true, verdict: 'pass' });
+    expect(v).not.toHaveProperty('classification');
+    expect(v).not.toHaveProperty('violationCode');
+  });
+
+  it('returns extraction classification and violation code when review result is missing', async () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();
     const v = await readReviewVerdict(invocation('whole-pr-review', undefined), {
       artifacts,
       agent,
     });
-    expect(v.ok).toBe(false);
+    expect(v).toEqual({
+      ok: false,
+      detail: 'no resultJsonPath provided',
+      classification: 'unrecoverable_artifact',
+      violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+    });
     expect(agent.invocations).toHaveLength(0);
   });
 });
@@ -128,6 +151,48 @@ describe('readFixVerdict', () => {
       expect(repair.calls).toHaveLength(1);
       expect(repair.calls[0]?.cwd).toBe('/some/cwd');
       expect(repair.calls[0]?.expectedHead).toBe('custom-repair-head');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('forwards cwd and transcript evidence from readReviewVerdict to repair', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'read-verdicts-test-'));
+    const stdoutPath = join(tempDir, 'stdout.log');
+    writeFileSync(stdoutPath, 'evidence');
+
+    try {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'run-1',
+        relativePath: 'result.json',
+        contents: 'malformed json',
+      });
+
+      const repair = new FakeStructuredResultRepair();
+      repair.response = async () => {
+        await artifacts.write({
+          runId: 'run-1',
+          relativePath: 'result.json',
+          contents: JSON.stringify({ result: 'pass', findings: [] }),
+        });
+        return { outcome: 'repaired', repairInvocationId: AgentInvocationId('rep-123') };
+      };
+
+      const agent = new FakeAgentPort();
+      const inv = invocation('whole-pr-review', 'result.json');
+      inv.stdoutPath = stdoutPath;
+
+      const v = await readReviewVerdict(
+        inv,
+        { artifacts, repair, agent },
+        { cwd: '/some/cwd', transcriptEvidence: 'review findings tail' },
+      );
+
+      expect(v).toEqual({ ok: true, verdict: 'pass' });
+      expect(repair.calls).toHaveLength(1);
+      expect(repair.calls[0]?.cwd).toBe('/some/cwd');
+      expect(repair.calls[0]?.transcriptEvidence).toBe('review findings tail');
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
