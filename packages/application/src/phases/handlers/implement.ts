@@ -21,6 +21,16 @@ export interface LintTaskSizeResult {
   oversized: OversizedTask[];
 }
 
+function declaredTaskFiles(task: unknown): string[] {
+  if (!task || typeof task !== 'object') return [];
+  const record = task as Record<string, unknown>;
+  const expectedFiles = Array.isArray(record.expected_files) ? record.expected_files : [];
+  const files = Array.isArray(record.files) ? record.files : [];
+  const rawPaths = [...expectedFiles, ...files];
+  const stringPaths = rawPaths.filter((p): p is string => typeof p === 'string');
+  return [...new Set(stringPaths.map((path) => path.trim().replace(/\\/g, '/')).filter(Boolean))];
+}
+
 export interface StepRunContext {
   stepIndex: number;
   stepTitle: string;
@@ -183,6 +193,58 @@ export class ImplementHandler implements PhaseHandler {
         continue;
       }
 
+      const task = manifest?.tasks.find((t) => t.n === d.index);
+      const declaredFiles = declaredTaskFiles(task);
+
+      let preStepHead: string | undefined;
+      if (declaredFiles.length > 0) {
+        try {
+          if (!ctx.git?.headCommitSha) {
+            throw new Error('ctx.git.headCommitSha is not available');
+          }
+          preStepHead = await ctx.git.headCommitSha(ctx.cwd);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          const startedAt = ctx.now();
+          const step: Step = {
+            id: ctx.idFactory?.() ?? `${ctx.runUuid}:implement:${d.index}`,
+            runId: ctx.runUuid,
+            phaseId: this.phase,
+            index: d.index,
+            title: d.title,
+            status: 'failed',
+            startedAt,
+            completedAt: ctx.now(),
+          };
+          this.opts.steps.upsert(step);
+          emit(
+            'step.uncommitted_files',
+            'error',
+            `step ${d.index}/${totalSteps} failed baseline read: ${message}`,
+            {
+              expectedFiles: declaredFiles,
+              preStepHead: undefined,
+              error: message,
+            },
+          );
+          emit(
+            'step.failed',
+            'error',
+            `step ${d.index}/${totalSteps} failed baseline read: ${message}`,
+            {
+              index: d.index,
+              total: totalSteps,
+            },
+          );
+          return this.fail(
+            ctx,
+            emit,
+            'unknown',
+            `step ${d.index} (${d.title}) failed baseline commit query: ${message}`,
+          );
+        }
+      }
+
       const startedAt = ctx.now();
       const step: Step = {
         id: ctx.idFactory?.() ?? `${ctx.runUuid}:implement:${d.index}`,
@@ -225,6 +287,87 @@ export class ImplementHandler implements PhaseHandler {
       }
 
       if (result.outcome === 'success') {
+        const expectedFiles = declaredTaskFiles(task);
+        if (expectedFiles.length > 0) {
+          let postStepHead: string | undefined;
+          let committedFiles: string[] = [];
+          let verificationError: string | undefined;
+
+          try {
+            if (!ctx.git?.headCommitSha || typeof ctx.git?.changedFiles !== 'function') {
+              throw new Error('ctx.git.changedFiles is not available');
+            }
+            postStepHead = await ctx.git.headCommitSha(ctx.cwd);
+            committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
+          } catch (e) {
+            verificationError = e instanceof Error ? e.message : String(e);
+          }
+
+          if (verificationError !== undefined) {
+            this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+            emit(
+              'step.uncommitted_files',
+              'error',
+              `step ${d.index}/${totalSteps} commit coverage query failed: ${verificationError}`,
+              {
+                expectedFiles,
+                preStepHead,
+                postStepHead,
+                error: verificationError,
+              },
+            );
+            emit(
+              'step.failed',
+              'error',
+              `step ${d.index}/${totalSteps} commit coverage query failed`,
+              {
+                index: d.index,
+                total: totalSteps,
+              },
+            );
+            return this.fail(
+              ctx,
+              emit,
+              'unknown',
+              `step ${d.index} (${d.title}) commit coverage query failed: ${verificationError}`,
+            );
+          }
+
+          const committedSet = new Set(committedFiles.map((p) => p.replace(/\\/g, '/')));
+          const missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
+
+          if (missingFiles.length > 0) {
+            this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+            emit(
+              'step.uncommitted_files',
+              'error',
+              `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
+              {
+                expectedFiles,
+                committedFiles,
+                missingFiles,
+                preStepHead,
+                postStepHead,
+              },
+            );
+            emit(
+              'step.failed',
+              'error',
+              `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
+              {
+                index: d.index,
+                total: totalSteps,
+              },
+            );
+            return this.fail(
+              ctx,
+              emit,
+              'invalid_result',
+              `step ${d.index} (${d.title}) did not commit declared files: ${missingFiles.join(', ')}`,
+            );
+          }
+        }
+
         this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
         emit('step.completed', 'info', `step ${d.index}/${totalSteps} done`, {
           index: d.index,
