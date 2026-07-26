@@ -19,7 +19,12 @@ describe('signature_changePrompts', () => {
       expect(template).toContain('"reference_files": ["path/to/read-only.ts"]');
       expect(template).toContain('- `tasks[].reference_files`: read-only files');
       expect(template).toContain('must modify and commit');
-      expect(template).toContain('reference_files (when change is "not_modified")');
+      expect(template).toContain(
+        'Declaration files MUST be in expected_files (or legacy files), or reference_files (when change is "not_modified")',
+      );
+      expect(template).toContain(
+        'Declaration files for `"not_modified"` entries may be listed in `reference_files`',
+      );
       expect(template).toContain('breaking: false');
       expect(template).toContain('pass-through');
     });
@@ -108,19 +113,6 @@ describe('signature_changePrompts', () => {
         'utf-8',
       );
       expect(template).toContain('Unknown fields in a `signature_changes` entry are rejected');
-    });
-
-    it('documents that declaration files can be in reference_files when change is not_modified', () => {
-      const template = readFileSync(
-        new URL('../../../../prompts/plan-write/plan-write.md', import.meta.url),
-        'utf-8',
-      );
-      expect(template).toContain(
-        'Declaration files MUST be in expected_files (or legacy files), or reference_files (when change is "not_modified")',
-      );
-      expect(template).toContain(
-        'Declaration files for `"not_modified"` entries may be listed in `reference_files`',
-      );
     });
   });
 
