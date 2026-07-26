@@ -37,6 +37,10 @@ export function buildPlanReviewFixPrompt(
       '```',
       '',
       'You MUST resolve this deterministic failure before performing other work.',
+      'CRITICAL: If you believe this diagnostic is already resolved, you MUST explicitly',
+      're-run, search, or grep your working tree to verify that the listed files, lines,',
+      'or symbols are actually declared and correctly synchronized in task-manifest.json',
+      'and plan.md. Do not assume or assert it is resolved without verifying directly.',
     ].join('\n');
   }
 

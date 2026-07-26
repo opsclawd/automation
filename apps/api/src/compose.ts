@@ -4704,12 +4704,48 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
 
         if (opts.isTerminalFix) {
+          // verdict: 'done_with_fixes' (verified via terminalVerdict parsing)
+          let terminalVerdict: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix' =
+            'done_with_fixes';
+          let terminalRebuttal: string | undefined;
+          let terminalSummary: string | undefined;
+
+          try {
+            const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+            if (inv) {
+              const patched = inv.resultJsonPath
+                ? inv
+                : { ...inv, resultJsonPath: PLAN_FIX_RESULT_ARTIFACT };
+              const verdict = await extractResult({
+                invocation: patched,
+                ports: {
+                  artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
+                  agent: artifactAgent,
+                  repair: structuredResultRepair,
+                },
+              });
+              if (verdict.ok) {
+                const parsed = planFixResultSchema.safeParse(verdict.result);
+                if (parsed.success) {
+                  terminalVerdict = parsed.data.verdict;
+                  terminalSummary = parsed.data.summary;
+                  if ('rebuttal' in parsed.data && parsed.data.rebuttal) {
+                    terminalRebuttal = parsed.data.rebuttal;
+                  }
+                }
+              }
+            }
+          } catch {
+            // ignore and fallback to 'done_with_fixes'
+          }
+
           return {
             invocationId,
             agentOutcome: 'success',
             headBeforeFix: startCommitSha,
-            verdict: 'done_with_fixes',
-            summary: 'Terminal fix executed',
+            verdict: terminalVerdict,
+            summary: terminalSummary ?? 'Terminal fix executed',
+            ...(terminalRebuttal ? { rebuttal: terminalRebuttal } : {}),
           };
         }
 
