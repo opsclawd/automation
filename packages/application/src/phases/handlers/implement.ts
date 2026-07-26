@@ -29,50 +29,13 @@ function normalizeTaskPath(path: unknown): string {
     .replace(/^(\.\/|\/)+/, '');
 }
 
-function isNotModifiedSignatureChange(
-  entry: unknown,
-): entry is { declaration_file: string; change: 'not_modified' } {
-  return (
-    typeof entry === 'object' &&
-    entry !== null &&
-    (entry as Record<string, unknown>).change === 'not_modified' &&
-    typeof (entry as Record<string, unknown>).declaration_file === 'string'
-  );
-}
-
-function isNonNotModifiedSignatureChange(entry: unknown): entry is { declaration_file: string } {
-  return (
-    typeof entry === 'object' &&
-    entry !== null &&
-    (entry as Record<string, unknown>).change !== 'not_modified' &&
-    typeof (entry as Record<string, unknown>).declaration_file === 'string'
-  );
-}
-
 function declaredTaskFiles(task: unknown): string[] {
   if (!task || typeof task !== 'object') return [];
   const record = task as Record<string, unknown>;
   const expectedFiles = Array.isArray(record.expected_files) ? record.expected_files : [];
   const files = Array.isArray(record.files) ? record.files : [];
-  const signatureChanges = Array.isArray(record.signature_changes) ? record.signature_changes : [];
 
-  const notModifiedDeclarations = new Set(
-    signatureChanges
-      .filter(isNotModifiedSignatureChange)
-      .map((entry) => normalizeTaskPath(entry.declaration_file))
-      .filter(Boolean),
-  );
-  const modifiedDeclarations = new Set(
-    signatureChanges
-      .filter(isNonNotModifiedSignatureChange)
-      .map((entry) => normalizeTaskPath(entry.declaration_file))
-      .filter(Boolean),
-  );
-  const requiredExpectedFiles = expectedFiles
-    .map(normalizeTaskPath)
-    .filter(
-      (path) => path && !(notModifiedDeclarations.has(path) && !modifiedDeclarations.has(path)),
-    );
+  const requiredExpectedFiles = expectedFiles.map(normalizeTaskPath).filter(Boolean);
   const requiredLegacyFiles = files.map(normalizeTaskPath).filter(Boolean);
   return [...new Set([...requiredExpectedFiles, ...requiredLegacyFiles])];
 }

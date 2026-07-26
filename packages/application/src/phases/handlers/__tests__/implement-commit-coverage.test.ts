@@ -433,13 +433,13 @@ describe('ImplementHandler Commit Coverage', () => {
     expect(events.some((event) => event.type === 'step.uncommitted_files')).toBe(false);
   });
 
-  it('not_modified expected declaration is exempt from commit coverage', async () => {
+  it('expected_files with not_modified signature change remains required for commit coverage', async () => {
     const artifacts = new FakeArtifactStore();
     const git = new FakeGitPort();
     await artifacts.write({
       runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       relativePath: 'plan.md',
-      contents: planMd(['Task 1: exempt unmodified']),
+      contents: planMd(['Task 1: unmodified signature in expected_files']),
     });
     await artifacts.write({
       runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -450,7 +450,7 @@ describe('ImplementHandler Commit Coverage', () => {
         tasks: [
           {
             n: 1,
-            title: 'Task 1: exempt unmodified',
+            title: 'Task 1: unmodified signature in expected_files',
             expected_files: ['src/reference-only.ts'],
             signature_changes: [
               { declaration_file: 'src/reference-only.ts', symbol: 'foo', change: 'not_modified' },
@@ -472,201 +472,12 @@ describe('ImplementHandler Commit Coverage', () => {
 
     const result = await new ImplementHandler({ steps, runStep }).run(ctx);
 
-    expect(result.outcome).toBe('passed');
-    expect(events.some((e) => e.type === 'step.completed')).toBe(true);
-    expect(events.some((e) => e.type === 'step.uncommitted_files')).toBe(false);
-  });
-
-  it('modified expected declaration remains required for commit coverage', async () => {
-    const artifacts = new FakeArtifactStore();
-    const git = new FakeGitPort();
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'plan.md',
-      contents: planMd(['Task 1: modified signature']),
-    });
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify({
-        version: 2,
-        task_count: 1,
-        tasks: [
-          {
-            n: 1,
-            title: 'Task 1: modified signature',
-            expected_files: ['src/api.ts'],
-            signature_changes: [
-              { declaration_file: 'src/api.ts', symbol: 'bar', change: 'modified' },
-            ],
-          },
-        ],
-      }),
-    });
-
-    const steps = new FakeStepRepository();
-    const { ctx, events } = makeCtx(artifacts, git);
-    git.headByCwd.set(ctx.cwd, 'pre-step');
-    git.changedFilesResults.set('pre-step|post-step', []);
-
-    const runStep = vi.fn(async (): Promise<StepRunResult> => {
-      git.headByCwd.set(ctx.cwd, 'post-step');
-      return { outcome: 'success' };
-    });
-
-    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
-
     expect(result.outcome).toBe('failed');
     const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
     expect(uncommitted).toHaveLength(1);
     expect(uncommitted[0]?.metadata).toMatchObject({
-      missingFiles: ['src/api.ts'],
-    });
-  });
-
-  it('other expected files remain required when a not_modified declaration is exempt', async () => {
-    const artifacts = new FakeArtifactStore();
-    const git = new FakeGitPort();
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'plan.md',
-      contents: planMd(['Task 1: mixed expected files']),
-    });
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify({
-        version: 2,
-        task_count: 1,
-        tasks: [
-          {
-            n: 1,
-            title: 'Task 1: mixed expected files',
-            expected_files: ['src/reference-only.ts', 'src/changed.ts'],
-            signature_changes: [
-              { declaration_file: 'src/reference-only.ts', symbol: 'foo', change: 'not_modified' },
-            ],
-          },
-        ],
-      }),
-    });
-
-    const steps = new FakeStepRepository();
-    const { ctx, events } = makeCtx(artifacts, git);
-    git.headByCwd.set(ctx.cwd, 'pre-step');
-    git.changedFilesResults.set('pre-step|post-step', []);
-
-    const runStep = vi.fn(async (): Promise<StepRunResult> => {
-      git.headByCwd.set(ctx.cwd, 'post-step');
-      return { outcome: 'success' };
-    });
-
-    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
-
-    expect(result.outcome).toBe('failed');
-    const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
-    expect(uncommitted).toHaveLength(1);
-    expect(uncommitted[0]?.metadata).toMatchObject({
-      expectedFiles: ['src/changed.ts'],
-      missingFiles: ['src/changed.ts'],
-    });
-  });
-
-  it('legacy files remain required when expected declaration is not_modified', async () => {
-    const artifacts = new FakeArtifactStore();
-    const git = new FakeGitPort();
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'plan.md',
-      contents: planMd(['Task 1: legacy and exempt expected']),
-    });
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify({
-        version: 2,
-        task_count: 1,
-        tasks: [
-          {
-            n: 1,
-            title: 'Task 1: legacy and exempt expected',
-            expected_files: ['src/shared.ts'],
-            files: ['src/shared.ts'],
-            signature_changes: [
-              { declaration_file: 'src/shared.ts', symbol: 'baz', change: 'not_modified' },
-            ],
-          },
-        ],
-      }),
-    });
-
-    const steps = new FakeStepRepository();
-    const { ctx, events } = makeCtx(artifacts, git);
-    git.headByCwd.set(ctx.cwd, 'pre-step');
-    git.changedFilesResults.set('pre-step|post-step', []);
-
-    const runStep = vi.fn(async (): Promise<StepRunResult> => {
-      git.headByCwd.set(ctx.cwd, 'post-step');
-      return { outcome: 'success' };
-    });
-
-    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
-
-    expect(result.outcome).toBe('failed');
-    const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
-    expect(uncommitted).toHaveLength(1);
-    expect(uncommitted[0]?.metadata).toMatchObject({
-      expectedFiles: ['src/shared.ts'],
-      missingFiles: ['src/shared.ts'],
-    });
-  });
-
-  it('file with both not_modified and modified signature changes remains required for commit coverage', async () => {
-    const artifacts = new FakeArtifactStore();
-    const git = new FakeGitPort();
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'plan.md',
-      contents: planMd(['Task 1: mixed signature changes for same file']),
-    });
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify({
-        version: 2,
-        task_count: 1,
-        tasks: [
-          {
-            n: 1,
-            title: 'Task 1: mixed signature changes for same file',
-            expected_files: ['src/shared.ts'],
-            signature_changes: [
-              { declaration_file: 'src/shared.ts', symbol: 'baz', change: 'not_modified' },
-              { declaration_file: 'src/shared.ts', symbol: 'bar', change: 'modified' },
-            ],
-          },
-        ],
-      }),
-    });
-
-    const steps = new FakeStepRepository();
-    const { ctx, events } = makeCtx(artifacts, git);
-    git.headByCwd.set(ctx.cwd, 'pre-step');
-    git.changedFilesResults.set('pre-step|post-step', []);
-
-    const runStep = vi.fn(async (): Promise<StepRunResult> => {
-      git.headByCwd.set(ctx.cwd, 'post-step');
-      return { outcome: 'success' };
-    });
-
-    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
-
-    expect(result.outcome).toBe('failed');
-    const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
-    expect(uncommitted).toHaveLength(1);
-    expect(uncommitted[0]?.metadata).toMatchObject({
-      expectedFiles: ['src/shared.ts'],
-      missingFiles: ['src/shared.ts'],
+      expectedFiles: ['src/reference-only.ts'],
+      missingFiles: ['src/reference-only.ts'],
     });
   });
 });
