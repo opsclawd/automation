@@ -63,6 +63,7 @@ export const taskManifestEntryV2Schema = z
     description: z.string().nullish(),
     acceptance_criteria: z.array(z.string()).nullish(),
     expected_files: z.array(z.string()).nullish(),
+    reference_files: z.array(z.string()).nullish(),
     relevant_symbols: z.array(z.string()).nullish(),
     design_sections: z.array(z.string()).nullish(),
     depends_on: z.array(z.number().int().min(1)).nullish(),
