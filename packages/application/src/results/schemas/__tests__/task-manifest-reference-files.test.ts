@@ -27,7 +27,28 @@ describe('reference_files in task-manifest V2', () => {
     ).not.toThrow();
   });
 
-  it('does not treat reference_files as ownership of a changed declaration', () => {
+  it('accepts a signature declaration_file listed in reference_files', () => {
+    const parsed = taskManifestSchema.parse({
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Reference declaration',
+          reference_files: ['src/api.ts'],
+          signature_changes: [
+            { declaration_file: 'src/api.ts', symbol: 'createClient', change: 'not_modified' },
+          ],
+        },
+      ],
+    });
+
+    expect(parsed.tasks[0]?.signature_changes).toEqual([
+      { declaration_file: 'src/api.ts', symbol: 'createClient', change: 'not_modified' },
+    ]);
+  });
+
+  it('rejects a signature declaration_file absent from all task file lists', () => {
     expect(() =>
       taskManifestSchema.parse({
         version: 2,
@@ -35,12 +56,14 @@ describe('reference_files in task-manifest V2', () => {
         tasks: [
           {
             n: 1,
-            title: 'Invalid ownership',
-            reference_files: ['src/api.ts'],
-            signature_changes: [{ declaration_file: 'src/api.ts', symbol: 'createClient' }],
+            title: 'Unlisted declaration',
+            expected_files: ['src/expected.ts'],
+            files: ['src/legacy.ts'],
+            reference_files: ['src/ref.ts'],
+            signature_changes: [{ declaration_file: 'src/unlisted.ts', symbol: 'createClient' }],
           },
         ],
       }),
-    ).toThrow(/expected_files or files/);
+    ).toThrow(/expected_files, files, or reference_files/);
   });
 });

@@ -94,16 +94,20 @@ export const taskManifestV2Schema = z
   .passthrough()
   .superRefine((manifest, ctx) => {
     for (const [taskIndex, task] of manifest.tasks.entries()) {
-      const ownedFiles = new Set(
-        [...(task.expected_files ?? []), ...(task.files ?? [])].map((f) => f.replace(/\\/g, '/')),
+      const declaredFiles = new Set(
+        [
+          ...(task.expected_files ?? []),
+          ...(task.files ?? []),
+          ...(task.reference_files ?? []),
+        ].map((file) => file.replace(/\\/g, '/')),
       );
       if (task.signature_changes) {
         for (const [scIndex, sc] of task.signature_changes.entries()) {
-          if (!ownedFiles.has(sc.declaration_file.replace(/\\/g, '/'))) {
+          if (!declaredFiles.has(sc.declaration_file.replace(/\\/g, '/'))) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               message:
-                "each signature_changes declaration_file must be in the task's expected_files or files",
+                "each signature_changes declaration_file must be in the task's expected_files, files, or reference_files",
               path: ['tasks', taskIndex, 'signature_changes', scIndex, 'declaration_file'],
             });
           }
