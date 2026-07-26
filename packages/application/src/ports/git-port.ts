@@ -58,6 +58,7 @@ export interface GitPort {
    * @param baseBranch - any git ref (branch name, SHA, tag) to reset to when clean
    */
   resetWorktreeIfClean(cwd: string, baseBranch: string): Promise<void>;
+  changedFiles(cwd: string, base: string, head?: string): Promise<string[]>;
 }
 
 export interface ArtifactGuardPort {

@@ -16,6 +16,8 @@ export class FakeGitPort implements GitPort {
   statusByCwd = new Map<string, string>();
   statusCalls: string[] = [];
   resetWorktreeIfCleanShouldThrow = new Set<string>();
+  changedFilesResults = new Map<string, string[]>();
+  changedFilesCalls: Array<{ cwd: string; base: string; head?: string }> = [];
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);
@@ -113,5 +115,10 @@ export class FakeGitPort implements GitPort {
     if (baseBranch !== 'HEAD') {
       this.headByCwd.set(cwd, baseBranch);
     }
+  }
+
+  async changedFiles(cwd: string, base: string, head?: string): Promise<string[]> {
+    this.changedFilesCalls.push({ cwd, base, ...(head ? { head } : {}) });
+    return [...(this.changedFilesResults.get(`${base}|${head ?? 'HEAD'}`) ?? [])];
   }
 }

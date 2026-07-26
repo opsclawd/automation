@@ -12,7 +12,9 @@ import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js'
 import { FakeStepRepository } from '../../../test-doubles/fake-step-repository.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 
-function makeCtx(artifacts: FakeArtifactStore) {
+import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
+
+function makeCtx(artifacts: FakeArtifactStore, git = new FakeGitPort()) {
   const events: OrchestratorEvent[] = [];
   const now = () => new Date('2026-06-16T00:00:00Z');
   const ctx = {
@@ -23,7 +25,7 @@ function makeCtx(artifacts: FakeArtifactStore) {
     cwd: '/tmp/wt',
     artifacts,
     github: {} as PhaseHandlerContext['github'],
-    git: {} as PhaseHandlerContext['git'],
+    git,
     agent: {} as PhaseHandlerContext['agent'],
     events: {
       publish: (_u: string, e: OrchestratorEvent) => {
@@ -697,7 +699,13 @@ describe('ImplementHandler', () => {
       const lintTaskSize = vi
         .fn<(cwd: string, manifest: unknown) => Promise<LintTaskSizeResult>>()
         .mockResolvedValue({ ok: true, oversized: [oversizedTask] });
-      const { ctx, events } = makeCtx(artifacts);
+      const git = new FakeGitPort();
+      git.headByCwd.set('/tmp/wt', 'head-sha');
+      git.changedFilesResults.set('head-sha|head-sha', [
+        'src/__tests__/big.test.ts',
+        'tsconfig.json',
+      ]);
+      const { ctx, events } = makeCtx(artifacts, git);
 
       const result = await new ImplementHandler({ steps, runStep, lintTaskSize }).run(ctx);
 
@@ -777,7 +785,10 @@ describe('ImplementHandler', () => {
       const lintTaskSize = vi
         .fn<(cwd: string, manifest: unknown) => Promise<LintTaskSizeResult>>()
         .mockResolvedValue({ ok: true, oversized: [] });
-      const { ctx, events } = makeCtx(artifacts);
+      const git = new FakeGitPort();
+      git.headByCwd.set('/tmp/wt', 'head-sha');
+      git.changedFilesResults.set('head-sha|head-sha', ['src/util.ts']);
+      const { ctx, events } = makeCtx(artifacts, git);
 
       const result = await new ImplementHandler({ steps, runStep, lintTaskSize }).run(ctx);
 
