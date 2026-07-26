@@ -1,10 +1,11 @@
-import { execa } from 'execa';
+import { execa, type Options } from 'execa';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   ValidationPort,
   RunValidationInput,
   ValidationCommandResult,
+  ValidationCommand,
 } from '@ai-sdlc/application/ports';
 
 export function commandSlug(command: string): string {
@@ -85,6 +86,14 @@ function packageHasScript(cwd: string, script: string): boolean {
   }
 }
 
+function isShellParseError(command: ValidationCommand, exitCode: number, stderr: string): boolean {
+  if (typeof command !== 'string') return false;
+  if (exitCode !== 2) return false;
+  return /unexpected EOF while looking for matching|unterminated quoted string|syntax error(?::| near unexpected token)/i.test(
+    stderr,
+  );
+}
+
 export class ProcessValidationAdapter implements ValidationPort {
   async run(input: RunValidationInput): Promise<ValidationCommandResult[]> {
     const prefix = input.logPathPrefix ?? 'validate';
@@ -93,7 +102,8 @@ export class ProcessValidationAdapter implements ValidationPort {
     const results: ValidationCommandResult[] = [];
     for (let i = 0; i < input.commands.length; i++) {
       const command = input.commands[i]!;
-      const slug = commandSlug(command);
+      const commandText = Array.isArray(command) ? command.join(' ') : command;
+      const slug = commandSlug(commandText);
       const stdoutRel = `${prefix}/${i}-${slug}.stdout.log`;
       const stderrRel = `${prefix}/${i}-${slug}.stderr.log`;
       const stdoutAbs = join(input.logDir, `${i}-${slug}.stdout.log`);
@@ -107,7 +117,7 @@ export class ProcessValidationAdapter implements ValidationPort {
       let isTimedOut = false;
       let timeoutId: NodeJS.Timeout | undefined;
 
-      const scriptName = bareScriptName(command);
+      const scriptName = bareScriptName(commandText);
       if (scriptName !== undefined && !packageHasScript(input.cwd, scriptName)) {
         stderr = `Skipped: no "${scriptName}" script in package.json at ${input.cwd}\n`;
         outcome = 'skipped';
@@ -115,7 +125,7 @@ export class ProcessValidationAdapter implements ValidationPort {
         writeFileSync(stdoutAbs, stdout);
         writeFileSync(stderrAbs, stderr);
         results.push({
-          command,
+          command: commandText,
           exitCode: 0,
           durationMs,
           stdout,
@@ -128,12 +138,7 @@ export class ProcessValidationAdapter implements ValidationPort {
       }
 
       try {
-        // POSIX-only: `detached` makes the shell a process-group leader so we
-        // can kill the whole group (shell + descendants) on timeout. Without
-        // this, a grandchild left running holds the stdout/stderr pipes open
-        // and execa won't resolve until it exits on its own.
-        const subprocess = execa(command, {
-          shell: true,
+        const options: Options = {
           cwd: input.cwd,
           reject: false,
           all: false,
@@ -142,7 +147,13 @@ export class ProcessValidationAdapter implements ValidationPort {
             ...process.env,
             ...(input.env ?? {}),
           },
-        });
+        };
+
+        // POSIX-only: `detached` makes the shell/process a group leader so we
+        // can kill the whole group on timeout.
+        const subprocess = Array.isArray(command)
+          ? execa(command[0]!, command.slice(1) as readonly string[], { ...options, shell: false })
+          : execa(command, { ...options, shell: true });
 
         timeoutId = setTimeout(() => {
           isTimedOut = true;
@@ -159,13 +170,15 @@ export class ProcessValidationAdapter implements ValidationPort {
         const r = await subprocess;
         if (timeoutId) clearTimeout(timeoutId);
 
-        stdout = r.stdout ?? '';
-        stderr = r.stderr ?? '';
+        stdout = typeof r.stdout === 'string' ? r.stdout : r.stdout ? String(r.stdout) : '';
+        stderr = typeof r.stderr === 'string' ? r.stderr : r.stderr ? String(r.stderr) : '';
         exitCode = r.exitCode ?? 0;
 
         if (isTimedOut) {
           outcome = 'timed_out';
           exitCode = r.exitCode ?? 124;
+        } else if (isShellParseError(command, exitCode, stderr)) {
+          outcome = 'parse_error';
         } else if (r.failed) {
           outcome = 'failed';
           exitCode = r.exitCode ?? 1;
@@ -182,7 +195,7 @@ export class ProcessValidationAdapter implements ValidationPort {
       writeFileSync(stderrAbs, stderr);
 
       results.push({
-        command,
+        command: commandText,
         exitCode,
         durationMs,
         stdout,

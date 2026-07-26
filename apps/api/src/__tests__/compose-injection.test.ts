@@ -80,9 +80,11 @@ class RecordingValidationAdapter implements ValidationPort {
     input: RunValidationInput,
   ): Promise<import('@ai-sdlc/application').ValidationCommandResult[]> {
     this.inputs.push(input);
+    const firstCmd = input.commands[0];
+    const commandStr = Array.isArray(firstCmd) ? firstCmd.join(' ') : (firstCmd ?? 'echo 1');
     return [
       {
-        command: input.commands[0] ?? 'echo 1',
+        command: commandStr,
         exitCode: 0,
         durationMs: 1,
         stdout: '',

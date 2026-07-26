@@ -24,6 +24,7 @@ export type {
   ValidationPort,
   RunValidationInput,
   ValidationCommandResult,
+  ValidationCommand,
 } from './validation-port.js';
 export type { ValidationRunRepositoryPort } from './validation-run-repository-port.js';
 export type { PrReviewRepositoryPort } from './pr-review-repository-port.js';

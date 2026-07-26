@@ -9,9 +9,10 @@ export interface ValidationCommandResult {
   stderrPath: string;
   outcome: ValidationCommandOutcome;
 }
+export type ValidationCommand = string | string[];
 export interface RunValidationInput {
   cwd: string;
-  commands: string[];
+  commands: ValidationCommand[];
   timeoutSeconds: number;
   logDir: string;
   logPathPrefix?: string;

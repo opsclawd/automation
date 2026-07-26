@@ -160,6 +160,7 @@ export type {
   ValidationPort,
   RunValidationInput,
   ValidationCommandResult,
+  ValidationCommand,
 } from './ports/validation-port.js';
 export type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
 export type { PhaseRepositoryPort } from './ports/phase-repository-port.js';

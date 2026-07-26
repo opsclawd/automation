@@ -199,6 +199,39 @@ describe('RunValidation', () => {
     expect(out.validationRun.commands[1].kind).toBe('typecheck');
     expect(out.validationRun.commands[1].classifier).toContain('error TS2345');
   });
+
+  it('classifies parse_error outcome and attaches failure', async () => {
+    const port = new FakeValidationPort();
+    port.result = [
+      {
+        command: "printf '%s\\n' 'unterminated",
+        exitCode: 2,
+        durationMs: 5,
+        stdout: '',
+        stderr: 'sh: 1: Syntax error: Unterminated quoted string\n',
+        stdoutPath: 'validate/0-cmd.stdout.log',
+        stderrPath: 'validate/0-cmd.stderr.log',
+        outcome: 'parse_error',
+      },
+    ];
+    const repo = new FakeValidationRunRepository();
+    const { useCase } = makeUseCase(port, repo);
+    const out = await useCase.execute({
+      runId: RUN,
+      phaseId: PhaseName('validate'),
+      cwd: '/work',
+      logDir: '/d',
+      commands: ["printf '%s\\n' 'unterminated"],
+      timeoutSeconds: 300,
+    });
+    expect(out.passed).toBe(false);
+    expect(out.validationRun.commands[0].outcome).toBe('parse_error');
+    expect(out.validationRun.commands[0].classifier).toContain(
+      'Command failed to parse (shell syntax error)',
+    );
+    expect(out.failure).toBeDefined();
+    expect(out.failure?.kind).toBe('validation_failed');
+  });
   it('emits no Failure when validation passes', async () => {
     const port = new FakeValidationPort();
     port.result = [
@@ -223,5 +256,24 @@ describe('RunValidation', () => {
       commands: ['pnpm build'],
       timeoutSeconds: 300,
     });
+  });
+
+  it('forwards nested argv validation commands unchanged to ValidationPort', async () => {
+    const port = new FakeValidationPort();
+    port.result = [passResult(0, 'pnpm build')];
+    const repo = new FakeValidationRunRepository();
+    const { useCase } = makeUseCase(port, repo);
+
+    const argvCommand = ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'];
+    await useCase.execute({
+      runId: RUN,
+      phaseId: PhaseName('validate'),
+      cwd: '/work',
+      logDir: '/d',
+      commands: ['pnpm build', argvCommand],
+      timeoutSeconds: 300,
+    });
+
+    expect(port.lastInput?.commands).toEqual(['pnpm build', argvCommand]);
   });
 });

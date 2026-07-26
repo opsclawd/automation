@@ -4607,4 +4607,156 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     expect(typecheckCalls).toBe(3);
     expect(revalidationCalls).toBe(1);
   });
+
+  it('reports a pre-existing shell parse error when rejecting a terminal rebuttal', async () => {
+    const { bus, events } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' });
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (_ctx, opts) =>
+        opts.isTerminalFix
+          ? {
+              invocationId: 'fix-terminal',
+              agentOutcome: 'success' as const,
+              verdict: 'done_no_fixes_needed' as const,
+              rebuttal: 'Nothing to fix.',
+              headBeforeFix: 'sha-1',
+            }
+          : { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' },
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+      runRevalidation: async () => ({
+        validationRunId: 'v-parse',
+        passed: false,
+        outcome: 'parse_error' as const,
+        failureDetail: 'Command: broken command\nOutcome: parse_error\n\nStderr:\nunexpected EOF',
+      }),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('needs_human_review');
+    const rejected = events.find((e) => e.type === 'step.terminal_fix.rejected');
+    expect(rejected).toBeDefined();
+    expect(rejected?.message).toContain('Command failed to parse (shell syntax error)');
+    expect(rejected?.metadata.revalidationOutcome).toBe('parse_error');
+    expect(rejected?.metadata.revalidationFailureDetail).toBe(
+      'Command: broken command\nOutcome: parse_error\n\nStderr:\nunexpected EOF',
+    );
+  });
+
+  it('reports a shell parse error when terminal fix revalidation fails', async () => {
+    const { bus, events } = collectEvents();
+    const deps = makeDeps({
+      events: bus,
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (_ctx, opts) =>
+        opts.isTerminalFix
+          ? {
+              invocationId: 'fix-terminal',
+              agentOutcome: 'success' as const,
+              verdict: 'done_with_fixes' as const,
+              headBeforeFix: 'sha-1',
+            }
+          : { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' },
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+      runRevalidation: async () => ({
+        validationRunId: 'v-parse',
+        passed: false,
+        outcome: 'parse_error' as const,
+        failureDetail: 'Command: broken command\nOutcome: parse_error\n\nStderr:\nunexpected EOF',
+      }),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('needs_human_review');
+    const rejected = events.find((e) => e.type === 'step.terminal_fix.rejected');
+    expect(rejected).toBeDefined();
+    expect(rejected?.message).toContain('Command failed to parse (shell syntax error)');
+    expect(rejected?.metadata.revalidationOutcome).toBe('parse_error');
+    expect(rejected?.metadata.revalidationFailureDetail).toBe(
+      'Command: broken command\nOutcome: parse_error\n\nStderr:\nunexpected EOF',
+    );
+  });
+
+  it('keeps generic terminal rejection messaging for ordinary validation failures', async () => {
+    const { bus, events } = collectEvents();
+    const deps = makeDeps({
+      events: bus,
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (_ctx, opts) =>
+        opts.isTerminalFix
+          ? {
+              invocationId: 'fix-terminal',
+              agentOutcome: 'success' as const,
+              verdict: 'done_with_fixes' as const,
+              headBeforeFix: 'sha-1',
+            }
+          : { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' },
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+      runRevalidation: async () => ({
+        validationRunId: 'v-fail',
+        passed: false,
+        outcome: 'failed' as const,
+        failureDetail: 'Tests failed',
+      }),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('needs_human_review');
+    const rejected = events.find((e) => e.type === 'step.terminal_fix.rejected');
+    expect(rejected).toBeDefined();
+    expect(rejected?.message).toBe('terminal fix rejected: deterministic verification failed');
+    expect(rejected?.metadata.revalidationOutcome).toBeUndefined();
+    expect(rejected?.metadata.revalidationFailureDetail).toBeUndefined();
+  });
+
+  it('does not attach parse-error detail to an accepted terminal fix', async () => {
+    const { bus, events } = collectEvents();
+    const deps = makeDeps({
+      events: bus,
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (_ctx, opts) =>
+        opts.isTerminalFix
+          ? {
+              invocationId: 'fix-terminal',
+              agentOutcome: 'success' as const,
+              verdict: 'done_with_fixes' as const,
+              headBeforeFix: 'sha-1',
+            }
+          : { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' },
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+      runRevalidation: async () => ({
+        validationRunId: 'v-pass',
+        passed: true,
+      }),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('success');
+    const accepted = events.find((e) => e.type === 'step.terminal_fix.accepted');
+    expect(accepted).toBeDefined();
+    expect(accepted?.metadata.revalidationOutcome).toBeUndefined();
+    expect(accepted?.metadata.revalidationFailureDetail).toBeUndefined();
+  });
 });

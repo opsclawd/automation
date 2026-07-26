@@ -58,6 +58,31 @@ describe('validationRunToFailure', () => {
     expect(f!.detectedAt).toBe(AT);
   });
 
+  it('creates a validation failure for a persisted parse_error', () => {
+    const f = validationRunToFailure(
+      run([
+        cmd(),
+        cmd({
+          command: "printf '%s\\n' 'unterminated",
+          kind: 'other',
+          outcome: 'parse_error',
+          exitCode: 2,
+          classifier: 'Command failed to parse (shell syntax error): Unterminated quoted string',
+          stdoutPath: 'validate/1-cmd.stdout.log',
+          stderrPath: 'validate/1-cmd.stderr.log',
+        }),
+      ]),
+      AT,
+    );
+    expect(f).not.toBeNull();
+    expect(f!.kind).toBe('validation_failed');
+    expect(f!.phase).toBe('validate');
+    expect(f!.message).toContain('command failed to parse (shell syntax error)');
+    expect(f!.artifacts).toContain('validate/1-cmd.stdout.log');
+    expect(f!.artifacts).toContain('validate/1-cmd.stderr.log');
+    expect(f!.artifacts).toContain('validate/validation-result.json');
+  });
+
   it('returns timeout when the only failures are timeouts', () => {
     const f = validationRunToFailure(
       run([

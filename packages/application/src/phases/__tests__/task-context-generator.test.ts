@@ -168,4 +168,32 @@ Something else.
     const result = generator.generate(input);
     expect(result.content).not.toContain('## Behavioral Invariants');
   });
+
+  it('renders mixed string and argv validation commands as JSON in validation fence', () => {
+    const input = {
+      task: {
+        n: 1,
+        title: 'Mixed Commands Task',
+        validation_commands: [
+          'pnpm lint',
+          ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
+        ],
+      } as unknown as TaskManifestEntry,
+      manifest: {
+        version: 2,
+        task_count: 1,
+        tasks: [],
+      } as unknown as TaskManifest,
+      planMd: '## Task 1: Mixed Commands Task\nBody',
+      workspaceConstraints: '',
+      cwd: '/app',
+      repoId: 'repo',
+      branchName: 'branch',
+    };
+
+    const result = generator.generate(input);
+    expect(result.content).toContain(
+      '## Validation Commands\n\n```bash\npnpm lint\n["pnpm","exec","eslint","apps/app/app/position/[id].tsx"]\n```',
+    );
+  });
 });

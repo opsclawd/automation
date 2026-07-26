@@ -54,6 +54,8 @@ export const taskManifestV1Schema = z
     message: 'manifest version must be 1',
   });
 
+const validationCommandSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
+
 export const taskManifestEntryV2Schema = z
   .object({
     n: z.number().int().min(1),
@@ -64,7 +66,7 @@ export const taskManifestEntryV2Schema = z
     relevant_symbols: z.array(z.string()).nullish(),
     design_sections: z.array(z.string()).nullish(),
     depends_on: z.array(z.number().int().min(1)).nullish(),
-    validation_commands: z.array(z.string()).nullish(),
+    validation_commands: z.array(validationCommandSchema).nullish(),
     migration_constraints: z.array(z.string()).nullish(),
     out_of_scope: z.array(z.string()).nullish(),
     invariants: z

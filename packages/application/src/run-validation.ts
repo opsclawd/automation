@@ -6,7 +6,7 @@ import {
   type ValidationCommandRecord,
   type Failure,
 } from '@ai-sdlc/domain';
-import type { ValidationPort } from './ports/validation-port.js';
+import type { ValidationPort, ValidationCommand } from './ports/validation-port.js';
 import type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
 import {
   classifyCommandKind,
@@ -26,7 +26,7 @@ export interface RunValidationInputUC {
   phaseId: PhaseName;
   cwd: string;
   logDir: string;
-  commands: string[];
+  commands: ValidationCommand[];
   timeoutSeconds: number;
   logPathPrefix?: string;
   env?: Record<string, string>;
@@ -81,7 +81,7 @@ export class RunValidation {
       stderrPath: r.stderrPath,
       outcome: r.outcome,
       kind: classifyCommandKind(r.command),
-      ...(r.outcome === 'failed' || r.outcome === 'timed_out'
+      ...(r.outcome === 'failed' || r.outcome === 'timed_out' || r.outcome === 'parse_error'
         ? {
             classifier: summarizeValidationFailure({
               outcome: r.outcome,

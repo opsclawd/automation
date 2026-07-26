@@ -1,6 +1,11 @@
 import type { RunId, PhaseName } from './ids.js';
 
-export type ValidationCommandOutcome = 'passed' | 'failed' | 'timed_out' | 'skipped';
+export type ValidationCommandOutcome =
+  | 'passed'
+  | 'failed'
+  | 'parse_error'
+  | 'timed_out'
+  | 'skipped';
 
 export type ValidationCommandKind = 'build' | 'lint' | 'typecheck' | 'test' | 'other';
 
