@@ -640,7 +640,7 @@ describe('signature-blast-radius', () => {
       expect(result.pass).toBe(true);
     });
 
-    it('uses same-task reference_files to cover signature callers', () => {
+    it('does not use same-task reference_files to cover signature callers', () => {
       const manifest = makeManifest({
         n: 1,
         title: 'Change API',
@@ -653,10 +653,14 @@ describe('signature-blast-radius', () => {
         [[{ file: 'src/caller.ts', line: 8, column: 3, kind: 'call' }]],
       );
 
-      expect(evaluateSignatureBlastRadius(manifest, analyses).pass).toBe(true);
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(false);
+      expect(result.failures[0]?.uncoveredReferences).toEqual([
+        { file: 'src/caller.ts', line: 8, column: 3, kind: 'call' },
+      ]);
     });
 
-    it('uses later-task reference_files to cover signature callers', () => {
+    it('does not use later-task reference_files to cover signature callers', () => {
       const manifest = makeManifest(
         {
           n: 1,
@@ -675,7 +679,11 @@ describe('signature-blast-radius', () => {
         [[{ file: 'src/caller.ts', line: 8, column: 3, kind: 'call' }]],
       );
 
-      expect(evaluateSignatureBlastRadius(manifest, analyses).pass).toBe(true);
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(false);
+      expect(result.failures[0]?.uncoveredReferences).toEqual([
+        { file: 'src/caller.ts', line: 8, column: 3, kind: 'call' },
+      ]);
     });
 
     it('does not use earlier-task reference_files to cover a later signature change', () => {

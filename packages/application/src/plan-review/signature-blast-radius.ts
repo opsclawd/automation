@@ -27,7 +27,7 @@ function normalizeFile(file: string): string {
 }
 
 function getOwnedFiles(task: TaskManifestEntryV2): Set<string> {
-  const files = [...(task.expected_files ?? task.files ?? []), ...(task.reference_files ?? [])];
+  const files = [...(task.expected_files ?? []), ...(task.files ?? [])];
   return new Set(files.map(normalizeFile));
 }
 

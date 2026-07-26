@@ -48,6 +48,42 @@ describe('reference_files in task-manifest V2', () => {
     ]);
   });
 
+  it('rejects a modified or added signature declaration_file listed only in reference_files', () => {
+    expect(() =>
+      taskManifestSchema.parse({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Modified in reference files',
+            reference_files: ['src/api.ts'],
+            signature_changes: [
+              { declaration_file: 'src/api.ts', symbol: 'createClient', change: 'modified' },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(/must be in expected_files or files/);
+
+    expect(() =>
+      taskManifestSchema.parse({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Added in reference files',
+            reference_files: ['src/api.ts'],
+            signature_changes: [
+              { declaration_file: 'src/api.ts', symbol: 'createClient', change: 'added' },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(/must be in expected_files or files/);
+  });
+
   it('rejects a signature declaration_file absent from all task file lists', () => {
     expect(() =>
       taskManifestSchema.parse({
@@ -60,7 +96,13 @@ describe('reference_files in task-manifest V2', () => {
             expected_files: ['src/expected.ts'],
             files: ['src/legacy.ts'],
             reference_files: ['src/ref.ts'],
-            signature_changes: [{ declaration_file: 'src/unlisted.ts', symbol: 'createClient' }],
+            signature_changes: [
+              {
+                declaration_file: 'src/unlisted.ts',
+                symbol: 'createClient',
+                change: 'not_modified',
+              },
+            ],
           },
         ],
       }),

@@ -94,22 +94,39 @@ export const taskManifestV2Schema = z
   .passthrough()
   .superRefine((manifest, ctx) => {
     for (const [taskIndex, task] of manifest.tasks.entries()) {
-      const declaredFiles = new Set(
-        [
-          ...(task.expected_files ?? []),
-          ...(task.files ?? []),
-          ...(task.reference_files ?? []),
-        ].map((file) => file.replace(/\\/g, '/')),
+      const writableFiles = new Set(
+        [...(task.expected_files ?? []), ...(task.files ?? [])].map((file) =>
+          file.replace(/\\/g, '/'),
+        ),
+      );
+      const referenceFiles = new Set(
+        (task.reference_files ?? []).map((file) => file.replace(/\\/g, '/')),
       );
       if (task.signature_changes) {
         for (const [scIndex, sc] of task.signature_changes.entries()) {
-          if (!declaredFiles.has(sc.declaration_file.replace(/\\/g, '/'))) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              message:
-                "each signature_changes declaration_file must be in the task's expected_files, files, or reference_files",
-              path: ['tasks', taskIndex, 'signature_changes', scIndex, 'declaration_file'],
-            });
+          const declFileNormalized = sc.declaration_file.replace(/\\/g, '/');
+          const isWritable = writableFiles.has(declFileNormalized);
+          const isReference = referenceFiles.has(declFileNormalized);
+          const change = sc.change ?? 'modified';
+
+          if (change === 'not_modified') {
+            if (!isWritable && !isReference) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message:
+                  "each signature_changes declaration_file must be in the task's expected_files, files, or reference_files",
+                path: ['tasks', taskIndex, 'signature_changes', scIndex, 'declaration_file'],
+              });
+            }
+          } else {
+            if (!isWritable) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message:
+                  "each signature_changes declaration_file with change 'modified' or 'added' must be in expected_files or files",
+                path: ['tasks', taskIndex, 'signature_changes', scIndex, 'declaration_file'],
+              });
+            }
           }
         }
       }
