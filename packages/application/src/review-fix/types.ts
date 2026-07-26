@@ -13,6 +13,9 @@ import type {
   ReviewStateRepositoryPort,
 } from '../review-state/types.js';
 import type { ArbiterResult } from '../results/schemas/arbiter.js';
+import type { ExtractResultOutcome } from '../results/extract-result.js';
+
+type ExtractResultFailure = Extract<ExtractResultOutcome, { ok: false }>;
 
 export interface StepContext {
   loopId: string;
@@ -45,6 +48,9 @@ export interface ReviewStepResult {
   snapshot?: ReviewSnapshot;
   metadata?: Record<string, unknown>;
   mode?: ReviewMode;
+  classification?: string;
+  violationCode?: ExtractResultFailure['violationCode'];
+  detail?: string;
 }
 
 export interface FixStepResult {
@@ -60,6 +66,9 @@ export interface FixStepResult {
    */
   rebuttal?: string;
   metadata?: Record<string, unknown>;
+  classification?: string;
+  violationCode?: string;
+  detail?: string;
 }
 
 export interface RevalidationResult {
@@ -180,6 +189,9 @@ export interface ReviewLoopHistoryEntry {
     offendingFindings?: Array<{ severity: string; summary: string }>;
     excerpt?: string;
     reviewedCommitSha?: string;
+    classification?: string;
+    violationCode?: string;
+    detail?: string;
   };
   fix?: {
     verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
@@ -188,6 +200,10 @@ export interface ReviewLoopHistoryEntry {
     summary?: string;
     deterministicDiagnostic?: string;
     attemptKind?: 'standard' | 'deterministic';
+    rebuttal?: string;
+    classification?: string;
+    violationCode?: string;
+    detail?: string;
   };
   revalidation?: {
     passed: boolean;
@@ -217,6 +233,7 @@ export interface ReviewStepOptions {
   mode?: ReviewMode;
   unresolvedRecords?: ReviewFindingRecord[];
   dispositionHistory?: DispositionHistoryEntry[];
+  artifactRecoveryRetry?: boolean;
 }
 
 export interface ReviewFixLoopInput {

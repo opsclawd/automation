@@ -582,10 +582,29 @@ export class ReviewFixLoop {
         invocation_type: iterationIndex === 1 ? 'initial' : 'semantic_retry',
         reviewMode,
       };
-      const review = await deps.runReview(
+      let review = await deps.runReview(
         ctx,
         Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
       );
+
+      if (review.verdict === undefined && review.classification === 'serialization_artifact') {
+        this.emit(
+          input,
+          'review.artifact_recovery_retry',
+          'warn',
+          `retrying serialization artifact failure in review loop iteration ${iterationIndex}`,
+          {
+            iterationIndex,
+            previousInvocationId: review.invocationId,
+            violationCode: review.violationCode,
+          },
+        );
+        await this.runCleanArtifacts(ctx);
+        review = await deps.runReview(ctx, {
+          ...reviewOptions,
+          artifactRecoveryRetry: true,
+        });
+      }
       if (review.offendingFindings) {
         lastOffendingFindings = review.offendingFindings;
       }
@@ -1566,6 +1585,9 @@ export class ReviewFixLoop {
           ...(review.reviewedCommitSha !== undefined
             ? { reviewedCommitSha: review.reviewedCommitSha }
             : {}),
+          ...(review.classification !== undefined ? { classification: review.classification } : {}),
+          ...(review.violationCode !== undefined ? { violationCode: review.violationCode } : {}),
+          ...(review.detail !== undefined ? { detail: review.detail } : {}),
         },
         ...(fix
           ? {
@@ -1574,6 +1596,10 @@ export class ReviewFixLoop {
                 ...(fix.invocationId !== undefined ? { invocationId: fix.invocationId } : {}),
                 ...(fix.headBeforeFix !== undefined ? { headBeforeFix: fix.headBeforeFix } : {}),
                 ...(fix.summary !== undefined ? { summary: fix.summary } : {}),
+                ...(fix.rebuttal !== undefined ? { rebuttal: fix.rebuttal } : {}),
+                ...(fix.classification !== undefined ? { classification: fix.classification } : {}),
+                ...(fix.violationCode !== undefined ? { violationCode: fix.violationCode } : {}),
+                ...(fix.detail !== undefined ? { detail: fix.detail } : {}),
               },
             }
           : {}),

@@ -28,6 +28,7 @@ export interface ExtractResultInput {
   cwd?: string | undefined;
   rerunContext?: { cwd: string; [key: string]: unknown } | undefined;
   repairExpectedHead?: string | undefined;
+  transcriptEvidence?: string | undefined;
 }
 
 async function readAndValidate(
@@ -112,12 +113,12 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
   }
 
   const hasEv = hasEvidence(invocation.stdoutPath);
-  const classification = hasEv ? 'serialization_artifact' : 'unrecoverable_artifact';
+  const initialClassification = hasEv ? 'serialization_artifact' : 'unrecoverable_artifact';
 
-  if (classification === 'unrecoverable_artifact' || !ports.repair) {
+  if (initialClassification === 'unrecoverable_artifact' || !ports.repair) {
     return {
       ...initial,
-      classification,
+      classification: initialClassification,
     };
   }
 
@@ -139,7 +140,7 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
     destination: invocation.resultJsonPath || 'result.json',
     schemaContractText: meta.schemaContractText,
     cappedRawArtifact: rawText,
-    transcriptEvidence: '',
+    transcriptEvidence: input.transcriptEvidence ?? '',
     expectedHead: input.repairExpectedHead ?? invocation.endCommitSha ?? invocation.startCommitSha,
     classification: initial.violationCode,
     primaryInvocation: {
@@ -164,6 +165,6 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
 
   return {
     ...initial,
-    classification: 'unrecoverable_artifact',
+    classification: initialClassification,
   };
 }

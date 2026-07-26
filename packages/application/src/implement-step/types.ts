@@ -82,6 +82,9 @@ export interface SpecReviewResult {
   findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
   snapshot?: ReviewSnapshot;
   mode?: ReviewMode;
+  classification?: string;
+  violationCode?: string;
+  detail?: string;
 }
 
 export interface QualityReviewResult {
@@ -91,6 +94,9 @@ export interface QualityReviewResult {
   findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
   snapshot?: ReviewSnapshot;
   mode?: ReviewMode;
+  classification?: string;
+  violationCode?: string;
+  detail?: string;
 }
 
 export interface FixResult {
@@ -101,6 +107,9 @@ export interface FixResult {
   /** Commit SHA captured by the adapter before invoking the fix agent (#671). */
   headBeforeFix?: string;
   summary?: string;
+  classification?: string;
+  violationCode?: string;
+  detail?: string;
 }
 
 /**
@@ -114,11 +123,17 @@ export interface ImplementStepHistoryEntry {
     verdict?: 'pass' | 'fail';
     invocationId?: string;
     findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
+    classification?: string;
+    violationCode?: string;
+    detail?: string;
   };
   qualityReview: {
     verdict?: 'pass' | 'fail';
     invocationId?: string;
     findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
+    classification?: string;
+    violationCode?: string;
+    detail?: string;
   };
   fix?: {
     verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
@@ -126,6 +141,9 @@ export interface ImplementStepHistoryEntry {
     headBeforeFix?: string;
     summary?: string;
     rebuttal?: string;
+    classification?: string;
+    violationCode?: string;
+    detail?: string;
   };
   /** ruling from a contradiction or final review arbiter */
   arbiter?: {
@@ -256,6 +274,14 @@ export interface ReviewState {
   finalPairSnapshots: { spec: string | undefined; quality: string | undefined };
 }
 
+export interface SpecReviewOptions {
+  artifactRecoveryRetry?: boolean;
+}
+
+export interface QualityReviewOptions {
+  artifactRecoveryRetry?: boolean;
+}
+
 export interface ImplementStepLoopDeps {
   runImplement: (ctx: StepLoopContext, opts?: ImplementStepOptions) => Promise<ImplementResult>;
   runTypecheck: (ctx: StepLoopContext) => Promise<TypecheckResult>;
@@ -263,14 +289,17 @@ export interface ImplementStepLoopDeps {
     ctx: StepLoopContext,
     tcResult: TypecheckResult,
     scope: ReviewScopeOptions,
+    opts?: SpecReviewOptions,
   ) => Promise<SpecReviewResult>;
   runQualityReview: (
     ctx: StepLoopContext,
     tcResult: TypecheckResult,
     scope: ReviewScopeOptions,
+    opts?: QualityReviewOptions,
   ) => Promise<QualityReviewResult>;
   runFix: (ctx: StepLoopContext, opts: ImplementFixStepOptions) => Promise<FixResult>;
   runRevalidation?: (ctx: StepLoopContext) => Promise<RevalidationResult>;
+  cleanArtifacts?: (ctx: StepLoopContext) => Promise<void>;
   implementProfile: AgentProfileName;
   implementFallbackProfile?: AgentProfileName;
   runArbiter?: (

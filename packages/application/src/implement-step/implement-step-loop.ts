@@ -459,6 +459,13 @@ export class ImplementStepLoop {
             ? { invocationId: specReview.invocationId }
             : {}),
           ...(specReview.findings !== undefined ? { findings: specReview.findings } : {}),
+          ...(specReview.classification !== undefined
+            ? { classification: specReview.classification }
+            : {}),
+          ...(specReview.violationCode !== undefined
+            ? { violationCode: specReview.violationCode }
+            : {}),
+          ...(specReview.detail !== undefined ? { detail: specReview.detail } : {}),
         },
         qualityReview: {
           ...(qualityReview.verdict !== undefined ? { verdict: qualityReview.verdict } : {}),
@@ -466,6 +473,13 @@ export class ImplementStepLoop {
             ? { invocationId: qualityReview.invocationId }
             : {}),
           ...(qualityReview.findings !== undefined ? { findings: qualityReview.findings } : {}),
+          ...(qualityReview.classification !== undefined
+            ? { classification: qualityReview.classification }
+            : {}),
+          ...(qualityReview.violationCode !== undefined
+            ? { violationCode: qualityReview.violationCode }
+            : {}),
+          ...(qualityReview.detail !== undefined ? { detail: qualityReview.detail } : {}),
         },
         ...(fix
           ? {
@@ -475,6 +489,9 @@ export class ImplementStepLoop {
                 ...(fix.headBeforeFix !== undefined ? { headBeforeFix: fix.headBeforeFix } : {}),
                 ...(fix.summary !== undefined ? { summary: fix.summary } : {}),
                 ...(fix.rebuttal !== undefined ? { rebuttal: fix.rebuttal } : {}),
+                ...(fix.classification !== undefined ? { classification: fix.classification } : {}),
+                ...(fix.violationCode !== undefined ? { violationCode: fix.violationCode } : {}),
+                ...(fix.detail !== undefined ? { detail: fix.detail } : {}),
               },
             }
           : {}),
@@ -957,6 +974,41 @@ export class ImplementStepLoop {
         if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
           break;
         }
+        if (
+          shouldReviewSpec &&
+          specReview.verdict === undefined &&
+          specReview.classification === 'serialization_artifact'
+        ) {
+          this.emit(
+            input,
+            'step.spec-review.artifact_recovery_retry',
+            'warn',
+            `retrying serialization artifact failure in spec-review iteration ${iterationIndex}`,
+            {
+              iterationIndex,
+              previousInvocationId: specReview.invocationId,
+              violationCode: specReview.violationCode,
+            },
+          );
+          await this.runCleanArtifacts(ctx);
+          specReview = await deps.runSpecReview(
+            {
+              ...ctx,
+              metadata: {
+                implementation_task_number: input.stepIndex,
+                iteration: iterationIndex,
+                invocation_type: 'retry',
+              },
+            },
+            tcResult,
+            specScope,
+            { artifactRecoveryRetry: true },
+          );
+          specReviewAttemptInvocationIds.push(specReview.invocationId);
+          if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
+            break;
+          }
+        }
         if (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS) {
           this.emit(
             input,
@@ -1035,6 +1087,16 @@ export class ImplementStepLoop {
       if (specReview.agentOutcome !== 'success' || specReview.verdict === undefined) {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            { invocationId: '', agentOutcome: 'success' },
+            undefined,
+            undefined,
+            'failed',
+          ),
+        );
         this.emitIterationCompleted(input, iterationIndex, 'failed');
         return { outcome: 'failed', loop };
       }
@@ -1070,6 +1132,41 @@ export class ImplementStepLoop {
         qualityReviewAttemptInvocationIds.push(qualityReview.invocationId);
         if (qualityReview.agentOutcome === 'success' && qualityReview.verdict !== undefined) {
           break;
+        }
+        if (
+          shouldReviewQuality &&
+          qualityReview.verdict === undefined &&
+          qualityReview.classification === 'serialization_artifact'
+        ) {
+          this.emit(
+            input,
+            'step.quality-review.artifact_recovery_retry',
+            'warn',
+            `retrying serialization artifact failure in quality-review iteration ${iterationIndex}`,
+            {
+              iterationIndex,
+              previousInvocationId: qualityReview.invocationId,
+              violationCode: qualityReview.violationCode,
+            },
+          );
+          await this.runCleanArtifacts(ctx);
+          qualityReview = await deps.runQualityReview(
+            {
+              ...ctx,
+              metadata: {
+                implementation_task_number: input.stepIndex,
+                iteration: iterationIndex,
+                invocation_type: 'retry',
+              },
+            },
+            tcResult,
+            qualityScope,
+            { artifactRecoveryRetry: true },
+          );
+          qualityReviewAttemptInvocationIds.push(qualityReview.invocationId);
+          if (qualityReview.agentOutcome === 'success' && qualityReview.verdict !== undefined) {
+            break;
+          }
         }
         if (qualityReviewAttempts < MAX_QUALITY_REVIEW_ATTEMPTS) {
           this.emit(
@@ -1146,6 +1243,16 @@ export class ImplementStepLoop {
       if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            qualityReview,
+            undefined,
+            undefined,
+            'failed',
+          ),
+        );
         this.emitIterationCompleted(input, iterationIndex, 'failed');
         return { outcome: 'failed', loop };
       }
@@ -2439,6 +2546,12 @@ export class ImplementStepLoop {
       triggerOwner: 'use_case',
       ...extraMetadata,
     });
+  }
+
+  private async runCleanArtifacts(ctx: StepLoopContext): Promise<void> {
+    if (this.deps.cleanArtifacts) {
+      await this.deps.cleanArtifacts(ctx);
+    }
   }
 
   private fingerprintTypecheck(tcResult: TypecheckResult): string {

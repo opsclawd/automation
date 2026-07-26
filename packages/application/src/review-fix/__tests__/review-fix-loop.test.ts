@@ -1247,6 +1247,36 @@ describe('ReviewFixLoop', () => {
           outcome: 'failed',
         }),
       );
+
+      // 5. contract violation with failure metadata
+      const loopHistory5 = {
+        read: vi.fn(async () => []),
+        append: vi.fn(async () => {}),
+        format: vi.fn(() => ''),
+      };
+      const deps5 = makeDeps({
+        loopHistory: loopHistory5,
+        runReview: async () => ({
+          invocationId: 'rev-fail',
+          agentOutcome: 'contract_violation' as const,
+          classification: 'unrecoverable_artifact',
+          violationCode: 'MISSING_REQUIRED_ARTIFACT',
+          detail: 'result.json missing',
+        }),
+      });
+      await new ReviewFixLoop(deps5).execute(baseInput());
+      expect(loopHistory5.append).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          review: expect.objectContaining({
+            invocationId: 'rev-fail',
+            classification: 'unrecoverable_artifact',
+            violationCode: 'MISSING_REQUIRED_ARTIFACT',
+            detail: 'result.json missing',
+          }),
+          outcome: 'failed',
+        }),
+      );
     });
 
     it('gracefully handles loopHistory.read failure before reviewer invocation', async () => {

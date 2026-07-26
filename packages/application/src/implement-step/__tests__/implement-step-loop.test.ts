@@ -2243,6 +2243,37 @@ describe('ImplementStepLoop', () => {
       expect(retryEvents[1]?.metadata.agentOutcome).toBe('timeout');
       expect(retryEvents[1]?.metadata.hasVerdict).toBe(false);
     });
+
+    it('retries a serialization artifact failure in specReview with cleanArtifacts and artifactRecoveryRetry option', async () => {
+      let cleanCalled = false;
+      const specCalls: Array<{ opts?: SpecReviewOptions }> = [];
+      const deps = makeDeps({
+        cleanArtifacts: async () => {
+          cleanCalled = true;
+        },
+        runSpecReview: async (_ctx, _tc, _scope, opts) => {
+          specCalls.push({ opts });
+          if (specCalls.length === 1) {
+            return {
+              invocationId: 'sr-1',
+              agentOutcome: 'contract_violation' as const,
+              classification: 'serialization_artifact',
+            };
+          }
+          return {
+            invocationId: 'sr-2',
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(specCalls).toHaveLength(2);
+      expect(specCalls[0].opts?.artifactRecoveryRetry).toBeUndefined();
+      expect(specCalls[1].opts?.artifactRecoveryRetry).toBe(true);
+      expect(cleanCalled).toBe(true);
+    });
   });
   describe('loopHistory', () => {
     it('reads history and passes context to fixer', async () => {
@@ -2432,6 +2463,25 @@ describe('ImplementStepLoop', () => {
     expect(holisticEvent?.metadata.file).toBe('src/repeat-offender.ts');
     expect(holisticEvent?.metadata.iteration).toBe(3);
     expect(holisticEvent?.metadata.findings).toBe(2);
+  });
+
+  it('preserves extraction failure metadata in history entries', async () => {
+    const history = makeInMemoryImplementHistory();
+    const deps = makeDeps({
+      loopHistory: history.port,
+      runSpecReview: async (): Promise<SpecReviewResult> => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'contract_violation',
+        classification: 'unrecoverable_artifact',
+        violationCode: 'MISSING_REQUIRED_ARTIFACT',
+        detail: 'result.json missing',
+      }),
+    });
+    await new ImplementStepLoop(deps).execute(baseInput());
+    expect(history.entries).toHaveLength(1);
+    expect(history.entries[0]?.specReview.classification).toBe('unrecoverable_artifact');
+    expect(history.entries[0]?.specReview.violationCode).toBe('MISSING_REQUIRED_ARTIFACT');
+    expect(history.entries[0]?.specReview.detail).toBe('result.json missing');
   });
 
   it('returns needs_human_review when typecheck regresses and revertFix is unavailable (#671)', async () => {
@@ -3265,6 +3315,37 @@ describe('ImplementStepLoop', () => {
       expect(out.loop.status).toBe('failed');
       expect(out.loop.iterations[0]?.outcome).toBe('failed');
       expect(qualityCalls).toBe(3);
+    });
+
+    it('retries a serialization artifact failure in qualityReview with cleanArtifacts and artifactRecoveryRetry option', async () => {
+      let cleanCalled = false;
+      const qualityCalls: Array<{ opts?: QualityReviewOptions }> = [];
+      const deps = makeDeps({
+        cleanArtifacts: async () => {
+          cleanCalled = true;
+        },
+        runQualityReview: async (_ctx, _tc, _scope, opts) => {
+          qualityCalls.push({ opts });
+          if (qualityCalls.length === 1) {
+            return {
+              invocationId: 'qr-1',
+              agentOutcome: 'contract_violation' as const,
+              classification: 'serialization_artifact',
+            };
+          }
+          return {
+            invocationId: 'qr-2',
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(qualityCalls).toHaveLength(2);
+      expect(qualityCalls[0].opts?.artifactRecoveryRetry).toBeUndefined();
+      expect(qualityCalls[1].opts?.artifactRecoveryRetry).toBe(true);
+      expect(cleanCalled).toBe(true);
     });
   });
 });

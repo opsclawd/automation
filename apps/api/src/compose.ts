@@ -166,6 +166,7 @@ import {
   type AgentPort,
   type ValidationPort,
   buildTaskValidationCommands,
+  CONTRACT_VIOLATION_CODES,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -2319,6 +2320,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           opts_ && 'unresolvedRecords' in opts_ ? opts_.unresolvedRecords : undefined;
         const dispositionHistory =
           opts_ && 'dispositionHistory' in opts_ ? opts_.dispositionHistory : undefined;
+        const artifactRecoveryRetry =
+          opts_ && 'artifactRecoveryRetry' in opts_ ? Boolean(opts_.artifactRecoveryRetry) : false;
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -2341,7 +2344,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         })
           .toString()
           .trim();
-        const isSemanticRetry = ctx.iterationIndex > 1;
+        const isSemanticRetry = ctx.iterationIndex > 1 || artifactRecoveryRetry;
         const result = await artifactAgent.invoke({
           profile: AgentProfileName(reviewProfileName),
           promptPath,
@@ -2373,24 +2376,58 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        const requiredArtifacts = ['result.json', 'code-review.md'] as const;
+        const missingArtifacts = requiredArtifacts.filter(
+          (artifact) => !existsSync(join(ctx.cwd, artifact)),
+        );
+        const bothRequiredArtifactsMissing = missingArtifacts.length === requiredArtifacts.length;
+
+        if (inv && bothRequiredArtifactsMissing) {
+          const contractViolations = Array.from(
+            new Set([
+              ...(inv.contractViolations ?? []),
+              CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+            ]),
+          );
+          agentInvocationRepository.update(inv.id, {
+            outcome: 'contract_violation',
+            contractViolations,
+            metadata: {
+              ...(inv.metadata ?? {}),
+              missing_required_artifacts: missingArtifacts,
+            },
+          });
+        }
+
+        const freshInv = inv ? (agentInvocationRepository.findById(inv.id) ?? inv) : undefined;
         const store = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         // External runtimes (antigravity etc.) do not populate resultJsonPath
         // on the invocation row even when result.json was written. Fall back
         // to the expected artifact name so readReviewVerdict can find it.
-        const patchedInv = inv?.resultJsonPath
-          ? inv
-          : inv
-            ? { ...inv, resultJsonPath: 'result.json' }
-            : inv;
+        const patchedInv = freshInv?.resultJsonPath
+          ? freshInv
+          : freshInv
+            ? { ...freshInv, resultJsonPath: 'result.json' }
+            : freshInv;
+        const transcriptEvidence = result.stdoutPath
+          ? await readTail(result.stdoutPath)
+          : undefined;
         const verdict = patchedInv
           ? await readReviewVerdict(
               patchedInv,
               { artifacts: store, agent: artifactAgent, repair: structuredResultRepair },
               {
                 blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
+                cwd: ctx.cwd,
+                ...(transcriptEvidence ? { transcriptEvidence } : {}),
               },
             )
-          : { ok: false as const, detail: 'no invocation row' };
+          : {
+              ok: false as const,
+              detail: 'no invocation row',
+              classification: 'unrecoverable_artifact' as const,
+              violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+            };
         // Preserve review artifacts to a stable per-iteration path so they
         // survive subsequent iterations that overwrite result.json and
         // code-review.md in the worktree.
@@ -2414,9 +2451,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         } catch {
           /* best-effort */
         }
-        return {
+        const reviewStepRes = {
           invocationId,
-          agentOutcome: result.outcome,
+          agentOutcome: verdict.ok ? 'success' : (patchedInv?.outcome ?? result.outcome),
           ...(verdict.ok
             ? {
                 verdict: verdict.verdict,
@@ -2425,9 +2462,14 @@ export function composeRoot(opts: ComposeOptions): Container {
                   ? { offendingFindings: verdict.offendingFindings }
                   : {}),
               }
-            : {}),
+            : {
+                classification: verdict.classification,
+                violationCode: verdict.violationCode,
+                detail: verdict.detail,
+              }),
           reviewedCommitSha: startCommitSha,
         };
+        return reviewStepRes;
       };
 
       const runFix = async (
@@ -2537,13 +2579,25 @@ export function composeRoot(opts: ComposeOptions): Container {
           : inv
             ? { ...inv, resultJsonPath: 'result.json' }
             : inv;
+        const transcriptEvidence = result.stdoutPath
+          ? await readTail(result.stdoutPath)
+          : undefined;
         const verdict = patchedFixInv
-          ? await readFixVerdict(patchedFixInv, {
-              artifacts: store,
-              agent: artifactAgent,
-              repair: structuredResultRepair,
-            })
-          : { ok: false as const, detail: 'no invocation row' };
+          ? await readFixVerdict(
+              patchedFixInv,
+              {
+                artifacts: store,
+                agent: artifactAgent,
+                repair: structuredResultRepair,
+              },
+              { cwd: ctx.cwd, ...(transcriptEvidence ? { transcriptEvidence } : {}) },
+            )
+          : {
+              ok: false as const,
+              detail: 'no invocation row',
+              classification: 'unrecoverable_artifact' as const,
+              violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+            };
         const shaAdvanced =
           result.endCommitSha !== undefined && result.endCommitSha !== startCommitSha;
         // Preserve fix artifacts to a stable per-iteration path before
@@ -2589,6 +2643,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           ...(verdict.ok && verdict.verdict !== undefined ? { verdict: verdict.verdict } : {}),
           ...(headBeforeFix !== undefined ? { headBeforeFix } : {}),
           ...(verdict.ok && verdict.rebuttal !== undefined ? { rebuttal: verdict.rebuttal } : {}),
+          ...(!verdict.ok
+            ? {
+                classification: verdict.classification,
+                violationCode: verdict.violationCode,
+                detail: verdict.detail,
+              }
+            : {}),
         };
       };
 
@@ -2896,6 +2957,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const verdict = await extractResult({
           invocation: patchedInv,
           ports: { artifacts: store, agent: artifactAgent, repair: structuredResultRepair },
+          cwd: ctx.cwd,
         });
 
         if (!verdict.ok) {
@@ -2949,7 +3011,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
             const repo = registryBackedRepo.findById(run.repoId);
             const repoRootPath = repo ? repo.localBasePath : targetRoot;
-            const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
             return artifactStoreForRun(runId, cwd).read(runId, relativePath);
           },
           write: async (input) => {
@@ -2957,7 +3020,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             if (!run) throw new Error(`ArtifactStore: no run found for ${input.runId}`);
             const repo = registryBackedRepo.findById(run.repoId);
             const repoRootPath = repo ? repo.localBasePath : targetRoot;
-            const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
             return artifactStoreForRun(input.runId, cwd).write(input);
           },
           list: async (runId) => {
@@ -2965,7 +3029,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
             const repo = registryBackedRepo.findById(run.repoId);
             const repoRootPath = repo ? repo.localBasePath : targetRoot;
-            const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
             return artifactStoreForRun(runId, cwd).list(runId);
           },
           hydrateWorktree: async (runId) => {
@@ -2973,7 +3038,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
             const repo = registryBackedRepo.findById(run.repoId);
             const repoRootPath = repo ? repo.localBasePath : targetRoot;
-            const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
             return artifactStoreForRun(runId, cwd).hydrateWorktree(runId);
           },
         },
@@ -3560,6 +3626,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mode: 'initial_full' | 'intermediate_delta' | 'final_full';
           dimensions?: Array<'spec' | 'quality'>;
         },
+        opts?: { artifactRecoveryRetry?: boolean },
       ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -3587,7 +3654,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
-        const isSemanticRetry = ctx.iterationIndex > 1;
+        const artifactRecoveryRetry = opts?.artifactRecoveryRetry ?? false;
+        const isSemanticRetry = ctx.iterationIndex > 1 || artifactRecoveryRetry;
         let result;
         try {
           result = await artifactAgent.invoke({
@@ -3661,12 +3729,26 @@ export function composeRoot(opts: ComposeOptions): Container {
           SPEC_REVIEW_RESULT_ARTIFACT,
           { mode: scope.mode, startCommitSha },
         );
+        const specTranscriptEvidence = result.stdoutPath
+          ? await readTail(result.stdoutPath)
+          : undefined;
         const verdict = await readReviewVerdict(
           patched,
           { artifacts, agent: artifactAgent, repair: structuredResultRepair },
-          { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
+          {
+            blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
+            cwd: ctx.cwd,
+            ...(specTranscriptEvidence ? { transcriptEvidence: specTranscriptEvidence } : {}),
+          },
         );
-        if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
+        if (!verdict.ok)
+          return {
+            invocationId,
+            agentOutcome: 'contract_violation' as const,
+            classification: verdict.classification,
+            violationCode: verdict.violationCode,
+            detail: verdict.detail,
+          };
         return {
           invocationId,
           agentOutcome: 'success' as const,
@@ -3684,6 +3766,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mode: 'initial_full' | 'intermediate_delta' | 'final_full';
           dimensions?: Array<'spec' | 'quality'>;
         },
+        opts?: { artifactRecoveryRetry?: boolean },
       ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -3703,7 +3786,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
-        const isSemanticRetry = ctx.iterationIndex > 1;
+        const artifactRecoveryRetry = opts?.artifactRecoveryRetry ?? false;
+        const isSemanticRetry = ctx.iterationIndex > 1 || artifactRecoveryRetry;
         let result;
         try {
           result = await artifactAgent.invoke({
@@ -3778,12 +3862,26 @@ export function composeRoot(opts: ComposeOptions): Container {
           { mode: scope.mode, startCommitSha },
         );
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+        const qualityTranscriptEvidence = result.stdoutPath
+          ? await readTail(result.stdoutPath)
+          : undefined;
         const verdict = await readReviewVerdict(
           patched,
           { artifacts, agent: artifactAgent, repair: structuredResultRepair },
-          { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
+          {
+            blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
+            cwd: ctx.cwd,
+            ...(qualityTranscriptEvidence ? { transcriptEvidence: qualityTranscriptEvidence } : {}),
+          },
         );
-        if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
+        if (!verdict.ok)
+          return {
+            invocationId,
+            agentOutcome: 'contract_violation' as const,
+            classification: verdict.classification,
+            violationCode: verdict.violationCode,
+            detail: verdict.detail,
+          };
         return {
           invocationId,
           agentOutcome: 'success' as const,
@@ -3891,6 +3989,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: invokeResult.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        const transcriptEvidence = invokeResult.stdoutPath
+          ? await readTail(invokeResult.stdoutPath)
+          : undefined;
         const fixVerdict = await readFixVerdict(
           patched,
           {
@@ -3901,6 +4002,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           {
             cwd: ctx.cwd,
             repairExpectedHead: patched.endCommitSha ?? startCommitSha,
+            ...(transcriptEvidence ? { transcriptEvidence } : {}),
           },
         );
         if (fixVerdict.ok) {
@@ -3913,8 +4015,16 @@ export function composeRoot(opts: ComposeOptions): Container {
         return {
           invocationId,
           agentOutcome: fixVerdict.ok ? ('success' as const) : ('contract_violation' as const),
-          ...(fixVerdict.ok ? { verdict: fixVerdict.verdict } : {}),
-          ...(fixVerdict.ok && fixVerdict.rebuttal ? { rebuttal: fixVerdict.rebuttal } : {}),
+          ...(fixVerdict.ok
+            ? {
+                verdict: fixVerdict.verdict,
+                ...(fixVerdict.rebuttal ? { rebuttal: fixVerdict.rebuttal } : {}),
+              }
+            : {
+                classification: fixVerdict.classification,
+                violationCode: fixVerdict.violationCode,
+                detail: fixVerdict.detail,
+              }),
           headBeforeFix: startCommitSha,
         };
       };
@@ -4108,6 +4218,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             const verdict = await extractResult({
               invocation: patched,
               ports: { artifacts, agent: artifactAgent, repair: structuredResultRepair },
+              cwd: ctx.cwd,
             });
             if (!verdict.ok) {
               return {
@@ -4234,6 +4345,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             const verdict = await extractResult({
               invocation: patched,
               ports: { artifacts, agent: artifactAgent, repair: structuredResultRepair },
+              cwd: ctx.cwd,
             });
             if (!verdict.ok) {
               return {
@@ -4356,6 +4468,14 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         },
         git: gitAdapter,
+        cleanArtifacts: async (ctx) => {
+          if (typeof gitAdapter.cleanOrchestratorArtifacts === 'function') {
+            await gitAdapter.cleanOrchestratorArtifacts(
+              ctx.cwd,
+              opts.baseBranch ?? resolvedDefaultBranch,
+            );
+          }
+        },
         now: () => new Date(),
         idFactory: () => randomUUID(),
         reviewStateRepository,
@@ -4763,6 +4883,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             agent: artifactAgent,
             repair: structuredResultRepair,
           },
+          cwd: ctx.cwd,
         });
         if (!verdict.ok) {
           return { invocationId, agentOutcome: 'failed' };
@@ -4863,6 +4984,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               const verdict = await extractResult({
                 invocation: patched,
                 ports: { artifacts, agent: artifactAgent, repair: structuredResultRepair },
+                cwd: ctx.cwd,
               });
               if (!verdict.ok) {
                 return {
@@ -4958,6 +5080,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             const verdict = await extractResult({
               invocation: patched,
               ports: { artifacts, agent: artifactAgent, repair: structuredResultRepair },
+              cwd: ctx.cwd,
             });
             if (!verdict.ok) {
               return {

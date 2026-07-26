@@ -128,6 +128,35 @@ describe('formatReviewLoopHistoryForPrompt', () => {
     // Should end with newline
     expect(result.endsWith('\n')).toBe(true);
   });
+
+  it('renders extraction failure metadata for reviewer and fixer when present', () => {
+    const history: ReviewLoopHistoryEntry[] = [
+      {
+        iteration: 1,
+        review: {
+          classification: 'unrecoverable_artifact',
+          violationCode: 'MISSING_REQUIRED_ARTIFACT',
+          detail: 'result.json missing',
+        },
+        fix: {
+          classification: 'invalid_json',
+          violationCode: 'MALFORMED_JSON',
+          detail: 'SyntaxError at line 1',
+        },
+        outcome: 'failed',
+      },
+    ];
+
+    const revOut = formatReviewLoopHistoryForPrompt(history, 'reviewer');
+    expect(revOut).toContain('Classification: unrecoverable_artifact');
+    expect(revOut).toContain('Violation Code: MISSING_REQUIRED_ARTIFACT');
+    expect(revOut).toContain('Detail: result.json missing');
+
+    const fixOut = formatReviewLoopHistoryForPrompt(history, 'fixer');
+    expect(fixOut).toContain('Classification: invalid_json');
+    expect(fixOut).toContain('Violation Code: MALFORMED_JSON');
+    expect(fixOut).toContain('Detail: SyntaxError at line 1');
+  });
 });
 
 describe('formatReviewLoopHistoryForPrompt — Disposition subsection (#627)', () => {

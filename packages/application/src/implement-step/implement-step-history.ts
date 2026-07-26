@@ -21,14 +21,36 @@ export function formatImplementStepHistoryForPrompt(
   const lines: string[] = [];
   for (const entry of sliced) {
     lines.push(`- Iteration ${entry.iteration}:`);
-    if (entry.specReview.verdict) {
-      lines.push(`  Spec Review: ${entry.specReview.verdict}`);
+    if (entry.specReview.verdict || entry.specReview.classification) {
+      if (entry.specReview.verdict) {
+        lines.push(`  Spec Review: ${entry.specReview.verdict}`);
+      }
+      if (entry.specReview.classification) {
+        lines.push(`  Spec Review Classification: ${entry.specReview.classification}`);
+      }
+      if (entry.specReview.violationCode) {
+        lines.push(`  Spec Review Violation Code: ${entry.specReview.violationCode}`);
+      }
+      if (entry.specReview.detail) {
+        lines.push(`  Spec Review Detail: ${entry.specReview.detail}`);
+      }
       if (entry.specReview.findings && entry.specReview.findings.length > 0) {
         lines.push(`    Findings: ${JSON.stringify(entry.specReview.findings)}`);
       }
     }
-    if (entry.qualityReview.verdict) {
-      lines.push(`  Quality Review: ${entry.qualityReview.verdict}`);
+    if (entry.qualityReview.verdict || entry.qualityReview.classification) {
+      if (entry.qualityReview.verdict) {
+        lines.push(`  Quality Review: ${entry.qualityReview.verdict}`);
+      }
+      if (entry.qualityReview.classification) {
+        lines.push(`  Quality Review Classification: ${entry.qualityReview.classification}`);
+      }
+      if (entry.qualityReview.violationCode) {
+        lines.push(`  Quality Review Violation Code: ${entry.qualityReview.violationCode}`);
+      }
+      if (entry.qualityReview.detail) {
+        lines.push(`  Quality Review Detail: ${entry.qualityReview.detail}`);
+      }
       if (entry.qualityReview.findings && entry.qualityReview.findings.length > 0) {
         lines.push(`    Findings: ${JSON.stringify(entry.qualityReview.findings)}`);
       }
@@ -36,6 +58,15 @@ export function formatImplementStepHistoryForPrompt(
     if (entry.fix) {
       if (entry.fix.verdict) {
         lines.push(`  Fix Verdict: ${entry.fix.verdict}`);
+      }
+      if (entry.fix.classification) {
+        lines.push(`  Fix Classification: ${entry.fix.classification}`);
+      }
+      if (entry.fix.violationCode) {
+        lines.push(`  Fix Violation Code: ${entry.fix.violationCode}`);
+      }
+      if (entry.fix.detail) {
+        lines.push(`  Fix Detail: ${entry.fix.detail}`);
       }
       if (entry.fix.headBeforeFix) {
         lines.push(`  Head before fix: ${entry.fix.headBeforeFix}`);
