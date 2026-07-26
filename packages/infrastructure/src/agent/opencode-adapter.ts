@@ -131,7 +131,11 @@ export class OpenCodeAgentAdapter implements AgentPort {
             ? AbortSignal.any(signals)
             : undefined;
       const args = ['run'];
-      if (request.phaseId.startsWith('implement') || request.phaseId.startsWith('fix-review')) {
+      if (
+        request.phaseId === 'implement' ||
+        request.phaseId === 'fix-review' ||
+        /^(?:implement|fix-review)-task-\d+$/.test(request.phaseId)
+      ) {
         args.push('--dangerously-skip-permissions');
       }
       if (request.model) {

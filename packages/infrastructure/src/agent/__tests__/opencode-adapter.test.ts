@@ -280,33 +280,37 @@ describe('OpenCodeAgentAdapter', () => {
     },
   );
 
-  it.each(['plan-design', 'spec-review', 'quality-review', 'arbiter'])(
-    'does not bypass permissions for read-only phase %s',
-    async (phaseId) => {
-      const cwd = makeWorktree();
-      const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
-      if (existsSync(argsLogFile)) rmSync(argsLogFile);
+  it.each([
+    'plan-design',
+    'spec-review',
+    'quality-review',
+    'arbiter',
+    'implement-final-review-arbiter',
+    'fix-review-architect',
+  ])('does not bypass permissions for read-only phase %s', async (phaseId) => {
+    const cwd = makeWorktree();
+    const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
 
-      const adapter = new OpenCodeAgentAdapter({
-        binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-args-logger.sh'),
-        artifactsDir: cwd,
-      });
-      await adapter.invoke({
-        profile: AgentProfileName('opencode-frontier'),
-        promptPath: '/dev/null',
-        expectedArtifacts: [],
-        cwd,
-        runId: '00000000-0000-0000-0000-000000000001',
-        repoId: 'r',
-        phaseId,
-        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
-      });
-      const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim().split(/\s+/);
-      expect(loggedArgs).not.toContain('--dangerously-skip-permissions');
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-args-logger.sh'),
+      artifactsDir: cwd,
+    });
+    await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId,
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim().split(/\s+/);
+    expect(loggedArgs).not.toContain('--dangerously-skip-permissions');
 
-      if (existsSync(argsLogFile)) rmSync(argsLogFile);
-    },
-  );
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+  });
 
   it('preserves model routing while adding one mutating permission bypass', async () => {
     const cwd = makeWorktree();
