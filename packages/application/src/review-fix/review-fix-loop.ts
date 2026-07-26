@@ -587,10 +587,7 @@ export class ReviewFixLoop {
         Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
       );
 
-      if (
-        review.verdict === undefined &&
-        review.failureClassification === 'serialization_artifact'
-      ) {
+      if (review.verdict === undefined && review.classification === 'serialization_artifact') {
         this.emit(
           input,
           'review.artifact_recovery_retry',

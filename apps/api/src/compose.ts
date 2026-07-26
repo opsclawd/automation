@@ -2464,7 +2464,6 @@ export function composeRoot(opts: ComposeOptions): Container {
               }
             : {
                 classification: verdict.classification,
-                failureClassification: verdict.classification,
                 violationCode: verdict.violationCode,
                 detail: verdict.detail,
               }),
@@ -3627,6 +3626,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mode: 'initial_full' | 'intermediate_delta' | 'final_full';
           dimensions?: Array<'spec' | 'quality'>;
         },
+        opts?: { artifactRecoveryRetry?: boolean },
       ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -3654,7 +3654,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
-        const isSemanticRetry = ctx.iterationIndex > 1;
+        const artifactRecoveryRetry = opts?.artifactRecoveryRetry ?? false;
+        const isSemanticRetry = ctx.iterationIndex > 1 || artifactRecoveryRetry;
         let result;
         try {
           result = await artifactAgent.invoke({
@@ -3765,6 +3766,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mode: 'initial_full' | 'intermediate_delta' | 'final_full';
           dimensions?: Array<'spec' | 'quality'>;
         },
+        opts?: { artifactRecoveryRetry?: boolean },
       ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -3784,7 +3786,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
-        const isSemanticRetry = ctx.iterationIndex > 1;
+        const artifactRecoveryRetry = opts?.artifactRecoveryRetry ?? false;
+        const isSemanticRetry = ctx.iterationIndex > 1 || artifactRecoveryRetry;
         let result;
         try {
           result = await artifactAgent.invoke({
@@ -4465,6 +4468,14 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         },
         git: gitAdapter,
+        cleanArtifacts: async (ctx) => {
+          if (typeof gitAdapter.cleanOrchestratorArtifacts === 'function') {
+            await gitAdapter.cleanOrchestratorArtifacts(
+              ctx.cwd,
+              opts.baseBranch ?? resolvedDefaultBranch,
+            );
+          }
+        },
         now: () => new Date(),
         idFactory: () => randomUUID(),
         reviewStateRepository,

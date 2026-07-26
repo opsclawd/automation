@@ -79,7 +79,7 @@ describe('ReviewFixLoop serialization artifact retry', () => {
       {
         invocationId: 'review-primary',
         agentOutcome: 'contract_violation',
-        failureClassification: 'serialization_artifact',
+        classification: 'serialization_artifact',
         violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
       },
       {
@@ -115,7 +115,7 @@ describe('ReviewFixLoop serialization artifact retry', () => {
       {
         invocationId: 'review-primary',
         agentOutcome: 'contract_violation',
-        failureClassification: 'unrecoverable_artifact',
+        classification: 'unrecoverable_artifact',
         violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
       },
     ]);
@@ -136,13 +136,13 @@ describe('ReviewFixLoop serialization artifact retry', () => {
       {
         invocationId: 'review-primary',
         agentOutcome: 'contract_violation',
-        failureClassification: 'serialization_artifact',
+        classification: 'serialization_artifact',
         violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
       },
       {
         invocationId: 'review-retry',
         agentOutcome: 'contract_violation',
-        failureClassification: 'serialization_artifact',
+        classification: 'serialization_artifact',
         violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
       },
     ]);
@@ -164,7 +164,7 @@ describe('ReviewFixLoop serialization artifact retry', () => {
       {
         invocationId: 'review-primary',
         agentOutcome: 'contract_violation',
-        failureClassification: 'serialization_artifact',
+        classification: 'serialization_artifact',
         violationCode: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
       },
       {
@@ -187,7 +187,7 @@ describe('ReviewFixLoop serialization artifact retry', () => {
       {
         invocationId: 'review-primary',
         agentOutcome: 'contract_violation',
-        failureClassification: 'serialization_artifact',
+        classification: 'serialization_artifact',
         violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
       },
       {

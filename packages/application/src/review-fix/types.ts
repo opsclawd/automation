@@ -49,7 +49,6 @@ export interface ReviewStepResult {
   metadata?: Record<string, unknown>;
   mode?: ReviewMode;
   classification?: string;
-  failureClassification?: ExtractResultFailure['classification'];
   violationCode?: ExtractResultFailure['violationCode'];
   detail?: string;
 }

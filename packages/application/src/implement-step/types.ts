@@ -274,6 +274,14 @@ export interface ReviewState {
   finalPairSnapshots: { spec: string | undefined; quality: string | undefined };
 }
 
+export interface SpecReviewOptions {
+  artifactRecoveryRetry?: boolean;
+}
+
+export interface QualityReviewOptions {
+  artifactRecoveryRetry?: boolean;
+}
+
 export interface ImplementStepLoopDeps {
   runImplement: (ctx: StepLoopContext, opts?: ImplementStepOptions) => Promise<ImplementResult>;
   runTypecheck: (ctx: StepLoopContext) => Promise<TypecheckResult>;
@@ -281,14 +289,17 @@ export interface ImplementStepLoopDeps {
     ctx: StepLoopContext,
     tcResult: TypecheckResult,
     scope: ReviewScopeOptions,
+    opts?: SpecReviewOptions,
   ) => Promise<SpecReviewResult>;
   runQualityReview: (
     ctx: StepLoopContext,
     tcResult: TypecheckResult,
     scope: ReviewScopeOptions,
+    opts?: QualityReviewOptions,
   ) => Promise<QualityReviewResult>;
   runFix: (ctx: StepLoopContext, opts: ImplementFixStepOptions) => Promise<FixResult>;
   runRevalidation?: (ctx: StepLoopContext) => Promise<RevalidationResult>;
+  cleanArtifacts?: (ctx: StepLoopContext) => Promise<void>;
   implementProfile: AgentProfileName;
   implementFallbackProfile?: AgentProfileName;
   runArbiter?: (
