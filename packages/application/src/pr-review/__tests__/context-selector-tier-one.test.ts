@@ -126,7 +126,7 @@ describe('context-selector tier one', () => {
       expect(hunkSections.length).toBe(1);
     });
 
-    it('includedHunks contains the shared hunk path once', () => {
+    it('includedHunks contains the shared hunk identity once', () => {
       const comment1 = makeComment({ commentId: 1, path: 'foo.ts', line: 2 });
       const comment2 = makeComment({ commentId: 2, path: 'foo.ts', line: 3 });
       const snapshot = makeSnapshot();
@@ -135,7 +135,7 @@ describe('context-selector tier one', () => {
         attempt: 1,
         snapshot,
       });
-      const fooHunks = result.includedHunks.filter((h) => h === 'foo.ts');
+      const fooHunks = result.includedHunks.filter((h) => h.startsWith('foo.ts:'));
       expect(fooHunks.length).toBe(1);
     });
   });

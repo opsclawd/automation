@@ -13,7 +13,7 @@ export interface ParsedHunk {
 }
 
 export interface ParsedUnifiedDiff {
-  readonly hunks: ReadonlyMap<string, ParsedHunk>;
+  readonly hunks: ReadonlyMap<string, readonly ParsedHunk[]>;
   readonly files: readonly string[];
   readonly diffStat: string;
   readonly parseError?: string;
@@ -84,7 +84,7 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
     return { hunks: new Map(), files: [], diffStat: '' };
   }
 
-  const hunks = new Map<string, ParsedHunk>();
+  const hunks = new Map<string, ParsedHunk[]>();
   const files: string[] = [];
 
   const lines = diff.split('\n');
@@ -118,7 +118,7 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
             currentHunkHeader.newStart,
             currentHunkHeader.newLines,
           );
-          hunks.set(currentFile, {
+          const newHunk: ParsedHunk = {
             oldStart: currentHunkHeader.oldStart,
             oldLines: currentHunkHeader.oldLines,
             newStart: currentHunkHeader.newStart,
@@ -130,7 +130,13 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
             isDeleted,
             isBinary,
             identity,
-          });
+          };
+          const existing = hunks.get(currentFile);
+          if (existing) {
+            hunks.set(currentFile, [...existing, newHunk]);
+          } else {
+            hunks.set(currentFile, [newHunk]);
+          }
         }
 
         if (line.startsWith('diff --git')) {
@@ -177,7 +183,7 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
               currentHunkHeader.newStart,
               currentHunkHeader.newLines,
             );
-            hunks.set(currentFile, {
+            const newHunk: ParsedHunk = {
               oldStart: currentHunkHeader.oldStart,
               oldLines: currentHunkHeader.oldLines,
               newStart: currentHunkHeader.newStart,
@@ -189,7 +195,13 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
               isDeleted,
               isBinary,
               identity,
-            });
+            };
+            const existing = hunks.get(currentFile);
+            if (existing) {
+              hunks.set(currentFile, [...existing, newHunk]);
+            } else {
+              hunks.set(currentFile, [newHunk]);
+            }
           }
           currentHunkHeader = header;
           currentHunkBody = [line];
@@ -211,7 +223,7 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
           files.push(currentFile);
         }
         const identity = generateHunkIdentity(currentFile, 0, 0, 0, 0);
-        hunks.set(currentFile, {
+        const newHunk: ParsedHunk = {
           oldStart: 0,
           oldLines: 0,
           newStart: 0,
@@ -223,7 +235,13 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
           isDeleted: false,
           isBinary: true,
           identity,
-        });
+        };
+        const existing = hunks.get(currentFile);
+        if (existing) {
+          hunks.set(currentFile, [...existing, newHunk]);
+        } else {
+          hunks.set(currentFile, [newHunk]);
+        }
       }
     }
 
@@ -235,7 +253,7 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
         currentHunkHeader.newStart,
         currentHunkHeader.newLines,
       );
-      hunks.set(currentFile, {
+      const newHunk: ParsedHunk = {
         oldStart: currentHunkHeader.oldStart,
         oldLines: currentHunkHeader.oldLines,
         newStart: currentHunkHeader.newStart,
@@ -247,7 +265,13 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
         isDeleted,
         isBinary,
         identity,
-      });
+      };
+      const existing = hunks.get(currentFile);
+      if (existing) {
+        hunks.set(currentFile, [...existing, newHunk]);
+      } else {
+        hunks.set(currentFile, [newHunk]);
+      }
     }
   } catch (e) {
     parseError = e instanceof Error ? e.message : String(e);
@@ -260,11 +284,14 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
   }
 
   const diffStatLines: string[] = [];
-  for (const [path, hunk] of hunks) {
-    if (hunk.isBinary) {
+  for (const [path, hunkList] of hunks) {
+    const firstHunk = hunkList[0];
+    if (firstHunk?.isBinary) {
       diffStatLines.push(`${path} | Binary`);
     } else {
-      diffStatLines.push(`${path} | ${hunk.additions} +, ${hunk.deletions} -`);
+      const totalAdditions = hunkList.reduce((sum, h) => sum + h.additions, 0);
+      const totalDeletions = hunkList.reduce((sum, h) => sum + h.deletions, 0);
+      diffStatLines.push(`${path} | ${totalAdditions} +, ${totalDeletions} -`);
     }
   }
 
@@ -278,18 +305,20 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
 }
 
 export function findHunkForLine(
-  hunks: ReadonlyMap<string, ParsedHunk>,
+  hunks: ReadonlyMap<string, readonly ParsedHunk[]>,
   path: string,
   line: number,
 ): ParsedHunk | undefined {
-  const hunk = hunks.get(path);
-  if (!hunk) return undefined;
+  const hunkList = hunks.get(path);
+  if (!hunkList) return undefined;
 
-  if (line >= hunk.newStart && line < hunk.newStart + hunk.newLines) {
-    return hunk;
+  for (const hunk of hunkList) {
+    if (line >= hunk.newStart && line < hunk.newStart + hunk.newLines) {
+      return hunk;
+    }
   }
 
-  return hunk;
+  return undefined;
 }
 
 export function extractBoundedSourceContext(

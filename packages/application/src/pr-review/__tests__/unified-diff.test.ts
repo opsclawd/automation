@@ -11,13 +11,15 @@ describe('parseUnifiedDiff', () => {
  const z = 3;`;
     const result = parseUnifiedDiff(diff);
     expect(result.hunks.size).toBe(1);
-    const hunk = result.hunks.get('foo.ts');
-    expect(hunk).toBeDefined();
-    expect(hunk!.oldStart).toBe(1);
-    expect(hunk!.oldLines).toBe(3);
-    expect(hunk!.newStart).toBe(1);
-    expect(hunk!.newLines).toBe(4);
-    expect(hunk!.body).toContain('+const y = 2');
+    const hunkList = result.hunks.get('foo.ts');
+    expect(hunkList).toBeDefined();
+    expect(hunkList!.length).toBe(1);
+    const hunk = hunkList![0];
+    expect(hunk.oldStart).toBe(1);
+    expect(hunk.oldLines).toBe(3);
+    expect(hunk.newStart).toBe(1);
+    expect(hunk.newLines).toBe(4);
+    expect(hunk.body).toContain('+const y = 2');
   });
 
   it('parses a simple modify hunk', () => {
@@ -30,12 +32,14 @@ describe('parseUnifiedDiff', () => {
  const z = 3;`;
     const result = parseUnifiedDiff(diff);
     expect(result.hunks.size).toBe(1);
-    const hunk = result.hunks.get('foo.ts');
-    expect(hunk).toBeDefined();
-    expect(hunk!.oldStart).toBe(1);
-    expect(hunk!.oldLines).toBe(4);
-    expect(hunk!.newStart).toBe(1);
-    expect(hunk!.newLines).toBe(4);
+    const hunkList = result.hunks.get('foo.ts');
+    expect(hunkList).toBeDefined();
+    expect(hunkList!.length).toBe(1);
+    const hunk = hunkList![0];
+    expect(hunk.oldStart).toBe(1);
+    expect(hunk.oldLines).toBe(4);
+    expect(hunk.newStart).toBe(1);
+    expect(hunk.newLines).toBe(4);
   });
 
   it('parses a deleted file diff', () => {
@@ -47,13 +51,15 @@ describe('parseUnifiedDiff', () => {
 -const z = 3;`;
     const result = parseUnifiedDiff(diff);
     expect(result.hunks.size).toBe(1);
-    const hunk = result.hunks.get('deleted.ts');
-    expect(hunk).toBeDefined();
-    expect(hunk!.oldStart).toBe(1);
-    expect(hunk!.oldLines).toBe(3);
-    expect(hunk!.newStart).toBe(0);
-    expect(hunk!.newLines).toBe(0);
-    expect(hunk!.isDeleted).toBe(true);
+    const hunkList = result.hunks.get('deleted.ts');
+    expect(hunkList).toBeDefined();
+    expect(hunkList!.length).toBe(1);
+    const hunk = hunkList![0];
+    expect(hunk.oldStart).toBe(1);
+    expect(hunk.oldLines).toBe(3);
+    expect(hunk.newStart).toBe(0);
+    expect(hunk.newLines).toBe(0);
+    expect(hunk.isDeleted).toBe(true);
   });
 
   it('parses quoted paths with spaces', () => {
@@ -65,10 +71,12 @@ describe('parseUnifiedDiff', () => {
  const z = 3;`;
     const result = parseUnifiedDiff(diff);
     expect(result.hunks.size).toBe(1);
-    const hunk = result.hunks.get('path with spaces/foo.ts');
-    expect(hunk).toBeDefined();
-    expect(hunk!.newStart).toBe(1);
-    expect(hunk!.newLines).toBe(4);
+    const hunkList = result.hunks.get('path with spaces/foo.ts');
+    expect(hunkList).toBeDefined();
+    expect(hunkList!.length).toBe(1);
+    const hunk = hunkList![0];
+    expect(hunk.newStart).toBe(1);
+    expect(hunk.newLines).toBe(4);
   });
 
   it('preserves no-newline marker in body', () => {
@@ -79,11 +87,13 @@ describe('parseUnifiedDiff', () => {
 +const y = 2;
  const z = 3;`;
     const result = parseUnifiedDiff(diff);
-    const hunk = result.hunks.get('foo.ts');
-    expect(hunk).toBeDefined();
-    expect(hunk!.body).toContain('\\ No newline at end of file');
-    expect(hunk!.newStart).toBe(1);
-    expect(hunk!.newLines).toBe(4);
+    const hunkList = result.hunks.get('foo.ts');
+    expect(hunkList).toBeDefined();
+    expect(hunkList!.length).toBe(1);
+    const hunk = hunkList![0];
+    expect(hunk.body).toContain('\\ No newline at end of file');
+    expect(hunk.newStart).toBe(1);
+    expect(hunk.newLines).toBe(4);
   });
 
   it('parses diff stat and changed files', () => {
@@ -136,13 +146,15 @@ this is garbage
 +const z = 3;`;
     const result = parseUnifiedDiff(diff);
     expect(result.hunks.size).toBe(1);
-    const hunk = result.hunks.get('newfile.ts');
-    expect(hunk).toBeDefined();
-    expect(hunk!.oldStart).toBe(0);
-    expect(hunk!.oldLines).toBe(0);
-    expect(hunk!.newStart).toBe(1);
-    expect(hunk!.newLines).toBe(3);
-    expect(hunk!.isNew).toBe(true);
+    const hunkList = result.hunks.get('newfile.ts');
+    expect(hunkList).toBeDefined();
+    expect(hunkList!.length).toBe(1);
+    const hunk = hunkList![0];
+    expect(hunk.oldStart).toBe(0);
+    expect(hunk.oldLines).toBe(0);
+    expect(hunk.newStart).toBe(1);
+    expect(hunk.newLines).toBe(3);
+    expect(hunk.isNew).toBe(true);
   });
 
   it('parses binary file diff', () => {
@@ -151,8 +163,10 @@ index 1234567..abcdefg 100644
 Binary files a/binary.png and b/binary.png differ`;
     const result = parseUnifiedDiff(diff);
     expect(result.files).toContain('binary.png');
-    const hunk = result.hunks.get('binary.png');
-    expect(hunk?.isBinary).toBe(true);
+    const hunkList = result.hunks.get('binary.png');
+    expect(hunkList).toBeDefined();
+    expect(hunkList!.length).toBe(1);
+    expect(hunkList![0].isBinary).toBe(true);
   });
 
   it('assigns stable hunk identity', () => {
@@ -165,10 +179,11 @@ Binary files a/binary.png and b/binary.png differ`;
  const c = 4;
  const d = 5;`;
     const result = parseUnifiedDiff(diff);
-    const hunk = result.hunks.get('foo.ts');
-    expect(hunk).toBeDefined();
-    expect(hunk!.identity).toBeDefined();
-    expect(typeof hunk!.identity).toBe('string');
+    const hunkList = result.hunks.get('foo.ts');
+    expect(hunkList).toBeDefined();
+    expect(hunkList!.length).toBe(1);
+    expect(hunkList![0].identity).toBeDefined();
+    expect(typeof hunkList![0].identity).toBe('string');
   });
 
   it('extracts additions and deletions correctly', () => {
@@ -179,8 +194,10 @@ Binary files a/binary.png and b/binary.png differ`;
 +const modified = 2;
  const unchanged = 3;`;
     const result = parseUnifiedDiff(diff);
-    const hunk = result.hunks.get('foo.ts');
-    expect(hunk!.additions).toBe(1);
-    expect(hunk!.deletions).toBe(1);
+    const hunkList = result.hunks.get('foo.ts');
+    expect(hunkList).toBeDefined();
+    expect(hunkList!.length).toBe(1);
+    expect(hunkList![0].additions).toBe(1);
+    expect(hunkList![0].deletions).toBe(1);
   });
 });

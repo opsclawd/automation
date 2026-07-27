@@ -40,7 +40,7 @@ export interface SelectPrReviewContextInput {
 }
 
 const DECLARATION_PATTERN =
-  /(?:^(?:export\s+)?(?:abstract\s+)?class|interface|type|function|const|let|var|enum|module|namespace)\s+(\w+)/m;
+  /(?:(?:export\s+)?(?:abstract\s+)?class|interface|type|function|const|let|var|enum|module|namespace)\s+(\w+)/m;
 const TEST_FILE_PATTERN = /\.test\.ts$|\.spec\.ts$/;
 const BOUNDED_CONTEXT_SIZE = 20;
 
@@ -53,7 +53,7 @@ function findDeclaration(fileContent: string, line: number): string | undefined 
     if (!lineContent) continue;
     const match = lineContent.match(DECLARATION_PATTERN);
     if (match && match[1]) {
-      return match[1];
+      return lineContent;
     }
   }
 
@@ -62,7 +62,7 @@ function findDeclaration(fileContent: string, line: number): string | undefined 
     if (!lineContent) continue;
     const match = lineContent.match(DECLARATION_PATTERN);
     if (match && match[1]) {
-      return match[1];
+      return lineContent;
     }
   }
 
@@ -90,7 +90,7 @@ function extractSymbolFromLine(fileContent: string, line: number): string | unde
 
   const lineContent = lines[line - 1];
   if (!lineContent) return undefined;
-  const match = lineContent.match(/\b([A-Z][a-zA-Z0-9_]*)\b/);
+  const match = lineContent.match(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/);
   return match ? match[1] : undefined;
 }
 
@@ -155,7 +155,7 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
         const hunk = findHunkForLine(parsed.hunks, filePath, comment.line);
         if (hunk && !seenHunkIdentities.has(hunk.identity)) {
           seenHunkIdentities.add(hunk.identity);
-          includedHunks.add(filePath);
+          includedHunks.add(hunk.identity);
           hasBoundedContext = true;
 
           sections.push({
