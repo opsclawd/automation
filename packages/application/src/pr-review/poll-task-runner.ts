@@ -1004,7 +1004,13 @@ export class PollTaskRunner {
         }
       }
 
-      return { outputs };
+      const hasVerificationFailure = outputs.some(
+        (o) => !o.processed && !o.blocked && o.action !== 'no_fix',
+      );
+      return {
+        outputs,
+        retryDisposition: hasVerificationFailure && comments.length > 1 ? 'split' : undefined,
+      };
     } catch (err) {
       const currentHead = await d.git.headCommitSha(input.cwd);
       attempts.forEach((a) => {

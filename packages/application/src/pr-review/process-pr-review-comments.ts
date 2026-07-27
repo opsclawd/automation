@@ -485,6 +485,7 @@ export class ProcessPrReviewComments {
 
         // Split multi-comment batch failure into singletons at next attempt
         if (batchResult.retryDisposition === 'split' && attempt < ESCALATION_BUDGET) {
+          const splitItems: ReviewBatchWorkItem[] = [];
           for (const comment of currentComments) {
             const commentOutput = batchResult.outputs.find(
               (o) => o.commentId === comment.commentId,
@@ -495,14 +496,17 @@ export class ProcessPrReviewComments {
               !commentOutput.blocked &&
               commentOutput.action !== 'no_fix'
             ) {
-              workQueue.push({
+              splitItems.push({
                 commentIds: [comment.commentId],
                 attempt: (attempt + 1) as 1 | 2 | 3,
-                batchStartSha: itemBatchStartSha,
+                batchStartSha: itemLiveStartSha,
                 previousBuildErrors: { ...perCommentBuildErrors },
                 previousVerifierReasons: { ...perCommentVerifierReasons },
               });
             }
+          }
+          for (const item of splitItems.reverse()) {
+            workQueue.unshift(item);
           }
           runningStartSha = await d.git.headCommitSha(input.cwd);
           continue;
@@ -518,10 +522,10 @@ export class ProcessPrReviewComments {
             !commentOutput.blocked &&
             commentOutput.action !== 'no_fix'
           ) {
-            workQueue.push({
+            workQueue.unshift({
               commentIds: [comment.commentId],
               attempt: (attempt + 1) as 1 | 2 | 3,
-              batchStartSha: itemBatchStartSha,
+              batchStartSha: activeBatchStartSha,
               previousBuildErrors: { ...perCommentBuildErrors },
               previousVerifierReasons: { ...perCommentVerifierReasons },
             });
@@ -717,10 +721,10 @@ export class ProcessPrReviewComments {
               blocked: true,
             };
           } else if (attempt < ESCALATION_BUDGET) {
-            workQueue.push({
+            workQueue.unshift({
               commentIds: [currentComment.commentId],
               attempt: (attempt + 1) as 1 | 2 | 3,
-              batchStartSha: itemBatchStartSha,
+              batchStartSha: activeBatchStartSha,
               previousBuildErrors: { ...perCommentBuildErrors },
               previousVerifierReasons: { ...perCommentVerifierReasons },
             });
