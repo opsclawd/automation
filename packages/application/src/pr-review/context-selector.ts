@@ -44,6 +44,17 @@ const DECLARATION_PATTERN =
 const TEST_FILE_PATTERN = /\.test\.ts$|\.spec\.ts$/;
 const BOUNDED_CONTEXT_SIZE = 20;
 
+const EXPLICIT_GLOBAL_SCOPE_PATTERNS = [
+  /pr[- ]?wide|entire[- ]?pr|full[- ]?pr|all[- ]?files/i,
+  /global[- ]?review|global[- ]?analysis/i,
+  /cross[- ]?cutting/i,
+  /analyze[- ]?entire[- ]?pr|review[- ]?entire/i,
+];
+
+function isExplicitGlobalScopeRequest(body: string): boolean {
+  return EXPLICIT_GLOBAL_SCOPE_PATTERNS.some((pattern) => pattern.test(body));
+}
+
 function findDeclaration(
   lines: readonly string[],
   line: number,
@@ -232,13 +243,64 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
     };
   }
 
+  if (attempt >= 3) {
+    for (const filePath of snapshot.changedFiles) {
+      if (includedFiles.has(filePath)) continue;
+      const parsedHunks = parsed.hunks.get(filePath);
+      if (parsedHunks) {
+        for (const hunk of parsedHunks) {
+          sections.push({
+            kind: 'related-diff',
+            path: filePath,
+            lineStart: hunk.newStart,
+            lineEnd: hunk.newStart + hunk.newLines - 1,
+            content: hunk.body,
+          });
+        }
+      }
+    }
+  }
+
+  const anyExplicitGlobal = comments.some((c) => isExplicitGlobalScopeRequest(c.body));
+
+  if (anyExplicitGlobal) {
+    sections.push({
+      kind: 'full-diff',
+      content: snapshot.fullDiff,
+    });
+    return {
+      level: attempt,
+      sections,
+      includedFiles: Array.from(includedFiles),
+      includedHunks: Array.from(includedHunks),
+      includedSymbols: Array.from(includedSymbols),
+      fullDiffIncluded: true,
+      fallbackReason: 'explicit_global_scope',
+    };
+  }
+
+  if (!hasBoundedContext) {
+    sections.push({
+      kind: 'full-diff',
+      content: snapshot.fullDiff,
+    });
+    return {
+      level: attempt,
+      sections,
+      includedFiles: Array.from(includedFiles),
+      includedHunks: Array.from(includedHunks),
+      includedSymbols: Array.from(includedSymbols),
+      fullDiffIncluded: true,
+      fallbackReason: 'no_bounded_context',
+    };
+  }
+
   return {
     level: attempt,
     sections,
     includedFiles: Array.from(includedFiles),
     includedHunks: Array.from(includedHunks),
     includedSymbols: Array.from(includedSymbols),
-    fullDiffIncluded: true,
-    fallbackReason: 'explicit_global_scope',
+    fullDiffIncluded: false,
   };
 }
