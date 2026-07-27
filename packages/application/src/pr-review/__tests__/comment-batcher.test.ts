@@ -226,14 +226,11 @@ describe('comment-batcher', () => {
         makeComment({ commentId: 3, path: 'a.ts', line: 5 }),
         makeComment({ commentId: 4, path: 'a.ts', line: 6 }),
         makeComment({ commentId: 5, path: 'a.ts', line: 7 }),
-        makeComment({ commentId: 6, path: 'a.ts', line: 22 }),
+        makeComment({ commentId: 6, path: 'a.ts', line: 8 }),
       ];
       const batches = groupCommentsWithDiff(comments, diffForHunks);
-      expect(batches).toHaveLength(2);
-      const firstHunkBatch = batches.find((b) => b.commentIds.includes(1));
-      expect(firstHunkBatch?.commentIds).toEqual([1, 2, 3, 4, 5]);
-      const secondHunkBatch = batches.find((b) => b.commentIds.includes(6));
-      expect(secondHunkBatch?.commentIds).toEqual([6]);
+      expect(batches).toHaveLength(1);
+      expect(batches[0].commentIds).toEqual([1, 2, 3, 4, 5, 6]);
     });
 
     it('fallback to file grouping when neither comment is in any hunk', () => {

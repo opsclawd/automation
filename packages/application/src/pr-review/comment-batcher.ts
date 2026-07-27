@@ -66,27 +66,38 @@ export function groupCommentsIntoBatches(
   const batches: CommentBatch[] = [];
   let batchPriority = 0;
 
-  const sortedKeys = Array.from(byLocality.keys()).sort();
-  for (const localityKey of sortedKeys) {
+  for (const localityKey of byLocality.keys()) {
     const localComments = byLocality.get(localityKey)!;
     const firstComment = localComments[0]!;
     const normalizedPath = normalizePath(firstComment.path);
     const hunk = findHunkForLine(hunks, normalizedPath, firstComment.line);
     const hunkIdentity = hunk?.identity;
 
-    for (let i = 0; i < localComments.length; i += MAX_BATCH_SIZE) {
+    if (hunkIdentity) {
       batchPriority++;
-      const batchComments = localComments.slice(i, i + MAX_BATCH_SIZE);
-      const commentIds = batchComments.map((c) => c.commentId);
+      const commentIds = localComments.map((c) => c.commentId);
       const firstCommentId = commentIds[0]!;
       const groupKey = buildLocalityKey(normalizedPath, hunkIdentity, firstCommentId);
-
       batches.push({
         path: normalizedPath,
         groupKey,
         commentIds,
         priority: batchPriority,
       });
+    } else {
+      for (let i = 0; i < localComments.length; i += MAX_BATCH_SIZE) {
+        batchPriority++;
+        const batchComments = localComments.slice(i, i + MAX_BATCH_SIZE);
+        const commentIds = batchComments.map((c) => c.commentId);
+        const firstCommentId = commentIds[0]!;
+        const groupKey = buildLocalityKey(normalizedPath, hunkIdentity, firstCommentId);
+        batches.push({
+          path: normalizedPath,
+          groupKey,
+          commentIds,
+          priority: batchPriority,
+        });
+      }
     }
   }
 
