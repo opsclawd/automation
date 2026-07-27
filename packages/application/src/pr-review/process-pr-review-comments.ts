@@ -138,7 +138,7 @@ const ESCALATION_BUDGET = 3;
 export interface ReviewBatchWorkItem {
   readonly commentIds: readonly number[];
   readonly attempt: 1 | 2 | 3;
-  readonly batchStartSha: string;
+  readonly batchStartSha: string | undefined;
   readonly previousBuildErrors: Readonly<Record<number, string>>;
   readonly previousVerifierReasons: Readonly<Record<number, string>>;
 }
@@ -263,13 +263,8 @@ export class ProcessPrReviewComments {
     // Process FIFO work queue
     while (workQueue.length > 0) {
       const workItem = workQueue.shift()!;
-      const {
-        commentIds,
-        attempt,
-        batchStartSha: itemBatchStartSha,
-        previousBuildErrors,
-        previousVerifierReasons,
-      } = workItem;
+      const { commentIds, attempt, batchStartSha, previousBuildErrors, previousVerifierReasons } =
+        workItem;
 
       // Re-read live HEAD at start of work item
       const itemLiveStartSha =
@@ -278,6 +273,7 @@ export class ProcessPrReviewComments {
           : await d.git.headCommitSha(input.cwd);
       runningStartSha = itemLiveStartSha;
 
+      const itemBatchStartSha = batchStartSha ?? itemLiveStartSha;
       const activeBatchStartSha = attempt === 1 ? itemLiveStartSha : itemBatchStartSha;
 
       // Re-read live state for these comment IDs
@@ -499,7 +495,7 @@ export class ProcessPrReviewComments {
               splitItems.push({
                 commentIds: [comment.commentId],
                 attempt: (attempt + 1) as 1 | 2 | 3,
-                batchStartSha: activeBatchStartSha,
+                batchStartSha: undefined,
                 previousBuildErrors: { ...perCommentBuildErrors },
                 previousVerifierReasons: { ...perCommentVerifierReasons },
               });
