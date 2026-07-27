@@ -8,6 +8,7 @@ import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import { validatePlanTaskList, derivePlanTasks, extractTaskBody } from '../plan-tasks.js';
 import type { TaskManifest, TaskManifestEntry } from '../plan-tasks.js';
 import type { ValidationPort } from '../../ports/validation-port.js';
+import type { RunWorkspaceTypecheckPort } from '../../ports/run-workspace-typecheck-port.js';
 import { buildTaskValidationCommands } from '../../task-validation-commands.js';
 
 export interface OversizedTask {
@@ -61,8 +62,8 @@ export interface ImplementHandlerOpts {
   setup?: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
   lintTaskSize?: (cwd: string, manifest: TaskManifest) => Promise<LintTaskSizeResult>;
   validationPort?: ValidationPort;
-  runWorkspaceTypecheck?: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
-  typecheckLogDir?: string;
+  runWorkspaceTypecheck?: RunWorkspaceTypecheckPort;
+  typecheckLogDir?: string | ((runUuid: string) => string);
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -368,11 +369,15 @@ export class ImplementHandler implements PhaseHandler {
               let validationsPassed = true;
 
               if (validationCommands.length > 0) {
+                const logDir =
+                  typeof this.opts.typecheckLogDir === 'function'
+                    ? this.opts.typecheckLogDir(ctx.runUuid)
+                    : this.opts.typecheckLogDir ?? '/tmp';
                 const validationResult = await this.opts.validationPort.run({
                   cwd: ctx.cwd,
                   commands: validationCommands,
                   timeoutSeconds: 300,
-                  logDir: this.opts.typecheckLogDir ?? '/tmp',
+                  logDir,
                 });
                 for (const cmdResult of validationResult) {
                   if (cmdResult.outcome !== 'passed') {
@@ -390,7 +395,7 @@ export class ImplementHandler implements PhaseHandler {
               }
 
               if (validationsPassed) {
-                const typecheckResult = await this.opts.runWorkspaceTypecheck(ctx.cwd);
+                const typecheckResult = await this.opts.runWorkspaceTypecheck({ cwd: ctx.cwd });
                 if (typecheckResult.ok) {
                   verifiedUnaffected = true;
                 } else {

@@ -8,6 +8,7 @@ import { FakeStepRepository } from '../../../test-doubles/fake-step-repository.j
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
 import { FakeValidationPort } from '../../../test-doubles/fake-validation-port.js';
 import type { PhaseHandlerContext } from '../../handler.js';
+import type { RunWorkspaceTypecheckInput } from '../../../ports/run-workspace-typecheck-port.js';
 
 function makeCtx(artifacts: FakeArtifactStore, git: FakeGitPort) {
   const events: OrchestratorEvent[] = [];
@@ -565,7 +566,7 @@ describe('ImplementHandler Commit Coverage', () => {
       return { outcome: 'success' };
     });
 
-    const runWorkspaceTypecheck = vi.fn(async (_cwd: string) => ({ ok: true }));
+    const runWorkspaceTypecheck = vi.fn(async ({}: RunWorkspaceTypecheckInput) => ({ ok: true }));
 
     const result = await new ImplementHandler({
       steps,
@@ -640,7 +641,7 @@ describe('ImplementHandler Commit Coverage', () => {
       return { outcome: 'success' };
     });
 
-    const runWorkspaceTypecheck = vi.fn(async (_cwd: string) => ({ ok: true }));
+    const runWorkspaceTypecheck = vi.fn(async ({}: RunWorkspaceTypecheckInput) => ({ ok: true }));
 
     const result = await new ImplementHandler({
       steps,
@@ -711,7 +712,7 @@ describe('ImplementHandler Commit Coverage', () => {
       return { outcome: 'success' };
     });
 
-    const runWorkspaceTypecheck = vi.fn(async (_cwd: string) => ({
+    const runWorkspaceTypecheck = vi.fn(async ({}: RunWorkspaceTypecheckInput) => ({
       ok: false,
       error: 'Type error',
     }));

@@ -172,6 +172,7 @@ import {
   type ValidationCommand,
   buildTaskValidationCommands,
   CONTRACT_VIOLATION_CODES,
+  type RunWorkspaceTypecheckPort,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -5416,6 +5417,19 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventBus: persistingEventBusForLoop,
       });
 
+      const runWorkspaceTypecheck: RunWorkspaceTypecheckPort = async ({ cwd }) => {
+        try {
+          await promisify(execFile)('pnpm', ['-r', 'typecheck'], {
+            cwd,
+            encoding: 'utf-8',
+          });
+          return { ok: true };
+        } catch (err) {
+          const error = err as { stdout?: string; stderr?: string };
+          return { ok: false, error: error.stdout || error.stderr || String(err) };
+        }
+      };
+
       if (runStep !== undefined) {
         phaseRegistry.register(
           new ImplementHandler({
@@ -5424,19 +5438,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             setup: worktreeSetup,
             lintTaskSize: lintTaskSizeDep,
             validationPort: validationAdapter,
-            typecheckLogDir: join(runsDir, 'validate'),
-            runWorkspaceTypecheck: async (cwd: string) => {
-              try {
-                await promisify(execFile)('pnpm', ['-r', 'typecheck'], {
-                  cwd,
-                  encoding: 'utf-8',
-                });
-                return { ok: true };
-              } catch (err) {
-                const error = err as { stdout?: string; stderr?: string };
-                return { ok: false, error: error.stdout || error.stderr || String(err) };
-              }
-            },
+            typecheckLogDir: (runUuid: string) => join(runsDir, runUuid, 'validate'),
+            runWorkspaceTypecheck,
           }),
         );
       }
