@@ -481,6 +481,8 @@ export class ProcessPrReviewComments {
 
         // Split multi-comment batch failure into singletons at next attempt
         if (batchResult.retryDisposition === 'split' && attempt < ESCALATION_BUDGET) {
+          await d.rollbackFix?.({ cwd: input.cwd, branch: pr.headRefName }, activeBatchStartSha);
+
           const splitItems: ReviewBatchWorkItem[] = [];
           for (const comment of currentComments) {
             const commentOutput = batchResult.outputs.find(
@@ -495,7 +497,7 @@ export class ProcessPrReviewComments {
               splitItems.push({
                 commentIds: [comment.commentId],
                 attempt: (attempt + 1) as 1 | 2 | 3,
-                batchStartSha: activeBatchStartSha,
+                batchStartSha: undefined,
                 previousBuildErrors: { ...perCommentBuildErrors },
                 previousVerifierReasons: { ...perCommentVerifierReasons },
               });
