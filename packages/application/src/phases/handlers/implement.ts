@@ -372,7 +372,7 @@ export class ImplementHandler implements PhaseHandler {
                   cwd: ctx.cwd,
                   commands: validationCommands,
                   timeoutSeconds: 300,
-                  logDir: `${this.opts.typecheckLogDir ?? '/tmp'}/validate`,
+                  logDir: this.opts.typecheckLogDir ?? '/tmp',
                 });
                 for (const cmdResult of validationResult) {
                   if (cmdResult.outcome !== 'passed') {
