@@ -40,11 +40,14 @@ export interface SelectPrReviewContextInput {
 }
 
 const DECLARATION_PATTERN =
-  /(?:(?:export\s+)?(?:abstract\s+)?class|interface|type|function|const|let|var|enum|module|namespace)\s+(\w+)/m;
+  /(?:(?:export\s+)?(?:abstract\s+)?class|interface|type|function|const|let|var|enum|module|namespace)\s+(\w+)|^\s*(?:async\s+)?(\w+)\s*\(|^\s*(?:async\s+)?(\w+)\s*\[|<(\w+)\s*\(/m;
 const TEST_FILE_PATTERN = /\.test\.ts$|\.spec\.ts$/;
 const BOUNDED_CONTEXT_SIZE = 20;
 
-function findDeclaration(fileContent: string, line: number): string | undefined {
+function findDeclaration(
+  fileContent: string,
+  line: number,
+): { content: string; symbol: string } | undefined {
   const lines = fileContent.split('\n');
   const beforeLine = Math.max(0, line - 1);
 
@@ -52,8 +55,11 @@ function findDeclaration(fileContent: string, line: number): string | undefined 
     const lineContent = lines[i];
     if (!lineContent) continue;
     const match = lineContent.match(DECLARATION_PATTERN);
-    if (match && match[1]) {
-      return lineContent;
+    if (match) {
+      const symbol = match[1] || match[2] || match[3] || match[4];
+      if (symbol) {
+        return { content: lineContent, symbol };
+      }
     }
   }
 
@@ -61,8 +67,11 @@ function findDeclaration(fileContent: string, line: number): string | undefined 
     const lineContent = lines[i];
     if (!lineContent) continue;
     const match = lineContent.match(DECLARATION_PATTERN);
-    if (match && match[1]) {
-      return lineContent;
+    if (match) {
+      const symbol = match[1] || match[2] || match[3] || match[4];
+      if (symbol) {
+        return { content: lineContent, symbol };
+      }
     }
   }
 
@@ -82,16 +91,6 @@ function findRelatedTests(symbol: string, trackedFiles: readonly string[]): stri
   }
 
   return tests;
-}
-
-function extractSymbolFromLine(fileContent: string, line: number): string | undefined {
-  const lines = fileContent.split('\n');
-  if (line < 1 || line > lines.length) return undefined;
-
-  const lineContent = lines[line - 1];
-  if (!lineContent) return undefined;
-  const match = lineContent.match(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/);
-  return match ? match[1] : undefined;
 }
 
 export function selectPrReviewContext(input: SelectPrReviewContextInput): SelectedPrReviewContext {
@@ -183,19 +182,16 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
         });
         hasBoundedContext = true;
 
-        const symbol = extractSymbolFromLine(fileContent, comment.line);
-        if (symbol) {
-          includedSymbols.add(symbol);
-          commentSymbolMap.set(comment.commentId, symbol);
+        const declaration = findDeclaration(fileContent, comment.line);
+        if (declaration) {
+          includedSymbols.add(declaration.symbol);
+          commentSymbolMap.set(comment.commentId, declaration.symbol);
 
-          const declaration = findDeclaration(fileContent, comment.line);
-          if (declaration) {
-            sections.push({
-              kind: 'symbol',
-              path: filePath,
-              content: declaration,
-            });
-          }
+          sections.push({
+            kind: 'symbol',
+            path: filePath,
+            content: declaration.content,
+          });
         }
       }
 

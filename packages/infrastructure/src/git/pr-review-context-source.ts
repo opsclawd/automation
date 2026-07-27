@@ -8,7 +8,7 @@ import type {
 
 function findRelativeImports(content: string): string[] {
   const imports: string[] = [];
-  const regex = /(?:from|import\s+)\s+['"]((\.{1,2}(?:\/[^'"]*)?))['"]/g;
+  const regex = /(?:from\s+|import\s+)['"]((\.{1,2}(?:\/[^'"]*)?))['"]/g;
   let match;
   while ((match = regex.exec(content)) !== null) {
     if (match[1]) {
@@ -22,14 +22,19 @@ function resolveRelativeImport(basePath: string, importPath: string): string {
   const parts = basePath.split('/');
   parts.pop();
   const importParts = importPath.split('/');
+  const excessDots: string[] = [];
   for (const part of importParts) {
     if (part === '..') {
-      parts.pop();
+      if (parts.length > 0) {
+        parts.pop();
+      } else {
+        excessDots.push('..');
+      }
     } else if (part !== '.') {
       parts.push(part);
     }
   }
-  return parts.join('/');
+  return [...excessDots, ...parts].join('/');
 }
 
 export const MAX_CONTEXT_FILES = 50;
@@ -144,8 +149,19 @@ export function createPrReviewContextSource(): PrReviewContextSourcePort {
         const relativeImports = findRelativeImports(seedContent);
         for (const imp of relativeImports) {
           const resolved = resolveRelativeImport(posixSeed, imp);
+          const isJsImport = resolved.endsWith('.js');
           if (!priorityFiles.includes(resolved)) {
             priorityFiles.push(resolved);
+          }
+          if (isJsImport) {
+            const tsResolved = resolved.replace(/\.js$/, '.ts');
+            const tsxResolved = resolved.replace(/\.js$/, '.tsx');
+            if (!priorityFiles.includes(tsResolved)) {
+              priorityFiles.push(tsResolved);
+            }
+            if (!priorityFiles.includes(tsxResolved)) {
+              priorityFiles.push(tsxResolved);
+            }
           }
         }
       }
@@ -168,8 +184,13 @@ export function createPrReviewContextSource(): PrReviewContextSourcePort {
       const { content, isBinary } = await tryReadFileAtHead(cwd, head, filePath);
       if (content === null || isBinary) continue;
 
-      const truncated =
-        content.length > MAX_FILE_CHARS ? content.slice(0, MAX_FILE_CHARS) : content;
+      let truncated = content.length > MAX_FILE_CHARS ? content.slice(0, MAX_FILE_CHARS) : content;
+      if (truncated.length === MAX_FILE_CHARS && content.length > MAX_FILE_CHARS) {
+        const charCode = truncated.charCodeAt(truncated.length - 1);
+        if (charCode >= 0xd800 && charCode <= 0xdbff) {
+          truncated = truncated.slice(0, -1);
+        }
+      }
 
       if (totalChars + truncated.length > MAX_SNAPSHOT_CHARS) {
         const remaining = MAX_SNAPSHOT_CHARS - totalChars;
