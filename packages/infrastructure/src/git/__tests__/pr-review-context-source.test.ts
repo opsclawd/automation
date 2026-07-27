@@ -134,6 +134,7 @@ describe('PrReviewContextSource', () => {
 
       expect(result.fullDiff).toBeDefined();
       expect(result.diffStat).toBeDefined();
+      expect(result.fileContents['image.png']).toBeUndefined();
     });
   });
 

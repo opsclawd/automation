@@ -1,4 +1,5 @@
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
+import { execa } from 'execa';
 import { git } from './git-runner.js';
 import type {
   PrReviewContextSnapshot,
@@ -15,12 +16,11 @@ function toPosixPath(path: string): string {
 
 function isPathConfined(cwd: string, filePath: string): boolean {
   if (isAbsolute(filePath)) return false;
-  const normalized = resolve(cwd, filePath);
-  const cwdPosix = toPosixPath(cwd);
-  const normalizedPosix = toPosixPath(normalized);
-  if (!normalizedPosix.startsWith(cwdPosix + '/')) return false;
   const parts = filePath.split('/');
   if (parts.includes('..')) return false;
+  const normalized = resolve(cwd, filePath);
+  const rel = relative(cwd, normalized);
+  if (rel.startsWith('..') || isAbsolute(rel)) return false;
   return true;
 }
 
@@ -38,6 +38,7 @@ function getSiblingTestCandidates(filePath: string): string[] {
   const testSuffixes = ['.test', '.spec', '.tests'];
   for (const suffix of testSuffixes) {
     candidates.push(`${dir}${name}${suffix}.${ext}`);
+    candidates.push(`${dir}__tests__/${name}${suffix}.${ext}`);
   }
 
   return candidates;
@@ -47,21 +48,23 @@ async function tryReadFileAtHead(
   cwd: string,
   head: string,
   filePath: string,
-): Promise<string | null> {
+): Promise<{ content: string | null; isBinary: boolean }> {
   try {
-    const output = await git(cwd, ['show', `${head}:${filePath}`]);
-    return output;
+    const { stdout } = await execa('git', ['show', `${head}:${filePath}`], {
+      cwd,
+      encoding: 'buffer',
+      stripFinalNewline: false,
+    });
+    const buffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    try {
+      const content = decoder.decode(buffer);
+      return { content, isBinary: false };
+    } catch {
+      return { content: null, isBinary: true };
+    }
   } catch {
-    return null;
-  }
-}
-
-async function isBinaryFile(cwd: string, head: string, filePath: string): Promise<boolean> {
-  try {
-    await git(cwd, ['show', `--word-diff=porcelain`, `${head}:${filePath}`]);
-    return false;
-  } catch {
-    return true;
+    return { content: null, isBinary: false };
   }
 }
 
@@ -86,14 +89,13 @@ export function createPrReviewContextSource(): PrReviewContextSourcePort {
     const changedFilesOutput = await git(cwd, ['diff', '-z', '--name-only', `${base}..${head}`]);
     const changedFiles = changedFilesOutput
       .split('\0')
-      .map((p) => p.trim().replace(/\\/g, '/'))
+      .map((p) => p.replace(/\\/g, '/'))
       .filter(Boolean)
       .sort();
 
-    const trackedFilesOutput = await git(cwd, ['ls-files']);
+    const trackedFilesOutput = await git(cwd, ['ls-files', '-z']);
     const trackedFiles = trackedFilesOutput
-      .split('\n')
-      .map((p) => p.trim())
+      .split('\0')
       .filter(Boolean)
       .map((p) => toPosixPath(p));
 
@@ -125,10 +127,8 @@ export function createPrReviewContextSource(): PrReviewContextSourcePort {
     for (const filePath of allFilesToProcess) {
       if (totalChars >= MAX_SNAPSHOT_CHARS) break;
 
-      const content = await tryReadFileAtHead(cwd, head, filePath);
-      if (content === null) continue;
-
-      if (await isBinaryFile(cwd, head, filePath)) continue;
+      const { content, isBinary } = await tryReadFileAtHead(cwd, head, filePath);
+      if (content === null || isBinary) continue;
 
       const truncated =
         content.length > MAX_FILE_CHARS ? content.slice(0, MAX_FILE_CHARS) : content;
