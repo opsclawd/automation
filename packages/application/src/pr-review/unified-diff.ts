@@ -133,7 +133,7 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
           };
           const existing = hunks.get(currentFile);
           if (existing) {
-            hunks.set(currentFile, [...existing, newHunk]);
+            existing.push(newHunk);
           } else {
             hunks.set(currentFile, [newHunk]);
           }
@@ -198,7 +198,7 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
             };
             const existing = hunks.get(currentFile);
             if (existing) {
-              hunks.set(currentFile, [...existing, newHunk]);
+              existing.push(newHunk);
             } else {
               hunks.set(currentFile, [newHunk]);
             }
@@ -238,7 +238,7 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
         };
         const existing = hunks.get(currentFile);
         if (existing) {
-          hunks.set(currentFile, [...existing, newHunk]);
+          existing.push(newHunk);
         } else {
           hunks.set(currentFile, [newHunk]);
         }
@@ -268,7 +268,7 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
       };
       const existing = hunks.get(currentFile);
       if (existing) {
-        hunks.set(currentFile, [...existing, newHunk]);
+        existing.push(newHunk);
       } else {
         hunks.set(currentFile, [newHunk]);
       }

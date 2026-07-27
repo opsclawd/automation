@@ -40,7 +40,7 @@ export interface SelectPrReviewContextInput {
 }
 
 const DECLARATION_PATTERN =
-  /(?:(?:export\s+)?(?:abstract\s+)?class|interface|type|function|const|let|var|enum|module|namespace)\s+(\w+)|^\s*(?:async\s+)?(\w+)\s*\(|^\s*(?:async\s+)?(\w+)\s*\[|<(\w+)\s*\(/m;
+  /(?:(?:export\s+)?(?:abstract\s+)?class|interface|type|function|const|let|var|enum|module|namespace)\s+(\w+)|^\s*(?:async\s+)?(?!(?:if|for|while|catch|switch|return)\b)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(|^\s*(?:async\s+)?(?!(?:if|for|while|catch|switch|return)\b)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\[|<(\w+)\s*\(/m;
 const TEST_FILE_PATTERN = /\.test\.ts$|\.spec\.ts$/;
 const BOUNDED_CONTEXT_SIZE = 20;
 
@@ -138,7 +138,6 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
   }
 
   const seenHunkIdentities = new Set<string>();
-  const commentSymbolMap = new Map<number, string | undefined>();
   let hasBoundedContext = false;
 
   for (const [filePath, fileComments] of commentsByFile) {
@@ -146,10 +145,9 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
 
     const fileContent = snapshot.fileContents[filePath];
     const parsedHunks = parsed.hunks.get(filePath);
+    const seenSymbolsForFile = new Set<string>();
 
     for (const comment of fileComments) {
-      commentSymbolMap.set(comment.commentId, undefined);
-
       if (parsedHunks) {
         const hunk = findHunkForLine(parsed.hunks, filePath, comment.line);
         if (hunk && !seenHunkIdentities.has(hunk.identity)) {
@@ -183,9 +181,9 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
         hasBoundedContext = true;
 
         const declaration = findDeclaration(fileContent, comment.line);
-        if (declaration) {
+        if (declaration && !seenSymbolsForFile.has(declaration.symbol)) {
+          seenSymbolsForFile.add(declaration.symbol);
           includedSymbols.add(declaration.symbol);
-          commentSymbolMap.set(comment.commentId, declaration.symbol);
 
           sections.push({
             kind: 'symbol',
