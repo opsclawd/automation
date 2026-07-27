@@ -194,6 +194,7 @@ import {
   RunId,
   RepositoryId,
   generateJobOwnership,
+  type PrReviewComment,
 } from '@ai-sdlc/domain';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- forward reference for Task 5 runtime factory
 import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
@@ -279,7 +280,11 @@ import {
   PLAN_FIX_RESULT_ARTIFACT,
   buildPlanReviewFixPrompt,
 } from './plan-review-prompts.js';
-import { WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
+import {
+  WORKSPACE_CONSTRAINTS,
+  type SelectedPrReviewContext,
+  type SelectedPrReviewContextSection,
+} from '@ai-sdlc/application';
 
 async function readTail(filePath: string, maxBytes: number = 65536): Promise<string> {
   try {
@@ -1425,6 +1430,134 @@ export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptIn
     '  "blockedReason": "<string - only when action is blocked>"',
     '}',
     '```',
+  );
+
+  return sections.join('\n');
+}
+
+export interface BuildPostPrReviewBatchPromptInput {
+  cwd: string;
+  comments: readonly PrReviewComment[];
+  context: SelectedPrReviewContext;
+  attempt: number;
+  dispositions: ReadonlyArray<{
+    commentId: number;
+    fingerprint: string;
+    disposition: string;
+    reason?: string;
+  }>;
+}
+
+function renderContextSection(section: SelectedPrReviewContextSection): string {
+  switch (section.kind) {
+    case 'summary':
+      return `## Context Summary\n\n${section.content}`;
+    case 'hunk':
+      return `## Hunk: ${section.path}:${section.lineStart}-${section.lineEnd}\n\n${section.content}`;
+    case 'source':
+      return `## Source: ${section.path}${section.lineStart != null ? `:${section.lineStart}` : ''}\n\n\`\`\`\n${section.content}\n\`\`\``;
+    case 'symbol':
+      return `## Symbol: ${section.path}\n\n\`\`\`\n${section.content}\n\`\`\``;
+    case 'test':
+      return `## Related Test: ${section.path}\n\n${section.content}`;
+    case 'related-diff':
+      return `## Related Diff: ${section.path}:${section.lineStart ?? 0}\n\n\`\`\`diff\n${section.content}\n\`\`\``;
+    case 'full-diff':
+      return `## Full Diff (${section.content.length} chars)\n\n\`\`\`diff\n${section.content}\n\`\`\``;
+    default:
+      return '';
+  }
+}
+
+export function buildPostPrReviewBatchPrompt(input: BuildPostPrReviewBatchPromptInput): string {
+  const { cwd, comments, context, attempt, dispositions } = input;
+  const sections: string[] = [];
+
+  sections.push(
+    '# PR Review Batch Task',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
+    `## Attempt: ${attempt}`,
+    '',
+    '## HARD CONSTRAINT — Do NOT push or post comments',
+    'Do NOT push to any remote branch. Do NOT post review comments. The orchestrator owns those actions.',
+    'Do NOT run verification yourself — the orchestrator runs all verification deterministically.',
+    '',
+  );
+
+  sections.push(
+    '## Context Provenance',
+    '',
+    `- level: ${context.level}`,
+    `- includedFiles: ${context.includedFiles.join(', ') || '(none)'}`,
+    `- includedHunks: ${context.includedHunks.join(', ') || '(none)'}`,
+    `- includedSymbols: ${context.includedSymbols.join(', ') || '(none)'}`,
+    `- fullDiffIncluded: ${context.fullDiffIncluded}`,
+    '',
+  );
+
+  if (context.fullDiffIncluded && context.fallbackReason) {
+    sections.push(`## CONTEXT FALLBACK`, '', `fallbackReason: ${context.fallbackReason}`, '');
+  }
+
+  if (context.sections.length > 0) {
+    sections.push('## Context Sections', '');
+    for (const section of context.sections) {
+      if (section.kind === 'full-diff' && !context.fullDiffIncluded) {
+        continue;
+      }
+      sections.push(renderContextSection(section), '');
+    }
+  }
+
+  sections.push(
+    '## Comments to Address',
+    '',
+    ...comments.map((c) => `- [commentId: ${c.commentId}] ${c.path}:${c.line} - ${c.body}`),
+    '',
+  );
+
+  const dispositionsByCommentId = new Map<number, (typeof dispositions)[0]>();
+  for (const d of dispositions) {
+    dispositionsByCommentId.set(d.commentId, d);
+  }
+
+  if (dispositions.length > 0) {
+    sections.push('## Prior Dispositions', '');
+    for (const comment of comments) {
+      const disp = dispositionsByCommentId.get(comment.commentId);
+      if (disp) {
+        sections.push(
+          `### commentId: ${comment.commentId}`,
+          `- disposition: ${disp.disposition}`,
+          `- reason: ${disp.reason ?? 'no reason'}`,
+          '',
+        );
+      }
+    }
+  }
+
+  sections.push(
+    '## Required Output',
+    '',
+    `Write a result.json file at: ${join(cwd, 'result.json')}`,
+    '',
+    'Return a JSON array with one entry per commentId listed above:',
+    '',
+    '```json',
+    '[',
+    '  { "commentId": <number>, "action": "fixed" | "no_fix" | "blocked", "replyBody": "<non-empty string>", "blockedReason": "<string - only when action is blocked>" },',
+    '  ...',
+    ']',
+    '```',
+    '',
+    'Rules:',
+    '- One array entry REQUIRED per listed commentId',
+    '- commentId values must match exactly the IDs listed above',
+    '- replyBody must be non-empty',
+    '- blockedReason is only valid when action is "blocked"',
+    '- Do NOT push. The orchestrator will push only after validation passes.',
   );
 
   return sections.join('\n');
