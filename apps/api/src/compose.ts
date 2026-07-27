@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   open as fsOpen,
   stat as fsStat,
@@ -5426,9 +5427,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             typecheckLogDir: join(runsDir, 'validate'),
             runWorkspaceTypecheck: async (cwd: string) => {
               try {
-                execFileSync('pnpm', ['-r', 'typecheck'], {
+                await promisify(execFile)('pnpm', ['-r', 'typecheck'], {
                   cwd,
-                  stdio: ['ignore', 'pipe', 'pipe'],
                   encoding: 'utf-8',
                 });
                 return { ok: true };

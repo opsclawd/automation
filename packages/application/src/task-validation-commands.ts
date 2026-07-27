@@ -1,4 +1,4 @@
-import type { TaskManifest } from './phases/index.js';
+import type { TaskManifest } from './phases/plan-tasks.js';
 import type { ValidationCommand } from './ports/validation-port.js';
 
 const DIRECT_VITEST_RUN =

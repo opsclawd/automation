@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { PhaseName } from '@ai-sdlc/domain';
 import type { FailureKind } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
@@ -362,6 +361,7 @@ export class ImplementHandler implements PhaseHandler {
 
           if (missingFiles.length > 0) {
             let verifiedUnaffected = false;
+            let verificationError: string | undefined;
 
             if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
               const validationCommands = buildTaskValidationCommands(manifest, d.index);
@@ -372,11 +372,12 @@ export class ImplementHandler implements PhaseHandler {
                   cwd: ctx.cwd,
                   commands: validationCommands,
                   timeoutSeconds: 300,
-                  logDir: join(this.opts.typecheckLogDir ?? '/tmp', 'validate'),
+                  logDir: `${this.opts.typecheckLogDir ?? '/tmp'}/validate`,
                 });
                 for (const cmdResult of validationResult) {
                   if (cmdResult.outcome !== 'passed') {
                     validationsPassed = false;
+                    verificationError = `validation failed: ${cmdResult.command}`;
                     break;
                   }
                 }
@@ -388,6 +389,8 @@ export class ImplementHandler implements PhaseHandler {
                 const typecheckResult = await this.opts.runWorkspaceTypecheck(ctx.cwd);
                 if (typecheckResult.ok) {
                   verifiedUnaffected = true;
+                } else {
+                  verificationError = typecheckResult.error;
                 }
               }
             }
@@ -411,6 +414,7 @@ export class ImplementHandler implements PhaseHandler {
                   missingFiles,
                   preStepHead,
                   postStepHead,
+                  verificationError,
                 },
               );
               emit(
