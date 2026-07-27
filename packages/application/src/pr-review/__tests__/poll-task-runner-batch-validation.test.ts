@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { RunId, RepositoryId, PhaseName, createPrReviewComment } from '@ai-sdlc/domain';
 import type { PrReviewComment, PrReviewReply } from '@ai-sdlc/domain';
 import type { PollTaskBatchResultEntry } from '../../results/schemas/poll-task-result.js';
@@ -526,6 +526,42 @@ describe('PollTaskRunner batch — side-effect-order validation tests', () => {
 
       const outputOrder = result.outputs.map((o) => o.commentId);
       expect(outputOrder).toEqual([9001, 9002, 9003]);
+    });
+  });
+
+  describe('verification invocation counts', () => {
+    it('tracks verifyBuildPasses and verifyCodeChange invocation counts for successful batch', async () => {
+      const verifyBuildPassesSpy = vi.fn(async () => ({ passed: true }));
+      const verifyCodeChangeSpy = vi.fn(async () => ({ pass: true }));
+      const { deps, git, agent } = makeBatchValidationDeps(
+        async () => ({
+          ok: true,
+          result: [
+            { commentId: 9001, action: 'fixed', replyBody: 'Fixed 1' },
+            { commentId: 9002, action: 'fixed', replyBody: 'Fixed 2' },
+          ],
+        }),
+        {
+          verifyBuildPasses: verifyBuildPassesSpy,
+          verifyCodeChange: verifyCodeChangeSpy,
+        },
+      );
+      agent.clearQueue('post-pr-review-profile');
+      agent.enqueue('post-pr-review-profile', () => {
+        git.headByCwd.set('/work/tree', 'def456');
+        return makeSuccessAgentResult();
+      });
+      git.remoteRefs.set('origin/feat-x', 'def456');
+      git.ancestorResults.set('def456|def456', true);
+      git.logBetweenResults.set('abc123|def456', ['def456']);
+
+      const comments = [makeComment(9001), makeComment(9002)];
+      const runner = new PollTaskRunner(deps);
+
+      await runner.executeBatch(makeBatchInput(comments));
+
+      expect(verifyBuildPassesSpy).toHaveBeenCalledTimes(3);
+      expect(verifyCodeChangeSpy).toHaveBeenCalledTimes(4);
     });
   });
 });

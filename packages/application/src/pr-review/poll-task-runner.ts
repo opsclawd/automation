@@ -1,7 +1,7 @@
 import type { PrReviewComment, PrReviewCommentAttempt } from '@ai-sdlc/domain';
 import { markProcessed, blockComment, markReplied } from '@ai-sdlc/domain';
 import type { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
-import type { GitHubPort } from '../ports/github-port.js';
+import type { GitHubPort, GitHubReviewComment } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
 import type { AgentPort } from '../ports/agent-port.js';
 import type { AgentProfileName } from '../ports/agent-invocation-types.js';
@@ -816,10 +816,10 @@ export class PollTaskRunner {
       const fixedResults = results.filter((r) => r.action === 'fixed');
       const verifierErrors: Map<number, string> = new Map();
 
-      for (const fixed of fixedResults) {
-        if (d.verifyCodeChange) {
+      if (d.verifyCodeChange && fixedResults.length > 0) {
+        const codeVerifyPromises = fixedResults.map(async (fixed) => {
           const comment = comments.find((c) => c.commentId === fixed.commentId)!;
-          const codeResult = await d.verifyCodeChange({
+          return d.verifyCodeChange!({
             commentBody: comment.body,
             path: comment.path,
             line: comment.line,
@@ -828,7 +828,10 @@ export class PollTaskRunner {
             fixCommitSha,
             runId: String(input.runId),
             repoId: String(input.repoId),
-          });
+          }).then((codeResult) => ({ fixed, codeResult }));
+        });
+        const codeVerifyResults = await Promise.all(codeVerifyPromises);
+        for (const { fixed, codeResult } of codeVerifyResults) {
           if (!codeResult.pass) {
             verifierErrors.set(fixed.commentId, codeResult.reason);
           }
@@ -868,13 +871,19 @@ export class PollTaskRunner {
 
       const outputs: PollTaskOutput[] = [];
       const sortedComments = [...comments].sort((a, b) => a.commentId - b.commentId);
+      const repliesBefore = await d.github.listReviewComments(input.repoFullName, input.prNumber);
 
       for (const comment of sortedComments) {
         const result = results.find((r) => r.commentId === comment.commentId)!;
         const attempt = attempts.find((a) => a.commentId === comment.commentId)!;
 
         if (result.action === 'blocked') {
-          await this.postReplyIfMissingForBatch(input, comment.commentId, result.replyBody);
+          await this.postReplyIfMissingForBatch(
+            input,
+            comment.commentId,
+            result.replyBody,
+            repliesBefore,
+          );
           d.prReviewRepo.insertReply({
             id: d.idFactory(),
             runId: input.runId,
@@ -907,6 +916,7 @@ export class PollTaskRunner {
             input,
             comment.commentId,
             result.replyBody,
+            repliesBefore,
           );
           d.prReviewRepo.insertReply({
             id: d.idFactory(),
@@ -981,6 +991,7 @@ export class PollTaskRunner {
             input,
             comment.commentId,
             result.replyBody,
+            repliesBefore,
           );
           d.prReviewRepo.insertReply({
             id: d.idFactory(),
@@ -1066,7 +1077,9 @@ export class PollTaskRunner {
       const currentHead = await d.git.headCommitSha(input.cwd);
       attempts.forEach((a) => {
         a.completedHead = currentHead;
-        a.disposition = 'failure';
+        if (a.disposition !== 'success') {
+          a.disposition = 'failure';
+        }
         d.prReviewRepo.updateCommentAttempt(a);
       });
       if (!pushed) {
@@ -1085,14 +1098,19 @@ export class PollTaskRunner {
     input: PollBatchTaskInput,
     commentId: number,
     body: string,
+    repliesBefore?: GitHubReviewComment[],
   ): Promise<number> {
-    const repliesBefore = await this.deps.github.listReviewComments(
-      input.repoFullName,
-      input.prNumber,
-    );
-    const existingReply = repliesBefore.find((c) => c.inReplyToId === commentId);
-    if (existingReply) {
-      return existingReply.id;
+    if (repliesBefore !== undefined) {
+      const existingReply = repliesBefore.find((c) => c.inReplyToId === commentId);
+      if (existingReply) {
+        return existingReply.id;
+      }
+    } else {
+      const replies = await this.deps.github.listReviewComments(input.repoFullName, input.prNumber);
+      const existingReply = replies.find((c) => c.inReplyToId === commentId);
+      if (existingReply) {
+        return existingReply.id;
+      }
     }
 
     const newReply = await this.deps.github.replyToReviewComment(
