@@ -98,7 +98,10 @@ function findDirectImports(
   fileContents: Readonly<Record<string, string>>,
 ): string[] {
   const imports: string[] = [];
-  const normalizedTarget = targetFilePath.replace(/^\.\//, '').replace(/\.ts$/, '');
+  const normalizedTarget = targetFilePath
+    .replace(/^\.\//, '')
+    .replace(/\.ts$/, '')
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   for (const file of trackedFiles) {
     if (file === targetFilePath) continue;
@@ -129,7 +132,8 @@ function findDeterministicCallers(
 
   if (!targetName) return callers;
 
-  const callerPattern = new RegExp(`\\b${targetName}[.\\w]\\b`, 'g');
+  const escapedTargetName = targetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const callerPattern = new RegExp(`\\b${escapedTargetName}[.\\w]\\b`, 'g');
 
   for (const file of trackedFiles) {
     if (file === targetFilePath) continue;
@@ -217,7 +221,7 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
         }
       }
 
-      if (fileLines && (attempt === 1 || !fileContent)) {
+      if (fileLines && !fileContent) {
         const context = extractBoundedSourceContext(fileLines, comment.line, BOUNDED_CONTEXT_SIZE);
         sections.push({
           kind: 'source',
@@ -262,6 +266,105 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
     }
   }
 
+  if (attempt === 1) {
+    return {
+      level: attempt,
+      sections,
+      includedFiles: Array.from(includedFiles),
+      includedHunks: Array.from(includedHunks),
+      includedSymbols: Array.from(includedSymbols),
+      fullDiffIncluded: false,
+    };
+  }
+
+  for (const filePath of includedFiles) {
+    const fileContent = snapshot.fileContents[filePath];
+    if (fileContent) {
+      sections.push({
+        kind: 'source',
+        path: filePath,
+        content: fileContent,
+      });
+    }
+  }
+
+  const relatedImportFiles = new Set<string>();
+  const relatedCallerFiles = new Set<string>();
+
+  for (const filePath of includedFiles) {
+    const directImports = findDirectImports(filePath, snapshot.trackedFiles, snapshot.fileContents);
+    for (const importFile of directImports) {
+      relatedImportFiles.add(importFile);
+    }
+
+    const deterministicCallers = findDeterministicCallers(
+      filePath,
+      snapshot.trackedFiles,
+      snapshot.fileContents,
+    );
+    for (const callerFile of deterministicCallers) {
+      relatedCallerFiles.add(callerFile);
+    }
+  }
+
+  for (const importFile of relatedImportFiles) {
+    const fileContent = snapshot.fileContents[importFile];
+    if (fileContent) {
+      sections.push({
+        kind: 'source',
+        path: importFile,
+        content: `Direct import: ${importFile}\n\n${fileContent}`,
+      });
+      includedFiles.add(importFile);
+    }
+  }
+
+  for (const callerFile of relatedCallerFiles) {
+    if (relatedImportFiles.has(callerFile)) continue;
+    const fileContent = snapshot.fileContents[callerFile];
+    if (fileContent) {
+      sections.push({
+        kind: 'source',
+        path: callerFile,
+        content: `Deterministic caller: ${callerFile}\n\n${fileContent}`,
+      });
+      includedFiles.add(callerFile);
+    }
+  }
+
+  if (attempt === 2) {
+    return {
+      level: attempt,
+      sections,
+      includedFiles: Array.from(includedFiles),
+      includedHunks: Array.from(includedHunks),
+      includedSymbols: Array.from(includedSymbols),
+      fullDiffIncluded: false,
+    };
+  }
+
+  let relatedDiffCharCount = 0;
+  for (const filePath of snapshot.changedFiles) {
+    if (relatedDiffCharCount > RELATED_DIFF_CHAR_BUDGET) break;
+    if (includedFiles.has(filePath)) continue;
+    const parsedHunks = parsed.hunks.get(filePath);
+    if (parsedHunks) {
+      for (const hunk of parsedHunks) {
+        if (relatedDiffCharCount + hunk.body.length > RELATED_DIFF_CHAR_BUDGET) {
+          break;
+        }
+        sections.push({
+          kind: 'related-diff',
+          path: filePath,
+          lineStart: hunk.newStart,
+          lineEnd: hunk.newStart + hunk.newLines - 1,
+          content: hunk.body,
+        });
+        relatedDiffCharCount += hunk.body.length;
+      }
+    }
+  }
+
   const anyExplicitGlobal = comments.some((c) => isExplicitGlobalScopeRequest(c.body));
 
   if (anyExplicitGlobal) {
@@ -294,112 +397,6 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
       fullDiffIncluded: true,
       fallbackReason: 'no_bounded_context',
     };
-  }
-
-  if (attempt === 1) {
-    return {
-      level: attempt,
-      sections,
-      includedFiles: Array.from(includedFiles),
-      includedHunks: Array.from(includedHunks),
-      includedSymbols: Array.from(includedSymbols),
-      fullDiffIncluded: false,
-    };
-  }
-
-  if (attempt >= 2) {
-    for (const filePath of includedFiles) {
-      const fileContent = snapshot.fileContents[filePath];
-      if (fileContent) {
-        sections.push({
-          kind: 'source',
-          path: filePath,
-          content: fileContent,
-        });
-      }
-    }
-
-    if (attempt === 2) {
-      const relatedImportFiles = new Set<string>();
-      const relatedCallerFiles = new Set<string>();
-
-      for (const filePath of includedFiles) {
-        const directImports = findDirectImports(
-          filePath,
-          snapshot.trackedFiles,
-          snapshot.fileContents,
-        );
-        for (const importFile of directImports) {
-          relatedImportFiles.add(importFile);
-        }
-
-        const deterministicCallers = findDeterministicCallers(
-          filePath,
-          snapshot.trackedFiles,
-          snapshot.fileContents,
-        );
-        for (const callerFile of deterministicCallers) {
-          relatedCallerFiles.add(callerFile);
-        }
-      }
-
-      for (const importFile of relatedImportFiles) {
-        const fileContent = snapshot.fileContents[importFile];
-        if (fileContent) {
-          sections.push({
-            kind: 'source',
-            path: importFile,
-            content: `Direct import: ${importFile}\n\n${fileContent}`,
-          });
-          includedFiles.add(importFile);
-        }
-      }
-
-      for (const callerFile of relatedCallerFiles) {
-        if (relatedImportFiles.has(callerFile)) continue;
-        const fileContent = snapshot.fileContents[callerFile];
-        if (fileContent) {
-          sections.push({
-            kind: 'source',
-            path: callerFile,
-            content: `Deterministic caller: ${callerFile}\n\n${fileContent}`,
-          });
-          includedFiles.add(callerFile);
-        }
-      }
-
-      return {
-        level: attempt,
-        sections,
-        includedFiles: Array.from(includedFiles),
-        includedHunks: Array.from(includedHunks),
-        includedSymbols: Array.from(includedSymbols),
-        fullDiffIncluded: false,
-      };
-    }
-  }
-
-  if (attempt >= 3) {
-    let relatedDiffCharCount = 0;
-    for (const filePath of snapshot.changedFiles) {
-      if (includedFiles.has(filePath)) continue;
-      const parsedHunks = parsed.hunks.get(filePath);
-      if (parsedHunks) {
-        for (const hunk of parsedHunks) {
-          if (relatedDiffCharCount + hunk.body.length > RELATED_DIFF_CHAR_BUDGET) {
-            break;
-          }
-          sections.push({
-            kind: 'related-diff',
-            path: filePath,
-            lineStart: hunk.newStart,
-            lineEnd: hunk.newStart + hunk.newLines - 1,
-            content: hunk.body,
-          });
-          relatedDiffCharCount += hunk.body.length;
-        }
-      }
-    }
   }
 
   return {
