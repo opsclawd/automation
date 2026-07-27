@@ -377,7 +377,11 @@ export class ImplementHandler implements PhaseHandler {
                 for (const cmdResult of validationResult) {
                   if (cmdResult.outcome !== 'passed') {
                     validationsPassed = false;
-                    verificationError = `validation failed: ${cmdResult.command}`;
+                    verificationError =
+                      'validation failed: ' +
+                      cmdResult.command +
+                      '\n' +
+                      (cmdResult.stderr || cmdResult.stdout);
                     break;
                   }
                 }

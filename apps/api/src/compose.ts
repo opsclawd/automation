@@ -5433,7 +5433,8 @@ export function composeRoot(opts: ComposeOptions): Container {
                 });
                 return { ok: true };
               } catch (err) {
-                return { ok: false, error: String(err) };
+                const error = err as { stdout?: string; stderr?: string };
+                return { ok: false, error: error.stdout || error.stderr || String(err) };
               }
             },
           }),
