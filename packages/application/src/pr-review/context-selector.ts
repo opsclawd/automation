@@ -43,6 +43,7 @@ const DECLARATION_PATTERN =
   /(?:(?:export\s+)?(?:abstract\s+)?class|interface|type|function|const|let|var|enum|module|namespace)\s+(\w+)|^\s*(?:async\s+)?(?!(?:if|for|while|catch|switch|return)\b)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(|^\s*(?:async\s+)?(?!(?:if|for|while|catch|switch|return)\b)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\[|<(\w+)\s*\(/m;
 const TEST_FILE_PATTERN = /\.test\.ts$|\.spec\.ts$/;
 const BOUNDED_CONTEXT_SIZE = 20;
+const RELATED_DIFF_CHAR_BUDGET = 5000;
 
 const EXPLICIT_GLOBAL_SCOPE_PATTERNS = [
   /pr[- ]?wide|entire[- ]?pr|full[- ]?pr|all[- ]?files/i,
@@ -89,6 +90,58 @@ function findRelatedTests(symbol: string, trackedFiles: readonly string[]): stri
   }
 
   return tests;
+}
+
+function findDirectImports(
+  targetFilePath: string,
+  trackedFiles: readonly string[],
+  fileContents: Readonly<Record<string, string>>,
+): string[] {
+  const imports: string[] = [];
+  const normalizedTarget = targetFilePath.replace(/^\.\//, '').replace(/\.ts$/, '');
+
+  for (const file of trackedFiles) {
+    if (file === targetFilePath) continue;
+    const content = fileContents[file];
+    if (!content) continue;
+
+    const importRegex = new RegExp(
+      `import\\s+(?:(?:\\{[^}]*\\}|[\\w*]+)\\s+from\\s+)?['"](\\.\\/[^'"]*${normalizedTarget}|(?:\\/[^'"]*)?${normalizedTarget})['"]`,
+      'g',
+    );
+
+    if (importRegex.test(content)) {
+      imports.push(file);
+    }
+  }
+
+  return imports;
+}
+
+function findDeterministicCallers(
+  targetFilePath: string,
+  trackedFiles: readonly string[],
+  fileContents: Readonly<Record<string, string>>,
+): string[] {
+  const callers: string[] = [];
+  const targetName =
+    targetFilePath.replace(/^\.\//, '').replace(/\.ts$/, '').split('/').pop() ?? '';
+
+  if (!targetName) return callers;
+
+  const callerPattern = new RegExp(`\\b${targetName}[.\\w]\\b`, 'g');
+
+  for (const file of trackedFiles) {
+    if (file === targetFilePath) continue;
+    const content = fileContents[file];
+    if (!content) continue;
+
+    if (callerPattern.test(content)) {
+      callers.push(file);
+    }
+  }
+
+  return callers;
 }
 
 export function selectPrReviewContext(input: SelectPrReviewContextInput): SelectedPrReviewContext {
@@ -164,7 +217,7 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
         }
       }
 
-      if (fileLines) {
+      if (fileLines && (attempt === 1 || !fileContent)) {
         const context = extractBoundedSourceContext(fileLines, comment.line, BOUNDED_CONTEXT_SIZE);
         sections.push({
           kind: 'source',
@@ -227,6 +280,22 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
     };
   }
 
+  if (!hasBoundedContext) {
+    sections.push({
+      kind: 'full-diff',
+      content: snapshot.fullDiff,
+    });
+    return {
+      level: attempt,
+      sections,
+      includedFiles: Array.from(includedFiles),
+      includedHunks: Array.from(includedHunks),
+      includedSymbols: Array.from(includedSymbols),
+      fullDiffIncluded: true,
+      fallbackReason: 'no_bounded_context',
+    };
+  }
+
   if (attempt === 1) {
     return {
       level: attempt,
@@ -251,6 +320,54 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
     }
 
     if (attempt === 2) {
+      const relatedImportFiles = new Set<string>();
+      const relatedCallerFiles = new Set<string>();
+
+      for (const filePath of includedFiles) {
+        const directImports = findDirectImports(
+          filePath,
+          snapshot.trackedFiles,
+          snapshot.fileContents,
+        );
+        for (const importFile of directImports) {
+          relatedImportFiles.add(importFile);
+        }
+
+        const deterministicCallers = findDeterministicCallers(
+          filePath,
+          snapshot.trackedFiles,
+          snapshot.fileContents,
+        );
+        for (const callerFile of deterministicCallers) {
+          relatedCallerFiles.add(callerFile);
+        }
+      }
+
+      for (const importFile of relatedImportFiles) {
+        const fileContent = snapshot.fileContents[importFile];
+        if (fileContent) {
+          sections.push({
+            kind: 'source',
+            path: importFile,
+            content: `Direct import: ${importFile}\n\n${fileContent}`,
+          });
+          includedFiles.add(importFile);
+        }
+      }
+
+      for (const callerFile of relatedCallerFiles) {
+        if (relatedImportFiles.has(callerFile)) continue;
+        const fileContent = snapshot.fileContents[callerFile];
+        if (fileContent) {
+          sections.push({
+            kind: 'source',
+            path: callerFile,
+            content: `Deterministic caller: ${callerFile}\n\n${fileContent}`,
+          });
+          includedFiles.add(callerFile);
+        }
+      }
+
       return {
         level: attempt,
         sections,
@@ -263,11 +380,15 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
   }
 
   if (attempt >= 3) {
+    let relatedDiffCharCount = 0;
     for (const filePath of snapshot.changedFiles) {
       if (includedFiles.has(filePath)) continue;
       const parsedHunks = parsed.hunks.get(filePath);
       if (parsedHunks) {
         for (const hunk of parsedHunks) {
+          if (relatedDiffCharCount + hunk.body.length > RELATED_DIFF_CHAR_BUDGET) {
+            break;
+          }
           sections.push({
             kind: 'related-diff',
             path: filePath,
@@ -275,25 +396,10 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
             lineEnd: hunk.newStart + hunk.newLines - 1,
             content: hunk.body,
           });
+          relatedDiffCharCount += hunk.body.length;
         }
       }
     }
-  }
-
-  if (!hasBoundedContext) {
-    sections.push({
-      kind: 'full-diff',
-      content: snapshot.fullDiff,
-    });
-    return {
-      level: attempt,
-      sections,
-      includedFiles: Array.from(includedFiles),
-      includedHunks: Array.from(includedHunks),
-      includedSymbols: Array.from(includedSymbols),
-      fullDiffIncluded: true,
-      fallbackReason: 'no_bounded_context',
-    };
   }
 
   return {
