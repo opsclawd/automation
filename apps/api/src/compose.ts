@@ -281,7 +281,7 @@ import {
   buildPlanReviewFixPrompt,
 } from './plan-review-prompts.js';
 import {
-  POST_PR_REVIEW_COMMIT_POLICY,
+  getPostPrReviewCommitPolicy,
   WORKSPACE_CONSTRAINTS,
   type SelectedPrReviewContext,
   type SelectedPrReviewContextSection,
@@ -1385,7 +1385,7 @@ export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptIn
   }
 
   sections.push(
-    POST_PR_REVIEW_COMMIT_POLICY,
+    getPostPrReviewCommitPolicy(false),
     '',
     '## Required Output',
     '',
@@ -1426,7 +1426,7 @@ function renderContextSection(section: SelectedPrReviewContextSection): string {
     case 'summary':
       return `## Context Summary\n\n${section.content}`;
     case 'hunk':
-      return `## Hunk: ${section.path}:${section.lineStart}-${section.lineEnd}\n\n${section.content}`;
+      return `## Hunk: ${section.path}:${section.lineStart}-${section.lineEnd}\n\n\`\`\`diff\n${section.content}\n\`\`\``;
     case 'source':
       return `## Source: ${section.path}${section.lineStart != null ? `:${section.lineStart}` : ''}\n\n\`\`\`\n${section.content}\n\`\`\``;
     case 'symbol':
@@ -1488,7 +1488,7 @@ export function buildPostPrReviewBatchPrompt(input: BuildPostPrReviewBatchPrompt
     }
   }
 
-  sections.push(POST_PR_REVIEW_COMMIT_POLICY, '');
+  sections.push(getPostPrReviewCommitPolicy(true), '');
 
   if (previousBuildError !== undefined) {
     const truncatedError =
@@ -1531,22 +1531,29 @@ export function buildPostPrReviewBatchPrompt(input: BuildPostPrReviewBatchPrompt
     '',
   );
 
-  const dispositionsByCommentId = new Map<number, (typeof dispositions)[0]>();
+  const dispositionsByCommentId = new Map<number, Array<(typeof dispositions)[0]>>();
   for (const d of dispositions) {
-    dispositionsByCommentId.set(d.commentId, d);
+    const existing = dispositionsByCommentId.get(d.commentId);
+    if (existing) {
+      existing.push(d);
+    } else {
+      dispositionsByCommentId.set(d.commentId, [d]);
+    }
   }
 
   if (dispositions.length > 0) {
     sections.push('## Prior Dispositions', '');
     for (const comment of comments) {
-      const disp = dispositionsByCommentId.get(comment.commentId);
-      if (disp) {
-        sections.push(
-          `### commentId: ${comment.commentId}`,
-          `- disposition: ${disp.disposition}`,
-          `- reason: ${disp.reason ?? 'no reason'}`,
-          '',
-        );
+      const disps = dispositionsByCommentId.get(comment.commentId);
+      if (disps && disps.length > 0) {
+        sections.push(`### commentId: ${comment.commentId}`);
+        for (const disp of disps) {
+          sections.push(
+            `- disposition: ${disp.disposition}`,
+            `  reason: ${disp.reason ?? 'no reason'}`,
+          );
+        }
+        sections.push('');
       }
     }
   }

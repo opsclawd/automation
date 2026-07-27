@@ -4,9 +4,13 @@ Your working directory is a dedicated git worktree with the repository's complet
 
 .ai-orchestrator.local.json, if one exists, lives only in the main checkout and is intentionally not copied into your worktree — it is operator-machine-specific and not part of your task. Do not search for it or read it outside this directory. Reason about configuration using only .ai-orchestrator.json in your own working directory; treat it as the effective config for your task.`;
 
-export const POST_PR_REVIEW_COMMIT_POLICY = `## Instructions
+export function getPostPrReviewCommitPolicy(isBatch: boolean): string {
+  const subject = isBatch ? 'these comments' : 'this comment';
+  const verb = isBatch ? 'are' : 'is';
+  const readSubject = isBatch ? 'the comments' : 'the comment';
+  return `## Instructions
 
-Make a judgement call: are these comments technically valid?
+Make a judgement call: ${verb} ${subject} technically valid?
 
 If code changes are required:
 1. Edit the relevant source files
@@ -21,7 +25,7 @@ If code changes are required:
       \`[ -z "$(git status --porcelain)" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }\`
 3. Do NOT push. The orchestrator will push only after validation passes.
 
-If comments are invalid, include your reasoning in replyBody.
+If ${isBatch ? 'comments are' : 'the comment is'} invalid, include your reasoning in replyBody.
 
 IMPORTANT: Do NOT post replies yourself. The orchestrator handles posting.
 IMPORTANT: Do NOT push to any remote branch.
@@ -34,4 +38,5 @@ IMPORTANT: Do NOT push to any remote branch.
 - Do NOT run npm/pnpm/yarn/bun install or any package manager commands
 - Do NOT verify your fix - the orchestrator handles all verification deterministically
 
-Your ONLY responsibility is: read the comments, make code changes (if needed), commit the changes locally (verifying HEAD advanced), write your output, and stop immediately.`;
+Your ONLY responsibility is: read ${readSubject}, make code changes (if needed), commit the changes locally (verifying HEAD advanced), write your output, and stop immediately.`;
+}
