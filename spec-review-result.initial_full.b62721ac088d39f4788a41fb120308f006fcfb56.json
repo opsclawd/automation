@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "The `buildPostPrReviewBatchPrompt` function completely omits the critical git commit instructions, HEAD verification steps (`PRE_HEAD`), and shell command restrictions (`CRITICAL: Do NOT run...`) present in the single-comment prompt, violating the plan's requirement to 'Reuse the existing workspace and commit contract strings; do not duplicate shell policy'.",
+      "file": "apps/api/src/compose.ts",
+      "suggested_fix": "Extract the commit instructions and shell command restrictions ('## Instructions' and 'CRITICAL: Do NOT run...') from `buildPostPrReviewTaskPrompt` into a shared constant and include it in `buildPostPrReviewBatchPrompt` to ensure the agent correctly commits code and avoids running forbidden commands."
+    }
+  ]
+}

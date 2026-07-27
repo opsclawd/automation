@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "executeBatch double-verifies the build and LLM code changes: first atomically before push, and then again redundantly inside the verifyComment call for each comment, causing severe performance degradation and risk of post-push flaky failures.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "Modify the verifyComment invocation inside executeBatch to skip mechanical build and LLM checks (e.g., by omitting them from the deps object passed to it), or extract structural reply-verification logic out of verifyComment entirely."
+    },
+    {
+      "severity": "P2",
+      "summary": "The global catch block in executeBatch unconditionally performs a git reset --hard locally, even if the commit has already been successfully pushed to the remote.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "Track whether `git push` has succeeded (e.g., `let pushed = false;`) and only call `this.resetBatch(input)` in the catch block if `!pushed`. A local hard reset after a remote push creates a divergent git state that breaks subsequent retries."
+    }
+  ]
+}

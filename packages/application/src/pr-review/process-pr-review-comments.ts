@@ -135,6 +135,14 @@ export interface ProcessPrReviewOutput {
 
 const ESCALATION_BUDGET = 3;
 
+export interface ReviewBatchWorkItem {
+  readonly commentIds: readonly number[];
+  readonly attempt: 1 | 2 | 3;
+  readonly batchStartSha: string;
+  readonly previousBuildErrors: Readonly<Record<number, string>>;
+  readonly previousVerifierReasons: Readonly<Record<number, string>>;
+}
+
 export class ProcessPrReviewComments {
   constructor(private readonly deps: ProcessPrReviewDeps) {}
 
@@ -232,320 +240,497 @@ export class ProcessPrReviewComments {
     // diff fetch and the attempt-1 diff fetch are not duplicated when HEAD has
     // not moved between the two.
     let cachedFirstDiff: string | undefined = initialDiff;
-    let isFirstBatchIteration = true;
 
-    const useBatching = d.renderBatchTaskPrompt && d.extractBatchTaskResult && d.contextSource;
-    let forceNoBatch = false;
+    const useBatching = Boolean(d.renderBatchTaskPrompt && d.extractBatchTaskResult);
 
+    // Build initial FIFO work queue from manifest batches
+    const workQueue: ReviewBatchWorkItem[] = [];
     for (const batch of manifest.tasks) {
-      // Re-read live state: a comment may have been resolved or blocked since the
-      // manifest was built (e.g. by a prior poll's orphan verification). Only
-      // process comments that are still pending. (M2)
       const batchComments = batch.comments
         .map((c) => d.prReviewRepo.getComment(input.runId, c.commentId))
         .filter((c): c is PrReviewComment => c !== undefined && c.state === 'pending');
       if (batchComments.length === 0) continue;
 
-      if (!isFirstBatchIteration) {
-        runningStartSha = await d.git.headCommitSha(input.cwd);
-      }
-      isFirstBatchIteration = false;
+      workQueue.push({
+        commentIds: batchComments.map((c) => c.commentId),
+        attempt: 1,
+        batchStartSha: runningStartSha,
+        previousBuildErrors: {},
+        previousVerifierReasons: {},
+      });
+    }
 
-      let previousBuildError: string | undefined;
-      let previousCodeVerifyReason: string | undefined;
+    // Process FIFO work queue
+    while (workQueue.length > 0) {
+      const workItem = workQueue.shift()!;
+      const {
+        commentIds,
+        attempt,
+        batchStartSha: itemBatchStartSha,
+        previousBuildErrors,
+        previousVerifierReasons,
+      } = workItem;
 
-      for (let attempt = 1; attempt <= ESCALATION_BUDGET; attempt++) {
-        // Re-check live state at each attempt
-        const currentBatchComments = batchComments
-          .map((c) => d.prReviewRepo.getComment(input.runId, c.commentId))
-          .filter((c): c is PrReviewComment => c !== undefined && c.state === 'pending');
-        if (currentBatchComments.length === 0) break;
+      // Re-read live HEAD at start of work item
+      const itemLiveStartSha =
+        attempt === 1 && cachedFirstDiff !== undefined
+          ? runningStartSha
+          : await d.git.headCommitSha(input.cwd);
+      runningStartSha = itemLiveStartSha;
 
-        const previousAttempts = currentBatchComments.flatMap((c) =>
-          d.prReviewRepo.listCommentAttempts(input.runId, c.commentId),
-        );
+      const activeBatchStartSha = attempt === 1 ? itemLiveStartSha : itemBatchStartSha;
 
-        let currentDiff: string;
-        try {
-          if (attempt === 1) {
-            if (cachedFirstDiff !== undefined) {
-              currentDiff = cachedFirstDiff;
-              cachedFirstDiff = undefined;
-            } else {
-              currentDiff = await d.git.diff(input.cwd, 'origin/HEAD', runningStartSha);
-            }
+      // Re-read live state for these comment IDs
+      const currentComments = commentIds
+        .map((id) => d.prReviewRepo.getComment(input.runId, id))
+        .filter((c): c is PrReviewComment => c !== undefined && c.state === 'pending');
+      if (currentComments.length === 0) continue;
+
+      // Gather previous attempts for all comments in this work item
+      const previousAttempts = currentComments.flatMap((c) =>
+        d.prReviewRepo.listCommentAttempts(input.runId, c.commentId),
+      );
+
+      // Generate diff
+      let currentDiff: string;
+      try {
+        if (attempt === 1) {
+          if (cachedFirstDiff !== undefined) {
+            currentDiff = cachedFirstDiff;
+            cachedFirstDiff = undefined;
           } else {
-            const lastCompletedAttempt = previousAttempts
-              .filter((a) => a.completedHead)
-              .sort((a, b) => b.retryNumber - a.retryNumber)[0];
-            if (!lastCompletedAttempt || !lastCompletedAttempt.completedHead) {
-              throw new Error(`Missing completedHead snapshot for retry attempt ${attempt}`);
-            }
-            currentDiff = await d.git.diff(
-              input.cwd,
-              lastCompletedAttempt.completedHead,
-              runningStartSha,
-            );
+            currentDiff = await d.git.diff(input.cwd, 'origin/HEAD', itemLiveStartSha);
           }
-        } catch (error: unknown) {
-          const reason = `Diff generation failed: ${error instanceof Error ? error.message : String(error)}`;
-          for (const c of currentBatchComments) {
-            d.prReviewRepo.upsertComment(blockComment(c, reason));
-          }
-          taskResults.push(
-            ...currentBatchComments.map((c) => ({
-              commentId: c.commentId,
-              action: 'failed' as const,
-              processed: false,
-              blocked: true,
-            })),
-          );
-          break;
+        } else {
+          currentDiff = await d.git.diff(input.cwd, 'origin/HEAD', itemLiveStartSha);
         }
+      } catch (error: unknown) {
+        const reason = `Diff generation failed: ${error instanceof Error ? error.message : String(error)}`;
+        for (const c of currentComments) {
+          d.prReviewRepo.upsertComment(blockComment(c, reason));
+        }
+        taskResults.push(
+          ...currentComments.map((c) => ({
+            commentId: c.commentId,
+            action: 'failed' as const,
+            processed: false,
+            blocked: true,
+          })),
+        );
+        continue;
+      }
 
-        const dispositions = previousAttempts.map((a) => {
-          const item: {
-            commentId: number;
-            fingerprint: string;
-            disposition: string;
-            reason?: string;
-          } = {
-            commentId: a.commentId,
-            fingerprint: a.attemptId,
-            disposition: String(a.disposition ?? 'failure'),
-          };
-          const r = a.verifierFeedback ?? a.buildFeedback;
-          if (r !== undefined) {
-            item.reason = r;
-          }
-          return item;
-        });
+      // Build per-comment dispositions map
+      const dispositions = previousAttempts.map((a) => {
+        const item: {
+          commentId: number;
+          fingerprint: string;
+          disposition: string;
+          reason?: string;
+        } = {
+          commentId: a.commentId,
+          fingerprint: a.attemptId,
+          disposition: String(a.disposition ?? 'failure'),
+        };
+        const r = a.verifierFeedback ?? a.buildFeedback;
+        if (r !== undefined) {
+          item.reason = r;
+        }
+        return item;
+      });
 
-        const reviewMode: PostPrReviewAttemptMode =
-          attempt === 1 ? 'initial_full' : 'intermediate_delta';
+      const reviewMode: PostPrReviewAttemptMode =
+        attempt === 1 ? 'initial_full' : 'intermediate_delta';
 
-        let context: SelectedPrReviewContext | undefined;
-        if (useBatching && !forceNoBatch) {
+      const perCommentBuildErrors: Record<number, string> = { ...previousBuildErrors };
+      const perCommentVerifierReasons: Record<number, string> = { ...previousVerifierReasons };
+
+      for (const output of taskResults) {
+        if (output.buildError !== undefined) {
+          perCommentBuildErrors[output.commentId] = output.buildError;
+        }
+        if (output.codeVerifyReason !== undefined) {
+          perCommentVerifierReasons[output.commentId] = output.codeVerifyReason;
+        }
+      }
+
+      if (useBatching) {
+        let context: SelectedPrReviewContext;
+        const contextLevel = Math.min(
+          attempt,
+          3,
+        ) as import('./context-selector.js').PrReviewContextLevel;
+
+        if (d.contextSource) {
           try {
-            const snapshot = await d.contextSource!({
+            const snapshot = await d.contextSource({
               cwd: input.cwd,
               base: 'origin/HEAD',
-              head: runningStartSha,
-              seedPaths: currentBatchComments.map((c) => c.path),
+              head: itemLiveStartSha,
+              seedPaths: Array.from(new Set(currentComments.map((c) => c.path))),
             });
 
+            const buildErrorsArray = currentComments
+              .map((c) => perCommentBuildErrors[c.commentId])
+              .filter((e): e is string => Boolean(e));
+            const verifierReasonsArray = currentComments
+              .map((c) => perCommentVerifierReasons[c.commentId])
+              .filter((r): r is string => Boolean(r));
+
             context = selectPrReviewContext({
-              comments: currentBatchComments,
-              attempt: Math.min(attempt, 3) as import('./context-selector.js').PrReviewContextLevel,
+              comments: currentComments,
+              attempt: contextLevel,
               snapshot,
-              previousBuildErrors: previousBuildError !== undefined ? [previousBuildError] : [],
-              previousVerifierReasons:
-                previousCodeVerifyReason !== undefined ? [previousCodeVerifyReason] : [],
+              previousBuildErrors: buildErrorsArray,
+              previousVerifierReasons: verifierReasonsArray,
             });
           } catch (error: unknown) {
-            forceNoBatch = true;
             d.onWarning?.(
               'context selection failed; falling back to per-comment processing',
               { reason: error instanceof Error ? error.message : String(error) },
               String(input.runId),
             );
+            context = {
+              level: contextLevel,
+              sections: [],
+              includedFiles: Array.from(new Set(currentComments.map((c) => c.path))),
+              includedHunks: [],
+              includedSymbols: [],
+              fullDiffIncluded: false,
+            };
+          }
+        } else {
+          context = {
+            level: contextLevel,
+            sections: [],
+            includedFiles: Array.from(new Set(currentComments.map((c) => c.path))),
+            includedHunks: [],
+            includedSymbols: [],
+            fullDiffIncluded: false,
+          };
+        }
+
+        d.onContextSelected?.({
+          level: context.level,
+          commentIds: currentComments.map((c) => c.commentId),
+          includedFiles: context.includedFiles,
+          includedHunks: context.includedHunks,
+          includedSymbols: context.includedSymbols,
+          fullDiffIncluded: context.fullDiffIncluded,
+          ...(context.fallbackReason !== undefined
+            ? { fallbackReason: context.fallbackReason }
+            : {}),
+        });
+
+        const firstCommentId = currentComments[0]?.commentId;
+        const batchPreviousBuildError =
+          firstCommentId !== undefined ? perCommentBuildErrors[firstCommentId] : undefined;
+        const batchPreviousVerifierReason =
+          firstCommentId !== undefined ? perCommentVerifierReasons[firstCommentId] : undefined;
+
+        let batchResult: PollBatchTaskOutput;
+        try {
+          batchResult = await taskRunner.executeBatch({
+            ...input,
+            comments: currentComments,
+            diff: currentDiff,
+            branch: pr.headRefName,
+            startCommitSha: itemLiveStartSha,
+            originalStartCommitSha: originalStartCommitSha,
+            unresolvedCommentCount: unresolved.length,
+            ...(batchPreviousBuildError !== undefined
+              ? { previousBuildError: batchPreviousBuildError }
+              : {}),
+            ...(batchPreviousVerifierReason !== undefined
+              ? { previousCodeVerifyReason: batchPreviousVerifierReason }
+              : {}),
+            reviewMode,
+            retryNumber: attempt,
+            dispositions,
+            contextLevel: context.level,
+            contextFiles: [...context.includedFiles],
+            fullDiffIncluded: context.fullDiffIncluded,
+            selectedContext: context,
+          });
+        } catch {
+          batchResult = {
+            outputs: currentComments.map((c) => ({
+              commentId: c.commentId,
+              action: 'failed' as const,
+              processed: false,
+              blocked: false,
+            })),
+            retryDisposition: currentComments.length > 1 ? 'split' : undefined,
+          };
+        }
+
+        taskResults.push(...batchResult.outputs);
+
+        for (const output of batchResult.outputs) {
+          if (output.buildError !== undefined) {
+            perCommentBuildErrors[output.commentId] = output.buildError;
+          }
+          if (output.codeVerifyReason !== undefined) {
+            perCommentVerifierReasons[output.commentId] = output.codeVerifyReason;
           }
         }
 
-        if (useBatching && !forceNoBatch && context) {
-          d.onContextSelected?.({
-            level: context.level,
-            commentIds: currentBatchComments.map((c) => c.commentId),
-            includedFiles: context.includedFiles,
-            includedHunks: context.includedHunks,
-            includedSymbols: context.includedSymbols,
-            fullDiffIncluded: context.fullDiffIncluded,
-            ...(context.fallbackReason !== undefined
-              ? { fallbackReason: context.fallbackReason }
-              : {}),
-          });
+        const allDone = batchResult.outputs.every(
+          (o) => o.processed || o.blocked || o.action === 'no_fix',
+        );
+        if (allDone) {
+          runningStartSha = await d.git.headCommitSha(input.cwd);
+          continue;
+        }
 
-          let batchResult: PollBatchTaskOutput;
+        // Split multi-comment batch failure into singletons at next attempt
+        if (batchResult.retryDisposition === 'split' && attempt < ESCALATION_BUDGET) {
+          for (const comment of currentComments) {
+            const commentOutput = batchResult.outputs.find(
+              (o) => o.commentId === comment.commentId,
+            );
+            if (
+              commentOutput &&
+              !commentOutput.processed &&
+              !commentOutput.blocked &&
+              commentOutput.action !== 'no_fix'
+            ) {
+              workQueue.push({
+                commentIds: [comment.commentId],
+                attempt: (attempt + 1) as 1 | 2 | 3,
+                batchStartSha: itemBatchStartSha,
+                previousBuildErrors: { ...perCommentBuildErrors },
+                previousVerifierReasons: { ...perCommentVerifierReasons },
+              });
+            }
+          }
+          runningStartSha = await d.git.headCommitSha(input.cwd);
+          continue;
+        }
+
+        // Singleton retry at next attempt
+        if (currentComments.length === 1 && attempt < ESCALATION_BUDGET) {
+          const comment = currentComments[0]!;
+          const commentOutput = batchResult.outputs.find((o) => o.commentId === comment.commentId);
+          if (
+            commentOutput &&
+            !commentOutput.processed &&
+            !commentOutput.blocked &&
+            commentOutput.action !== 'no_fix'
+          ) {
+            workQueue.push({
+              commentIds: [comment.commentId],
+              attempt: (attempt + 1) as 1 | 2 | 3,
+              batchStartSha: itemBatchStartSha,
+              previousBuildErrors: { ...perCommentBuildErrors },
+              previousVerifierReasons: { ...perCommentVerifierReasons },
+            });
+          }
+          runningStartSha = await d.git.headCommitSha(input.cwd);
+          continue;
+        }
+
+        // Attempt budget exhausted (attempt === ESCALATION_BUDGET)
+        if (attempt === ESCALATION_BUDGET) {
+          const unresolvedOutputs = batchResult.outputs.filter(
+            (o) => !o.processed && !o.blocked && o.action !== 'no_fix',
+          );
+
+          for (const output of unresolvedOutputs) {
+            const comment = currentComments.find((c) => c.commentId === output.commentId);
+            if (!comment) continue;
+            let fallbackReason = `task failed after ${ESCALATION_BUDGET} attempts`;
+            if (output.codeVerifyReason !== undefined) {
+              fallbackReason = `verified incorrect: ${output.codeVerifyReason}`;
+            } else if (output.buildError !== undefined) {
+              fallbackReason = `code verified correct but build failing: ${output.buildError}`;
+            }
+            d.prReviewRepo.upsertComment(blockComment(comment, fallbackReason));
+            output.blocked = true;
+          }
+
+          if (unresolvedOutputs.length > 0) {
+            const rollbackOk = await d.rollbackFix?.(
+              { cwd: input.cwd, branch: pr.headRefName },
+              activeBatchStartSha,
+            );
+            if (rollbackOk === false) {
+              d.onWarning?.(
+                'rollbackFix failed: broken commits may remain on remote branch',
+                { branch: pr.headRefName, cwd: input.cwd, targetSha: activeBatchStartSha },
+                String(input.runId),
+              );
+            }
+          }
+          runningStartSha = await d.git.headCommitSha(input.cwd);
+          continue;
+        }
+      } else {
+        // Singleton processing path (single comment)
+        for (const currentComment of currentComments) {
+          let context: SelectedPrReviewContext | undefined;
+          const contextLevel = Math.min(
+            attempt,
+            3,
+          ) as import('./context-selector.js').PrReviewContextLevel;
+
+          const commentPreviousBuildError = perCommentBuildErrors[currentComment.commentId];
+          const commentPreviousVerifierReason = perCommentVerifierReasons[currentComment.commentId];
+
+          if (d.contextSource) {
+            try {
+              const snapshot = await d.contextSource({
+                cwd: input.cwd,
+                base: 'origin/HEAD',
+                head: itemLiveStartSha,
+                seedPaths: [currentComment.path],
+              });
+
+              context = selectPrReviewContext({
+                comments: [currentComment],
+                attempt: contextLevel,
+                snapshot,
+                previousBuildErrors: commentPreviousBuildError ? [commentPreviousBuildError] : [],
+                previousVerifierReasons: commentPreviousVerifierReason
+                  ? [commentPreviousVerifierReason]
+                  : [],
+              });
+            } catch (error: unknown) {
+              d.onWarning?.(
+                'context selection failed; falling back to per-comment processing',
+                { reason: error instanceof Error ? error.message : String(error) },
+                String(input.runId),
+              );
+            }
+          }
+
+          if (context) {
+            d.onContextSelected?.({
+              level: context.level,
+              commentIds: [currentComment.commentId],
+              includedFiles: context.includedFiles,
+              includedHunks: context.includedHunks,
+              includedSymbols: context.includedSymbols,
+              fullDiffIncluded: context.fullDiffIncluded,
+              ...(context.fallbackReason !== undefined
+                ? { fallbackReason: context.fallbackReason }
+                : {}),
+            });
+          }
+
+          let lastOutput: PollTaskOutput | undefined;
+          const commentPreviousAttempts = d.prReviewRepo.listCommentAttempts(
+            input.runId,
+            currentComment.commentId,
+          );
+
           try {
-            batchResult = await taskRunner.executeBatch({
+            lastOutput = await taskRunner.execute({
               ...input,
-              comments: currentBatchComments,
+              comment: currentComment,
               diff: currentDiff,
               branch: pr.headRefName,
-              startCommitSha: runningStartSha,
+              startCommitSha: itemLiveStartSha,
               originalStartCommitSha: originalStartCommitSha,
               unresolvedCommentCount: unresolved.length,
-              ...(previousBuildError !== undefined ? { previousBuildError } : {}),
-              ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
               reviewMode,
               retryNumber: attempt,
-              dispositions,
-              contextLevel: context.level,
-              contextFiles: [...context.includedFiles],
-              fullDiffIncluded: context.fullDiffIncluded,
-              selectedContext: context,
+              dispositions: commentPreviousAttempts.map((a) => {
+                const disposition = String(a.disposition ?? 'failure');
+                const reason = a.verifierFeedback ?? a.buildFeedback;
+                return {
+                  fingerprint: a.attemptId,
+                  disposition,
+                  ...(reason !== undefined ? { reason } : {}),
+                };
+              }),
+              ...(context
+                ? {
+                    contextLevel: context.level,
+                    contextFiles: [...context.includedFiles],
+                    fullDiffIncluded: context.fullDiffIncluded,
+                    selectedContext: context,
+                  }
+                : {}),
+              ...(commentPreviousBuildError !== undefined
+                ? { previousBuildError: commentPreviousBuildError }
+                : {}),
+              ...(commentPreviousVerifierReason !== undefined
+                ? { previousCodeVerifyReason: commentPreviousVerifierReason }
+                : {}),
             });
+            if (lastOutput.processed || lastOutput.blocked || lastOutput.action === 'no_fix') {
+              if (lastOutput.buildError !== undefined) {
+                perCommentBuildErrors[currentComment.commentId] = lastOutput.buildError;
+              }
+              if (lastOutput.codeVerifyReason !== undefined) {
+                perCommentVerifierReasons[currentComment.commentId] = lastOutput.codeVerifyReason;
+              }
+              runningStartSha = await d.git.headCommitSha(input.cwd);
+              taskResults.push(lastOutput);
+              continue;
+            }
           } catch {
-            batchResult = {
-              outputs: currentBatchComments.map((c) => ({
-                commentId: c.commentId,
-                action: 'failed' as const,
-                processed: false,
-                blocked: false,
-              })),
-              retryDisposition: currentBatchComments.length > 1 ? 'split' : undefined,
+            lastOutput = {
+              commentId: currentComment.commentId,
+              action: 'failed',
+              processed: false,
+              blocked: false,
             };
           }
 
-          taskResults.push(...batchResult.outputs);
-
-          if (batchResult.retryDisposition === 'split') {
-            forceNoBatch = true;
+          if (lastOutput.buildError !== undefined) {
+            perCommentBuildErrors[currentComment.commentId] = lastOutput.buildError;
+          }
+          if (lastOutput.codeVerifyReason !== undefined) {
+            perCommentVerifierReasons[currentComment.commentId] = lastOutput.codeVerifyReason;
           }
 
-          const allDone = batchResult.outputs.every(
-            (o) => o.processed || o.blocked || o.action === 'no_fix',
-          );
-          if (allDone) break;
-
-          const firstFailed = batchResult.outputs.find((o) => o.buildError);
-          if (firstFailed?.buildError) {
-            previousBuildError = firstFailed.buildError;
-          }
-          const firstFailedCode = batchResult.outputs.find((o) => o.codeVerifyReason);
-          if (firstFailedCode?.codeVerifyReason) {
-            previousCodeVerifyReason = firstFailedCode.codeVerifyReason;
-          }
-
-          if (attempt === ESCALATION_BUDGET) {
-            const unresolvedOutputs = batchResult.outputs.filter(
-              (o) => !o.processed && !o.blocked && o.action !== 'no_fix',
-            );
-            for (const output of unresolvedOutputs) {
-              const comment = currentBatchComments.find((c) => c.commentId === output.commentId);
-              if (!comment) continue;
-              let fallbackReason = `batch task failed after ${ESCALATION_BUDGET} attempts`;
-              if (output.codeVerifyReason !== undefined) {
-                fallbackReason = `verified incorrect: ${output.codeVerifyReason}`;
-              } else if (output.buildError !== undefined) {
-                fallbackReason = `code verified correct but build failing: ${output.buildError}`;
-              }
-              d.prReviewRepo.upsertComment(blockComment(comment, fallbackReason));
-              output.blocked = true;
-            }
-            if (unresolvedOutputs.length > 0) {
-              const rollbackOk = await d.rollbackFix?.(
-                { cwd: input.cwd, branch: pr.headRefName },
-                runningStartSha,
-              );
-              if (rollbackOk === false) {
-                d.onWarning?.(
-                  'rollbackFix failed: broken commits may remain on remote branch',
-                  { branch: pr.headRefName, cwd: input.cwd, targetSha: runningStartSha },
-                  String(input.runId),
-                );
-              }
-            }
-          }
-        } else {
-          for (const currentComment of currentBatchComments) {
-            let lastOutput: PollTaskOutput | undefined;
-            const commentPreviousAttempts = d.prReviewRepo.listCommentAttempts(
-              input.runId,
-              currentComment.commentId,
-            );
-            try {
-              lastOutput = await taskRunner.execute({
-                ...input,
-                comment: currentComment,
-                diff: currentDiff,
-                branch: pr.headRefName,
-                startCommitSha: runningStartSha,
-                originalStartCommitSha: originalStartCommitSha,
-                unresolvedCommentCount: unresolved.length,
-                reviewMode,
-                retryNumber: attempt,
-                dispositions: commentPreviousAttempts.map((a) => {
-                  const disposition = String(a.disposition ?? 'failure');
-                  const reason = a.verifierFeedback ?? a.buildFeedback;
-                  return {
-                    commentId: a.commentId,
-                    fingerprint: a.attemptId,
-                    disposition,
-                    ...(reason !== undefined ? { reason } : {}),
-                  };
-                }),
-                ...(previousBuildError !== undefined ? { previousBuildError } : {}),
-                ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
-              });
-              if (lastOutput.processed || lastOutput.blocked || lastOutput.action === 'no_fix') {
-                runningStartSha = await d.git.headCommitSha(input.cwd);
-                taskResults.push(lastOutput);
-                continue;
-              }
-            } catch {
-              lastOutput = {
-                commentId: currentComment.commentId,
-                action: 'failed',
-                processed: false,
-                blocked: false,
-              };
-            }
-            if (lastOutput.buildError !== undefined) {
-              previousBuildError = lastOutput.buildError;
-            }
+          if (
+            attempt === ESCALATION_BUDGET &&
+            lastOutput &&
+            !lastOutput.processed &&
+            !lastOutput.blocked
+          ) {
+            let fallbackReason = `task failed after ${ESCALATION_BUDGET} attempts`;
             if (lastOutput.codeVerifyReason !== undefined) {
-              previousCodeVerifyReason = lastOutput.codeVerifyReason;
+              fallbackReason = `verified incorrect: ${lastOutput.codeVerifyReason}`;
+            } else if (lastOutput.buildError !== undefined) {
+              fallbackReason = `code verified correct but build failing: ${lastOutput.buildError}`;
             }
-            if (
-              attempt === ESCALATION_BUDGET &&
-              lastOutput &&
-              !lastOutput.processed &&
-              !lastOutput.blocked
-            ) {
-              let fallbackReason = `task failed after ${ESCALATION_BUDGET} attempts`;
-              if (lastOutput.codeVerifyReason !== undefined) {
-                fallbackReason = `verified incorrect: ${lastOutput.codeVerifyReason}`;
-              } else if (lastOutput.buildError !== undefined) {
-                fallbackReason = `code verified correct but build failing: ${lastOutput.buildError}`;
-              }
-              d.prReviewRepo.upsertComment(blockComment(currentComment, fallbackReason));
-              const rollbackOk = await d.rollbackFix?.(
-                { cwd: input.cwd, branch: pr.headRefName },
-                runningStartSha,
-              );
-              if (rollbackOk === false) {
-                d.onWarning?.(
-                  'rollbackFix failed: broken commits may remain on remote branch',
-                  { branch: pr.headRefName, cwd: input.cwd, targetSha: runningStartSha },
-                  String(input.runId),
-                );
-              }
-              lastOutput = {
-                commentId: currentComment.commentId,
-                action: 'failed',
-                processed: false,
-                blocked: true,
-              };
-            }
-            if (lastOutput) {
-              taskResults.push(lastOutput);
-            }
-          }
-          const allDone = (() => {
-            const commentIdsInBatch = new Set(currentBatchComments.map((c) => c.commentId));
-            const resultsByComment = new Map<number, PollTaskOutput>();
-            for (const tr of taskResults) {
-              if (commentIdsInBatch.has(tr.commentId)) {
-                resultsByComment.set(tr.commentId, tr);
-              }
-            }
-            return [...resultsByComment.values()].every(
-              (o) => o.processed || o.blocked || o.action === 'no_fix',
+            d.prReviewRepo.upsertComment(blockComment(currentComment, fallbackReason));
+            const rollbackOk = await d.rollbackFix?.(
+              { cwd: input.cwd, branch: pr.headRefName },
+              activeBatchStartSha,
             );
-          })();
-          if (allDone) break;
+            if (rollbackOk === false) {
+              d.onWarning?.(
+                'rollbackFix failed: broken commits may remain on remote branch',
+                { branch: pr.headRefName, cwd: input.cwd, targetSha: activeBatchStartSha },
+                String(input.runId),
+              );
+            }
+            lastOutput = {
+              commentId: currentComment.commentId,
+              action: 'failed',
+              processed: false,
+              blocked: true,
+            };
+          } else if (attempt < ESCALATION_BUDGET) {
+            workQueue.push({
+              commentIds: [currentComment.commentId],
+              attempt: (attempt + 1) as 1 | 2 | 3,
+              batchStartSha: itemBatchStartSha,
+              previousBuildErrors: { ...perCommentBuildErrors },
+              previousVerifierReasons: { ...perCommentVerifierReasons },
+            });
+          }
+          if (lastOutput) {
+            taskResults.push(lastOutput);
+          }
         }
+
+        runningStartSha = await d.git.headCommitSha(input.cwd);
       }
     }
 

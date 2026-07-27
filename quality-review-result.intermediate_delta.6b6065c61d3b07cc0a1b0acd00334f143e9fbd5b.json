@@ -1,0 +1,35 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "Retry loop breaks because the live state filter inside the attempt loop incorrectly excludes comments in 'replied' state",
+      "file": "packages/application/src/pr-review/process-pr-review-comments.ts",
+      "suggested_fix": "Change the filter in the attempt loop to allow 'replied' state: c.state === 'pending' || c.state === 'replied'."
+    },
+    {
+      "severity": "P0",
+      "summary": "The batching execution branch is missing the ESCALATION_BUDGET fallback and rollback logic when all attempts fail",
+      "file": "packages/application/src/pr-review/process-pr-review-comments.ts",
+      "suggested_fix": "Add an attempt === ESCALATION_BUDGET check after batch execution to block unresolved comments and call rollbackFix, similar to the non-batch branch."
+    },
+    {
+      "severity": "P0",
+      "summary": "In the non-batch fallback branch, runningStartSha is not updated between comments, causing rollbackFix to erase prior successful fixes",
+      "file": "packages/application/src/pr-review/process-pr-review-comments.ts",
+      "suggested_fix": "Update runningStartSha after each successfully processed comment inside the loop, or prevent grouping comments if useBatching is false."
+    },
+    {
+      "severity": "P2",
+      "summary": "Missing test coverage for batch execution exhausting ESCALATION_BUDGET",
+      "file": "packages/application/src/pr-review/__tests__/process-pr-review-comments-batching.test.ts",
+      "suggested_fix": "Add a test case where a batch fails all attempts to verify it correctly blocks the comments and triggers rollbackFix."
+    },
+    {
+      "severity": "P3",
+      "summary": "Synchronous filesystem methods (writeFileSync, readFileSync) are used inside async port implementations",
+      "file": "apps/api/src/compose.ts",
+      "suggested_fix": "Replace writeFileSync and readFileSync with writeFile and readFile from fs/promises."
+    }
+  ]
+}

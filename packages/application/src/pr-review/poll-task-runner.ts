@@ -110,6 +110,10 @@ export interface PollTaskInput {
     disposition: string;
     reason?: string;
   }>;
+  contextLevel?: number;
+  contextFiles?: string[];
+  fullDiffIncluded?: boolean;
+  selectedContext?: SelectedPrReviewContext;
 }
 
 export interface PollTaskOutput {
@@ -222,8 +226,13 @@ export class PollTaskRunner {
         timeoutMs,
         metadata: {
           pr_review_comment_id: comment.commentId,
+          pr_review_context_level: input.contextLevel,
+          pr_review_context_files: input.contextFiles,
+          pr_review_full_diff_included: input.fullDiffIncluded,
           invocation_type:
-            input.previousBuildError || input.previousCodeVerifyReason ? 'retry' : 'initial',
+            input.previousBuildError || input.previousCodeVerifyReason || input.retryNumber > 1
+              ? 'retry'
+              : 'initial',
           review_mode: input.reviewMode,
           review_snapshot_kind: 'git',
           review_snapshot_identity: completedHeadAfterPrompt,
@@ -664,14 +673,20 @@ export class PollTaskRunner {
         startCommitSha: input.startCommitSha,
         timeoutMs,
         metadata: {
-          pr_review_batch_id: batchId,
-          pr_review_comment_ids: commentIds,
-          pr_review_comment_count: comments.length,
+          ...(comments.length === 1
+            ? { pr_review_comment_id: commentIds[0]! }
+            : {
+                pr_review_batch_id: batchId,
+                pr_review_comment_ids: commentIds,
+                pr_review_comment_count: comments.length,
+              }),
           pr_review_context_level: input.contextLevel,
           pr_review_context_files: input.contextFiles,
           pr_review_full_diff_included: input.fullDiffIncluded,
           invocation_type:
-            input.previousBuildError || input.previousCodeVerifyReason ? 'retry' : 'initial',
+            input.previousBuildError || input.previousCodeVerifyReason || input.retryNumber > 1
+              ? 'retry'
+              : 'initial',
           review_mode: input.reviewMode,
           review_snapshot_kind: 'git',
           review_snapshot_identity: currentHeadBeforeReset,

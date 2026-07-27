@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "executeBatch redundantly re-runs verifyBuildPasses and verifyCodeChange via verifyComment on already-pushed code, severely degrading performance and risking nondeterministic failures.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "Extract the remote/GitHub verification logic (verifyReplyPosted and verifyRemoteFixCommit) out of verifyComment and call only those post-push, or pass a flag to verifyComment to skip mechanical/semantic code checks if called from executeBatch."
+    },
+    {
+      "severity": "P1",
+      "summary": "ProcessPrReviewDeps lacks renderBatchTaskPrompt and extractBatchTaskResult, which will cause executeBatch to crash at runtime.",
+      "file": "packages/application/src/pr-review/process-pr-review-comments.ts",
+      "suggested_fix": "Add renderBatchTaskPrompt and extractBatchTaskResult to ProcessPrReviewDeps and provide them during instantiation in compose.ts."
+    },
+    {
+      "severity": "P2",
+      "summary": "PollTaskRunnerDeps is missing fixDiffInspector?: FixDiffInspectorPort, preventing executeBatch from performing structural diff verification atomically before pushing the batch.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "Add fixDiffInspector?: FixDiffInspectorPort to PollTaskRunnerDeps and invoke it alongside verifyCodeChange in executeBatch prior to pushing."
+    }
+  ]
+}

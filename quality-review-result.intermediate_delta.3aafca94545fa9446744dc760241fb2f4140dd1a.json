@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P2",
+      "summary": "executeBatch makes redundant O(N) network requests by calling verifyComment sequentially for each comment, which internally fetches all PR comments and remote git refs.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "Remove verifyComment from the batch loop and manually construct the VerificationResult based on the already-verified batch state, or pass cached remote/reply states to verifyComment."
+    },
+    {
+      "severity": "P3",
+      "summary": "executeBatch ignores verification.reason when a fixed comment fails verification, falling back to a generic 'verification failed' message and losing valuable debug context.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "Change attempt.verifierFeedback to use verification.reason as a fallback instead of the hardcoded string 'verification failed'."
+    },
+    {
+      "severity": "P3",
+      "summary": "executeBatch duplicates the core logic for posting replies, upserting comments, and handling verification success/failure across the 'no_fix' and 'fixed' branches.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "Extract the comment persistence and github resolution logic into a shared helper method."
+    }
+  ]
+}

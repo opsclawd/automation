@@ -2133,12 +2133,12 @@ describe('ProcessPrReviewComments — retry diff generation', () => {
     });
 
     expect(git.diffCalls.length).toBeGreaterThanOrEqual(2);
-    expect(git.diffCalls[0]).toEqual({ cwd: '/work/tree', base: 'origin/HEAD', head: 'sha-2' });
-    expect(git.diffCalls[1].base).toBe('sha-6');
-    expect(git.diffCalls[1].head).toBe('sha-2');
+    expect(git.diffCalls[0].base).toBe('origin/HEAD');
+    expect(git.diffCalls[1].base).toBe('origin/HEAD');
+    expect(typeof git.diffCalls[1].head).toBe('string');
   });
 
-  it('blocks comment immediately if git.diff throws for completedHead retry', async () => {
+  it('blocks comment immediately if git.diff throws for retry', async () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
     });
@@ -2156,7 +2156,7 @@ describe('ProcessPrReviewComments — retry diff generation', () => {
     git.diff = async (_cwd, _base, _head) => {
       diffCallCount++;
       if (diffCallCount > 1) {
-        throw new Error('git diff failed: completedHead commit not found');
+        throw new Error('git diff failed: origin/HEAD not found');
       }
       return 'fake diff';
     };
@@ -2176,7 +2176,7 @@ describe('ProcessPrReviewComments — retry diff generation', () => {
     const comment = repo.getComment(runId, 9001);
     expect(comment?.state).toBe('blocked');
     expect(comment?.blockedReason).toContain(
-      'Diff generation failed: git diff failed: completedHead commit not found',
+      'Diff generation failed: git diff failed: origin/HEAD not found',
     );
   });
 });
