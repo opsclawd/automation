@@ -495,7 +495,7 @@ export class ProcessPrReviewComments {
               splitItems.push({
                 commentIds: [comment.commentId],
                 attempt: (attempt + 1) as 1 | 2 | 3,
-                batchStartSha: undefined,
+                batchStartSha: activeBatchStartSha,
                 previousBuildErrors: { ...perCommentBuildErrors },
                 previousVerifierReasons: { ...perCommentVerifierReasons },
               });
