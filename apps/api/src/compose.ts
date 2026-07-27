@@ -1417,6 +1417,8 @@ export interface BuildPostPrReviewBatchPromptInput {
     disposition: string;
     reason?: string;
   }>;
+  previousBuildError?: string;
+  previousCodeVerifyReason?: string;
 }
 
 function renderContextSection(section: SelectedPrReviewContextSection): string {
@@ -1441,7 +1443,15 @@ function renderContextSection(section: SelectedPrReviewContextSection): string {
 }
 
 export function buildPostPrReviewBatchPrompt(input: BuildPostPrReviewBatchPromptInput): string {
-  const { cwd, comments, context, attempt, dispositions } = input;
+  const {
+    cwd,
+    comments,
+    context,
+    attempt,
+    dispositions,
+    previousBuildError,
+    previousCodeVerifyReason,
+  } = input;
   const sections: string[] = [];
 
   sections.push(
@@ -1478,9 +1488,43 @@ export function buildPostPrReviewBatchPrompt(input: BuildPostPrReviewBatchPrompt
     }
   }
 
+  sections.push(POST_PR_REVIEW_COMMIT_POLICY, '');
+
+  if (previousBuildError !== undefined) {
+    const truncatedError =
+      previousBuildError.length > 4000
+        ? previousBuildError.slice(0, 2000) +
+          '\n... (truncated) ...\n' +
+          previousBuildError.slice(-2000)
+        : previousBuildError;
+    sections.push(
+      '## Previous Attempt Failed',
+      '',
+      'The previous fix attempt failed the build with the following error:',
+      '',
+      '```',
+      truncatedError,
+      '```',
+      '',
+      'Please adjust your fix to resolve this error.',
+      '',
+    );
+  }
+
+  if (previousCodeVerifyReason !== undefined) {
+    sections.push(
+      '## Previous Fix Rejected by Code Verifier',
+      '',
+      'An independent verifier reviewed your previous fix and rejected it with this reason:',
+      '',
+      `> ${previousCodeVerifyReason}`,
+      '',
+      'Please revisit your fix with this feedback in mind before trying again.',
+      '',
+    );
+  }
+
   sections.push(
-    POST_PR_REVIEW_COMMIT_POLICY,
-    '',
     '## Comments to Address',
     '',
     ...comments.map((c) => `- [commentId: ${c.commentId}] ${c.path}:${c.line} - ${c.body}`),

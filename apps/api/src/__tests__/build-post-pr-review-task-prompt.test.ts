@@ -19,7 +19,7 @@ describe('buildPostPrReviewTaskPrompt', () => {
 
     expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain('Do NOT push');
-    expect(prompt).toContain('commit the change locally');
+    expect(prompt).toContain('commit the changes locally');
     expect(prompt).not.toContain('git push');
     expect(prompt).not.toContain('commit and push');
   });

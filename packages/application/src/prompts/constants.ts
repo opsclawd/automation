@@ -8,9 +8,9 @@ export const POST_PR_REVIEW_COMMIT_POLICY = `## Instructions
 
 Make a judgement call: are these comments technically valid?
 
-If a code change is required:
+If code changes are required:
 1. Edit the relevant source files
-2. Commit your change:
+2. Commit your changes:
    a. Record HEAD before: \`PRE_HEAD=$(git rev-parse HEAD)\`
    b. Stage and commit: \`git add -A && git commit -m "fix: address PR review feedback"\`
    c. If git commit exits non-zero, the pre-commit hook failed. Read the hook/lint
@@ -21,7 +21,7 @@ If a code change is required:
       \`[ -z "$(git status --porcelain)" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }\`
 3. Do NOT push. The orchestrator will push only after validation passes.
 
-If a comment is invalid, include your reasoning in replyBody.
+If comments are invalid, include your reasoning in replyBody.
 
 IMPORTANT: Do NOT post replies yourself. The orchestrator handles posting.
 IMPORTANT: Do NOT push to any remote branch.
@@ -34,4 +34,4 @@ IMPORTANT: Do NOT push to any remote branch.
 - Do NOT run npm/pnpm/yarn/bun install or any package manager commands
 - Do NOT verify your fix - the orchestrator handles all verification deterministically
 
-Your ONLY responsibility is: read the comments, make code changes (if needed), commit the change locally (verifying HEAD advanced), write result.json, and stop immediately.`;
+Your ONLY responsibility is: read the comments, make code changes (if needed), commit the changes locally (verifying HEAD advanced), write your output, and stop immediately.`;
