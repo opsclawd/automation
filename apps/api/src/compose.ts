@@ -6416,10 +6416,16 @@ export function composeRoot(opts: ComposeOptions): Container {
       }) => {
         const promptDir = join(baseTmpDir, 'pr-review-batch-prompt');
         mkdirSync(promptDir, { recursive: true });
-        const promptPath = join(
-          promptDir,
-          `batch-${comments.map((c) => c.commentId).join('-')}.md`,
-        );
+        const commentIdsHash = createHash('sha256')
+          .update(
+            comments
+              .map((c) => c.commentId)
+              .sort()
+              .join(','),
+          )
+          .digest('hex')
+          .slice(0, 16);
+        const promptPath = join(promptDir, `batch-${commentIdsHash}.md`);
         const content = buildPostPrReviewBatchPrompt({
           cwd,
           comments,

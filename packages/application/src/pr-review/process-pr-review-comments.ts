@@ -28,7 +28,7 @@ import {
   selectCommentsFromManifest,
 } from '../results/schemas/poll-task-manifest.js';
 import { PollTaskRunner } from './poll-task-runner.js';
-import type { PollTaskOutput } from './poll-task-runner.js';
+import type { PollTaskOutput, PollBatchTaskOutput } from './poll-task-runner.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { PrReviewContextSourcePort } from '../ports/pr-review-context-source-port.js';
 import { selectPrReviewContext, type SelectedPrReviewContext } from './context-selector.js';
@@ -229,6 +229,7 @@ export class ProcessPrReviewComments {
     let runningStartSha = startCommitSha;
 
     const useBatching = d.renderBatchTaskPrompt && d.extractBatchTaskResult && d.contextSource;
+    let forceNoBatch = false;
 
     for (const batch of manifest.tasks) {
       // Re-read live state: a comment may have been resolved or blocked since the
@@ -309,7 +310,7 @@ export class ProcessPrReviewComments {
         const reviewMode: PostPrReviewAttemptMode =
           attempt === 1 ? 'initial_full' : 'intermediate_delta';
 
-        if (useBatching) {
+        if (useBatching && !forceNoBatch) {
           const snapshot = await d.contextSource!({
             cwd: input.cwd,
             base: 'origin/HEAD',
@@ -338,26 +339,43 @@ export class ProcessPrReviewComments {
               : {}),
           });
 
-          const batchResult = await taskRunner.executeBatch({
-            ...input,
-            comments: currentBatchComments,
-            diff: currentDiff,
-            branch: pr.headRefName,
-            startCommitSha: runningStartSha,
-            originalStartCommitSha: originalStartCommitSha,
-            unresolvedCommentCount: unresolved.length,
-            ...(previousBuildError !== undefined ? { previousBuildError } : {}),
-            ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
-            reviewMode,
-            retryNumber: attempt,
-            dispositions,
-            contextLevel: context.level,
-            contextFiles: [...context.includedFiles],
-            fullDiffIncluded: context.fullDiffIncluded,
-            selectedContext: context,
-          });
+          let batchResult: PollBatchTaskOutput;
+          try {
+            batchResult = await taskRunner.executeBatch({
+              ...input,
+              comments: currentBatchComments,
+              diff: currentDiff,
+              branch: pr.headRefName,
+              startCommitSha: runningStartSha,
+              originalStartCommitSha: originalStartCommitSha,
+              unresolvedCommentCount: unresolved.length,
+              ...(previousBuildError !== undefined ? { previousBuildError } : {}),
+              ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
+              reviewMode,
+              retryNumber: attempt,
+              dispositions,
+              contextLevel: context.level,
+              contextFiles: [...context.includedFiles],
+              fullDiffIncluded: context.fullDiffIncluded,
+              selectedContext: context,
+            });
+          } catch {
+            batchResult = {
+              outputs: currentBatchComments.map((c) => ({
+                commentId: c.commentId,
+                action: 'failed' as const,
+                processed: false,
+                blocked: false,
+              })),
+              retryDisposition: currentBatchComments.length > 1 ? 'split' : undefined,
+            };
+          }
 
           taskResults.push(...batchResult.outputs);
+
+          if (batchResult.retryDisposition === 'split') {
+            forceNoBatch = true;
+          }
 
           const allDone = batchResult.outputs.every(
             (o) => o.processed || o.blocked || o.action === 'no_fix',
@@ -435,6 +453,7 @@ export class ProcessPrReviewComments {
                 ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
               });
               if (lastOutput.processed || lastOutput.blocked || lastOutput.action === 'no_fix') {
+                runningStartSha = await d.git.headCommitSha(input.cwd);
                 taskResults.push(lastOutput);
                 continue;
               }
@@ -487,9 +506,18 @@ export class ProcessPrReviewComments {
               taskResults.push(lastOutput);
             }
           }
-          const allDone = taskResults
-            .filter((tr) => currentBatchComments.some((c) => c.commentId === tr.commentId))
-            .every((o) => o.processed || o.blocked || o.action === 'no_fix');
+          const allDone = (() => {
+            const commentIdsInBatch = new Set(currentBatchComments.map((c) => c.commentId));
+            const resultsByComment = new Map<number, PollTaskOutput>();
+            for (const tr of taskResults) {
+              if (commentIdsInBatch.has(tr.commentId)) {
+                resultsByComment.set(tr.commentId, tr);
+              }
+            }
+            return [...resultsByComment.values()].every(
+              (o) => o.processed || o.blocked || o.action === 'no_fix',
+            );
+          })();
           if (allDone) break;
         }
       }

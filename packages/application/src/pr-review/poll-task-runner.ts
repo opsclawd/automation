@@ -889,23 +889,27 @@ export class PollTaskRunner {
       }
 
       let fixedVerification: VerificationResult | undefined;
+      let remoteVerification: Awaited<ReturnType<typeof verifyRemoteFixCommit>> | undefined;
       if (hasFixed) {
         await d.git.push({ cwd: input.cwd, branch: input.branch });
         pushed = true;
 
-        const remote = await verifyRemoteFixCommit(
+        remoteVerification = await verifyRemoteFixCommit(
           d,
           { cwd: input.cwd, branch: input.branch, startCommitSha: input.startCommitSha },
           fixCommitSha,
         );
-        const ok = remote.fixCommitOnRemote && remote.isNewerThanStart && remote.commitVerified;
+        const ok =
+          remoteVerification.fixCommitOnRemote &&
+          remoteVerification.isNewerThanStart &&
+          remoteVerification.commitVerified;
         fixedVerification = {
           ok,
           replyVerified: true,
-          commitVerified: remote.commitVerified,
+          commitVerified: remoteVerification.commitVerified,
           buildVerified: true,
           codeVerified: true,
-          reason: ok ? '' : remote.reason,
+          reason: ok ? '' : remoteVerification.reason,
         };
       }
 
@@ -966,11 +970,20 @@ export class PollTaskRunner {
             }),
           );
         } else if (result.action === 'fixed') {
+          const codeVerified = !verifierErrors.has(comment.commentId);
+          const perCommentVerification: VerificationResult = {
+            ok: fixedVerification!.ok,
+            replyVerified: true,
+            commitVerified: fixedVerification!.commitVerified,
+            buildVerified: fixedVerification!.buildVerified,
+            codeVerified,
+            reason: fixedVerification!.reason,
+          };
           outputs.push(
             await this.finalizeBatchReply(input, comment, attempt, result, repliesBefore, {
               outcome: 'fixed',
               commitSha: fixCommitSha,
-              verification: fixedVerification!,
+              verification: perCommentVerification,
             }),
           );
         }
