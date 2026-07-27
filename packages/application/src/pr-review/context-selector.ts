@@ -98,10 +98,12 @@ function findDirectImports(
   fileContents: Readonly<Record<string, string>>,
 ): string[] {
   const imports: string[] = [];
-  const normalizedTarget = targetFilePath
-    .replace(/^\.\//, '')
-    .replace(/\.ts$/, '')
-    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const normalizedTarget =
+    targetFilePath.replace(/^\.\//, '').replace(/\.ts$/, '').split('/').pop() ?? '';
+
+  if (!normalizedTarget) return imports;
+
+  const escapedTarget = normalizedTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   for (const file of trackedFiles) {
     if (file === targetFilePath) continue;
@@ -109,7 +111,7 @@ function findDirectImports(
     if (!content) continue;
 
     const importRegex = new RegExp(
-      `import\\s+(?:(?:\\{[^}]*\\}|[\\w*]+)\\s+from\\s+)?['"](\\.\\/[^'"]*${normalizedTarget}|(?:\\/[^'"]*)?${normalizedTarget})['"]`,
+      `import\\s+(?:(?:\\{[^}]*\\}|[\\w*]+)\\s+from\\s+)?['"](\\.\\/[^'"]*${escapedTarget}|(?:\\/[^'"]*)?${escapedTarget})['"]`,
       'g',
     );
 
@@ -132,8 +134,9 @@ function findDeterministicCallers(
 
   if (!targetName) return callers;
 
-  const escapedTargetName = targetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const callerPattern = new RegExp(`\\b${escapedTargetName}[.\\w]\\b`, 'g');
+  const camelCaseName = targetName.replace(/-_/g, (c) => c[1]!.toUpperCase());
+  const escapedTargetName = camelCaseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const callerPattern = new RegExp(`\\b${escapedTargetName}\\b`, 'g');
 
   for (const file of trackedFiles) {
     if (file === targetFilePath) continue;
@@ -221,27 +224,34 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
         }
       }
 
-      if (fileLines && !fileContent) {
-        const context = extractBoundedSourceContext(fileLines, comment.line, BOUNDED_CONTEXT_SIZE);
-        sections.push({
-          kind: 'source',
-          path: filePath,
-          lineStart: Math.max(1, comment.line - BOUNDED_CONTEXT_SIZE),
-          lineEnd: comment.line + BOUNDED_CONTEXT_SIZE,
-          content: context,
-        });
+      if (fileLines) {
         hasBoundedContext = true;
 
-        const declaration = findDeclaration(fileLines, comment.line);
-        if (declaration && !seenSymbolsForFile.has(declaration.symbol)) {
-          seenSymbolsForFile.add(declaration.symbol);
-          includedSymbols.add(declaration.symbol);
-
+        if (attempt === 1) {
+          const context = extractBoundedSourceContext(
+            fileLines,
+            comment.line,
+            BOUNDED_CONTEXT_SIZE,
+          );
           sections.push({
-            kind: 'symbol',
+            kind: 'source',
             path: filePath,
-            content: declaration.content,
+            lineStart: Math.max(1, comment.line - BOUNDED_CONTEXT_SIZE),
+            lineEnd: comment.line + BOUNDED_CONTEXT_SIZE,
+            content: context,
           });
+
+          const declaration = findDeclaration(fileLines, comment.line);
+          if (declaration && !seenSymbolsForFile.has(declaration.symbol)) {
+            seenSymbolsForFile.add(declaration.symbol);
+            includedSymbols.add(declaration.symbol);
+
+            sections.push({
+              kind: 'symbol',
+              path: filePath,
+              content: declaration.content,
+            });
+          }
         }
       }
 
