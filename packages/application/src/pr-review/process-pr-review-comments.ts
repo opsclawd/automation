@@ -567,9 +567,9 @@ export class ProcessPrReviewComments {
         }
       } else {
         // Singleton processing path (single comment)
-        let rollbackPerformedForBatch = false;
         for (const currentComment of currentComments) {
           const commentStartSha = runningStartSha;
+          const targetSha = attempt === 1 ? commentStartSha : activeBatchStartSha;
           let context: SelectedPrReviewContext | undefined;
           const contextLevel = Math.min(
             attempt,
@@ -701,19 +701,16 @@ export class ProcessPrReviewComments {
               fallbackReason = `code verified correct but build failing: ${lastOutput.buildError}`;
             }
             d.prReviewRepo.upsertComment(blockComment(currentComment, fallbackReason));
-            if (!rollbackPerformedForBatch) {
-              rollbackPerformedForBatch = true;
-              const rollbackOk = await d.rollbackFix?.(
-                { cwd: input.cwd, branch: pr.headRefName },
-                commentStartSha,
+            const rollbackOk = await d.rollbackFix?.(
+              { cwd: input.cwd, branch: pr.headRefName },
+              targetSha,
+            );
+            if (rollbackOk === false) {
+              d.onWarning?.(
+                'rollbackFix failed: broken commits may remain on remote branch',
+                { branch: pr.headRefName, cwd: input.cwd, targetSha },
+                String(input.runId),
               );
-              if (rollbackOk === false) {
-                d.onWarning?.(
-                  'rollbackFix failed: broken commits may remain on remote branch',
-                  { branch: pr.headRefName, cwd: input.cwd, targetSha: commentStartSha },
-                  String(input.runId),
-                );
-              }
             }
             lastOutput = {
               commentId: currentComment.commentId,
@@ -725,7 +722,7 @@ export class ProcessPrReviewComments {
             workQueue.unshift({
               commentIds: [currentComment.commentId],
               attempt: (attempt + 1) as 1 | 2 | 3,
-              batchStartSha: commentStartSha,
+              batchStartSha: targetSha,
               previousBuildErrors: { ...perCommentBuildErrors },
               previousVerifierReasons: { ...perCommentVerifierReasons },
             });
