@@ -45,6 +45,7 @@ export interface PollTaskRunnerDeps {
     previousCodeVerifyReason?: string;
     mode: PostPrReviewAttemptMode;
     dispositions?: Array<{
+      commentId: number;
       fingerprint: string;
       disposition: string;
       reason?: string;
@@ -137,6 +138,7 @@ export interface PollBatchTaskInput {
   reviewMode: PostPrReviewAttemptMode;
   retryNumber: number;
   dispositions?: Array<{
+    commentId: number;
     fingerprint: string;
     disposition: string;
     reason?: string;

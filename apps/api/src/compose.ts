@@ -51,6 +51,7 @@ import {
   listProcesses,
   killProcess,
   ReviewStateRepository,
+  createPrReviewContextSource,
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
@@ -83,6 +84,7 @@ import {
   applyReactivation,
   createVerifyCodeChange,
   pollTaskResultSchema,
+  pollTaskBatchResultSchema,
   ReviewFixLoop,
   ValidateFixLoop,
   FixValidateHandler,
@@ -6393,6 +6395,66 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         },
       }),
+      contextSource: createPrReviewContextSource(),
+      onContextSelected: (event) => {
+        console.warn(
+          `[post-pr-review] context_selected level=${event.level} commentIds=[${event.commentIds.join(',')}] files=[${event.includedFiles.join(',')}] fullDiffIncluded=${event.fullDiffIncluded}`,
+        );
+      },
+      renderBatchTaskPrompt: async ({
+        cwd,
+        comments,
+        diff: _diff,
+        branch: _branch,
+        mode: _mode,
+        previousBuildError,
+        previousCodeVerifyReason,
+        dispositions,
+      }) => {
+        const promptDir = join(baseTmpDir, 'pr-review-batch-prompt');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(
+          promptDir,
+          `batch-${comments.map((c) => c.commentId).join('-')}.md`,
+        );
+        const content = buildPostPrReviewBatchPrompt({
+          cwd,
+          comments,
+          context: {
+            level: 1,
+            sections: [],
+            includedFiles: comments.map((c) => c.path),
+            includedHunks: [],
+            includedSymbols: [],
+            fullDiffIncluded: false,
+          },
+          attempt: 1,
+          dispositions: dispositions ?? [],
+          ...(previousBuildError !== undefined ? { previousBuildError } : {}),
+          ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
+        });
+        writeFileSync(promptPath, content, 'utf-8');
+        return promptPath;
+      },
+      extractBatchTaskResult: async (input) => {
+        try {
+          const absPath = input.resultJsonPath
+            ? join(input.cwd, input.resultJsonPath)
+            : join(input.cwd, 'result.json');
+          const raw = readFileSync(absPath, 'utf-8');
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) {
+            return { ok: false, reason: 'invalid', detail: 'expected array' };
+          }
+          const result = pollTaskBatchResultSchema.safeParse(parsed);
+          if (!result.success) {
+            return { ok: false, reason: 'invalid', detail: result.error.message };
+          }
+          return { ok: true, result: result.data };
+        } catch (err) {
+          return { ok: false, reason: 'missing', detail: String(err) };
+        }
+      },
     });
     // Wrap the in-memory bus so poll events are persisted to the database.
     // In the detached CLI process there are no SSE subscribers, so without
