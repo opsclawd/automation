@@ -25,6 +25,8 @@ export * from './pr-review/reactivate-on-review.js';
 export * from './pr-review/apply-reactivation.js';
 export * from './pr-review/verify-code-change.js';
 export * from './pr-review/check-merge-readiness.js';
+export * from './pr-review/unified-diff.js';
+export * from './pr-review/context-selector.js';
 export * from './review-fix/types.js';
 export * from './review-fix/review-fix-loop.js';
 export * from './review-fix/review-loop-history.js';
