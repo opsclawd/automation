@@ -580,6 +580,7 @@ export class PollTaskRunner {
     const batchId = d.idFactory();
     const attemptIds: string[] = comments.map(() => d.idFactory());
     const currentHeadBeforeReset = await d.git.headCommitSha(input.cwd);
+    let pushed = false;
 
     const attempts: PrReviewCommentAttempt[] = comments.map((comment, idx) => ({
       attemptId: attemptIds[idx]!,
@@ -837,22 +838,20 @@ export class PollTaskRunner {
       if (verifierErrors.size > 0) {
         const currentHead = await d.git.headCommitSha(input.cwd);
         attempts.forEach((a) => {
-          if (verifierErrors.has(a.commentId)) {
-            a.completedHead = currentHead;
-            a.disposition = 'failure';
-            a.action = 'verify';
-            const error = verifierErrors.get(a.commentId);
-            if (error !== undefined) {
-              a.verifierFeedback = error;
-            }
-            d.prReviewRepo.updateCommentAttempt(a);
+          a.completedHead = currentHead;
+          a.disposition = 'failure';
+          a.action = 'verify';
+          const error = verifierErrors.get(a.commentId);
+          if (error !== undefined) {
+            a.verifierFeedback = error;
           }
+          d.prReviewRepo.updateCommentAttempt(a);
         });
         await this.resetBatch(input);
         return {
           outputs: attempts.map((a) => ({
             commentId: a.commentId,
-            action: verifierErrors.has(a.commentId) ? ('failed' as const) : ('fixed' as const),
+            action: 'failed' as const,
             processed: false,
             blocked: false,
             codeVerifyReason: verifierErrors.get(a.commentId),
@@ -864,6 +863,7 @@ export class PollTaskRunner {
 
       if (hasFixed) {
         await d.git.push({ cwd: input.cwd, branch: input.branch });
+        pushed = true;
       }
 
       const outputs: PollTaskOutput[] = [];
@@ -1069,7 +1069,9 @@ export class PollTaskRunner {
         a.disposition = 'failure';
         d.prReviewRepo.updateCommentAttempt(a);
       });
-      await this.resetBatch(input);
+      if (!pushed) {
+        await this.resetBatch(input);
+      }
       throw err;
     }
   }
