@@ -206,6 +206,8 @@ export async function verifyComment(
     const semanticVerifierAvailable = deps.verifyCodeChange !== undefined;
     if (!inspection.touchesPath && semanticVerifierAvailable) {
     } else if (!inspection.touchesPath) {
+      // fix commit does not touch the file at all - no code change could have occurred
+      // (no_fix replies are handled earlier, so reaching here means a fix was claimed but no diff)
       return {
         ok: false,
         replyVerified,
