@@ -567,6 +567,7 @@ export class ProcessPrReviewComments {
         }
       } else {
         // Singleton processing path (single comment)
+        let rollbackPerformedForBatch = false;
         for (const currentComment of currentComments) {
           let context: SelectedPrReviewContext | undefined;
           const contextLevel = Math.min(
@@ -699,16 +700,19 @@ export class ProcessPrReviewComments {
               fallbackReason = `code verified correct but build failing: ${lastOutput.buildError}`;
             }
             d.prReviewRepo.upsertComment(blockComment(currentComment, fallbackReason));
-            const rollbackOk = await d.rollbackFix?.(
-              { cwd: input.cwd, branch: pr.headRefName },
-              activeBatchStartSha,
-            );
-            if (rollbackOk === false) {
-              d.onWarning?.(
-                'rollbackFix failed: broken commits may remain on remote branch',
-                { branch: pr.headRefName, cwd: input.cwd, targetSha: activeBatchStartSha },
-                String(input.runId),
+            if (!rollbackPerformedForBatch) {
+              rollbackPerformedForBatch = true;
+              const rollbackOk = await d.rollbackFix?.(
+                { cwd: input.cwd, branch: pr.headRefName },
+                activeBatchStartSha,
               );
+              if (rollbackOk === false) {
+                d.onWarning?.(
+                  'rollbackFix failed: broken commits may remain on remote branch',
+                  { branch: pr.headRefName, cwd: input.cwd, targetSha: activeBatchStartSha },
+                  String(input.runId),
+                );
+              }
             }
             lastOutput = {
               commentId: currentComment.commentId,
