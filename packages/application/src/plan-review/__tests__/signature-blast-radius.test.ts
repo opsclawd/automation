@@ -639,6 +639,78 @@ describe('signature-blast-radius', () => {
       const result = evaluateSignatureBlastRadius(manifest, analyses);
       expect(result.pass).toBe(true);
     });
+
+    it('does not use same-task reference_files to cover signature callers', () => {
+      const manifest = makeManifest({
+        n: 1,
+        title: 'Change API',
+        expected_files: ['src/api.ts'],
+        reference_files: ['src/caller.ts'],
+        signature_changes: [{ declaration_file: 'src/api.ts', symbol: 'createClient' }],
+      });
+      const analyses = makeAnalysis(
+        [{ declarationFile: 'src/api.ts', symbol: 'createClient' }],
+        [[{ file: 'src/caller.ts', line: 8, column: 3, kind: 'call' }]],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(false);
+      expect(result.failures[0]?.uncoveredReferences).toEqual([
+        { file: 'src/caller.ts', line: 8, column: 3, kind: 'call' },
+      ]);
+    });
+
+    it('does not use later-task reference_files to cover signature callers', () => {
+      const manifest = makeManifest(
+        {
+          n: 1,
+          title: 'Change API',
+          expected_files: ['src/api.ts'],
+          signature_changes: [{ declaration_file: 'src/api.ts', symbol: 'createClient' }],
+        },
+        {
+          n: 2,
+          title: 'Read caller',
+          reference_files: ['src/caller.ts'],
+        },
+      );
+      const analyses = makeAnalysis(
+        [{ declarationFile: 'src/api.ts', symbol: 'createClient' }],
+        [[{ file: 'src/caller.ts', line: 8, column: 3, kind: 'call' }]],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(false);
+      expect(result.failures[0]?.uncoveredReferences).toEqual([
+        { file: 'src/caller.ts', line: 8, column: 3, kind: 'call' },
+      ]);
+    });
+
+    it('does not use earlier-task reference_files to cover a later signature change', () => {
+      const manifest = makeManifest(
+        {
+          n: 1,
+          title: 'Earlier task',
+          reference_files: ['src/caller.ts'],
+        },
+        {
+          n: 2,
+          title: 'Change API',
+          expected_files: ['src/api.ts'],
+          signature_changes: [{ declaration_file: 'src/api.ts', symbol: 'createClient' }],
+        },
+      );
+      const analyses = makeAnalysis(
+        [{ declarationFile: 'src/api.ts', symbol: 'createClient' }],
+        [[{ file: 'src/caller.ts', line: 8, column: 3, kind: 'call' }]],
+      );
+
+      const result = evaluateSignatureBlastRadius(manifest, analyses);
+      expect(result.pass).toBe(false);
+      expect(result.failures[0]?.uncoveredReferences).toEqual([
+        { file: 'src/caller.ts', line: 8, column: 3, kind: 'call' },
+      ]);
+    });
   });
 
   describe('renderSignatureBlastRadiusDiagnostic', () => {

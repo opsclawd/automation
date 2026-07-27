@@ -46,6 +46,7 @@ Write `task-manifest.json` as a JSON file with this exact structure:
       "n": 1,
       "title": "Short task title",
       "expected_files": ["path/to/file1", "path/to/file2"],
+      "reference_files": ["path/to/read-only.ts"],
       "validation_commands": ["command to verify", ["pnpm", "exec", "eslint", "apps/app/app/position/[id].tsx"]],
       "signature_changes": [
         {
@@ -73,12 +74,13 @@ Fields:
 - `task_count`: must equal `tasks.length`
 - `tasks[].n`: sequential 1-indexed task number
 - `tasks[].title`: one-line summary matching the prose task header
-- `tasks[].expected_files`: files the task touches (optional but encouraged)
+- `tasks[].expected_files`: files the implementer must modify and commit (optional but encouraged). Any file actually modified during the task MUST be listed in `expected_files`; `reference_files` is not an exemption for planned edits.
+- `tasks[].reference_files`: read-only files the task reads or consults for context, but does not modify or commit (optional). Traceability-only declarations marked `change: "not_modified"` belong in `reference_files`. Inspected consumers of `breaking: false` changes that structurally require no update (for example, a pass-through adapter using an imported widened type) also belong in `reference_files` when inspected for blast-radius coverage. `reference_files` does not bypass review for a file that actually changes.
 - `tasks[].validation_commands`: commands to verify task completion (optional but encouraged). Entries may be shell command strings (e.g. `"pnpm lint"`) or argv arrays of non-empty strings (e.g. `["pnpm", "exec", "eslint", "apps/app/app/position/[id].tsx"]`) to execute without shell expansion when paths contain brackets or special characters.
-- `tasks[].signature_changes`: REQUIRED when the task changes the surface of an exported API (parameter-list, return-type, overload-set, required-generic parameter, or required-member-shape). Each entry names a repository-relative declaration file and the exact symbol being changed. Declaration files MUST be in `expected_files` (or legacy `files`). This field is nullish (optional) when no exported-API signatures change. Each `signature_changes` entry supports the following fields:
+- `tasks[].signature_changes`: REQUIRED when the task changes the surface of an exported API (parameter-list, return-type, overload-set, required-generic parameter, or required-member-shape). Each entry names a repository-relative declaration file and the exact symbol being changed. Declaration files MUST be in expected_files (or legacy files), or reference_files (when change is "not_modified"). This field is nullish (optional) when no exported-API signatures change. Each `signature_changes` entry supports the following fields:
   - `declaration_file` (required): repository-relative path to the declaration file
   - `symbol` (required): exact exported symbol name being changed
-  - `change` (optional): either `"modified"` (default) or `"not_modified"` — defaults to `"modified"` when omitted for backward compatibility. A symbol listed only because it is referenced for context but deliberately stable MUST set `"change": "not_modified"`; omitting that reference from the manifest and explaining stability in `plan.md` prose also remains valid. `not_modified` entries are retained for traceability but skipped by signature blast-radius enforcement.
+  - `change` (optional): either `"modified"` (default) or `"not_modified"` — defaults to `"modified"` when omitted for backward compatibility. A symbol listed only because it is referenced for context but deliberately stable MUST set `"change": "not_modified"`; omitting that reference from the manifest and explaining stability in `plan.md` prose also remains valid. `not_modified` entries are retained for traceability but skipped by signature blast-radius enforcement. Declaration files for `"not_modified"` entries may be listed in `reference_files`.
   - `breaking` (optional): a boolean indicating whether the signature change is backward-compatible/additive (`false`) or a breaking structural change (`true`). Defaults to `true` when omitted. Non-breaking signature changes (such as adding an optional field or method) should declare `"breaking": false` to be exempt from mandatory signature blast-radius reference checks.
   - `note` (optional): explanatory text describing why this declaration is listed
   - Unknown fields in a `signature_changes` entry are rejected.

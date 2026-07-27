@@ -22,6 +22,7 @@ describe('TaskContextGenerator', () => {
         design_sections: ['Data Model'],
         depends_on: [1],
         expected_files: ['src/index.ts'],
+        reference_files: ['src/read-only.ts'],
         relevant_symbols: ['MyClass'],
         validation_commands: ['npm test'],
         migration_constraints: ['No breaking changes'],
@@ -83,6 +84,7 @@ Something else.
     expect(result.content).not.toContain('Other Section');
     expect(result.content).toContain('### Task 1 Summary\n\nImplemented the base class.');
     expect(result.content).toContain('### Expected Files\n- src/index.ts');
+    expect(result.content).toContain('### Reference Files\n- src/read-only.ts');
     expect(result.content).toContain('### Relevant Symbols\n- MyClass');
     expect(result.content).toContain('## Validation Commands\n\n```bash\nnpm test\n```');
     expect(result.content).toContain(
@@ -195,5 +197,59 @@ Something else.
     expect(result.content).toContain(
       '## Validation Commands\n\n```bash\npnpm lint\n["pnpm","exec","eslint","apps/app/app/position/[id].tsx"]\n```',
     );
+  });
+
+  it('renders expected and reference files as distinct repository targets', () => {
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Use repository targets',
+          expected_files: ['src/change.ts'],
+          reference_files: ['src/read-only.ts'],
+        },
+      ],
+    } as TaskManifest;
+    const result = generator.generate({
+      task: manifest.tasks[0]!,
+      manifest,
+      planMd: '## Task 1: Use repository targets\nBody',
+      workspaceConstraints: '',
+      cwd: '/app',
+      repoId: 'repo',
+      branchName: 'branch',
+    });
+
+    expect(result.content).toContain('### Expected Files\n- src/change.ts');
+    expect(result.content).toContain('### Reference Files\n- src/read-only.ts');
+  });
+
+  it('renders repository targets when only reference_files are declared', () => {
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Read a repository target',
+          reference_files: ['src/read-only.ts'],
+        },
+      ],
+    } as TaskManifest;
+    const result = generator.generate({
+      task: manifest.tasks[0]!,
+      manifest,
+      planMd: '## Task 1: Read a repository target\nBody',
+      workspaceConstraints: '',
+      cwd: '/app',
+      repoId: 'repo',
+      branchName: 'branch',
+    });
+
+    expect(result.content).toContain('## Repository Targets');
+    expect(result.content).toContain('### Reference Files\n- src/read-only.ts');
+    expect(result.content).not.toContain('### Expected Files');
   });
 });

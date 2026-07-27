@@ -21,25 +21,23 @@ export interface LintTaskSizeResult {
   oversized: OversizedTask[];
 }
 
+function normalizeTaskPath(path: unknown): string {
+  if (typeof path !== 'string') return '';
+  return path
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^(\.\/|\/)+/, '');
+}
+
 function declaredTaskFiles(task: unknown): string[] {
   if (!task || typeof task !== 'object') return [];
   const record = task as Record<string, unknown>;
   const expectedFiles = Array.isArray(record.expected_files) ? record.expected_files : [];
   const files = Array.isArray(record.files) ? record.files : [];
-  const rawPaths = [...expectedFiles, ...files];
-  const stringPaths = rawPaths.filter((p): p is string => typeof p === 'string');
-  return [
-    ...new Set(
-      stringPaths
-        .map((path) =>
-          path
-            .trim()
-            .replace(/\\/g, '/')
-            .replace(/^(\.\/|\/)+/, ''),
-        )
-        .filter(Boolean),
-    ),
-  ];
+
+  const requiredExpectedFiles = expectedFiles.map(normalizeTaskPath).filter(Boolean);
+  const requiredLegacyFiles = files.map(normalizeTaskPath).filter(Boolean);
+  return [...new Set([...requiredExpectedFiles, ...requiredLegacyFiles])];
 }
 
 export interface StepRunContext {
