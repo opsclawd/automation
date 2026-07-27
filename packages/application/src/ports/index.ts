@@ -128,3 +128,7 @@ export type {
   SchedulerTelemetryRecord,
 } from './repository-scheduler-port.js';
 export type { RepositoryAvailabilityPort } from './repository-availability-port.js';
+export type {
+  PrReviewContextSnapshot,
+  PrReviewContextSourcePort,
+} from './pr-review-context-source-port.js';
