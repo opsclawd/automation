@@ -569,6 +569,7 @@ export class ProcessPrReviewComments {
         // Singleton processing path (single comment)
         let rollbackPerformedForBatch = false;
         for (const currentComment of currentComments) {
+          const commentStartSha = runningStartSha;
           let context: SelectedPrReviewContext | undefined;
           const contextLevel = Math.min(
             attempt,
@@ -704,12 +705,12 @@ export class ProcessPrReviewComments {
               rollbackPerformedForBatch = true;
               const rollbackOk = await d.rollbackFix?.(
                 { cwd: input.cwd, branch: pr.headRefName },
-                activeBatchStartSha,
+                commentStartSha,
               );
               if (rollbackOk === false) {
                 d.onWarning?.(
                   'rollbackFix failed: broken commits may remain on remote branch',
-                  { branch: pr.headRefName, cwd: input.cwd, targetSha: activeBatchStartSha },
+                  { branch: pr.headRefName, cwd: input.cwd, targetSha: commentStartSha },
                   String(input.runId),
                 );
               }
@@ -724,7 +725,7 @@ export class ProcessPrReviewComments {
             workQueue.unshift({
               commentIds: [currentComment.commentId],
               attempt: (attempt + 1) as 1 | 2 | 3,
-              batchStartSha: activeBatchStartSha,
+              batchStartSha: commentStartSha,
               previousBuildErrors: { ...perCommentBuildErrors },
               previousVerifierReasons: { ...perCommentVerifierReasons },
             });
