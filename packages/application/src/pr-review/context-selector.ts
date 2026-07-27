@@ -116,10 +116,10 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
   summaryLines.push(`Diff stat: ${snapshot.diffStat}`);
   summaryLines.push(`Changed files: ${snapshot.changedFiles.join(', ')}`);
 
-  if (previousBuildErrors && previousBuildErrors.length > 0) {
+  if (attempt >= 2 && previousBuildErrors && previousBuildErrors.length > 0) {
     summaryLines.push(`Previous build errors: ${previousBuildErrors.join('; ')}`);
   }
-  if (previousVerifierReasons && previousVerifierReasons.length > 0) {
+  if (attempt >= 2 && previousVerifierReasons && previousVerifierReasons.length > 0) {
     summaryLines.push(`Previous verifier reasons: ${previousVerifierReasons.join('; ')}`);
   }
 
@@ -209,6 +209,24 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
     }
   }
 
+  const anyExplicitGlobal = comments.some((c) => isExplicitGlobalScopeRequest(c.body));
+
+  if (anyExplicitGlobal) {
+    sections.push({
+      kind: 'full-diff',
+      content: snapshot.fullDiff,
+    });
+    return {
+      level: attempt,
+      sections,
+      includedFiles: Array.from(includedFiles),
+      includedHunks: Array.from(includedHunks),
+      includedSymbols: Array.from(includedSymbols),
+      fullDiffIncluded: true,
+      fallbackReason: 'explicit_global_scope',
+    };
+  }
+
   if (attempt === 1) {
     return {
       level: attempt,
@@ -217,11 +235,10 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
       includedHunks: Array.from(includedHunks),
       includedSymbols: Array.from(includedSymbols),
       fullDiffIncluded: false,
-      ...(hasBoundedContext ? {} : { fallbackReason: 'no_bounded_context' as const }),
     };
   }
 
-  if (attempt === 2) {
+  if (attempt >= 2) {
     for (const filePath of includedFiles) {
       const fileContent = snapshot.fileContents[filePath];
       if (fileContent) {
@@ -233,14 +250,16 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
       }
     }
 
-    return {
-      level: attempt,
-      sections,
-      includedFiles: Array.from(includedFiles),
-      includedHunks: Array.from(includedHunks),
-      includedSymbols: Array.from(includedSymbols),
-      fullDiffIncluded: false,
-    };
+    if (attempt === 2) {
+      return {
+        level: attempt,
+        sections,
+        includedFiles: Array.from(includedFiles),
+        includedHunks: Array.from(includedHunks),
+        includedSymbols: Array.from(includedSymbols),
+        fullDiffIncluded: false,
+      };
+    }
   }
 
   if (attempt >= 3) {
@@ -259,24 +278,6 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
         }
       }
     }
-  }
-
-  const anyExplicitGlobal = comments.some((c) => isExplicitGlobalScopeRequest(c.body));
-
-  if (anyExplicitGlobal) {
-    sections.push({
-      kind: 'full-diff',
-      content: snapshot.fullDiff,
-    });
-    return {
-      level: attempt,
-      sections,
-      includedFiles: Array.from(includedFiles),
-      includedHunks: Array.from(includedHunks),
-      includedSymbols: Array.from(includedSymbols),
-      fullDiffIncluded: true,
-      fallbackReason: 'explicit_global_scope',
-    };
   }
 
   if (!hasBoundedContext) {

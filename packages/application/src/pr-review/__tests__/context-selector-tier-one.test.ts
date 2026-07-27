@@ -223,9 +223,8 @@ index 1234567..0000000
         attempt: 1,
         snapshot,
       });
-      if (!result.fullDiffIncluded) {
-        expect(result.fallbackReason).toBe('no_bounded_context');
-      }
+      expect(result.fullDiffIncluded).toBe(false);
+      expect(result.fallbackReason).toBeUndefined();
     });
   });
 
