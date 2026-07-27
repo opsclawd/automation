@@ -5422,6 +5422,20 @@ export function composeRoot(opts: ComposeOptions): Container {
             runStep,
             setup: worktreeSetup,
             lintTaskSize: lintTaskSizeDep,
+            validationPort: validationAdapter,
+            typecheckLogDir: join(runsDir, 'validate'),
+            runWorkspaceTypecheck: async (cwd: string) => {
+              try {
+                execFileSync('pnpm', ['-r', 'typecheck'], {
+                  cwd,
+                  stdio: ['ignore', 'pipe', 'pipe'],
+                  encoding: 'utf-8',
+                });
+                return { ok: true };
+              } catch (err) {
+                return { ok: false, error: String(err) };
+              }
+            },
           }),
         );
       }
