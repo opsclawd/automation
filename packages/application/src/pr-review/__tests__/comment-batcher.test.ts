@@ -25,6 +25,10 @@ function groupComments(comments: PrReviewComment[]): CommentBatch[] {
   return groupCommentsIntoBatches(comments);
 }
 
+function groupCommentsWithDiff(comments: PrReviewComment[], diff: string): CommentBatch[] {
+  return groupCommentsIntoBatches(comments, { diff });
+}
+
 describe('comment-batcher', () => {
   describe('comments in one hunk form one stable batch', () => {
     it('two same-file comments in the same hunk form one batch', () => {
@@ -170,6 +174,85 @@ describe('comment-batcher', () => {
       for (const batch of batches) {
         expect(batch.commentIds.length).toBeLessThanOrEqual(5);
       }
+    });
+  });
+
+  describe('comments in different hunks within same file are isolated into separate batches', () => {
+    const diffForHunks = `diff --git a/a.ts b/a.ts
+--- a/a.ts
++++ b/a.ts
+@@ -1,10 +1,10 @@ line 1
++added line
+ line 2
+ line 3
+ line 4
+ line 5
+@@ -20,10 +20,10 @@ line 20
+ line 21
+ line 22
+ line 23
+ line 24
+ line 25`;
+
+    it('two same-file comments in different hunks form two separate batches', () => {
+      const comments = [
+        makeComment({ commentId: 1, path: 'a.ts', line: 3 }),
+        makeComment({ commentId: 2, path: 'a.ts', line: 22 }),
+      ];
+      const batches = groupCommentsWithDiff(comments, diffForHunks);
+      expect(batches).toHaveLength(2);
+      expect(batches[0].commentIds).toEqual([1]);
+      expect(batches[1].commentIds).toEqual([2]);
+    });
+
+    it('three same-file comments in two different hunks form two separate batches', () => {
+      const comments = [
+        makeComment({ commentId: 1, path: 'a.ts', line: 3 }),
+        makeComment({ commentId: 2, path: 'a.ts', line: 22 }),
+        makeComment({ commentId: 3, path: 'a.ts', line: 23 }),
+      ];
+      const batches = groupCommentsWithDiff(comments, diffForHunks);
+      expect(batches).toHaveLength(2);
+      const hunk1Batch = batches.find((b) => b.commentIds.includes(1));
+      const hunk2Batch = batches.find((b) => b.commentIds.includes(2));
+      expect(hunk1Batch?.commentIds).toEqual([1]);
+      expect(hunk2Batch?.commentIds).toEqual([2, 3]);
+    });
+
+    it('comments in same hunk form one batch even when beyond file cap', () => {
+      const comments = [
+        makeComment({ commentId: 1, path: 'a.ts', line: 3 }),
+        makeComment({ commentId: 2, path: 'a.ts', line: 4 }),
+        makeComment({ commentId: 3, path: 'a.ts', line: 5 }),
+        makeComment({ commentId: 4, path: 'a.ts', line: 6 }),
+        makeComment({ commentId: 5, path: 'a.ts', line: 7 }),
+        makeComment({ commentId: 6, path: 'a.ts', line: 22 }),
+      ];
+      const batches = groupCommentsWithDiff(comments, diffForHunks);
+      expect(batches).toHaveLength(2);
+      const firstHunkBatch = batches.find((b) => b.commentIds.includes(1));
+      expect(firstHunkBatch?.commentIds).toEqual([1, 2, 3, 4, 5]);
+      const secondHunkBatch = batches.find((b) => b.commentIds.includes(6));
+      expect(secondHunkBatch?.commentIds).toEqual([6]);
+    });
+
+    it('fallback to file grouping when neither comment is in any hunk', () => {
+      const comments = [
+        makeComment({ commentId: 1, path: 'a.ts', line: 50 }),
+        makeComment({ commentId: 2, path: 'a.ts', line: 100 }),
+      ];
+      const batches = groupCommentsWithDiff(comments, diffForHunks);
+      expect(batches).toHaveLength(1);
+      expect(batches[0].commentIds).toEqual([1, 2]);
+    });
+
+    it('separate batches when one comment is in hunk and other is not', () => {
+      const comments = [
+        makeComment({ commentId: 1, path: 'a.ts', line: 3 }),
+        makeComment({ commentId: 2, path: 'a.ts', line: 100 }),
+      ];
+      const batches = groupCommentsWithDiff(comments, diffForHunks);
+      expect(batches).toHaveLength(2);
     });
   });
 });

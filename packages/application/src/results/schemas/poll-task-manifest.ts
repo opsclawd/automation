@@ -17,7 +17,7 @@ export const pollTaskEntrySchema = z.object({
   line: z.number().int(),
   body: z.string(),
   reviewer: z.string(),
-  priority: z.number().int(),
+  priority: z.number().int().optional(),
   comments: z.array(pollTaskCommentSchema).optional(),
   groupKey: z.string().optional(),
 });
