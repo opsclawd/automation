@@ -6,6 +6,32 @@ import type {
   PrReviewContextSourcePort,
 } from '@ai-sdlc/application/ports';
 
+function findRelativeImports(content: string): string[] {
+  const imports: string[] = [];
+  const regex = /(?:from|import\s+)\s+['"]((\.{1,2}(?:\/[^'"]*)?))['"]/g;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    if (match[1]) {
+      imports.push(match[1]);
+    }
+  }
+  return imports;
+}
+
+function resolveRelativeImport(basePath: string, importPath: string): string {
+  const parts = basePath.split('/');
+  parts.pop();
+  const importParts = importPath.split('/');
+  for (const part of importParts) {
+    if (part === '..') {
+      parts.pop();
+    } else if (part !== '.') {
+      parts.push(part);
+    }
+  }
+  return parts.join('/');
+}
+
 export const MAX_CONTEXT_FILES = 50;
 export const MAX_FILE_CHARS = 100_000;
 export const MAX_SNAPSHOT_CHARS = 500_000;
@@ -54,6 +80,7 @@ async function tryReadFileAtHead(
       cwd,
       encoding: 'buffer',
       stripFinalNewline: false,
+      timeout: 30_000,
     });
     const buffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
     const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -93,7 +120,7 @@ export function createPrReviewContextSource(): PrReviewContextSourcePort {
       .filter(Boolean)
       .sort();
 
-    const trackedFilesOutput = await git(cwd, ['ls-files', '-z']);
+    const trackedFilesOutput = await git(cwd, ['ls-tree', '-r', '--name-only', '-z', head]);
     const trackedFiles = trackedFilesOutput
       .split('\0')
       .filter(Boolean)
@@ -106,10 +133,20 @@ export function createPrReviewContextSource(): PrReviewContextSourcePort {
       if (!priorityFiles.includes(posixSeed)) {
         priorityFiles.push(posixSeed);
       }
-      const siblings = getSiblingTestCandidates(seedPath);
+      const siblings = getSiblingTestCandidates(posixSeed);
       for (const sibling of siblings) {
         if (!priorityFiles.includes(sibling)) {
           priorityFiles.push(sibling);
+        }
+      }
+      const { content: seedContent } = await tryReadFileAtHead(cwd, head, posixSeed);
+      if (seedContent) {
+        const relativeImports = findRelativeImports(seedContent);
+        for (const imp of relativeImports) {
+          const resolved = resolveRelativeImport(posixSeed, imp);
+          if (!priorityFiles.includes(resolved)) {
+            priorityFiles.push(resolved);
+          }
         }
       }
     }
@@ -126,6 +163,7 @@ export function createPrReviewContextSource(): PrReviewContextSourcePort {
 
     for (const filePath of allFilesToProcess) {
       if (totalChars >= MAX_SNAPSHOT_CHARS) break;
+      if (Object.keys(fileContents).length >= MAX_CONTEXT_FILES) break;
 
       const { content, isBinary } = await tryReadFileAtHead(cwd, head, filePath);
       if (content === null || isBinary) continue;
