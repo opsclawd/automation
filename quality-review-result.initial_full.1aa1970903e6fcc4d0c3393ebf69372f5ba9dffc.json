@@ -1,0 +1,47 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "tryReadFileAtHead uses the shared git runner which calls .trim() on stdout, stripping all leading and trailing whitespace (including newlines and first-line indentation) from every file in the review context.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Use execa directly with stripFinalNewline: false to read raw file contents, bypassing the git-runner's automatic trimming."
+    },
+    {
+      "severity": "P1",
+      "summary": "isBinaryFile always returns false because git show --word-diff=porcelain on a binary blob exits with 0 instead of throwing, causing binary files to be included in the context.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Replace the git show command with a direct content check for null bytes or use git diff --numstat."
+    },
+    {
+      "severity": "P1",
+      "summary": "Mismatched path resolution: changedFiles uses repo-relative paths (missing --relative flag), while trackedFiles and seedPaths use cwd-relative paths, causing git show HEAD:path to fail or load incorrect files when cwd is a subdirectory.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Use git diff --relative to ensure paths are cwd-relative, and use git show HEAD:./${filePath} to resolve files relative to the cwd."
+    },
+    {
+      "severity": "P2",
+      "summary": "isBinaryFile spawns an additional git process for every single file in the snapshot, causing a severe N+1 performance bottleneck.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Remove the git process call in isBinaryFile and check for binary signatures directly in the string returned by tryReadFileAtHead."
+    },
+    {
+      "severity": "P2",
+      "summary": "git ls-files without -z quotes filenames containing spaces or non-ASCII characters, which breaks matching against the unquoted paths from changedFiles.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Run git ls-files -z and split by null bytes instead of splitting by newlines."
+    },
+    {
+      "severity": "P3",
+      "summary": "getSiblingTestCandidates only looks for tests in the exact same directory, completely missing tests located in __tests__ directories which are standard in this repository.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Add patterns to check for __tests__/${name}${suffix}.${ext} to accurately locate tests in this repository's structure."
+    },
+    {
+      "severity": "P3",
+      "summary": "Calling .trim() on each path returned by git diff -z breaks support for filenames that legitimately contain leading or trailing spaces.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Remove the .trim() call in the .map() pipeline for changedFiles."
+    }
+  ]
+}

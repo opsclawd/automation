@@ -1,0 +1,29 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "The `!hasBoundedContext` fallback triggers globally before the tier 1 check, erroneously forcing a full diff on attempt 1 when no context is found, which breaks the expected tier-one fallback behavior.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Move the `if (!hasBoundedContext)` fallback so it only applies when `attempt >= 3`, ensuring attempt 1 can return safely without a full diff."
+    },
+    {
+      "severity": "P0",
+      "summary": "Attempt 3 fails to accumulate context from attempt 2 because the logic for direct imports and deterministic callers is trapped inside an `if (attempt === 2)` block that returns early.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Change the `if (attempt === 2)` block to `if (attempt >= 2)` and remove the early `return` inside it, so that execution continues and attempt 3 retains the tier 2 context."
+    },
+    {
+      "severity": "P1",
+      "summary": "`findDirectImports` and `findDeterministicCallers` construct RegExp objects using unescaped variables, leading to regex injection vulnerabilities if file names contain metacharacters.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Escape regex metacharacters in `normalizedTarget` and `targetName` before passing them to the RegExp constructor."
+    },
+    {
+      "severity": "P2",
+      "summary": "The `if (fileLines && (attempt === 1 || !fileContent))` condition prevents `hasBoundedContext` from being true during attempts 2 and 3 for unchanged lines, incorrectly triggering full PR diffs.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Separate the tracking of `hasBoundedContext = true` from the `attempt === 1` block so that it accurately registers bounded context presence across all attempt levels."
+    }
+  ]
+}

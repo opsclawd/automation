@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "Attempt 3 provides less context for commented files than Attempt 2 because the logic to append full file contents is trapped inside an `if (attempt === 2)` block that returns early.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Change `if (attempt === 2)` to `if (attempt >= 2)`. Move the attempt 2 return statement inside this block (after the loop) so that Attempt 3 can append the full file contents and then proceed to its own expansion logic."
+    },
+    {
+      "severity": "P2",
+      "summary": "Explicit global scope requests (e.g., 'review entire PR') are completely ignored on attempts 1 and 2 due to early returns, unnecessarily delaying the requested full-diff fallback until attempt 3.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Move the `anyExplicitGlobal` check and its associated `full-diff` return block to the top of the function, before the attempt 1 and 2 early returns."
+    },
+    {
+      "severity": "P3",
+      "summary": "At attempt 1, if no bounded context is found, the function incorrectly sets `fallbackReason: 'no_bounded_context'` even though `fullDiffIncluded` is false, semantically contradicting the purpose of the fallback reason field.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Remove `fallbackReason: 'no_bounded_context'` from the attempt 1 return object, as the full diff fallback is not actually triggered in attempt 1."
+    }
+  ]
+}

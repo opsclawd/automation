@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "When splitting failed batches or retrying singletons, the work queue incorrectly pushes the next attempt with `batchStartSha: itemBatchStartSha` instead of the newly evaluated `activeBatchStartSha`. Because `itemBatchStartSha` retains the original pre-poll `runningStartSha` from the start of the orchestration run, this causes a final exhaustion rollback on any subsequent batch's comment to inadvertently revert all successful commits from previously completed batches in the same run.",
+      "file": "packages/application/src/pr-review/process-pr-review-comments.ts",
+      "suggested_fix": "In the three places where `workQueue.push` is called for next attempts (approx. lines 501, 524, 723), change `batchStartSha: itemBatchStartSha` to `batchStartSha: activeBatchStartSha` so that the retry isolate its rollback correctly."
+    }
+  ]
+}

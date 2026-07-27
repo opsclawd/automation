@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "When verifyCodeChange fails for one comment, the batch reset incorrectly leaves the attempt records of other batch members in a non-failed state and returns them with action 'fixed', violating the plan's requirement to mark every batch member failed on code-verifier failure.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "In executeBatch under if (verifierErrors.size > 0), remove the if (verifierErrors.has(a.commentId)) check when setting a.completedHead/disposition/action/repo.update, and unconditionally map action to 'failed' in the returned outputs, ensuring only the verifierFeedback uses the check."
+    }
+  ]
+}

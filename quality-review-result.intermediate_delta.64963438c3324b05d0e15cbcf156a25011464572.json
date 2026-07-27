@@ -1,0 +1,29 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "Context builder silently fails to read local imports in TypeScript ESM projects because it queries Git using the literal '.js' extension from the import statement instead of mapping it to the actual '.ts' or '.tsx' source file.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "When resolving imports into `priorityFiles`, strip the `.js` extension and append the original import alongside its `.ts` and `.tsx` equivalents, or check multiple extensions when validating file existence."
+    },
+    {
+      "severity": "P2",
+      "summary": "Path resolution drops `..` segments that traverse above the base path because `parts.pop()` is called on an empty array, erroneously resolving out-of-bounds imports as if they were inside the root directory.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Track `..` segments that cannot be popped (when the parts array is empty) and ensure they are prepended to the final resolved path array before joining, or use `path.posix.join` if applicable."
+    },
+    {
+      "severity": "P3",
+      "summary": "The regex `/(?:from|import\\s+)\\s+['\"]/` expects two whitespace characters for side-effect imports (e.g. `import './foo.js'`), causing it to fail to match standard single-space side-effect imports.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Change the regex to `/(?:from\\s+|import\\s+)['\"]/` so that the space is consumed consistently in both `from` and `import` cases."
+    },
+    {
+      "severity": "P3",
+      "summary": "Applying `String.prototype.slice()` directly to UTF-16 strings to enforce `MAX_SNAPSHOT_CHARS` can split a surrogate pair in half, leaving an invalid lone surrogate character in the JSON output.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Detect if the slice boundary falls between a high and low surrogate pair (e.g., using charCodeAt) and adjust the slice length down by 1 if necessary to prevent invalid UTF-16 strings."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "BuildPostPrReviewBatchPromptInput and buildPostPrReviewBatchPrompt omit previousBuildError and previousCodeVerifyReason, preventing the agent from receiving feedback on failed batch retries.",
+      "file": "apps/api/src/compose.ts",
+      "suggested_fix": "Add previousBuildError and previousCodeVerifyReason to BuildPostPrReviewBatchPromptInput and render them in buildPostPrReviewBatchPrompt just like buildPostPrReviewTaskPrompt does."
+    }
+  ]
+}

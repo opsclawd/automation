@@ -111,6 +111,7 @@ export async function verifyComment(
       commentId?: number;
     }) => Promise<{ pass: boolean; reason: string }>;
     fixDiffInspector?: FixDiffInspectorPort;
+    skipExpensiveVerifications?: boolean;
   },
   context: {
     cwd: string;
@@ -149,18 +150,27 @@ export async function verifyComment(
     };
   }
 
-  const buildResult = await deps.verifyBuildPasses({
-    cwd: context.cwd,
-    runId: String(comment.runId),
-  });
-  const buildVerified = buildResult.passed;
-  const buildError = buildResult.error;
+  let buildVerified: boolean;
+  let buildError: string | undefined;
+  let codeVerified = true;
+  let codeVerifyReason: string | undefined;
 
   const remote = await verifyRemoteFixCommit(
     deps,
     { cwd: context.cwd, branch: context.branch, startCommitSha: context.runningStartSha },
     comment.commitSha,
   );
+
+  if (deps.skipExpensiveVerifications) {
+    buildVerified = true;
+  } else {
+    const buildResult = await deps.verifyBuildPasses({
+      cwd: context.cwd,
+      runId: String(comment.runId),
+    });
+    buildVerified = buildResult.passed;
+    buildError = buildResult.error;
+  }
 
   let failReason = '';
   if (!replyVerified) failReason = 'reply not found on GitHub';
@@ -171,10 +181,6 @@ export async function verifyComment(
   else if (!remote.commitVerified) failReason = 'commit not pushed to remote';
   else if (!buildVerified) failReason = 'build did not pass';
 
-  // Semantic code verification — only when all mechanical checks pass
-  let codeVerified = true;
-  let codeVerifyReason: string | undefined;
-
   const mechanicalOk =
     remote.fixCommitOnRemote &&
     remote.isNewerThanStart &&
@@ -183,6 +189,7 @@ export async function verifyComment(
     buildVerified;
 
   if (
+    !deps.skipExpensiveVerifications &&
     mechanicalOk &&
     deps.fixDiffInspector &&
     comment.commitSha &&
@@ -198,14 +205,9 @@ export async function verifyComment(
     });
     const semanticVerifierAvailable = deps.verifyCodeChange !== undefined;
     if (!inspection.touchesPath && semanticVerifierAvailable) {
-      // A fix that does not modify the anchored file may still be legitimate —
-      // the correct change often lives in another file (#629). Fall through to
-      // the LLM pass (whose prompt carries the full fix diff) instead of
-      // rejecting here; only in-file line-proximity failures short-circuit.
     } else if (!inspection.touchesPath) {
-      // No semantic verifier is wired, so nothing can evaluate a cross-file
-      // diff — keep the structural rejection rather than auto-passing a
-      // commit that only changes unrelated files.
+      // fix commit does not touch the file at all - no code change could have occurred
+      // (no_fix replies are handled earlier, so reaching here means a fix was claimed but no diff)
       return {
         ok: false,
         replyVerified,
@@ -228,10 +230,14 @@ export async function verifyComment(
         ...(buildError !== undefined ? { buildError } : {}),
       };
     }
-    // nearLine === true | 'skipped' → continue to verifyCodeChange.
   }
 
-  if (mechanicalOk && deps.verifyCodeChange && comment.commitSha) {
+  if (
+    !deps.skipExpensiveVerifications &&
+    mechanicalOk &&
+    deps.verifyCodeChange &&
+    comment.commitSha
+  ) {
     const codeResult = await deps.verifyCodeChange({
       commentBody: comment.body,
       path: comment.path,

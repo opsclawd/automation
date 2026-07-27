@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "The executeBatch catch block unconditionally sets disposition='failure' on all attempts, improperly overwriting the success state of already-processed comments if a subsequent comment throws an exception post-push.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "In the catch block of executeBatch, conditionally update attempts (e.g., skip updating if a.disposition === 'success') to ensure per-comment independence when a post-push exception occurs."
+    },
+    {
+      "severity": "P1",
+      "summary": "executeBatch redundantly verifies the build and LLM code changes twice for fixed comments: once atomically before push, and then again inside verifyComment, causing severe performance degradation.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "Refactor verifyComment's interface to support skipping mechanical build and code checks when executeBatch has already verified them pre-push."
+    }
+  ]
+}

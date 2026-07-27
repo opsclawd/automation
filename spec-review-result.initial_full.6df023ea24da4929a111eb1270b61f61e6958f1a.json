@@ -1,0 +1,29 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "parseUnifiedDiff uses the file path as the Map key (hunks.set(currentFile, ...)), causing multiple hunks in the same file to overwrite each other and leaving only the last hunk.",
+      "file": "packages/application/src/pr-review/unified-diff.ts",
+      "suggested_fix": "Change ParsedUnifiedDiff.hunks to store an array of hunks per file (Map<string, ParsedHunk[]>) or use hunk.identity as the map key."
+    },
+    {
+      "severity": "P0",
+      "summary": "findHunkForLine unconditionally returns the hunk at the end of the function, bypassing the line bounds check and erroneously matching any line to the file's hunk.",
+      "file": "packages/application/src/pr-review/unified-diff.ts",
+      "suggested_fix": "Change the final return statement to return undefined instead of hunk."
+    },
+    {
+      "severity": "P1",
+      "summary": "findDeclaration returns only the matched symbol name (match[1]) instead of the full declaration source line, resulting in unhelpful string context for the LLM.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Return lineContent instead of match[1] when a declaration is found."
+    },
+    {
+      "severity": "P2",
+      "summary": "selectPrReviewContext incorrectly adds the filePath to the includedHunks set instead of hunk.identity, losing the specific hunk attribution.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Change includedHunks.add(filePath) to includedHunks.add(hunk.identity)."
+    }
+  ]
+}

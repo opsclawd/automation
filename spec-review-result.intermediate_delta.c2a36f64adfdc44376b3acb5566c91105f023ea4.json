@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "Attempt 3 drops direct imports and deterministic callers because their extraction logic is trapped in an `if (attempt === 2)` block that returns early.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Change the block to `if (attempt >= 2)`, remove the early return statement, and allow execution to fall through to the Attempt 3 related-diff logic."
+    },
+    {
+      "severity": "P1",
+      "summary": "The `explicit_global_scope` and `no_bounded_context` fallbacks execute as early returns for all attempt levels, bypassing Attempt 3's related-diff extraction and causing early attempts to inappropriately return full diffs.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Move the fallback logic to the end of the function, restrict it to `attempt >= 3`, and ensure it only returns a full diff if no bounded context sections could be gathered across all attempt levels."
+    },
+    {
+      "severity": "P3",
+      "summary": "The budget check for `related-diff` breaks the inner hunk loop but continues processing subsequent files, which could lead to exceeding the budget if subsequent files have small hunks.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Add a break for the outer `changedFiles` loop when `relatedDiffCharCount` exceeds `RELATED_DIFF_CHAR_BUDGET`."
+    }
+  ]
+}

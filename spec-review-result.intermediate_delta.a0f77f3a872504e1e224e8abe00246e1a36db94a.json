@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "In executeBatch, the `result.action === 'fixed'` conditional branch is duplicated, and the first instance incorrectly sets `action: 'no_fix'` in the output.",
+      "file": "packages/application/src/pr-review/poll-task-runner.ts",
+      "suggested_fix": "Remove the first buggy `else if (result.action === 'fixed')` block (lines 1001-1080) that pushes `action: 'no_fix'`, leaving only the correct block that pushes `action: 'fixed'`."
+    }
+  ]
+}

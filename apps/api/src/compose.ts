@@ -5,6 +5,7 @@ import {
   stat as fsStat,
   access as fsAccess,
   readFile as fsReadFile,
+  writeFile as fsWriteFile,
 } from 'node:fs/promises';
 import os from 'node:os';
 import {
@@ -51,6 +52,7 @@ import {
   listProcesses,
   killProcess,
   ReviewStateRepository,
+  createPrReviewContextSource,
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
@@ -83,6 +85,7 @@ import {
   applyReactivation,
   createVerifyCodeChange,
   pollTaskResultSchema,
+  pollTaskBatchResultSchema,
   ReviewFixLoop,
   ValidateFixLoop,
   FixValidateHandler,
@@ -194,6 +197,7 @@ import {
   RunId,
   RepositoryId,
   generateJobOwnership,
+  type PrReviewComment,
 } from '@ai-sdlc/domain';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- forward reference for Task 5 runtime factory
 import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
@@ -279,7 +283,12 @@ import {
   PLAN_FIX_RESULT_ARTIFACT,
   buildPlanReviewFixPrompt,
 } from './plan-review-prompts.js';
-import { WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
+import {
+  getPostPrReviewCommitPolicy,
+  WORKSPACE_CONSTRAINTS,
+  type SelectedPrReviewContext,
+  type SelectedPrReviewContextSection,
+} from '@ai-sdlc/application';
 
 async function readTail(filePath: string, maxBytes: number = 65536): Promise<string> {
   try {
@@ -1379,39 +1388,7 @@ export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptIn
   }
 
   sections.push(
-    '## Instructions',
-    '',
-    'Make a judgement call: is this comment technically valid?',
-    '',
-    'If a code change is required:',
-    '1. Edit the relevant source files',
-    '2. Commit your change:',
-    '   a. Record HEAD before: `PRE_HEAD=$(git rev-parse HEAD)`',
-    '   b. Stage and commit: `git add -A && git commit -m "fix: address PR review feedback"`',
-    '   c. If git commit exits non-zero, the pre-commit hook failed. Read the hook/lint',
-    '      output, FIX the reported errors, and retry the commit. Never report action=fixed',
-    '      with a failed or skipped commit.',
-    '   d. After a successful commit, confirm HEAD advanced:',
-    '      `[ "$(git rev-parse HEAD)" != "$PRE_HEAD" ] || { echo "COMMIT DID NOT ADVANCE HEAD"; exit 1; }`',
-    '   e. Confirm clean worktree:',
-    '      `[ -z "$(git status --porcelain)" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }`',
-    '   f. Only write action=fixed in result.json after steps d and e both pass.',
-    '3. Do NOT push. The orchestrator will push only after validation passes.',
-    '',
-    'If the comment is invalid, include your reasoning in replyBody.',
-    '',
-    'IMPORTANT: Do NOT post replies yourself. The orchestrator handles posting.',
-    'IMPORTANT: Do NOT push to any remote branch.',
-    '',
-    '---',
-    '',
-    '**CRITICAL: Do NOT run any of the following commands.**',
-    '- Do NOT run npm/pnpm/yarn/bun build, test, lint, typecheck, boundaries, or test:bash',
-    '- Do NOT run any shell scripts that invoke tests or linters',
-    '- Do NOT run npm/pnpm/yarn/bun install or any package manager commands',
-    '- Do NOT verify your fix - the orchestrator handles all verification deterministically',
-    '',
-    'Your ONLY responsibility is: read the comment, make a code change (if needed), commit the change locally (verifying HEAD advanced), write result.json, and stop immediately.',
+    getPostPrReviewCommitPolicy(false),
     '',
     '## Required Output',
     '',
@@ -1425,6 +1402,184 @@ export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptIn
     '  "blockedReason": "<string - only when action is blocked>"',
     '}',
     '```',
+    '',
+    'Only write a fixed action in result.json after verifying HEAD advanced and worktree is clean.',
+  );
+
+  return sections.join('\n');
+}
+
+export interface BuildPostPrReviewBatchPromptInput {
+  cwd: string;
+  comments: readonly PrReviewComment[];
+  context: SelectedPrReviewContext;
+  attempt: number;
+  dispositions: ReadonlyArray<{
+    commentId: number;
+    fingerprint: string;
+    disposition: string;
+    reason?: string;
+  }>;
+  previousBuildError?: string;
+  previousCodeVerifyReason?: string;
+}
+
+function renderContextSection(section: SelectedPrReviewContextSection): string {
+  switch (section.kind) {
+    case 'summary':
+      return `## Context Summary\n\n${section.content}`;
+    case 'hunk':
+      return `## Hunk: ${section.path}:${section.lineStart}-${section.lineEnd}\n\n\`\`\`diff\n${section.content}\n\`\`\``;
+    case 'source':
+      return `## Source: ${section.path}${section.lineStart != null ? `:${section.lineStart}` : ''}\n\n\`\`\`\n${section.content}\n\`\`\``;
+    case 'symbol':
+      return `## Symbol: ${section.path}\n\n\`\`\`\n${section.content}\n\`\`\``;
+    case 'test':
+      return `## Related Test: ${section.path}\n\n${section.content}`;
+    case 'related-diff':
+      return `## Related Diff: ${section.path}:${section.lineStart ?? 0}\n\n\`\`\`diff\n${section.content}\n\`\`\``;
+    case 'full-diff':
+      return `## Full Diff (${section.content.length} chars)\n\n\`\`\`diff\n${section.content}\n\`\`\``;
+    default:
+      return '';
+  }
+}
+
+export function buildPostPrReviewBatchPrompt(input: BuildPostPrReviewBatchPromptInput): string {
+  const {
+    cwd,
+    comments,
+    context,
+    attempt,
+    dispositions,
+    previousBuildError,
+    previousCodeVerifyReason,
+  } = input;
+  const sections: string[] = [];
+
+  sections.push(
+    '# PR Review Batch Task',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
+    `## Attempt: ${attempt}`,
+    '',
+  );
+
+  sections.push(
+    '## Context Provenance',
+    '',
+    `- level: ${context.level}`,
+    `- includedFiles: ${context.includedFiles.join(', ') || '(none)'}`,
+    `- includedHunks: ${context.includedHunks.join(', ') || '(none)'}`,
+    `- includedSymbols: ${context.includedSymbols.join(', ') || '(none)'}`,
+    `- fullDiffIncluded: ${context.fullDiffIncluded}`,
+    '',
+  );
+
+  if (context.fullDiffIncluded && context.fallbackReason) {
+    sections.push(`## CONTEXT FALLBACK`, '', `fallbackReason: ${context.fallbackReason}`, '');
+  }
+
+  if (context.sections.length > 0) {
+    sections.push('## Context Sections', '');
+    for (const section of context.sections) {
+      if (section.kind === 'full-diff' && !context.fullDiffIncluded) {
+        continue;
+      }
+      sections.push(renderContextSection(section), '');
+    }
+  }
+
+  sections.push(getPostPrReviewCommitPolicy(true), '');
+
+  if (previousBuildError !== undefined) {
+    const truncatedError =
+      previousBuildError.length > 4000
+        ? previousBuildError.slice(0, 2000) +
+          '\n... (truncated) ...\n' +
+          previousBuildError.slice(-2000)
+        : previousBuildError;
+    sections.push(
+      '## Previous Attempt Failed',
+      '',
+      'The previous fix attempt failed the build with the following error:',
+      '',
+      '```',
+      truncatedError,
+      '```',
+      '',
+      'Please adjust your fix to resolve this error.',
+      '',
+    );
+  }
+
+  if (previousCodeVerifyReason !== undefined) {
+    sections.push(
+      '## Previous Fix Rejected by Code Verifier',
+      '',
+      'An independent verifier reviewed your previous fix and rejected it with this reason:',
+      '',
+      `> ${previousCodeVerifyReason}`,
+      '',
+      'Please revisit your fix with this feedback in mind before trying again.',
+      '',
+    );
+  }
+
+  sections.push(
+    '## Comments to Address',
+    '',
+    ...comments.map((c) => `- [commentId: ${c.commentId}] ${c.path}:${c.line} - ${c.body}`),
+    '',
+  );
+
+  const dispositionsByCommentId = new Map<number, Array<(typeof dispositions)[0]>>();
+  for (const d of dispositions) {
+    const existing = dispositionsByCommentId.get(d.commentId);
+    if (existing) {
+      existing.push(d);
+    } else {
+      dispositionsByCommentId.set(d.commentId, [d]);
+    }
+  }
+
+  if (dispositions.length > 0) {
+    sections.push('## Prior Dispositions', '');
+    for (const comment of comments) {
+      const disps = dispositionsByCommentId.get(comment.commentId);
+      if (disps && disps.length > 0) {
+        sections.push(`### commentId: ${comment.commentId}`);
+        for (const disp of disps) {
+          sections.push(
+            `- disposition: ${disp.disposition}`,
+            `  reason: ${disp.reason ?? 'no reason'}`,
+          );
+        }
+        sections.push('');
+      }
+    }
+  }
+
+  sections.push(
+    '## Required Output',
+    '',
+    `Write a result.json file at: ${join(cwd, 'result.json')}`,
+    '',
+    'Return a JSON array with one entry per commentId listed above:',
+    '',
+    '```json',
+    '[',
+    '  { "commentId": <number>, "action": "fixed" | "no_fix" | "blocked", "replyBody": "<non-empty string>", "blockedReason": "<string - only when action is blocked>" },',
+    '  ...',
+    ']',
+    '```',
+    '',
+    'Rules:',
+    '- One array entry REQUIRED per listed commentId',
+    '- commentId values must match exactly the IDs listed above',
+    '- replyBody must be non-empty',
+    '- blockedReason is only valid when action is "blocked"',
   );
 
   return sections.join('\n');
@@ -6241,6 +6396,67 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         },
       }),
+      contextSource: createPrReviewContextSource(),
+      onContextSelected: (event) => {
+        console.warn(
+          `[post-pr-review] context_selected level=${event.level} commentIds=[${event.commentIds.join(',')}] files=[${event.includedFiles.join(',')}] fullDiffIncluded=${event.fullDiffIncluded}`,
+        );
+      },
+      renderBatchTaskPrompt: async ({
+        cwd,
+        comments,
+        diff: _diff,
+        branch: _branch,
+        mode: _mode,
+        context,
+        attempt,
+        previousBuildError,
+        previousCodeVerifyReason,
+        dispositions,
+      }) => {
+        const promptDir = join(baseTmpDir, 'pr-review-batch-prompt');
+        mkdirSync(promptDir, { recursive: true });
+        const commentIdsHash = createHash('sha256')
+          .update(
+            comments
+              .map((c) => c.commentId)
+              .sort()
+              .join(','),
+          )
+          .digest('hex')
+          .slice(0, 16);
+        const promptPath = join(promptDir, `batch-${commentIdsHash}.md`);
+        const content = buildPostPrReviewBatchPrompt({
+          cwd,
+          comments,
+          context,
+          attempt,
+          dispositions: dispositions ?? [],
+          ...(previousBuildError !== undefined ? { previousBuildError } : {}),
+          ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
+        });
+        await fsWriteFile(promptPath, content, 'utf-8');
+        return promptPath;
+      },
+      extractBatchTaskResult: async (input) => {
+        try {
+          const absPath = input.resultJsonPath
+            ? join(input.cwd, input.resultJsonPath)
+            : join(input.cwd, 'result.json');
+          const raw = readFileSync(absPath, 'utf-8');
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) {
+            return { ok: false, reason: 'invalid', detail: 'expected array' };
+          }
+          const result = pollTaskBatchResultSchema.safeParse(parsed);
+          if (!result.success) {
+            return { ok: false, reason: 'invalid', detail: result.error.message };
+          }
+          return { ok: true, result: result.data };
+        } catch (err) {
+          return { ok: false, reason: 'missing', detail: String(err) };
+        }
+      },
     });
     // Wrap the in-memory bus so poll events are persisted to the database.
     // In the detached CLI process there are no SSE subscribers, so without

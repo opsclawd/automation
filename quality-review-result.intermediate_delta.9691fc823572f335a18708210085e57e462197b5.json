@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "Split singletons inherit the pre-split batchStartSha, causing a later failing singleton's rollback to revert successful commits made by preceding singletons from the same split.",
+      "file": "packages/application/src/pr-review/process-pr-review-comments.ts",
+      "suggested_fix": "Change ReviewBatchWorkItem.batchStartSha type to `string | undefined`. When enqueuing split singletons, set `batchStartSha: undefined`. When dequeuing, resolve it via `const itemBatchStartSha = workItem.batchStartSha ?? itemLiveStartSha;` so each split item correctly anchors its rollback boundary to the HEAD right before it starts."
+    }
+  ]
+}

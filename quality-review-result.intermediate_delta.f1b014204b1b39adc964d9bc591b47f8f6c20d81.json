@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "Unhandled promise rejection in ProcessPrReviewComments.execute when contextSource throws, which crashes the orchestrator agent run loop",
+      "file": "packages/application/src/pr-review/process-pr-review-comments.ts",
+      "suggested_fix": "Wrap `await d.contextSource!(...)` and `selectPrReviewContext(...)` in a try/catch block. If an error occurs, either fall back to `forceNoBatch = true` or mark the batch as failed with a retry disposition of \"split\"."
+    },
+    {
+      "severity": "P3",
+      "summary": "The seedPaths argument for contextSource uses all comment paths from the original manifest instead of filtering to only those currently pending",
+      "file": "packages/application/src/pr-review/process-pr-review-comments.ts",
+      "suggested_fix": "Use `currentBatchComments.map(c => c.path)` instead of `batch.comments.map(c => c.path)` for seedPaths so that already-resolved comments do not needlessly pull in extra context."
+    }
+  ]
+}

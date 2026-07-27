@@ -223,5 +223,6 @@ export interface PrReviewCommentAttempt {
   verifierFeedback?: string;
   buildFeedback?: string;
   disposition?: AttemptDisposition;
+  batchId?: string;
   createdAt: Date;
 }

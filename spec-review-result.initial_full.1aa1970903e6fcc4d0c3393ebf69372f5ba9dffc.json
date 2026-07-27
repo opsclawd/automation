@@ -1,0 +1,35 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "isBinaryFile logic is flawed and always returns false for existing blobs because git show --word-diff=porcelain HEAD:path on a binary blob does not exit with a non-zero status. This causes binary files to be fully loaded into memory and included in the LLM context, violating the 'absent entries' requirement.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Use a command that actually fails on or detects binary files, or use 'git diff --numstat <empty-tree-sha> HEAD:path' and parse the output to see if it shows '- -'. Also, the test 'handles binary files gracefully' must be updated to explicitly assert that the binary file is not present in result.fileContents."
+    },
+    {
+      "severity": "P1",
+      "summary": "The test 'handles binary files gracefully' fails to assert that the binary file was excluded from fileContents, hiding the broken isBinaryFile implementation.",
+      "file": "packages/infrastructure/src/git/__tests__/pr-review-context-source.test.ts",
+      "suggested_fix": "Add expect(result.fileContents['image.png']).toBeUndefined(); to the test case."
+    },
+    {
+      "severity": "P2",
+      "summary": "isPathConfined incorrectly rejects valid confined paths if cwd is the root directory (/) or ends with a trailing slash because cwdPosix + '/' produces consecutive slashes.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Instead of string concatenation, use node:path.relative(cwd, normalized) and ensure the result doesn't start with '..' and isn't absolute."
+    },
+    {
+      "severity": "P3",
+      "summary": "Fetching tracked files uses 'git ls-files' without the '-z' flag, which means git will output quoted strings with escape sequences for any filenames containing spaces or special characters, corrupting the trackedFiles array.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Use 'git ls-files -z' and split by '\\0' to safely handle all filenames."
+    },
+    {
+      "severity": "P3",
+      "summary": "Memory/Performance issue: tryReadFileAtHead is called before isBinaryFile. If a file is a 50MB binary, it is fully loaded into a Node string before the binary check is even attempted.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Check isBinaryFile before calling tryReadFileAtHead."
+    }
+  ]
+}
