@@ -45,25 +45,12 @@ const TEST_FILE_PATTERN = /\.test\.ts$|\.spec\.ts$/;
 const BOUNDED_CONTEXT_SIZE = 20;
 
 function findDeclaration(
-  fileContent: string,
+  lines: readonly string[],
   line: number,
 ): { content: string; symbol: string } | undefined {
-  const lines = fileContent.split('\n');
   const beforeLine = Math.max(0, line - 1);
 
   for (let i = beforeLine; i >= 0; i--) {
-    const lineContent = lines[i];
-    if (!lineContent) continue;
-    const match = lineContent.match(DECLARATION_PATTERN);
-    if (match) {
-      const symbol = match[1] || match[2] || match[3] || match[4];
-      if (symbol) {
-        return { content: lineContent, symbol };
-      }
-    }
-  }
-
-  for (let i = beforeLine; i < lines.length; i++) {
     const lineContent = lines[i];
     if (!lineContent) continue;
     const match = lineContent.match(DECLARATION_PATTERN);
@@ -144,6 +131,7 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
     includedFiles.add(filePath);
 
     const fileContent = snapshot.fileContents[filePath];
+    const fileLines = fileContent ? fileContent.split('\n') : undefined;
     const parsedHunks = parsed.hunks.get(filePath);
     const seenSymbolsForFile = new Set<string>();
 
@@ -165,12 +153,8 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
         }
       }
 
-      if (fileContent) {
-        const context = extractBoundedSourceContext(
-          fileContent,
-          comment.line,
-          BOUNDED_CONTEXT_SIZE,
-        );
+      if (fileLines) {
+        const context = extractBoundedSourceContext(fileLines, comment.line, BOUNDED_CONTEXT_SIZE);
         sections.push({
           kind: 'source',
           path: filePath,
@@ -180,7 +164,7 @@ export function selectPrReviewContext(input: SelectPrReviewContextInput): Select
         });
         hasBoundedContext = true;
 
-        const declaration = findDeclaration(fileContent, comment.line);
+        const declaration = findDeclaration(fileLines, comment.line);
         if (declaration && !seenSymbolsForFile.has(declaration.symbol)) {
           seenSymbolsForFile.add(declaration.symbol);
           includedSymbols.add(declaration.symbol);

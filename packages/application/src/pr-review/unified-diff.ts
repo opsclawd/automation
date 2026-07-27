@@ -19,6 +19,13 @@ export interface ParsedUnifiedDiff {
   readonly parseError?: string;
 }
 
+interface HunkHeader {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+}
+
 function generateHunkIdentity(
   path: string,
   oldStart: number,
@@ -29,9 +36,46 @@ function generateHunkIdentity(
   return `${path}:${oldStart},${oldLines}:${newStart},${newLines}`;
 }
 
-function parseHunkHeader(
-  line: string,
-): { oldStart: number; oldLines: number; newStart: number; newLines: number } | null {
+function finalizeHunk(
+  hunks: Map<string, ParsedHunk[]>,
+  file: string,
+  header: HunkHeader,
+  body: readonly string[],
+  additions: number,
+  deletions: number,
+  isNew: boolean,
+  isDeleted: boolean,
+  isBinary: boolean,
+): void {
+  const identity = generateHunkIdentity(
+    file,
+    header.oldStart,
+    header.oldLines,
+    header.newStart,
+    header.newLines,
+  );
+  const newHunk: ParsedHunk = {
+    oldStart: header.oldStart,
+    oldLines: header.oldLines,
+    newStart: header.newStart,
+    newLines: header.newLines,
+    body: body.join('\n'),
+    additions,
+    deletions,
+    isNew,
+    isDeleted,
+    isBinary,
+    identity,
+  };
+  const existing = hunks.get(file);
+  if (existing) {
+    existing.push(newHunk);
+  } else {
+    hunks.set(file, [newHunk]);
+  }
+}
+
+function parseHunkHeader(line: string): HunkHeader | null {
   const match = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
   if (!match || !match[1] || !match[3]) return null;
   return {
@@ -67,7 +111,7 @@ function parseOldNewPaths(headerLines: string[]): {
       }
     } else if (line.startsWith('+++ ')) {
       const path = line.slice(4).trim();
-      if (path === '/dev/null' || path === '/dev/null') {
+      if (path === '/dev/null') {
         newPath = null;
       } else {
         const unquoted = unquotePath(path);
@@ -77,6 +121,16 @@ function parseOldNewPaths(headerLines: string[]): {
   }
 
   return { oldPath, newPath };
+}
+
+// Best-effort fallback for extracting a path from the "diff --git" line itself,
+// used only when there is no "--- "/"+++ " header to rely on (e.g. binary diffs).
+// The greedy match backtracks to the *last* " b/" in the line, which matches
+// git's own convention of mirroring the a/ and b/ paths and avoids truncating
+// at an earlier " b/" substring that happens to appear inside the path.
+function parseDiffGitLine(line: string): string | null {
+  const match = line.match(/^diff --git "?a\/(.+)"? b\//);
+  return match && match[1] ? unquotePath(match[1]) : null;
 }
 
 export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
@@ -89,12 +143,7 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
 
   const lines = diff.split('\n');
   let currentFile: string | null = null;
-  let currentHunkHeader: {
-    oldStart: number;
-    oldLines: number;
-    newStart: number;
-    newLines: number;
-  } | null = null;
+  let currentHunkHeader: HunkHeader | null = null;
   let currentHunkBody: string[] = [];
   let headerLines: string[] = [];
   let additions = 0;
@@ -111,40 +160,22 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
 
       if (line.startsWith('diff --git') || line.startsWith('--- ') || line.startsWith('diff --')) {
         if (currentFile && currentHunkHeader !== null) {
-          const identity = generateHunkIdentity(
+          finalizeHunk(
+            hunks,
             currentFile,
-            currentHunkHeader.oldStart,
-            currentHunkHeader.oldLines,
-            currentHunkHeader.newStart,
-            currentHunkHeader.newLines,
-          );
-          const newHunk: ParsedHunk = {
-            oldStart: currentHunkHeader.oldStart,
-            oldLines: currentHunkHeader.oldLines,
-            newStart: currentHunkHeader.newStart,
-            newLines: currentHunkHeader.newLines,
-            body: currentHunkBody.join('\n'),
+            currentHunkHeader,
+            currentHunkBody,
             additions,
             deletions,
             isNew,
             isDeleted,
             isBinary,
-            identity,
-          };
-          const existing = hunks.get(currentFile);
-          if (existing) {
-            existing.push(newHunk);
-          } else {
-            hunks.set(currentFile, [newHunk]);
-          }
+          );
         }
 
         if (line.startsWith('diff --git')) {
-          const match = line.match(/^diff --git "?a\/(.+?)"? b\//);
-          if (match && match[1]) {
-            currentFile = unquotePath(match[1]);
-            headerLines = [line];
-          }
+          currentFile = parseDiffGitLine(line);
+          headerLines = [line];
         } else if (line.startsWith('--- ')) {
           headerLines.push(line);
           const { oldPath, newPath } = parseOldNewPaths([line]);
@@ -176,32 +207,17 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
         const header = parseHunkHeader(line);
         if (header) {
           if (currentHunkHeader !== null && currentFile) {
-            const identity = generateHunkIdentity(
+            finalizeHunk(
+              hunks,
               currentFile,
-              currentHunkHeader.oldStart,
-              currentHunkHeader.oldLines,
-              currentHunkHeader.newStart,
-              currentHunkHeader.newLines,
-            );
-            const newHunk: ParsedHunk = {
-              oldStart: currentHunkHeader.oldStart,
-              oldLines: currentHunkHeader.oldLines,
-              newStart: currentHunkHeader.newStart,
-              newLines: currentHunkHeader.newLines,
-              body: currentHunkBody.join('\n'),
+              currentHunkHeader,
+              currentHunkBody,
               additions,
               deletions,
               isNew,
               isDeleted,
               isBinary,
-              identity,
-            };
-            const existing = hunks.get(currentFile);
-            if (existing) {
-              existing.push(newHunk);
-            } else {
-              hunks.set(currentFile, [newHunk]);
-            }
+            );
           }
           currentHunkHeader = header;
           currentHunkBody = [line];
@@ -222,56 +238,32 @@ export function parseUnifiedDiff(diff: string): ParsedUnifiedDiff {
         if (!files.includes(currentFile)) {
           files.push(currentFile);
         }
-        const identity = generateHunkIdentity(currentFile, 0, 0, 0, 0);
-        const newHunk: ParsedHunk = {
-          oldStart: 0,
-          oldLines: 0,
-          newStart: 0,
-          newLines: 0,
-          body: line,
-          additions: 0,
-          deletions: 0,
-          isNew: false,
-          isDeleted: false,
-          isBinary: true,
-          identity,
-        };
-        const existing = hunks.get(currentFile);
-        if (existing) {
-          existing.push(newHunk);
-        } else {
-          hunks.set(currentFile, [newHunk]);
-        }
+        finalizeHunk(
+          hunks,
+          currentFile,
+          { oldStart: 0, oldLines: 0, newStart: 0, newLines: 0 },
+          [line],
+          0,
+          0,
+          false,
+          false,
+          true,
+        );
       }
     }
 
     if (currentFile && currentHunkHeader !== null) {
-      const identity = generateHunkIdentity(
+      finalizeHunk(
+        hunks,
         currentFile,
-        currentHunkHeader.oldStart,
-        currentHunkHeader.oldLines,
-        currentHunkHeader.newStart,
-        currentHunkHeader.newLines,
-      );
-      const newHunk: ParsedHunk = {
-        oldStart: currentHunkHeader.oldStart,
-        oldLines: currentHunkHeader.oldLines,
-        newStart: currentHunkHeader.newStart,
-        newLines: currentHunkHeader.newLines,
-        body: currentHunkBody.join('\n'),
+        currentHunkHeader,
+        currentHunkBody,
         additions,
         deletions,
         isNew,
         isDeleted,
         isBinary,
-        identity,
-      };
-      const existing = hunks.get(currentFile);
-      if (existing) {
-        existing.push(newHunk);
-      } else {
-        hunks.set(currentFile, [newHunk]);
-      }
+      );
     }
   } catch (e) {
     parseError = e instanceof Error ? e.message : String(e);
@@ -322,11 +314,10 @@ export function findHunkForLine(
 }
 
 export function extractBoundedSourceContext(
-  fileContent: string,
+  lines: readonly string[],
   line: number,
   contextSize: number = 20,
 ): string {
-  const lines = fileContent.split('\n');
   const start = Math.max(0, line - contextSize - 1);
   const end = Math.min(lines.length, line + contextSize);
   return lines.slice(start, end).join('\n');
