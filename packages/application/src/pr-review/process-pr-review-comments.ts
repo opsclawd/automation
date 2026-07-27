@@ -220,13 +220,19 @@ export class ProcessPrReviewComments {
     const localMainShaBefore =
       d.repoRoot && d.baseBranch ? await d.git.headCommitShaOf(d.repoRoot) : undefined;
 
-    const initialDiff = await d.git.diff(input.cwd, 'origin/HEAD', startCommitSha);
+    // Each batch's agent may commit, advancing HEAD. Later batches must verify
+    // against the HEAD as of when they start, not the stale poll-start SHA. (M1)
+    let runningStartSha = await d.git.headCommitSha(input.cwd);
+    const initialDiff = await d.git.diff(input.cwd, 'origin/HEAD', runningStartSha);
     const manifest = this.generateManifest(unresolved, initialDiff);
     const taskRunner = new PollTaskRunner(d);
     const taskResults: PollTaskOutput[] = [];
-    // Each batch's agent may commit, advancing HEAD. Later batches must verify
-    // against the HEAD as of when they start, not the stale poll-start SHA. (M1)
-    let runningStartSha = startCommitSha;
+
+    // Reused as the first batch's first-attempt diff so the manifest-generation
+    // diff fetch and the attempt-1 diff fetch are not duplicated when HEAD has
+    // not moved between the two.
+    let cachedFirstDiff: string | undefined = initialDiff;
+    let isFirstBatchIteration = true;
 
     const useBatching = d.renderBatchTaskPrompt && d.extractBatchTaskResult && d.contextSource;
     let forceNoBatch = false;
@@ -240,7 +246,10 @@ export class ProcessPrReviewComments {
         .filter((c): c is PrReviewComment => c !== undefined && c.state === 'pending');
       if (batchComments.length === 0) continue;
 
-      runningStartSha = await d.git.headCommitSha(input.cwd);
+      if (!isFirstBatchIteration) {
+        runningStartSha = await d.git.headCommitSha(input.cwd);
+      }
+      isFirstBatchIteration = false;
 
       let previousBuildError: string | undefined;
       let previousCodeVerifyReason: string | undefined;
@@ -259,7 +268,12 @@ export class ProcessPrReviewComments {
         let currentDiff: string;
         try {
           if (attempt === 1) {
-            currentDiff = await d.git.diff(input.cwd, 'origin/HEAD', runningStartSha);
+            if (cachedFirstDiff !== undefined) {
+              currentDiff = cachedFirstDiff;
+              cachedFirstDiff = undefined;
+            } else {
+              currentDiff = await d.git.diff(input.cwd, 'origin/HEAD', runningStartSha);
+            }
           } else {
             const lastCompletedAttempt = previousAttempts
               .filter((a) => a.completedHead)
@@ -310,23 +324,35 @@ export class ProcessPrReviewComments {
         const reviewMode: PostPrReviewAttemptMode =
           attempt === 1 ? 'initial_full' : 'intermediate_delta';
 
+        let context: SelectedPrReviewContext | undefined;
         if (useBatching && !forceNoBatch) {
-          const snapshot = await d.contextSource!({
-            cwd: input.cwd,
-            base: 'origin/HEAD',
-            head: runningStartSha,
-            seedPaths: batch.comments.map((c) => c.path),
-          });
+          try {
+            const snapshot = await d.contextSource!({
+              cwd: input.cwd,
+              base: 'origin/HEAD',
+              head: runningStartSha,
+              seedPaths: currentBatchComments.map((c) => c.path),
+            });
 
-          const context = selectPrReviewContext({
-            comments: currentBatchComments,
-            attempt: Math.min(attempt, 3) as import('./context-selector.js').PrReviewContextLevel,
-            snapshot,
-            previousBuildErrors: previousBuildError !== undefined ? [previousBuildError] : [],
-            previousVerifierReasons:
-              previousCodeVerifyReason !== undefined ? [previousCodeVerifyReason] : [],
-          });
+            context = selectPrReviewContext({
+              comments: currentBatchComments,
+              attempt: Math.min(attempt, 3) as import('./context-selector.js').PrReviewContextLevel,
+              snapshot,
+              previousBuildErrors: previousBuildError !== undefined ? [previousBuildError] : [],
+              previousVerifierReasons:
+                previousCodeVerifyReason !== undefined ? [previousCodeVerifyReason] : [],
+            });
+          } catch (error: unknown) {
+            forceNoBatch = true;
+            d.onWarning?.(
+              'context selection failed; falling back to per-comment processing',
+              { reason: error instanceof Error ? error.message : String(error) },
+              String(input.runId),
+            );
+          }
+        }
 
+        if (useBatching && !forceNoBatch && context) {
           d.onContextSelected?.({
             level: context.level,
             commentIds: currentBatchComments.map((c) => c.commentId),
