@@ -12,7 +12,8 @@ import type {
 } from '../results/schemas/poll-task-result.js';
 import { validatePollTaskBatchResult } from '../results/schemas/poll-task-result.js';
 import type { VerifyCodeChangeFn } from './verify-code-change.js';
-import { verifyComment } from './verify-comment.js';
+import { verifyComment, verifyRemoteFixCommit } from './verify-comment.js';
+import type { VerificationResult } from './verify-comment.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { FixDiffInspectorPort } from '../ports/fix-diff-inspector-port.js';
 
@@ -872,9 +873,25 @@ export class PollTaskRunner {
         };
       }
 
+      let fixedVerification: VerificationResult | undefined;
       if (hasFixed) {
         await d.git.push({ cwd: input.cwd, branch: input.branch });
         pushed = true;
+
+        const remote = await verifyRemoteFixCommit(
+          d,
+          { cwd: input.cwd, branch: input.branch, startCommitSha: input.startCommitSha },
+          fixCommitSha,
+        );
+        const ok = remote.fixCommitOnRemote && remote.isNewerThanStart && remote.commitVerified;
+        fixedVerification = {
+          ok,
+          replyVerified: true,
+          commitVerified: remote.commitVerified,
+          buildVerified: true,
+          codeVerified: true,
+          reason: ok ? '' : remote.reason,
+        };
       }
 
       const outputs: PollTaskOutput[] = [];
@@ -920,171 +937,27 @@ export class PollTaskRunner {
             attemptId: attempt.attemptId,
           });
         } else if (result.action === 'no_fix') {
-          const githubReplyId = await this.postReplyIfMissingForBatch(
-            input,
-            comment.commentId,
-            result.replyBody,
-            repliesBefore,
+          outputs.push(
+            await this.finalizeBatchReply(input, comment, attempt, result, repliesBefore, {
+              outcome: 'no_fix',
+              verification: {
+                ok: true,
+                replyVerified: true,
+                commitVerified: true,
+                buildVerified: true,
+                codeVerified: true,
+                reason: '',
+              },
+            }),
           );
-          d.prReviewRepo.insertReply({
-            id: d.idFactory(),
-            runId: input.runId,
-            prNumber: input.prNumber,
-            commentId: comment.commentId,
-            body: result.replyBody,
-            postedAt: d.now(),
-            verified: true,
-          });
-
-          const replied = markReplied(comment, {
-            replyId: githubReplyId,
-            outcome: 'no_fix',
-            poll: input.pollNumber,
-          });
-          d.prReviewRepo.upsertComment(replied);
-
-          attempt.action = 'verify';
-          const verification = await verifyComment(
-            replied,
-            { ...d, skipExpensiveVerifications: true },
-            {
-              cwd: input.cwd,
-              branch: input.branch,
-              prNumber: input.prNumber,
-              repoFullName: input.repoFullName,
-              originalStartCommitSha: input.originalStartCommitSha,
-              runningStartSha: input.startCommitSha,
-              repoId: String(input.repoId),
-            },
-          );
-
-          if (verification.ok) {
-            d.prReviewRepo.upsertComment(
-              markProcessed(replied, {
-                commitVerified: verification.commitVerified,
-                replyVerified: verification.replyVerified,
-                buildVerified: verification.buildVerified,
-              }),
-            );
-            await d.github.resolveReviewThread(
-              input.repoFullName,
-              input.prNumber,
-              comment.commentId,
-            );
-            const currentHead = await d.git.headCommitSha(input.cwd);
-            attempt.completedHead = currentHead;
-            attempt.disposition = 'success';
-            attempt.action = 'remediate';
-            d.prReviewRepo.updateCommentAttempt(attempt);
-            outputs.push({
-              commentId: comment.commentId,
-              action: 'no_fix',
-              processed: true,
-              blocked: false,
-              attemptId: attempt.attemptId,
-            });
-          } else {
-            const currentHeadNoFix = await d.git.headCommitSha(input.cwd);
-            attempt.completedHead = currentHeadNoFix;
-            attempt.disposition = 'failure';
-            attempt.action = 'verify';
-            attempt.verifierFeedback = 'reply verification failed';
-            d.prReviewRepo.updateCommentAttempt(attempt);
-            outputs.push({
-              commentId: comment.commentId,
-              action: 'no_fix',
-              processed: false,
-              blocked: false,
-              attemptId: attempt.attemptId,
-            });
-          }
         } else if (result.action === 'fixed') {
-          const githubReplyId = await this.postReplyIfMissingForBatch(
-            input,
-            comment.commentId,
-            result.replyBody,
-            repliesBefore,
+          outputs.push(
+            await this.finalizeBatchReply(input, comment, attempt, result, repliesBefore, {
+              outcome: 'fixed',
+              commitSha: fixCommitSha,
+              verification: fixedVerification!,
+            }),
           );
-          d.prReviewRepo.insertReply({
-            id: d.idFactory(),
-            runId: input.runId,
-            prNumber: input.prNumber,
-            commentId: comment.commentId,
-            body: result.replyBody,
-            postedAt: d.now(),
-            verified: true,
-          });
-
-          const replied = markReplied(comment, {
-            replyId: githubReplyId,
-            outcome: 'fixed',
-            commitSha: fixCommitSha,
-            poll: input.pollNumber,
-          });
-          d.prReviewRepo.upsertComment(replied);
-
-          attempt.action = 'verify';
-          const verification = await verifyComment(
-            replied,
-            { ...d, skipExpensiveVerifications: true },
-            {
-              cwd: input.cwd,
-              branch: input.branch,
-              prNumber: input.prNumber,
-              repoFullName: input.repoFullName,
-              originalStartCommitSha: input.originalStartCommitSha,
-              runningStartSha: input.startCommitSha,
-              repoId: String(input.repoId),
-            },
-          );
-
-          if (verification.ok) {
-            d.prReviewRepo.upsertComment(
-              markProcessed(replied, {
-                commitVerified: verification.commitVerified,
-                replyVerified: verification.replyVerified,
-                buildVerified: verification.buildVerified,
-              }),
-            );
-            await d.github.resolveReviewThread(
-              input.repoFullName,
-              input.prNumber,
-              comment.commentId,
-            );
-            const currentHead = await d.git.headCommitSha(input.cwd);
-            attempt.completedHead = currentHead;
-            attempt.disposition = 'success';
-            attempt.action = 'remediate';
-            d.prReviewRepo.updateCommentAttempt(attempt);
-            outputs.push({
-              commentId: comment.commentId,
-              action: 'fixed',
-              processed: true,
-              blocked: false,
-              attemptId: attempt.attemptId,
-            });
-          } else {
-            const currentHeadFixed = await d.git.headCommitSha(input.cwd);
-            attempt.completedHead = currentHeadFixed;
-            attempt.disposition = 'failure';
-            attempt.action = 'verify';
-            attempt.verifierFeedback =
-              verification.buildError ?? verification.codeVerifyReason ?? 'verification failed';
-            d.prReviewRepo.updateCommentAttempt(attempt);
-            outputs.push({
-              commentId: comment.commentId,
-              action: 'fixed',
-              processed: false,
-              blocked: false,
-              ...(verification.buildError !== undefined
-                ? { buildError: verification.buildError }
-                : {}),
-              ...(verification.codeVerifyReason !== undefined
-                ? { codeVerifyReason: verification.codeVerifyReason }
-                : {}),
-              attemptId: attempt.attemptId,
-            });
-          }
         }
       }
 
@@ -1108,6 +981,98 @@ export class PollTaskRunner {
   private async resetBatch(input: PollBatchTaskInput): Promise<void> {
     await this.deps.git.resetHard(input.cwd, input.startCommitSha);
     await this.deps.git.cleanUntracked(input.cwd);
+  }
+
+  private async finalizeBatchReply(
+    input: PollBatchTaskInput,
+    comment: PrReviewComment,
+    attempt: PrReviewCommentAttempt,
+    result: PollTaskBatchResultEntry,
+    repliesBefore: GitHubReviewComment[],
+    options: {
+      outcome: 'no_fix' | 'fixed';
+      commitSha?: string;
+      verification: VerificationResult;
+    },
+  ): Promise<PollTaskOutput> {
+    const d = this.deps;
+    const { outcome, commitSha, verification } = options;
+
+    const githubReplyId = await this.postReplyIfMissingForBatch(
+      input,
+      comment.commentId,
+      result.replyBody,
+      repliesBefore,
+    );
+    d.prReviewRepo.insertReply({
+      id: d.idFactory(),
+      runId: input.runId,
+      prNumber: input.prNumber,
+      commentId: comment.commentId,
+      body: result.replyBody,
+      postedAt: d.now(),
+      verified: true,
+    });
+
+    const replied = markReplied(
+      comment,
+      outcome === 'fixed'
+        ? {
+            replyId: githubReplyId,
+            outcome: 'fixed',
+            commitSha: commitSha!,
+            poll: input.pollNumber,
+          }
+        : { replyId: githubReplyId, outcome: 'no_fix', poll: input.pollNumber },
+    );
+    d.prReviewRepo.upsertComment(replied);
+
+    attempt.action = 'verify';
+
+    if (verification.ok) {
+      d.prReviewRepo.upsertComment(
+        markProcessed(replied, {
+          commitVerified: verification.commitVerified,
+          replyVerified: verification.replyVerified,
+          buildVerified: verification.buildVerified,
+        }),
+      );
+      await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
+      const currentHead = await d.git.headCommitSha(input.cwd);
+      attempt.completedHead = currentHead;
+      attempt.disposition = 'success';
+      attempt.action = 'remediate';
+      d.prReviewRepo.updateCommentAttempt(attempt);
+      return {
+        commentId: comment.commentId,
+        action: outcome,
+        processed: true,
+        blocked: false,
+        attemptId: attempt.attemptId,
+      };
+    }
+
+    const currentHead = await d.git.headCommitSha(input.cwd);
+    attempt.completedHead = currentHead;
+    attempt.disposition = 'failure';
+    attempt.action = 'verify';
+    attempt.verifierFeedback =
+      verification.buildError ??
+      verification.codeVerifyReason ??
+      verification.reason ??
+      'verification failed';
+    d.prReviewRepo.updateCommentAttempt(attempt);
+    return {
+      commentId: comment.commentId,
+      action: outcome,
+      processed: false,
+      blocked: false,
+      ...(verification.buildError !== undefined ? { buildError: verification.buildError } : {}),
+      ...(verification.codeVerifyReason !== undefined
+        ? { codeVerifyReason: verification.codeVerifyReason }
+        : {}),
+      attemptId: attempt.attemptId,
+    };
   }
 
   private async postReplyIfMissingForBatch(
