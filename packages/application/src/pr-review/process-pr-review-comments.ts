@@ -220,7 +220,8 @@ export class ProcessPrReviewComments {
     const localMainShaBefore =
       d.repoRoot && d.baseBranch ? await d.git.headCommitShaOf(d.repoRoot) : undefined;
 
-    const manifest = this.generateManifest(unresolved);
+    const initialDiff = await d.git.diff(input.cwd, 'origin/HEAD', startCommitSha);
+    const manifest = this.generateManifest(unresolved, initialDiff);
     const taskRunner = new PollTaskRunner(d);
     const taskResults: PollTaskOutput[] = [];
     // Each batch's agent may commit, advancing HEAD. Later batches must verify
@@ -386,6 +387,9 @@ export class ProcessPrReviewComments {
                 fallbackReason = `code verified correct but build failing: ${output.buildError}`;
               }
               d.prReviewRepo.upsertComment(blockComment(comment, fallbackReason));
+              output.blocked = true;
+            }
+            if (unresolvedOutputs.length > 0) {
               const rollbackOk = await d.rollbackFix?.(
                 { cwd: input.cwd, branch: pr.headRefName },
                 runningStartSha,
