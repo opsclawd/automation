@@ -1,4 +1,5 @@
 import type { PrReviewComment, PrReviewCommentAttempt } from '@ai-sdlc/domain';
+import type { SelectedPrReviewContext } from './context-selector.js';
 import { markProcessed, blockComment, markReplied } from '@ai-sdlc/domain';
 import type { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
 import type { GitHubPort, GitHubReviewComment } from '../ports/github-port.js';
@@ -44,6 +45,8 @@ export interface PollTaskRunnerDeps {
     previousBuildError?: string;
     previousCodeVerifyReason?: string;
     mode: PostPrReviewAttemptMode;
+    context: SelectedPrReviewContext;
+    attempt: number;
     dispositions?: Array<{
       commentId: number;
       fingerprint: string;
@@ -146,6 +149,7 @@ export interface PollBatchTaskInput {
   contextLevel?: number;
   contextFiles?: string[];
   fullDiffIncluded?: boolean;
+  selectedContext?: SelectedPrReviewContext;
 }
 
 export interface PollBatchTaskOutput {
@@ -621,6 +625,15 @@ export class PollTaskRunner {
         diff: input.diff,
         branch: input.branch,
         mode: input.reviewMode,
+        context: input.selectedContext ?? {
+          level: (input.contextLevel ?? 1) as import('./context-selector.js').PrReviewContextLevel,
+          sections: [],
+          includedFiles: input.contextFiles ?? input.comments.map((c) => c.path),
+          includedHunks: [],
+          includedSymbols: [],
+          fullDiffIncluded: input.fullDiffIncluded ?? false,
+        },
+        attempt: input.retryNumber,
         ...(input.previousBuildError !== undefined
           ? { previousBuildError: input.previousBuildError }
           : {}),

@@ -31,7 +31,7 @@ import { PollTaskRunner } from './poll-task-runner.js';
 import type { PollTaskOutput } from './poll-task-runner.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { PrReviewContextSourcePort } from '../ports/pr-review-context-source-port.js';
-import { selectPrReviewContext } from './context-selector.js';
+import { selectPrReviewContext, type SelectedPrReviewContext } from './context-selector.js';
 import { groupCommentsIntoBatches } from './comment-batcher.js';
 
 export interface ContextSelectedEvent {
@@ -75,6 +75,8 @@ export interface ProcessPrReviewDeps {
     diff: string;
     branch: string;
     mode: PostPrReviewAttemptMode;
+    context: SelectedPrReviewContext;
+    attempt: number;
     previousBuildError?: string;
     previousCodeVerifyReason?: string;
     dispositions?: Array<{
@@ -351,6 +353,7 @@ export class ProcessPrReviewComments {
             contextLevel: context.level,
             contextFiles: [...context.includedFiles],
             fullDiffIncluded: context.fullDiffIncluded,
+            selectedContext: context,
           });
 
           taskResults.push(...batchResult.outputs);
@@ -367,6 +370,34 @@ export class ProcessPrReviewComments {
           const firstFailedCode = batchResult.outputs.find((o) => o.codeVerifyReason);
           if (firstFailedCode?.codeVerifyReason) {
             previousCodeVerifyReason = firstFailedCode.codeVerifyReason;
+          }
+
+          if (attempt === ESCALATION_BUDGET) {
+            const unresolvedOutputs = batchResult.outputs.filter(
+              (o) => !o.processed && !o.blocked && o.action !== 'no_fix',
+            );
+            for (const output of unresolvedOutputs) {
+              const comment = currentBatchComments.find((c) => c.commentId === output.commentId);
+              if (!comment) continue;
+              let fallbackReason = `batch task failed after ${ESCALATION_BUDGET} attempts`;
+              if (output.codeVerifyReason !== undefined) {
+                fallbackReason = `verified incorrect: ${output.codeVerifyReason}`;
+              } else if (output.buildError !== undefined) {
+                fallbackReason = `code verified correct but build failing: ${output.buildError}`;
+              }
+              d.prReviewRepo.upsertComment(blockComment(comment, fallbackReason));
+              const rollbackOk = await d.rollbackFix?.(
+                { cwd: input.cwd, branch: pr.headRefName },
+                runningStartSha,
+              );
+              if (rollbackOk === false) {
+                d.onWarning?.(
+                  'rollbackFix failed: broken commits may remain on remote branch',
+                  { branch: pr.headRefName, cwd: input.cwd, targetSha: runningStartSha },
+                  String(input.runId),
+                );
+              }
+            }
           }
         } else {
           for (const currentComment of currentBatchComments) {

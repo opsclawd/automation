@@ -5,6 +5,7 @@ import {
   stat as fsStat,
   access as fsAccess,
   readFile as fsReadFile,
+  writeFile as fsWriteFile,
 } from 'node:fs/promises';
 import os from 'node:os';
 import {
@@ -6407,6 +6408,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         diff: _diff,
         branch: _branch,
         mode: _mode,
+        context,
+        attempt,
         previousBuildError,
         previousCodeVerifyReason,
         dispositions,
@@ -6420,20 +6423,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         const content = buildPostPrReviewBatchPrompt({
           cwd,
           comments,
-          context: {
-            level: 1,
-            sections: [],
-            includedFiles: comments.map((c) => c.path),
-            includedHunks: [],
-            includedSymbols: [],
-            fullDiffIncluded: false,
-          },
-          attempt: 1,
+          context,
+          attempt,
           dispositions: dispositions ?? [],
           ...(previousBuildError !== undefined ? { previousBuildError } : {}),
           ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
         });
-        writeFileSync(promptPath, content, 'utf-8');
+        await fsWriteFile(promptPath, content, 'utf-8');
         return promptPath;
       },
       extractBatchTaskResult: async (input) => {
