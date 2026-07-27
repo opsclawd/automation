@@ -20,6 +20,10 @@ import type { AgentPort } from '../ports/agent-port.js';
 import type { AgentProfileName } from '../ports/agent-invocation-types.js';
 import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.js';
 import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
+import {
+  isPollTaskManifestV2,
+  selectCommentsFromManifest,
+} from '../results/schemas/poll-task-manifest.js';
 import { PollTaskRunner } from './poll-task-runner.js';
 import type { PollTaskOutput } from './poll-task-runner.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
@@ -563,3 +567,11 @@ export class ProcessPrReviewComments {
     });
   }
 }
+
+export function isBatchManifest(
+  manifest: unknown,
+): manifest is import('../results/schemas/poll-task-manifest.js').PollTaskManifestV2 {
+  return isPollTaskManifestV2(manifest);
+}
+
+export { selectCommentsFromManifest };

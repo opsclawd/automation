@@ -26,10 +26,22 @@ export { compoundResultSchema } from './schemas/compound.js';
 export type { CompoundResult } from './schemas/compound.js';
 export { fixValidateResultSchema } from './schemas/fix-validate.js';
 export type { FixValidateResult } from './schemas/fix-validate.js';
-export { pollTaskManifestSchema } from './schemas/poll-task-manifest.js';
-export type { PollTaskManifest, PollTaskEntry } from './schemas/poll-task-manifest.js';
-export { pollTaskResultSchema } from './schemas/poll-task-result.js';
-export type { PollTaskResult } from './schemas/poll-task-result.js';
+export { pollTaskManifestSchema, pollTaskManifestV2Schema } from './schemas/poll-task-manifest.js';
+export type {
+  PollTaskManifest,
+  PollTaskEntry,
+  PollTaskManifestV2,
+  PollTaskBatchEntry,
+  PollTaskComment,
+} from './schemas/poll-task-manifest.js';
+export { isPollTaskManifestV2, selectCommentsFromManifest } from './schemas/poll-task-manifest.js';
+export { pollTaskResultSchema, pollTaskBatchResultSchema } from './schemas/poll-task-result.js';
+export type {
+  PollTaskResult,
+  PollTaskBatchResult,
+  PollTaskBatchResultEntry,
+} from './schemas/poll-task-result.js';
+export { validatePollTaskBatchResult } from './schemas/poll-task-result.js';
 export { arbiterResultSchema } from './schemas/arbiter.js';
 export type { ArbiterResult } from './schemas/arbiter.js';
 export { architectPlanSchema, architectPlanTaskSchema } from './schemas/architect.js';
