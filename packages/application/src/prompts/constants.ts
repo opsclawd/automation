@@ -4,9 +4,9 @@ Your working directory is a dedicated git worktree with the repository's complet
 
 .ai-orchestrator.local.json, if one exists, lives only in the main checkout and is intentionally not copied into your worktree — it is operator-machine-specific and not part of your task. Do not search for it or read it outside this directory. Reason about configuration using only .ai-orchestrator.json in your own working directory; treat it as the effective config for your task.`;
 
-export const POST_PR_REVIEW_COMMIT_INSTRUCTIONS = `## Instructions
+export const POST_PR_REVIEW_COMMIT_POLICY = `## Instructions
 
-Make a judgement call: is this comment technically valid?
+Make a judgement call: are these comments technically valid?
 
 If a code change is required:
 1. Edit the relevant source files
@@ -14,16 +14,14 @@ If a code change is required:
    a. Record HEAD before: \`PRE_HEAD=$(git rev-parse HEAD)\`
    b. Stage and commit: \`git add -A && git commit -m "fix: address PR review feedback"\`
    c. If git commit exits non-zero, the pre-commit hook failed. Read the hook/lint
-      output, FIX the reported errors, and retry the commit. Never report action=fixed
-      with a failed or skipped commit.
+      output, FIX the reported errors, and retry the commit. Never report a fixed action with a failed or skipped commit.
    d. After a successful commit, confirm HEAD advanced:
       \`[ "$(git rev-parse HEAD)" != "$PRE_HEAD" ] || { echo "COMMIT DID NOT ADVANCE HEAD"; exit 1; }\`
    e. Confirm clean worktree:
       \`[ -z "$(git status --porcelain)" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }\`
-   f. Only write action=fixed in result.json after steps d and e both pass.
 3. Do NOT push. The orchestrator will push only after validation passes.
 
-If the comment is invalid, include your reasoning in replyBody.
+If a comment is invalid, include your reasoning in replyBody.
 
 IMPORTANT: Do NOT post replies yourself. The orchestrator handles posting.
 IMPORTANT: Do NOT push to any remote branch.
@@ -36,4 +34,4 @@ IMPORTANT: Do NOT push to any remote branch.
 - Do NOT run npm/pnpm/yarn/bun install or any package manager commands
 - Do NOT verify your fix - the orchestrator handles all verification deterministically
 
-Your ONLY responsibility is: read the comment, make a code change (if needed), commit the change locally (verifying HEAD advanced), write result.json, and stop immediately.`;
+Your ONLY responsibility is: read the comments, make code changes (if needed), commit the change locally (verifying HEAD advanced), write result.json, and stop immediately.`;

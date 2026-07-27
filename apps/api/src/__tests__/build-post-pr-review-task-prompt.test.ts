@@ -31,7 +31,7 @@ describe('buildPostPrReviewTaskPrompt', () => {
     expect(prompt).toContain('COMMIT DID NOT ADVANCE HEAD');
     expect(prompt).toContain('WORKTREE DIRTY AFTER COMMIT');
     expect(prompt).toContain(
-      'Only write action=fixed in result.json after steps d and e both pass',
+      'Only write a fixed action in result.json after verifying HEAD advanced and worktree is clean',
     );
   });
 
@@ -40,7 +40,7 @@ describe('buildPostPrReviewTaskPrompt', () => {
 
     expect(prompt).toContain('pre-commit hook failed');
     expect(prompt).toContain('FIX the reported errors');
-    expect(prompt).toContain('Never report action=fixed');
+    expect(prompt).toContain('Never report a fixed action');
   });
 
   it('includes previous build error and previous code verify reason when provided', () => {

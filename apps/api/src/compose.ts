@@ -281,7 +281,7 @@ import {
   buildPlanReviewFixPrompt,
 } from './plan-review-prompts.js';
 import {
-  POST_PR_REVIEW_COMMIT_INSTRUCTIONS,
+  POST_PR_REVIEW_COMMIT_POLICY,
   WORKSPACE_CONSTRAINTS,
   type SelectedPrReviewContext,
   type SelectedPrReviewContextSection,
@@ -1385,7 +1385,7 @@ export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptIn
   }
 
   sections.push(
-    POST_PR_REVIEW_COMMIT_INSTRUCTIONS,
+    POST_PR_REVIEW_COMMIT_POLICY,
     '',
     '## Required Output',
     '',
@@ -1399,6 +1399,8 @@ export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptIn
     '  "blockedReason": "<string - only when action is blocked>"',
     '}',
     '```',
+    '',
+    'Only write a fixed action in result.json after verifying HEAD advanced and worktree is clean.',
   );
 
   return sections.join('\n');
@@ -1449,10 +1451,6 @@ export function buildPostPrReviewBatchPrompt(input: BuildPostPrReviewBatchPrompt
     '',
     `## Attempt: ${attempt}`,
     '',
-    '## HARD CONSTRAINT — Do NOT push or post comments',
-    'Do NOT push to any remote branch. Do NOT post review comments. The orchestrator owns those actions.',
-    'Do NOT run verification yourself — the orchestrator runs all verification deterministically.',
-    '',
   );
 
   sections.push(
@@ -1481,6 +1479,8 @@ export function buildPostPrReviewBatchPrompt(input: BuildPostPrReviewBatchPrompt
   }
 
   sections.push(
+    POST_PR_REVIEW_COMMIT_POLICY,
+    '',
     '## Comments to Address',
     '',
     ...comments.map((c) => `- [commentId: ${c.commentId}] ${c.path}:${c.line} - ${c.body}`),
@@ -1508,8 +1508,6 @@ export function buildPostPrReviewBatchPrompt(input: BuildPostPrReviewBatchPrompt
   }
 
   sections.push(
-    POST_PR_REVIEW_COMMIT_INSTRUCTIONS,
-    '',
     '## Required Output',
     '',
     `Write a result.json file at: ${join(cwd, 'result.json')}`,
@@ -1528,7 +1526,6 @@ export function buildPostPrReviewBatchPrompt(input: BuildPostPrReviewBatchPrompt
     '- commentId values must match exactly the IDs listed above',
     '- replyBody must be non-empty',
     '- blockedReason is only valid when action is "blocked"',
-    '- Do NOT push. The orchestrator will push only after validation passes.',
   );
 
   return sections.join('\n');
