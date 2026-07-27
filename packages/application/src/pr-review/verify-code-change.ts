@@ -10,6 +10,7 @@ export type VerifyCodeChangeFn = (input: {
   fixCommitSha: string;
   runId: string;
   repoId: string;
+  commentId?: number;
 }) => Promise<{ pass: boolean; reason: string }>;
 
 export interface VerifyCodeChangeDeps {

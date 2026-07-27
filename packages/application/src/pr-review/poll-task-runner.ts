@@ -14,6 +14,7 @@ import { validatePollTaskBatchResult } from '../results/schemas/poll-task-result
 import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import { verifyComment } from './verify-comment.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
+import type { FixDiffInspectorPort } from '../ports/fix-diff-inspector-port.js';
 
 export interface PollTaskRunnerDeps {
   github: GitHubPort;
@@ -71,6 +72,8 @@ export interface PollTaskRunnerDeps {
     runId: string;
   }) => Promise<{ passed: boolean; error?: string }>;
   verifyCodeChange?: VerifyCodeChangeFn;
+  fixDiffInspector?: FixDiffInspectorPort;
+  skipExpensiveVerifications?: boolean;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
@@ -348,15 +351,19 @@ export class PollTaskRunner {
         d.prReviewRepo.upsertComment(replied);
 
         attempt.action = 'verify';
-        const verification = await verifyComment(replied, d, {
-          cwd: input.cwd,
-          branch: input.branch,
-          prNumber: input.prNumber,
-          repoFullName: input.repoFullName,
-          originalStartCommitSha: input.originalStartCommitSha,
-          runningStartSha: input.startCommitSha,
-          repoId: String(input.repoId),
-        });
+        const verification = await verifyComment(
+          replied,
+          { ...d, skipExpensiveVerifications: true },
+          {
+            cwd: input.cwd,
+            branch: input.branch,
+            prNumber: input.prNumber,
+            repoFullName: input.repoFullName,
+            originalStartCommitSha: input.originalStartCommitSha,
+            runningStartSha: input.startCommitSha,
+            repoId: String(input.repoId),
+          },
+        );
 
         if (verification.ok) {
           d.prReviewRepo.upsertComment(
@@ -828,6 +835,7 @@ export class PollTaskRunner {
             fixCommitSha,
             runId: String(input.runId),
             repoId: String(input.repoId),
+            commentId: comment.commentId,
           }).then((codeResult) => ({ fixed, codeResult }));
         });
         const codeVerifyResults = await Promise.all(codeVerifyPromises);
@@ -936,15 +944,19 @@ export class PollTaskRunner {
           d.prReviewRepo.upsertComment(replied);
 
           attempt.action = 'verify';
-          const verification = await verifyComment(replied, d, {
-            cwd: input.cwd,
-            branch: input.branch,
-            prNumber: input.prNumber,
-            repoFullName: input.repoFullName,
-            originalStartCommitSha: input.originalStartCommitSha,
-            runningStartSha: input.startCommitSha,
-            repoId: String(input.repoId),
-          });
+          const verification = await verifyComment(
+            replied,
+            { ...d, skipExpensiveVerifications: true },
+            {
+              cwd: input.cwd,
+              branch: input.branch,
+              prNumber: input.prNumber,
+              repoFullName: input.repoFullName,
+              originalStartCommitSha: input.originalStartCommitSha,
+              runningStartSha: input.startCommitSha,
+              repoId: String(input.repoId),
+            },
+          );
 
           if (verification.ok) {
             d.prReviewRepo.upsertComment(
@@ -1012,15 +1024,99 @@ export class PollTaskRunner {
           d.prReviewRepo.upsertComment(replied);
 
           attempt.action = 'verify';
-          const verification = await verifyComment(replied, d, {
-            cwd: input.cwd,
-            branch: input.branch,
+          const verification = await verifyComment(
+            replied,
+            { ...d, skipExpensiveVerifications: true },
+            {
+              cwd: input.cwd,
+              branch: input.branch,
+              prNumber: input.prNumber,
+              repoFullName: input.repoFullName,
+              originalStartCommitSha: input.originalStartCommitSha,
+              runningStartSha: input.startCommitSha,
+              repoId: String(input.repoId),
+            },
+          );
+
+          if (verification.ok) {
+            d.prReviewRepo.upsertComment(
+              markProcessed(replied, {
+                commitVerified: verification.commitVerified,
+                replyVerified: verification.replyVerified,
+                buildVerified: verification.buildVerified,
+              }),
+            );
+            await d.github.resolveReviewThread(
+              input.repoFullName,
+              input.prNumber,
+              comment.commentId,
+            );
+            const currentHead = await d.git.headCommitSha(input.cwd);
+            attempt.completedHead = currentHead;
+            attempt.disposition = 'success';
+            attempt.action = 'remediate';
+            d.prReviewRepo.updateCommentAttempt(attempt);
+            outputs.push({
+              commentId: comment.commentId,
+              action: 'no_fix',
+              processed: true,
+              blocked: false,
+              attemptId: attempt.attemptId,
+            });
+          } else {
+            const currentHeadNoFix = await d.git.headCommitSha(input.cwd);
+            attempt.completedHead = currentHeadNoFix;
+            attempt.disposition = 'failure';
+            attempt.action = 'verify';
+            attempt.verifierFeedback = 'reply verification failed';
+            d.prReviewRepo.updateCommentAttempt(attempt);
+            outputs.push({
+              commentId: comment.commentId,
+              action: 'no_fix',
+              processed: false,
+              blocked: false,
+              attemptId: attempt.attemptId,
+            });
+          }
+        } else if (result.action === 'fixed') {
+          const githubReplyId = await this.postReplyIfMissingForBatch(
+            input,
+            comment.commentId,
+            result.replyBody,
+            repliesBefore,
+          );
+          d.prReviewRepo.insertReply({
+            id: d.idFactory(),
+            runId: input.runId,
             prNumber: input.prNumber,
-            repoFullName: input.repoFullName,
-            originalStartCommitSha: input.originalStartCommitSha,
-            runningStartSha: input.startCommitSha,
-            repoId: String(input.repoId),
+            commentId: comment.commentId,
+            body: result.replyBody,
+            postedAt: d.now(),
+            verified: true,
           });
+
+          const replied = markReplied(comment, {
+            replyId: githubReplyId,
+            outcome: 'fixed',
+            commitSha: fixCommitSha,
+            poll: input.pollNumber,
+          });
+          d.prReviewRepo.upsertComment(replied);
+
+          attempt.action = 'verify';
+          const verification = await verifyComment(
+            replied,
+            { ...d, skipExpensiveVerifications: true },
+            {
+              cwd: input.cwd,
+              branch: input.branch,
+              prNumber: input.prNumber,
+              repoFullName: input.repoFullName,
+              originalStartCommitSha: input.originalStartCommitSha,
+              runningStartSha: input.startCommitSha,
+              repoId: String(input.repoId),
+            },
+          );
 
           if (verification.ok) {
             d.prReviewRepo.upsertComment(

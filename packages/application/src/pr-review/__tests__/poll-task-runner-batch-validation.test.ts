@@ -560,8 +560,8 @@ describe('PollTaskRunner batch — side-effect-order validation tests', () => {
 
       await runner.executeBatch(makeBatchInput(comments));
 
-      expect(verifyBuildPassesSpy).toHaveBeenCalledTimes(3);
-      expect(verifyCodeChangeSpy).toHaveBeenCalledTimes(4);
+      expect(verifyBuildPassesSpy).toHaveBeenCalledTimes(1);
+      expect(verifyCodeChangeSpy).toHaveBeenCalledTimes(2);
     });
   });
 });

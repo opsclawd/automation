@@ -19,7 +19,10 @@ import type { GitPort } from '../ports/git-port.js';
 import type { AgentPort } from '../ports/agent-port.js';
 import type { AgentProfileName } from '../ports/agent-invocation-types.js';
 import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.js';
-import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
+import type {
+  PollTaskResult,
+  PollTaskBatchResultEntry,
+} from '../results/schemas/poll-task-result.js';
 import {
   isPollTaskManifestV2,
   selectCommentsFromManifest,
@@ -52,6 +55,26 @@ export interface ProcessPrReviewDeps {
     cwd: string;
   }) => Promise<
     { ok: true; result: PollTaskResult } | { ok: false; reason: string; detail: string }
+  >;
+  renderBatchTaskPrompt?: (input: {
+    cwd: string;
+    comments: PrReviewComment[];
+    diff: string;
+    branch: string;
+    mode: PostPrReviewAttemptMode;
+    previousBuildError?: string;
+    previousCodeVerifyReason?: string;
+    dispositions?: Array<{
+      fingerprint: string;
+      disposition: string;
+      reason?: string;
+    }>;
+  }) => Promise<string>;
+  extractBatchTaskResult?: (input: {
+    resultJsonPath?: string;
+    cwd: string;
+  }) => Promise<
+    { ok: true; result: PollTaskBatchResultEntry[] } | { ok: false; reason: string; detail: string }
   >;
   verifyCommitPushed: (input: {
     cwd: string;
