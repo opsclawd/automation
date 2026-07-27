@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "The adapter uses `git ls-files -z` to generate `trackedFiles`, which reads from the mutable working directory/index instead of the `head` commit, violating the requirement for deterministic, immutable snapshots.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Replace `git ls-files -z` with `git ls-tree -r --name-only -z ${head}` to ensure tracked files are resolved deterministically from the target commit."
+    },
+    {
+      "severity": "P1",
+      "summary": "The adapter fails to discover and include 'directly imported relative files' in the priority files list before filling from changed files, missing an explicit Task 1 requirement.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Read the contents of seed files (or use an AST/regex scanner) to find relative imports and add the resolved paths to `priorityFiles`."
+    },
+    {
+      "severity": "P2",
+      "summary": "The adapter does not enforce `MAX_CONTEXT_FILES` if the initial `priorityFiles` array (seed paths + test siblings) exceeds the limit, checking only character caps in the final loop.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Add a check to `break` the `allFilesToProcess` loop if `Object.keys(fileContents).length >= MAX_CONTEXT_FILES`."
+    }
+  ]
+}

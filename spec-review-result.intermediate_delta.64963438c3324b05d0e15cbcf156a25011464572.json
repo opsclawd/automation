@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "extractSymbolFromLine incorrectly extracts the first word on the comment line (e.g., 'const', 'return') instead of the identifier from the nearest declaration, which causes test discovery to search for language keywords and skipping context entirely for comments on blank lines.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Extract the symbol name from the regex match in findDeclaration rather than parsing the comment line directly, so test discovery uses the actual declaration identifier."
+    },
+    {
+      "severity": "P2",
+      "summary": "DECLARATION_PATTERN regex does not match class or object methods, despite the task explicitly requiring 'method' as one of the nearest declaration types.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Update DECLARATION_PATTERN to also match method signatures, for example by checking for method keywords or identifier followed by parentheses."
+    }
+  ]
+}

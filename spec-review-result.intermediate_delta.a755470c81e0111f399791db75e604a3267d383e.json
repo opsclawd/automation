@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "The `importRegex` in `findDirectImports` anchors the module name directly to the closing quote, causing it to fail on standard relative imports that include file extensions like `.js`.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Add an optional extension pattern before the closing quote: `(?:\\\\.(?:js|ts))?` so it matches imports with extensions."
+    },
+    {
+      "severity": "P1",
+      "summary": "`findDeterministicCallers` uses the literal string regex `/-_/g` instead of a character class, failing to convert kebab-case filenames to camelCase and resulting in searches for invalid identifier names.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Change the regex to `/[-_](.)/g` and update the replacer to use the first capture group: `targetName.replace(/[-_](.)/g, (_, c) => c.toUpperCase())`."
+    },
+    {
+      "severity": "P2",
+      "summary": "Attempt 2 and 3 drop the `test` sections that were present in attempt 1 because symbol discovery is trapped inside the `if (attempt === 1)` block, violating progressive expansion.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Move the `findDeclaration` and `includedSymbols.add` logic outside the `if (attempt === 1)` block so symbols are collected for all attempts, while keeping the `sections.push({ kind: 'symbol' })` inside it."
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P0",
+      "summary": "The parseUnifiedDiff function stores only the last hunk per file because it uses the file path as the map key, dropping all previous hunks and breaking diff stats and deduplication.",
+      "file": "packages/application/src/pr-review/unified-diff.ts",
+      "suggested_fix": "Change ParsedUnifiedDiff.hunks to store an array of hunks per file (e.g., ReadonlyMap<string, ParsedHunk[]>), and append to this array instead of overwriting the map value."
+    },
+    {
+      "severity": "P0",
+      "summary": "findHunkForLine unconditionally returns a hunk even if the comment line does not fall within the hunk's line range, leaking unrelated diff context.",
+      "file": "packages/application/src/pr-review/unified-diff.ts",
+      "suggested_fix": "Remove the unconditional `return hunk;` at the end of findHunkForLine and return `undefined` if the line does not match the range."
+    },
+    {
+      "severity": "P2",
+      "summary": "extractSymbolFromLine only matches capitalized words, failing to extract lowercase function or variable names as symbols.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Update the regex in extractSymbolFromLine to `/\\b([a-zA-Z_$][a-zA-Z0-9_$]*)\\b/` to match all valid TypeScript identifiers."
+    },
+    {
+      "severity": "P2",
+      "summary": "findDeclaration uses a regex anchored to the start of the line (^), which fails to find indented declarations or methods inside classes.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Remove the `^` anchor from DECLARATION_PATTERN so it can match indented declarations."
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P3",
+      "summary": "A test artifact `dummy.bin` was accidentally committed to the repository root and is unused.",
+      "file": "dummy.bin",
+      "suggested_fix": "Remove the file using `git rm dummy.bin`."
+    },
+    {
+      "severity": "P2",
+      "summary": "`getSiblingTestCandidates` is called with the unnormalized `seedPath` instead of `posixSeed`, causing directory splitting to fail for Windows paths.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Change the call to `const siblings = getSiblingTestCandidates(posixSeed);` on line 111."
+    },
+    {
+      "severity": "P2",
+      "summary": "The direct `execa` call to `git show` lacks a `timeout` option, risking an indefinite hang if the git process stalls.",
+      "file": "packages/infrastructure/src/git/pr-review-context-source.ts",
+      "suggested_fix": "Add `timeout: 30_000` to the `execa` options object in `tryReadFileAtHead`, matching the behavior of `git-runner.ts`."
+    }
+  ]
+}

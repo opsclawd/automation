@@ -1,0 +1,23 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "The condition `if (fileLines && !fileContent)` evaluates to false for any populated file, completely disabling bounded source context extraction and symbol resolution for unchanged lines.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Change the condition to `if (fileLines)` so that bounded context and symbols can be extracted."
+    },
+    {
+      "severity": "P1",
+      "summary": "`findDirectImports` fails to match sibling relative imports because `normalizedTarget` includes the full directory path instead of just the file basename, causing the regex to look for directory names that aren't present in sibling relative import paths.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Add `.split('/').pop() ?? ''` when computing `normalizedTarget` so it matches the module basename, similar to how `targetName` is computed in `findDeterministicCallers`."
+    },
+    {
+      "severity": "P2",
+      "summary": "`findDeterministicCallers` uses the literal filename for its caller regex, which fails to match callers for kebab-case files since hyphens are not valid in JavaScript identifiers.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Convert `targetName` to camelCase before building `callerPattern`, or use a more robust heuristic for matching callers."
+    }
+  ]
+}

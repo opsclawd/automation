@@ -1,0 +1,11 @@
+{
+  "result": "fail",
+  "findings": [
+    {
+      "severity": "P1",
+      "summary": "The `!hasBoundedContext` fallback is incorrectly deferred because it is placed after the early returns for attempt 1 and 2, causing the first two attempts to execute with zero code context when bounded extraction fails.",
+      "file": "packages/application/src/pr-review/context-selector.ts",
+      "suggested_fix": "Move the `if (!hasBoundedContext)` block above the `if (attempt === 1)` early return so that the full-diff fallback triggers immediately when no context can be extracted."
+    }
+  ]
+}
