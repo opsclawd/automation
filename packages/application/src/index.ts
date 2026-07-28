@@ -66,6 +66,7 @@ export type {
   EvidenceResolver,
   TerminalValidationResult,
   DeterministicPlanCheckResult,
+  PlanReviewArbiterResult,
 } from './plan-review/types.js';
 export * from './plan-review/plan-review-loop.js';
 export {

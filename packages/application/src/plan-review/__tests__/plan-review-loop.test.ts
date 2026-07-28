@@ -14,9 +14,20 @@ import type {
   PlanReviewFinding,
   DeterministicPlanCheckResult,
   PlanReviewSnapshot,
+  PlanReviewArbiterResult,
 } from '../types.js';
 import type { ArbiterResult } from '../../implement-step/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
+
+function arbiterResult(
+  result: ArbiterResult,
+  groundingSources = {
+    planExcerpt: 'The defect is real and not addressed by prior fixes.',
+    manifestExcerpt: '{"version":2}',
+  },
+): PlanReviewArbiterResult {
+  return { ...result, groundingSources };
+}
 
 function collectEvents() {
   const events: Array<{
@@ -161,11 +172,12 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_no_fixes_needed' as const,
       }),
-      runArbiter: async (): Promise<ArbiterResult> => ({
-        outcome: 'finding_invalid',
-        evidence: 'reviewer is wrong; the plan is sound',
-        rationale: 'the cited defect is not present in plan.md',
-      }),
+      runArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_invalid',
+          evidence: 'reviewer is wrong; the plan is sound',
+          rationale: 'the cited defect is not present in plan.md',
+        }),
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
@@ -198,11 +210,12 @@ describe('PlanReviewLoop', () => {
           ...(opts.reconciliationContext ? { rebuttal: 'reconciling' } : {}),
         };
       },
-      runArbiter: async (): Promise<ArbiterResult> => ({
-        outcome: 'finding_valid',
-        evidence: 'defect is real',
-        rationale: 'reviewer is correct: state-machine edge case unhandled',
-      }),
+      runArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_valid',
+          evidence: 'defect is real',
+          rationale: 'reviewer is correct: state-machine edge case unhandled',
+        }),
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
@@ -452,13 +465,13 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
       }),
-      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> => {
         arbiterCalls += 1;
-        return {
+        return arbiterResult({
           outcome: 'finding_invalid',
           evidence: 'plan section 3 already covers this',
           rationale: 'the trailing finding misreads the plan',
-        };
+        });
       },
     });
     const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
@@ -503,13 +516,13 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
       }),
-      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> => {
         arbiterCalls += 1;
-        return {
+        return arbiterResult({
           outcome: 'finding_valid',
           evidence: 'defect is real and not addressed by prior fixes',
           rationale: 'the trailing reviewer identified a genuine gap',
-        };
+        });
       },
       options: { bonusIteration: false },
     });
@@ -569,13 +582,13 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
       }),
-      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> => {
         arbiterCalls += 1;
-        return {
+        return arbiterResult({
           outcome: 'finding_valid',
           evidence: 'plan section 5 is missing the migration step',
           rationale: 'the trailing finding is correct',
-        };
+        });
       },
       options: { bonusIteration: false },
     });
@@ -606,13 +619,13 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
       }),
-      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> => {
         arbiterCalls += 1;
-        return {
+        return arbiterResult({
           outcome: 'insufficient_evidence',
           evidence: '   ',
           rationale: 'artifacts unreadable',
-        };
+        });
       },
     });
     const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
@@ -656,11 +669,12 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_no_fixes_needed' as const,
       }),
-      runArbiter: async (): Promise<ArbiterResult> => ({
-        outcome: 'insufficient_evidence',
-        evidence: 'missing artifacts',
-        rationale: 'cannot see cited files',
-      }),
+      runArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'insufficient_evidence',
+          evidence: 'missing artifacts',
+          rationale: 'cannot see cited files',
+        }),
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
@@ -697,11 +711,12 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
       }),
-      runFinalReviewArbiter: async (): Promise<ArbiterResult> => ({
-        outcome: 'insufficient_evidence',
-        evidence: 'missing artifacts',
-        rationale: 'cannot see cited files',
-      }),
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'insufficient_evidence',
+          evidence: 'missing artifacts',
+          rationale: 'cannot see cited files',
+        }),
     });
     const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
     expect(out.outcome).toBe('success');
@@ -764,13 +779,13 @@ describe('PlanReviewLoop', () => {
             : headBeforeFix === 'fix-head-2'
               ? ['plan.md:50-55']
               : [],
-      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> => {
         arbiterCalls += 1;
-        return {
+        return arbiterResult({
           outcome: 'finding_valid',
           evidence: 'P0 confirmed',
           rationale: 'fix the worker-ID scoping bug',
-        };
+        });
       },
     });
 
@@ -815,11 +830,12 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
       }),
-      runFinalReviewArbiter: async (): Promise<ArbiterResult> => ({
-        outcome: 'finding_valid',
-        evidence: 'real defect',
-        rationale: 'still broken',
-      }),
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_valid',
+          evidence: 'real defect',
+          rationale: 'still broken',
+        }),
     });
 
     const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
@@ -842,13 +858,13 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
       }),
-      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> => {
         arbiterCalls += 1;
-        return {
+        return arbiterResult({
           outcome: 'finding_valid',
           evidence: 'real defect',
           rationale: 'fix it',
-        };
+        });
       },
       options: { bonusIteration: false },
     });
@@ -1005,7 +1021,7 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_no_fixes_needed' as const,
       }),
-      runArbiter: async (): Promise<ArbiterResult> => {
+      runArbiter: async (): Promise<PlanReviewArbiterResult> => {
         arbiterCalls += 1;
         return {
           invocationId: 'arb-1',
@@ -1013,6 +1029,10 @@ describe('PlanReviewLoop', () => {
           outcome: 'finding_invalid' as const,
           evidence: 'ruling evidence',
           rationale: 'some rationale',
+          groundingSources: {
+            planExcerpt: 'The defect is real and not addressed by prior fixes.',
+            manifestExcerpt: '{"version":2}',
+          },
         };
       },
     });
@@ -1677,11 +1697,12 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
             verdict: 'done_no_fixes_needed',
           };
         },
-        runArbiter: async () => ({
-          outcome: 'ambiguous',
-          evidence: 'Some evidence',
-          rationale: 'Not clear',
-        }),
+        runArbiter: async () =>
+          arbiterResult({
+            outcome: 'ambiguous',
+            evidence: 'Some evidence',
+            rationale: 'Not clear',
+          }),
         validateTerminalFix: async () => ({
           passed: true,
           diagnostics: [],
@@ -1733,11 +1754,12 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
             verdict: 'done_with_fixes',
           };
         },
-        runFinalReviewArbiter: async () => ({
-          outcome: 'insufficient_evidence',
-          evidence: 'Some final evidence',
-          rationale: 'Not clear final',
-        }),
+        runFinalReviewArbiter: async () =>
+          arbiterResult({
+            outcome: 'insufficient_evidence',
+            evidence: 'Some final evidence',
+            rationale: 'Not clear final',
+          }),
         validateTerminalFix: async () => ({
           passed: true,
           diagnostics: [],
@@ -1794,11 +1816,12 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
             verdict: 'done_no_fixes_needed',
           };
         },
-        runArbiter: async () => ({
-          outcome: 'insufficient_evidence',
-          evidence: 'Some evidence',
-          rationale: 'Gate manufactured',
-        }),
+        runArbiter: async () =>
+          arbiterResult({
+            outcome: 'insufficient_evidence',
+            evidence: 'Some evidence',
+            rationale: 'Gate manufactured',
+          }),
       });
 
       const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 3 });

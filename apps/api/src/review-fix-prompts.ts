@@ -360,7 +360,7 @@ export function buildWholePrArbiterPrompt(input: BuildWholePrArbiterPromptInput)
     '- Quotes from the disputed findings or fixer rebuttal may provide context but do not satisfy the grounding requirement.',
     '',
     '## TASK',
-    'Determine if the disputed integration findings are valid or invalid based on the evidence. You MUST include at least one non-empty <quote>exact text from plan.md, task-manifest.json, or code</quote> in `evidence` or `rationale` for a `finding_valid` ruling.',
+    'Determine if the disputed integration findings are valid or invalid based on the evidence. You MUST include at least one non-empty <quote>exact text from plan.md or task-manifest.json</quote> in `evidence` or `rationale` for a `finding_valid` ruling.',
     'You must return one of:',
     '- finding_valid: at least one finding is correct and the fixer must address it',
     '- finding_invalid: all findings are incorrect or the fixer is right to rebut them',
