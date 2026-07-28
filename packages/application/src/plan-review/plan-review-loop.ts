@@ -1725,6 +1725,16 @@ export class PlanReviewLoop {
               },
             );
           }
+          history.push({
+            type: 'arbiter',
+            iterationIndex: finalIterationIndex,
+            data: {
+              reviewType: 'final',
+              outcome: effectiveArbiterResult.outcome,
+              evidence: effectiveArbiterResult.evidence,
+              rationale: effectiveArbiterResult.rationale,
+            },
+          });
           if (
             effectiveArbiterResult.outcome === 'insufficient_evidence' &&
             finalIsGateManufactured

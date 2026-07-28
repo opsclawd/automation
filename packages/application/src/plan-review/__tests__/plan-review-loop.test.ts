@@ -687,6 +687,47 @@ describe('PlanReviewLoop', () => {
     expect(events.map((e) => e.type)).toContain('plan-review.final_review.arbiter.resolved');
   });
 
+  it('final review arbiter finding_valid with an unmatched quote is overridden and emits hallucination telemetry', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_valid',
+          evidence: '<quote>this text does not exist in plan or manifest</quote>',
+          rationale: 'the trailing reviewer identified a genuine gap',
+        }),
+      options: { bonusIteration: false },
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('success');
+    const hallucinationEvent = events.find(
+      (e) => e.type === 'plan-review.arbiter.hallucination_detected',
+    );
+    expect(hallucinationEvent).toBeDefined();
+    expect(hallucinationEvent?.metadata).toMatchObject({
+      path: 'final_review',
+      originalRuling: 'finding_valid',
+      effectiveRuling: 'finding_invalid',
+      reason: 'unmatched_quotes',
+    });
+    expect(hallucinationEvent?.metadata).toHaveProperty('unmatchedQuotes');
+  });
+
   it('AC #683.3.c — trailing final review fail + no runFinalReviewArbiter configured → needs_human_review (regression)', async () => {
     let reviewCalls = 0;
     const { deps, events } = makeDeps({
