@@ -3061,6 +3061,19 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         }
 
+        let planContent = '';
+        let manifestContent = '';
+        try {
+          planContent = await store.read(String(ctx.runId), 'plan.md');
+        } catch {
+          // plan.md not available
+        }
+        try {
+          manifestContent = await store.read(String(ctx.runId), 'task-manifest.json');
+        } catch {
+          // task-manifest.json not available
+        }
+
         const arbiterPrompt = buildWholePrArbiterPrompt({
           cwd: ctx.cwd,
           repoId: ctx.repoId,
@@ -3069,6 +3082,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           relevantExcerpts,
           fixDelta,
           fixRebuttal: fixResult.rebuttal ?? '',
+          planContent,
+          manifestContent,
         });
 
         writeFileSync(promptPath, arbiterPrompt, 'utf-8');
@@ -3138,19 +3153,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
 
         const arbiterResult = parsed.data as ArbiterResult;
-
-        let planContent = '';
-        let manifestContent = '';
-        try {
-          planContent = await store.read(String(ctx.runId), 'plan.md');
-        } catch {
-          // plan.md not available
-        }
-        try {
-          manifestContent = await store.read(String(ctx.runId), 'task-manifest.json');
-        } catch {
-          // task-manifest.json not available
-        }
 
         const groundingCheck = verifyArbiterGrounding(arbiterResult, [
           planContent,

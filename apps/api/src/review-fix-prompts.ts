@@ -294,6 +294,8 @@ export interface BuildWholePrArbiterPromptInput {
   fixDelta: string;
   fixRebuttal: string;
   deterministicDiagnostics?: string;
+  planContent?: string;
+  manifestContent?: string;
 }
 
 export function buildWholePrArbiterPrompt(input: BuildWholePrArbiterPromptInput): string {
@@ -348,6 +350,14 @@ export function buildWholePrArbiterPrompt(input: BuildWholePrArbiterPromptInput)
 
   if (input.deterministicDiagnostics) {
     sections.push('', '## DETERMINISTIC DIAGNOSTICS', '```', input.deterministicDiagnostics, '```');
+  }
+
+  if (input.planContent) {
+    sections.push('', '## PLAN.MD', '```', input.planContent, '```');
+  }
+
+  if (input.manifestContent) {
+    sections.push('', '## TASK-MANIFEST.JSON', '```', input.manifestContent, '```');
   }
 
   sections.push(
