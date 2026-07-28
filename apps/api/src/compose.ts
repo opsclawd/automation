@@ -3136,7 +3136,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           };
         }
 
-        return await verifyArbiterQuotes(parsed.data as ArbiterResult, store, String(ctx.runId));
+        return await verifyQuotes(parsed.data as ArbiterResult, store, String(ctx.runId));
       };
 
       // Non-optional local so the ReviewFixHandler closure below can reference it
@@ -4387,7 +4387,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               };
             }
             const arbiterResult = arbiterResultSchema.parse(verdict.result) as LoopArbiterResult;
-            return (await verifyArbiterQuotes(
+            return (await verifyQuotes(
               arbiterResult,
               artifacts,
               String(ctx.runId),
@@ -4526,7 +4526,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 rationale: `arbiter result.json Zod parse error: ${parsed.error.message}`,
               };
             }
-            return (await verifyArbiterQuotes(
+            return (await verifyQuotes(
               parsed.data as ImplementStepFinalReviewArbiterResult,
               artifacts,
               String(ctx.runId),
@@ -5073,15 +5073,17 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
 
       /**
-       * Verify grounded quotes in a plan-review arbiter result.
-       * If outcome is finding_valid but no valid quotes are found in evidence/rationale,
-       * returns result with outcome downgraded to finding_invalid.
+       * Verify grounded <quote> tags in evidence/rationale against plan.md and
+       * task-manifest.json. If outcome is finding_valid but any quote is missing,
+       * empty, or not found verbatim (whitespace-normalized) in either artifact,
+       * downgrades the outcome to finding_invalid. Shared by the plan-review,
+       * implementation-phase, and whole-PR contradiction arbiters.
        */
-      async function verifyPlanReviewArbiterQuotes(
-        result: PlanReviewArbiterResult,
+      async function verifyQuotes<T extends ArbiterResult>(
+        result: T,
         artifacts: ArtifactStore,
         runId: string,
-      ): Promise<PlanReviewArbiterResult> {
+      ): Promise<T> {
         if (result.outcome !== 'finding_valid') {
           return result;
         }
@@ -5096,7 +5098,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const allQuotes = [...evidenceQuotes, ...rationaleQuotes];
 
         if (allQuotes.length === 0) {
-          return { ...result, outcome: 'finding_invalid' as const };
+          return { ...result, outcome: 'finding_invalid' };
         }
 
         let planContent = '';
@@ -5104,7 +5106,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         try {
           planContent = await artifacts.read(runId, 'plan.md');
         } catch {
-          return { ...result, outcome: 'finding_invalid' as const };
+          planContent = '';
         }
         try {
           manifestContent = await artifacts.read(runId, 'task-manifest.json');
@@ -5119,85 +5121,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         for (const quote of allQuotes) {
           const normalizedQuote = normalizeWs(quote);
           if (normalizedQuote.length === 0) {
-            return { ...result, outcome: 'finding_invalid' as const };
+            return { ...result, outcome: 'finding_invalid' };
           }
           if (
             !normalizedPlan.includes(normalizedQuote) &&
             !normalizedManifest.includes(normalizedQuote)
           ) {
-            return { ...result, outcome: 'finding_invalid' as const };
-          }
-        }
-
-        return result;
-      }
-
-      /**
-       * Verify grounded quotes in an implementation-phase or whole-PR arbiter result.
-       * If outcome is finding_valid but no valid quotes are found in evidence/rationale,
-       * returns result with outcome downgraded to finding_invalid.
-       */
-      async function verifyArbiterQuotes(
-        result: ArbiterResult,
-        artifacts: ArtifactStore,
-        runId: string,
-      ): Promise<ArbiterResult> {
-        if (result.outcome !== 'finding_valid') {
-          return result;
-        }
-
-        const quoteRegex = /<quote>(.*?)<\/quote>/gs;
-        const evidenceQuotes = [...result.evidence.matchAll(quoteRegex)]
-          .map((m) => m[1])
-          .filter((q): q is string => q !== undefined);
-        const rationaleQuotes = [...result.rationale.matchAll(quoteRegex)]
-          .map((m) => m[1])
-          .filter((q): q is string => q !== undefined);
-        const allQuotes = [...evidenceQuotes, ...rationaleQuotes];
-
-        const makeInvalid = (r: ArbiterResult): ArbiterResult => {
-          const base: ArbiterResult = {
-            outcome: 'finding_invalid',
-            evidence: r.evidence,
-            rationale: r.rationale,
-          };
-          if (r.defect_classification !== undefined) {
-            base.defect_classification = r.defect_classification;
-          }
-          return base;
-        };
-
-        if (allQuotes.length === 0) {
-          return makeInvalid(result);
-        }
-
-        let planContent = '';
-        let manifestContent = '';
-        try {
-          planContent = await artifacts.read(runId, 'plan.md');
-        } catch {
-          return makeInvalid(result);
-        }
-        try {
-          manifestContent = await artifacts.read(runId, 'task-manifest.json');
-        } catch {
-          manifestContent = '';
-        }
-
-        const normalizeWs = (s: string) => s.replace(/\s+/g, ' ').trim();
-        const normalizedPlan = normalizeWs(planContent);
-        const normalizedManifest = normalizeWs(manifestContent);
-
-        for (const quote of allQuotes) {
-          const normalizedQuote = normalizeWs(quote);
-          if (normalizedQuote.length === 0) {
-            return makeInvalid(result);
-          }
-          if (
-            !normalizedPlan.includes(normalizedQuote) &&
-            !normalizedManifest.includes(normalizedQuote)
-          ) {
-            return makeInvalid(result);
+            return { ...result, outcome: 'finding_invalid' };
           }
         }
 
@@ -5302,7 +5232,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                   rationale: 'Zod parse error',
                 };
               }
-              return verifyPlanReviewArbiterQuotes(
+              return verifyQuotes(
                 parsed.data as PlanReviewArbiterResult,
                 artifacts,
                 String(ctx.runId),
@@ -5402,7 +5332,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 rationale: 'Zod parse error',
               };
             }
-            return verifyPlanReviewArbiterQuotes(
+            return verifyQuotes(
               parsed.data as PlanReviewArbiterResult,
               artifacts,
               String(ctx.runId),
