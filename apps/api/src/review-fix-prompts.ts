@@ -352,8 +352,15 @@ export function buildWholePrArbiterPrompt(input: BuildWholePrArbiterPromptInput)
 
   sections.push(
     '',
+    '## GROUNDING CONTRACT',
+    '- Any claim about existing plan.md, task-manifest.json, or code content MUST include the exact source text as <quote>exact text from plan.md, task-manifest.json, or code</quote>.',
+    '- For `finding_valid`, include at least one non-empty <quote>...</quote> block in `evidence` or `rationale`; use multiple blocks when the ruling depends on multiple passages.',
+    '- Every tagged quote will be mechanically verified against plan.md, task-manifest.json, and code after whitespace normalization.',
+    '- A `finding_valid` result with no tagged quote, an empty tagged quote, or any quote absent from all sources is automatically treated as `finding_invalid`.',
+    '- Quotes from the disputed findings or fixer rebuttal may provide context but do not satisfy the grounding requirement.',
+    '',
     '## TASK',
-    'Determine if the disputed integration findings are valid or invalid based on the evidence.',
+    'Determine if the disputed integration findings are valid or invalid based on the evidence. You MUST include at least one non-empty <quote>exact text from plan.md, task-manifest.json, or code</quote> in `evidence` or `rationale` for a `finding_valid` ruling.',
     'You must return one of:',
     '- finding_valid: at least one finding is correct and the fixer must address it',
     '- finding_invalid: all findings are incorrect or the fixer is right to rebut them',

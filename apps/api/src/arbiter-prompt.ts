@@ -117,9 +117,16 @@ export function buildArbiterPrompt(
   }
 
   sections.push(
+    '## GROUNDING CONTRACT',
+    '- Any claim about existing plan.md, task-manifest.json, or code content MUST include the exact source text as <quote>exact text from plan.md, task-manifest.json, or code</quote>.',
+    '- For `finding_valid`, include at least one non-empty <quote>...</quote> block in `evidence` or `rationale`; use multiple blocks when the ruling depends on multiple passages.',
+    '- Every tagged quote will be mechanically verified against plan.md and task-manifest.json after whitespace normalization.',
+    '- A `finding_valid` result with no tagged quote, an empty tagged quote, or any quote absent from plan.md and task-manifest.json is automatically treated as `finding_invalid`.',
+    '- Quotes from the disputed finding, reviewer summary, or fixer rebuttal may provide context but do not satisfy the grounding requirement.',
+    '',
     '## DECISION FRAMEWORK',
     'Pick exactly one of these outcomes:',
-    '- **finding_valid** — the reviewer is right; the fix step missed a real defect. Cite the typecheck error, the spec-review finding, or the plan task body that proves it.',
+    '- **finding_valid** — the reviewer is right; the fix step missed a real defect. You MUST include at least one non-empty <quote>exact text from plan.md, task-manifest.json, or code</quote> in `evidence` or `rationale` that proves the defect.',
     '- **finding_invalid** — the reviewer is wrong; the fix is correct and no defect exists. Cite the typecheck pass, the plan task body, or external evidence that disproves the finding.',
     '- **ambiguous** — both interpretations are defensible from the available artifacts. Cite what each side claims.',
     '- **insufficient_evidence** — the artifacts are unreadable or absent. Cite what is missing.',

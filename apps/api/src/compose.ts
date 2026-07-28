@@ -5063,6 +5063,62 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
+      /**
+       * Verify grounded quotes in a plan-review arbiter result.
+       * If outcome is finding_valid but no valid quotes are found in evidence/rationale,
+       * returns result with outcome downgraded to finding_invalid.
+       */
+      async function verifyPlanReviewArbiterQuotes(
+        result: PlanReviewArbiterResult,
+        artifacts: ArtifactStore,
+        runId: string,
+      ): Promise<PlanReviewArbiterResult> {
+        if (result.outcome !== 'finding_valid') {
+          return result;
+        }
+
+        const quoteRegex = /<quote>(.*?)<\/quote>/gs;
+        const evidenceQuotes = [...result.evidence.matchAll(quoteRegex)]
+          .map((m) => m[1])
+          .filter((q): q is string => q !== undefined);
+        const rationaleQuotes = [...result.rationale.matchAll(quoteRegex)]
+          .map((m) => m[1])
+          .filter((q): q is string => q !== undefined);
+        const allQuotes = [...evidenceQuotes, ...rationaleQuotes];
+
+        if (allQuotes.length === 0) {
+          return { ...result, outcome: 'finding_invalid' as const };
+        }
+
+        let planContent = '';
+        let manifestContent = '';
+        try {
+          planContent = await artifacts.read(runId, 'plan.md');
+          manifestContent = await artifacts.read(runId, 'task-manifest.json');
+        } catch {
+          return result;
+        }
+
+        const normalizeWs = (s: string) => s.replace(/\s+/g, ' ').trim();
+        const normalizedPlan = normalizeWs(planContent);
+        const normalizedManifest = normalizeWs(manifestContent);
+
+        for (const quote of allQuotes) {
+          const normalizedQuote = normalizeWs(quote);
+          if (normalizedQuote.length === 0) {
+            continue;
+          }
+          if (
+            normalizedPlan.includes(normalizedQuote) ||
+            normalizedManifest.includes(normalizedQuote)
+          ) {
+            return result;
+          }
+        }
+
+        return { ...result, outcome: 'finding_invalid' as const };
+      }
+
       type PlanReviewArbiterResult = Awaited<
         ReturnType<Required<PlanReviewLoopDeps>['runArbiter']>
       >;
@@ -5161,7 +5217,11 @@ export function composeRoot(opts: ComposeOptions): Container {
                   rationale: 'Zod parse error',
                 };
               }
-              return parsed.data as PlanReviewArbiterResult;
+              return verifyPlanReviewArbiterQuotes(
+                parsed.data as PlanReviewArbiterResult,
+                artifacts,
+                String(ctx.runId),
+              );
             }
           : undefined;
 
@@ -5257,7 +5317,11 @@ export function composeRoot(opts: ComposeOptions): Container {
                 rationale: 'Zod parse error',
               };
             }
-            return parsed.data as PlanReviewArbiterResult;
+            return verifyPlanReviewArbiterQuotes(
+              parsed.data as PlanReviewArbiterResult,
+              artifacts,
+              String(ctx.runId),
+            );
           }
         : undefined;
 
