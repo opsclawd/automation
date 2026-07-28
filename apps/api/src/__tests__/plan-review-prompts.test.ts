@@ -114,6 +114,22 @@ describe('readPlanReviewExcerpts', () => {
 });
 
 describe('buildPlanReviewFinalReviewArbiterPrompt', () => {
+  it('requires mechanically verified plan or manifest quotes for finding_valid', () => {
+    const prompt = buildPlanReviewFinalReviewArbiterPrompt(
+      { cwd: '/wt', runId: 'run-1' },
+      {
+        planExcerpt: '# plan body',
+        findingsExcerpt: '# trailing findings',
+        manifestExcerpt: '{"version":2}',
+      },
+    );
+
+    expect(prompt).toContain('<quote>exact text from plan.md or task-manifest.json</quote>');
+    expect(prompt).toContain('mechanically verified');
+    expect(prompt).toContain('automatically treated as `finding_invalid`');
+    expect(prompt).toContain('whitespace');
+  });
+
   it('includes plan and findings excerpts with no fixer-shaped narrative', () => {
     const prompt = buildPlanReviewFinalReviewArbiterPrompt(
       { cwd: '/wt', runId: 'run-1' },
@@ -130,7 +146,6 @@ describe('buildPlanReviewFinalReviewArbiterPrompt', () => {
     expect(prompt).not.toContain('done_no_fixes_needed');
     expect(prompt).not.toContain('fixExcerpt');
     expect(prompt).not.toContain('plan-fix-result.json');
-    expect(prompt).not.toContain('rebuttal');
   });
 
   it('emits the arbiter result.json shape', () => {
