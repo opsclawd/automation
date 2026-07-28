@@ -19,6 +19,7 @@ import type {
 } from './types.js';
 import type { ReviewMode } from '../review-state/types.js';
 import type { ReviewAttempt } from '../ports/review-state-repository-port.js';
+import { verifyPlanReviewArbiterGrounding } from './arbiter-grounding.js';
 
 export const DEFAULT_REVIEWER_MAX_RETRIES = 2;
 
@@ -987,17 +988,44 @@ export class PlanReviewLoop {
               invocation_type: 'initial',
             },
           });
+          const grounding = verifyPlanReviewArbiterGrounding(arbiterResult);
+          const effectiveArbiterResult =
+            grounding.status === 'ungrounded'
+              ? {
+                  ...arbiterResult,
+                  outcome: 'finding_invalid' as const,
+                  rationale: `Deterministic grounding rejected finding_valid: ${grounding.reason}.`,
+                  evidence: `[Override] Ungrounded finding_valid: ${grounding.reason}. The arbiter's ruling has been overridden to finding_invalid because it did not provide mechanically verified quotes from plan.md or task-manifest.json.`,
+                }
+              : arbiterResult;
+          if (grounding.status === 'ungrounded') {
+            this.emit(
+              input,
+              'plan-review.arbiter.hallucination_detected',
+              'warn',
+              `overriding ungrounded contradiction arbiter finding at iteration ${iterationIndex}`,
+              {
+                path: 'contradiction',
+                iterationIndex,
+                originalRuling: 'finding_valid',
+                effectiveRuling: 'finding_invalid',
+                reason: grounding.reason,
+                quoteCount: grounding.quotes.length,
+                unmatchedQuotes: grounding.unmatchedQuotes,
+              },
+            );
+          }
           history.push({
             type: 'arbiter',
             iterationIndex,
             data: {
               reviewType: 'regular',
-              outcome: arbiterResult.outcome,
-              evidence: arbiterResult.evidence,
-              rationale: arbiterResult.rationale,
+              outcome: effectiveArbiterResult.outcome,
+              evidence: effectiveArbiterResult.evidence,
+              rationale: effectiveArbiterResult.rationale,
             },
           });
-          if (arbiterResult.outcome === 'insufficient_evidence' && isGateManufactured) {
+          if (effectiveArbiterResult.outcome === 'insufficient_evidence' && isGateManufactured) {
             this.emit(
               input,
               'plan-review.review.contradiction.resolved',
@@ -1013,28 +1041,31 @@ export class PlanReviewLoop {
             deps.loops.update(loop);
             return { outcome: 'success', loop, proceedWithConcerns: false };
           }
-          if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
+          if (
+            !effectiveArbiterResult.evidence ||
+            effectiveArbiterResult.evidence.trim().length === 0
+          ) {
             this.emit(
               input,
               'plan-review.needs_human_review',
               'warn',
               `arbiter returned empty evidence at iteration ${iterationIndex} — escalating to human`,
-              { iterationIndex, outcome: arbiterResult.outcome },
+              { iterationIndex, outcome: effectiveArbiterResult.outcome },
             );
             loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
             deps.loops.update(loop);
             return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
           }
-          if (arbiterResult.outcome === 'finding_invalid') {
+          if (effectiveArbiterResult.outcome === 'finding_invalid') {
             this.emit(
               input,
               'plan-review.review.contradiction.resolved',
               'info',
-              `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
+              `arbiter resolved contradiction at iteration ${iterationIndex}: ${effectiveArbiterResult.outcome}`,
               {
-                ruling: arbiterResult.outcome,
+                ruling: effectiveArbiterResult.outcome,
                 resolvedBy: 'contradiction-arbiter',
-                evidence: arbiterResult.evidence,
+                evidence: effectiveArbiterResult.evidence,
                 iterationIndex,
               },
             );
@@ -1042,15 +1073,19 @@ export class PlanReviewLoop {
             deps.loops.update(loop);
             return { outcome: 'success', loop, proceedWithConcerns: false };
           }
-          if (arbiterResult.outcome === 'finding_valid') {
+          if (effectiveArbiterResult.outcome === 'finding_valid') {
             this.emit(
               input,
               'plan-review.review.contradiction.resolved',
               'info',
-              `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
-              { ruling: arbiterResult.outcome, evidence: arbiterResult.evidence, iterationIndex },
+              `arbiter resolved contradiction at iteration ${iterationIndex}: ${effectiveArbiterResult.outcome}`,
+              {
+                ruling: effectiveArbiterResult.outcome,
+                evidence: effectiveArbiterResult.evidence,
+                iterationIndex,
+              },
             );
-            pendingReconciliationContext = arbiterResult.rationale;
+            pendingReconciliationContext = effectiveArbiterResult.rationale;
             loop = completeIteration(loop, {
               outcome: 'unresolved',
               fixInvocationId: fix.invocationId,
@@ -1060,24 +1095,28 @@ export class PlanReviewLoop {
             continue;
           }
           if (
-            (arbiterResult.outcome === 'ambiguous' ||
-              arbiterResult.outcome === 'insufficient_evidence') &&
-            arbiterResult.evidence &&
-            arbiterResult.evidence.trim().length > 0
+            (effectiveArbiterResult.outcome === 'ambiguous' ||
+              effectiveArbiterResult.outcome === 'insufficient_evidence') &&
+            effectiveArbiterResult.evidence &&
+            effectiveArbiterResult.evidence.trim().length > 0
           ) {
             this.emit(
               input,
               'plan-review.needs_human_review',
               'warn',
-              `arbiter could not resolve contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
-              { ruling: arbiterResult.outcome, evidence: arbiterResult.evidence, iterationIndex },
+              `arbiter could not resolve contradiction at iteration ${iterationIndex}: ${effectiveArbiterResult.outcome}`,
+              {
+                ruling: effectiveArbiterResult.outcome,
+                evidence: effectiveArbiterResult.evidence,
+                iterationIndex,
+              },
             );
             loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
             deps.loops.update(loop);
             return this.escalateToTerminalFix(
               input,
               loop,
-              'arbiter_' + arbiterResult.outcome,
+              'arbiter_' + effectiveArbiterResult.outcome,
               history,
               lastDeterministicDiagnostic,
             );
@@ -1086,8 +1125,12 @@ export class PlanReviewLoop {
             input,
             'plan-review.needs_human_review',
             'warn',
-            `arbiter could not resolve contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
-            { ruling: arbiterResult.outcome, evidence: arbiterResult.evidence, iterationIndex },
+            `arbiter could not resolve contradiction at iteration ${iterationIndex}: ${effectiveArbiterResult.outcome}`,
+            {
+              ruling: effectiveArbiterResult.outcome,
+              evidence: effectiveArbiterResult.evidence,
+              iterationIndex,
+            },
           );
           loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
           deps.loops.update(loop);

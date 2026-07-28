@@ -213,13 +213,163 @@ describe('PlanReviewLoop', () => {
       runArbiter: async (): Promise<PlanReviewArbiterResult> =>
         arbiterResult({
           outcome: 'finding_valid',
-          evidence: 'defect is real',
+          evidence: '<quote>The defect is real and not addressed by prior fixes.</quote>',
           rationale: 'reviewer is correct: state-machine edge case unhandled',
         }),
     });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
     expect(out.loop.iterations.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('ungrounded contradiction finding_valid is overridden to finding_invalid and resolves the Loop', async () => {
+    let reviewCalls = 0;
+    let fixCalls = 0;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+        };
+      },
+      runArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_valid',
+          evidence: 'defect is real',
+          rationale: 'reviewer is correct',
+        }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(1);
+    expect(fixCalls).toBe(1);
+  });
+
+  it('contradiction finding_valid with an unmatched quote is overridden and emits hallucination telemetry', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_no_fixes_needed' as const,
+      }),
+      runArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_valid',
+          evidence: '<quote>this text does not exist in plan or manifest</quote>',
+          rationale: 'reviewer is correct',
+        }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+    const hallucinationEvent = events.find(
+      (e) => e.type === 'plan-review.arbiter.hallucination_detected',
+    );
+    expect(hallucinationEvent).toBeDefined();
+    expect(hallucinationEvent?.metadata).toMatchObject({
+      path: 'contradiction',
+      originalRuling: 'finding_valid',
+      effectiveRuling: 'finding_invalid',
+      reason: 'unmatched_quotes',
+    });
+    expect(hallucinationEvent?.metadata).toHaveProperty('unmatchedQuotes');
+  });
+
+  it('grounded contradiction finding_valid retains the reconciliation transition', async () => {
+    let reviewCalls = 0;
+    let fixCalls = 0;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls >= 2 ? ('pass' as const) : ('p1_found' as const),
+          findings: reviewCalls >= 2 ? [] : groundedP1Findings(),
+        };
+      },
+      runFix: async (_ctx: PlanReviewContext, opts: PlanFixOptions): Promise<PlanFixResult> => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict:
+            fixCalls === 1 ? ('done_no_fixes_needed' as const) : ('done_with_fixes' as const),
+          ...(opts.reconciliationContext ? { rebuttal: 'reconciling' } : {}),
+        };
+      },
+      runArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_valid',
+          evidence: '<quote>The defect is real and not addressed by prior fixes.</quote>',
+          rationale: 'reviewer is correct',
+        }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations.length).toBeGreaterThanOrEqual(2);
+    expect(reviewCalls).toBeGreaterThanOrEqual(2);
+    expect(fixCalls).toBe(1);
+  });
+
+  it('contradiction finding_invalid bypasses quote verification', async () => {
+    let reviewCalls = 0;
+    let fixCalls = 0;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+        };
+      },
+      runArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_invalid',
+          evidence: 'reviewer is wrong',
+          rationale: 'the plan is sound',
+        }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(1);
+    expect(fixCalls).toBe(1);
   });
 
   it('AC #5.5 — exhaustion → needs_human_review', async () => {
