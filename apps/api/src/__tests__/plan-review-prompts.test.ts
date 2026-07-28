@@ -51,6 +51,24 @@ describe('buildPlanReviewArbiterPrompt', () => {
     expect(prompt).toContain('STOP RULE');
   });
 
+  it('requires mechanically verified plan or manifest quotes for finding_valid', () => {
+    const prompt = buildPlanReviewArbiterPrompt(
+      { cwd: '/wt', runId: 'run-1' },
+      {
+        planExcerpt: '# plan body',
+        findingsExcerpt: '# findings',
+        fixExcerpt: '{"verdict":"done_no_fixes_needed"}',
+        fixRebuttal: 'finding is wrong',
+        manifestExcerpt: '{"version":2}',
+      },
+    );
+
+    expect(prompt).toContain('<quote>exact text from plan.md or task-manifest.json</quote>');
+    expect(prompt).toContain('mechanically verified');
+    expect(prompt).toContain('automatically treated as `finding_invalid`');
+    expect(prompt).toContain('whitespace');
+  });
+
   it('emits the arbiter result.json shape', () => {
     const prompt = buildPlanReviewArbiterPrompt(
       { cwd: '/wt', runId: 'run-1' },
