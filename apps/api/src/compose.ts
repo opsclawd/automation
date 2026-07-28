@@ -5173,6 +5173,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const normalizedPlan = normalizeWs(planContent);
         const normalizedManifest = normalizeWs(manifestContent);
 
+        let foundValidQuote = false;
         for (const quote of allQuotes) {
           const normalizedQuote = normalizeWs(quote);
           if (normalizedQuote.length === 0) {
@@ -5182,11 +5183,16 @@ export function composeRoot(opts: ComposeOptions): Container {
             normalizedPlan.includes(normalizedQuote) ||
             normalizedManifest.includes(normalizedQuote)
           ) {
-            return result;
+            foundValidQuote = true;
+          } else {
+            return { ...result, outcome: 'finding_invalid' };
           }
         }
 
-        return { ...result, outcome: 'finding_invalid' };
+        if (!foundValidQuote) {
+          return { ...result, outcome: 'finding_invalid' };
+        }
+        return result;
       }
 
       type PlanReviewArbiterResult = Awaited<

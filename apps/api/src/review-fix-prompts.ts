@@ -353,7 +353,7 @@ export function buildWholePrArbiterPrompt(input: BuildWholePrArbiterPromptInput)
   sections.push(
     '',
     '## GROUNDING CONTRACT',
-    '- Any claim about existing plan.md, task-manifest.json, or code content MUST include the exact source text as <quote>exact text from plan.md, task-manifest.json, or code</quote>.',
+    '- Any claim about existing plan.md or task-manifest.json content MUST include the exact source text as <quote>exact text from plan.md or task-manifest.json</quote>.',
     '- For `finding_valid`, include at least one non-empty <quote>...</quote> block in `evidence` or `rationale`; use multiple blocks when the ruling depends on multiple passages.',
     '- Every tagged quote will be mechanically verified against plan.md and task-manifest.json after whitespace normalization.',
     '- A `finding_valid` result with no tagged quote, an empty tagged quote, or any quote absent from all sources is automatically treated as `finding_invalid`.',
