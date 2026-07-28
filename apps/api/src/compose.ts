@@ -3136,7 +3136,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           };
         }
 
-        return await verifyQuotes(parsed.data as ArbiterResult, store, String(ctx.runId));
+        return await verifyArbiterQuotes(parsed.data as ArbiterResult, store, String(ctx.runId));
       };
 
       // Non-optional local so the ReviewFixHandler closure below can reference it
@@ -4526,7 +4526,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 rationale: `arbiter result.json Zod parse error: ${parsed.error.message}`,
               };
             }
-            return (await verifyQuotes(
+            return (await verifyArbiterQuotes(
               parsed.data as ImplementStepFinalReviewArbiterResult,
               artifacts,
               String(ctx.runId),
@@ -5132,6 +5132,61 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
 
         return result;
+      }
+
+      async function verifyArbiterQuotes<T extends ArbiterResult>(
+        result: T,
+        artifacts: ArtifactStore,
+        runId: string,
+      ): Promise<T> {
+        if (result.outcome !== 'finding_valid') {
+          return result;
+        }
+
+        const quoteRegex = /<quote>(.*?)<\/quote>/gs;
+        const evidenceQuotes = [...result.evidence.matchAll(quoteRegex)]
+          .map((m) => m[1])
+          .filter((q): q is string => q !== undefined);
+        const rationaleQuotes = [...result.rationale.matchAll(quoteRegex)]
+          .map((m) => m[1])
+          .filter((q): q is string => q !== undefined);
+        const allQuotes = [...evidenceQuotes, ...rationaleQuotes];
+
+        if (allQuotes.length === 0) {
+          return { ...result, outcome: 'finding_invalid' };
+        }
+
+        let planContent = '';
+        let manifestContent = '';
+        try {
+          planContent = await artifacts.read(runId, 'plan.md');
+        } catch {
+          planContent = '';
+        }
+        try {
+          manifestContent = await artifacts.read(runId, 'task-manifest.json');
+        } catch {
+          manifestContent = '';
+        }
+
+        const normalizeWs = (s: string) => s.replace(/\s+/g, ' ').trim();
+        const normalizedPlan = normalizeWs(planContent);
+        const normalizedManifest = normalizeWs(manifestContent);
+
+        for (const quote of allQuotes) {
+          const normalizedQuote = normalizeWs(quote);
+          if (normalizedQuote.length === 0) {
+            return { ...result, outcome: 'finding_invalid' };
+          }
+          if (
+            normalizedPlan.includes(normalizedQuote) ||
+            normalizedManifest.includes(normalizedQuote)
+          ) {
+            return result;
+          }
+        }
+
+        return { ...result, outcome: 'finding_invalid' };
       }
 
       type PlanReviewArbiterResult = Awaited<
