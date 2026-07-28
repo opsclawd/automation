@@ -76,6 +76,7 @@ export {
   type SignatureBlastRadiusFailure,
 } from './plan-review/signature-blast-radius.js';
 export {
+  verifyArbiterGrounding,
   verifyPlanReviewArbiterGrounding,
   type ArbiterGroundingCheck,
   type ArbiterGroundingStatus,

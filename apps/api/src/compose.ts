@@ -173,6 +173,7 @@ import {
   buildTaskValidationCommands,
   CONTRACT_VIOLATION_CODES,
   type RunWorkspaceTypecheckPort,
+  verifyArbiterGrounding,
   verifyPlanReviewArbiterGrounding,
 } from '@ai-sdlc/application';
 import {
@@ -3137,7 +3138,34 @@ export function composeRoot(opts: ComposeOptions): Container {
           };
         }
 
-        return parsed.data as ArbiterResult;
+        const arbiterResult = parsed.data as ArbiterResult;
+
+        let planContent = '';
+        let manifestContent = '';
+        try {
+          planContent = await store.read(String(ctx.runId), 'plan.md');
+        } catch {
+          // plan.md not available
+        }
+        try {
+          manifestContent = await store.read(String(ctx.runId), 'task-manifest.json');
+        } catch {
+          // task-manifest.json not available
+        }
+
+        const groundingCheck = verifyArbiterGrounding(arbiterResult, [
+          planContent,
+          manifestContent,
+        ]);
+        if (groundingCheck.status === 'ungrounded') {
+          return {
+            ...arbiterResult,
+            outcome: 'finding_invalid' as const,
+            rationale: `Grounding verification failed: ${groundingCheck.reason === 'missing_quotes' ? 'arbiter provided no <quote> tags in evidence or rationale' : 'arbiter quoted text not found in plan.md or task-manifest.json'}. Unmatched quotes: ${groundingCheck.unmatchedQuotes.join('; ')}`,
+          };
+        }
+
+        return arbiterResult;
       };
 
       // Non-optional local so the ReviewFixHandler closure below can reference it
@@ -4523,7 +4551,16 @@ export function composeRoot(opts: ComposeOptions): Container {
                 rationale: `arbiter result.json Zod parse error: ${parsed.error.message}`,
               };
             }
-            return parsed.data as ImplementStepFinalReviewArbiterResult;
+            const arbiterResult = parsed.data as ImplementStepFinalReviewArbiterResult;
+            const groundingCheck = verifyArbiterGrounding(arbiterResult, [taskBody]);
+            if (groundingCheck.status === 'ungrounded') {
+              return {
+                ...arbiterResult,
+                outcome: 'finding_invalid' as const,
+                rationale: `Grounding verification failed: ${groundingCheck.reason === 'missing_quotes' ? 'arbiter provided no <quote> tags in evidence or rationale' : 'arbiter quoted text not found in task body'}. Unmatched quotes: ${groundingCheck.unmatchedQuotes.join('; ')}`,
+              };
+            }
+            return arbiterResult;
           }
         : undefined;
 

@@ -22,6 +22,39 @@ function extractRawQuotes(value: string): string[] {
   ).filter((q) => q.length > 0);
 }
 
+export function verifyArbiterGrounding(
+  result: { outcome: string; evidence: string; rationale: string },
+  sources: string[],
+): ArbiterGroundingCheck {
+  if (result.outcome !== 'finding_valid') {
+    return { status: 'not_applicable', quotes: [], unmatchedQuotes: [] };
+  }
+
+  const quotes = extractRawQuotes(`${result.evidence}\n${result.rationale}`);
+  if (quotes.length === 0) {
+    return {
+      status: 'ungrounded',
+      reason: 'missing_quotes',
+      quotes: [],
+      unmatchedQuotes: [],
+    };
+  }
+
+  const normalizedSources = sources.map((s) => normalizeWhitespace(s));
+  const unmatchedQuotes = quotes.filter(
+    (quote) => !normalizedSources.some((source) => source.includes(quote)),
+  );
+
+  return unmatchedQuotes.length === 0
+    ? { status: 'grounded', quotes, unmatchedQuotes: [] }
+    : {
+        status: 'ungrounded',
+        reason: 'unmatched_quotes',
+        quotes,
+        unmatchedQuotes,
+      };
+}
+
 export function verifyPlanReviewArbiterGrounding(
   result: PlanReviewArbiterResult,
 ): ArbiterGroundingCheck {
