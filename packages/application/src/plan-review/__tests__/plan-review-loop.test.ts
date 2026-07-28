@@ -728,6 +728,227 @@ describe('PlanReviewLoop', () => {
     expect(hallucinationEvent?.metadata).toHaveProperty('unmatchedQuotes');
   });
 
+  it('ungrounded trailing finding_valid is overridden to finding_invalid and converges', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_valid',
+          evidence: '<quote>this text does not exist in plan or manifest</quote>',
+          rationale: 'the trailing reviewer identified a genuine gap',
+        }),
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('success');
+    expect(out.loop.status).toBe('converged');
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(events.map((e) => e.type)).toContain('plan-review.arbiter.hallucination_detected');
+    const hallucinationEvent = events.find(
+      (e) => e.type === 'plan-review.arbiter.hallucination_detected',
+    );
+    expect(hallucinationEvent?.metadata).toMatchObject({
+      path: 'final_review',
+      originalRuling: 'finding_valid',
+      effectiveRuling: 'finding_invalid',
+    });
+  });
+
+  it('trailing finding_valid with an unmatched quote is overridden and emits hallucination telemetry', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_valid',
+          evidence: '<quote>this text does not exist in plan or manifest</quote>',
+          rationale: 'the trailing reviewer identified a genuine gap',
+        }),
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('success');
+    const hallucinationEvent = events.find(
+      (e) => e.type === 'plan-review.arbiter.hallucination_detected',
+    );
+    expect(hallucinationEvent).toBeDefined();
+    expect(hallucinationEvent?.metadata).toMatchObject({
+      path: 'final_review',
+      originalRuling: 'finding_valid',
+      effectiveRuling: 'finding_invalid',
+      reason: 'unmatched_quotes',
+    });
+    expect(hallucinationEvent?.metadata).toHaveProperty('unmatchedQuotes');
+  });
+
+  it('grounded trailing finding_valid retains the bonus-fix transition', async () => {
+    let reviewCalls = 0;
+    let fixCalls = 0;
+    let arbiterCalls = 0;
+    const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
+    const { deps, events } = makeDeps({
+      runReview: async (
+        _ctx: PlanReviewContext,
+        opts?: PlanReviewStepOptions,
+      ): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        reviewOptions.push(opts);
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 4 ? ('pass' as const) : ('p1_found' as const),
+          findings:
+            reviewCalls === 4
+              ? []
+              : [
+                  {
+                    severity: 'P1' as const,
+                    citation: 'plan.md:42',
+                    failureScenario: 'Missing transition handler',
+                    evidence: 'grounded' as const,
+                  },
+                ],
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+          headBeforeFix: fixCalls === 3 ? 'bonus-fix-head' : `fix-head-${fixCalls}`,
+        };
+      },
+      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
+        headBeforeFix === 'bonus-fix-head'
+          ? ['plan.md:99-101']
+          : headBeforeFix === 'fix-head-1'
+            ? ['plan.md:42']
+            : [],
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> => {
+        arbiterCalls += 1;
+        return arbiterResult({
+          outcome: 'finding_valid',
+          evidence: '<quote>The defect is real and not addressed by prior fixes.</quote>',
+          rationale: 'the trailing finding is correct',
+        });
+      },
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(4);
+    expect(arbiterCalls).toBe(1);
+    expect(fixCalls).toBe(3);
+    expect(reviewCalls).toBe(4);
+    expect(events.map((e) => e.type)).toContain(
+      'plan-review.loop.trailing_review.bonus_fix_iteration',
+    );
+  });
+
+  it('grounded trailing finding_valid still respects disabled bonus iterations', async () => {
+    let reviewCalls = 0;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> =>
+        arbiterResult({
+          outcome: 'finding_valid',
+          evidence: '<quote>The defect is real and not addressed by prior fixes.</quote>',
+          rationale: 'the trailing finding is correct',
+        }),
+      options: { bonusIteration: false },
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
+  });
+
+  it('trailing finding_invalid bypasses quote verification', async () => {
+    let reviewCalls = 0;
+    let arbiterCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> => {
+        arbiterCalls += 1;
+        return arbiterResult({
+          outcome: 'finding_invalid',
+          evidence: 'plan section 3 already covers this',
+          rationale: 'the trailing finding misreads the plan',
+        });
+      },
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('success');
+    expect(out.loop.status).toBe('converged');
+    expect(arbiterCalls).toBe(1);
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(events.map((e) => e.type)).toContain('plan-review.final_review.arbiter.escalated');
+    expect(events.map((e) => e.type)).toContain('plan-review.final_review.arbiter.resolved');
+    const hallucinationEvents = events.filter(
+      (e) => e.type === 'plan-review.arbiter.hallucination_detected',
+    );
+    expect(hallucinationEvents).toHaveLength(0);
+  });
+
   it('AC #683.3.c — trailing final review fail + no runFinalReviewArbiter configured → needs_human_review (regression)', async () => {
     let reviewCalls = 0;
     const { deps, events } = makeDeps({
