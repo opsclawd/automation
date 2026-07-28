@@ -3136,7 +3136,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           };
         }
 
-        return parsed.data as ArbiterResult;
+        return await verifyArbiterQuotes(parsed.data as ArbiterResult, store, String(ctx.runId));
       };
 
       // Non-optional local so the ReviewFixHandler closure below can reference it
@@ -4386,7 +4386,12 @@ export function composeRoot(opts: ComposeOptions): Container {
                 rationale: `arbiter result.json unparseable: ${verdict.detail}`,
               };
             }
-            return arbiterResultSchema.parse(verdict.result) as LoopArbiterResult;
+            const arbiterResult = arbiterResultSchema.parse(verdict.result) as LoopArbiterResult;
+            return (await verifyArbiterQuotes(
+              arbiterResult,
+              artifacts,
+              String(ctx.runId),
+            )) as LoopArbiterResult;
           }
         : undefined;
 
@@ -4521,7 +4526,11 @@ export function composeRoot(opts: ComposeOptions): Container {
                 rationale: `arbiter result.json Zod parse error: ${parsed.error.message}`,
               };
             }
-            return parsed.data as ImplementStepFinalReviewArbiterResult;
+            return (await verifyArbiterQuotes(
+              parsed.data as ImplementStepFinalReviewArbiterResult,
+              artifacts,
+              String(ctx.runId),
+            )) as ImplementStepFinalReviewArbiterResult;
           }
         : undefined;
 
@@ -5094,9 +5103,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         let manifestContent = '';
         try {
           planContent = await artifacts.read(runId, 'plan.md');
+        } catch {
+          return { ...result, outcome: 'finding_invalid' as const };
+        }
+        try {
           manifestContent = await artifacts.read(runId, 'task-manifest.json');
         } catch {
-          return result;
+          manifestContent = '';
         }
 
         const normalizeWs = (s: string) => s.replace(/\s+/g, ' ').trim();
@@ -5106,17 +5119,89 @@ export function composeRoot(opts: ComposeOptions): Container {
         for (const quote of allQuotes) {
           const normalizedQuote = normalizeWs(quote);
           if (normalizedQuote.length === 0) {
-            continue;
+            return { ...result, outcome: 'finding_invalid' as const };
           }
           if (
-            normalizedPlan.includes(normalizedQuote) ||
-            normalizedManifest.includes(normalizedQuote)
+            !normalizedPlan.includes(normalizedQuote) &&
+            !normalizedManifest.includes(normalizedQuote)
           ) {
-            return result;
+            return { ...result, outcome: 'finding_invalid' as const };
           }
         }
 
-        return { ...result, outcome: 'finding_invalid' as const };
+        return result;
+      }
+
+      /**
+       * Verify grounded quotes in an implementation-phase or whole-PR arbiter result.
+       * If outcome is finding_valid but no valid quotes are found in evidence/rationale,
+       * returns result with outcome downgraded to finding_invalid.
+       */
+      async function verifyArbiterQuotes(
+        result: ArbiterResult,
+        artifacts: ArtifactStore,
+        runId: string,
+      ): Promise<ArbiterResult> {
+        if (result.outcome !== 'finding_valid') {
+          return result;
+        }
+
+        const quoteRegex = /<quote>(.*?)<\/quote>/gs;
+        const evidenceQuotes = [...result.evidence.matchAll(quoteRegex)]
+          .map((m) => m[1])
+          .filter((q): q is string => q !== undefined);
+        const rationaleQuotes = [...result.rationale.matchAll(quoteRegex)]
+          .map((m) => m[1])
+          .filter((q): q is string => q !== undefined);
+        const allQuotes = [...evidenceQuotes, ...rationaleQuotes];
+
+        const makeInvalid = (r: ArbiterResult): ArbiterResult => {
+          const base: ArbiterResult = {
+            outcome: 'finding_invalid',
+            evidence: r.evidence,
+            rationale: r.rationale,
+          };
+          if (r.defect_classification !== undefined) {
+            base.defect_classification = r.defect_classification;
+          }
+          return base;
+        };
+
+        if (allQuotes.length === 0) {
+          return makeInvalid(result);
+        }
+
+        let planContent = '';
+        let manifestContent = '';
+        try {
+          planContent = await artifacts.read(runId, 'plan.md');
+        } catch {
+          return makeInvalid(result);
+        }
+        try {
+          manifestContent = await artifacts.read(runId, 'task-manifest.json');
+        } catch {
+          manifestContent = '';
+        }
+
+        const normalizeWs = (s: string) => s.replace(/\s+/g, ' ').trim();
+        const normalizedPlan = normalizeWs(planContent);
+        const normalizedManifest = normalizeWs(manifestContent);
+
+        for (const quote of allQuotes) {
+          const normalizedQuote = normalizeWs(quote);
+          if (normalizedQuote.length === 0) {
+            return makeInvalid(result);
+          }
+          if (
+            !normalizedPlan.includes(normalizedQuote) &&
+            !normalizedManifest.includes(normalizedQuote)
+          ) {
+            return makeInvalid(result);
+          }
+        }
+
+        return result;
       }
 
       type PlanReviewArbiterResult = Awaited<
