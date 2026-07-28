@@ -670,7 +670,7 @@ describe('PlanReviewLoop', () => {
         arbiterCalls += 1;
         return arbiterResult({
           outcome: 'finding_valid',
-          evidence: 'defect is real and not addressed by prior fixes',
+          evidence: '<quote>The defect is real and not addressed by prior fixes.</quote>',
           rationale: 'the trailing reviewer identified a genuine gap',
         });
       },
@@ -736,7 +736,7 @@ describe('PlanReviewLoop', () => {
         arbiterCalls += 1;
         return arbiterResult({
           outcome: 'finding_valid',
-          evidence: 'plan section 5 is missing the migration step',
+          evidence: '<quote>The defect is real and not addressed by prior fixes.</quote>',
           rationale: 'the trailing finding is correct',
         });
       },
@@ -933,7 +933,7 @@ describe('PlanReviewLoop', () => {
         arbiterCalls += 1;
         return arbiterResult({
           outcome: 'finding_valid',
-          evidence: 'P0 confirmed',
+          evidence: '<quote>The defect is real and not addressed by prior fixes.</quote>',
           rationale: 'fix the worker-ID scoping bug',
         });
       },
@@ -983,7 +983,7 @@ describe('PlanReviewLoop', () => {
       runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> =>
         arbiterResult({
           outcome: 'finding_valid',
-          evidence: 'real defect',
+          evidence: '<quote>The defect is real and not addressed by prior fixes.</quote>',
           rationale: 'still broken',
         }),
     });
@@ -1012,7 +1012,7 @@ describe('PlanReviewLoop', () => {
         arbiterCalls += 1;
         return arbiterResult({
           outcome: 'finding_valid',
-          evidence: 'real defect',
+          evidence: '<quote>The defect is real and not addressed by prior fixes.</quote>',
           rationale: 'fix it',
         });
       },

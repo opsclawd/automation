@@ -1698,7 +1698,37 @@ export class PlanReviewLoop {
               invocation_type: 'initial',
             },
           });
-          if (arbiterResult.outcome === 'insufficient_evidence' && finalIsGateManufactured) {
+          const grounding = verifyPlanReviewArbiterGrounding(arbiterResult);
+          const effectiveArbiterResult =
+            grounding.status === 'ungrounded'
+              ? {
+                  ...arbiterResult,
+                  outcome: 'finding_invalid' as const,
+                  rationale: `Deterministic grounding rejected finding_valid: ${grounding.reason}.`,
+                  evidence: `[Override] Ungrounded finding_valid: ${grounding.reason}. The arbiter's ruling has been overridden to finding_invalid because it did not provide mechanically verified quotes from plan.md or task-manifest.json.`,
+                }
+              : arbiterResult;
+          if (grounding.status === 'ungrounded') {
+            this.emit(
+              input,
+              'plan-review.arbiter.hallucination_detected',
+              'warn',
+              `overriding ungrounded final review arbiter finding at iteration ${finalIterationIndex}`,
+              {
+                path: 'final_review',
+                iterationIndex: finalIterationIndex,
+                originalRuling: 'finding_valid',
+                effectiveRuling: 'finding_invalid',
+                reason: grounding.reason,
+                quoteCount: grounding.quotes.length,
+                unmatchedQuotes: grounding.unmatchedQuotes,
+              },
+            );
+          }
+          if (
+            effectiveArbiterResult.outcome === 'insufficient_evidence' &&
+            finalIsGateManufactured
+          ) {
             this.emit(
               input,
               'plan-review.final_review.arbiter.resolved',
@@ -1733,13 +1763,16 @@ export class PlanReviewLoop {
                 : {}),
             };
           }
-          if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
+          if (
+            !effectiveArbiterResult.evidence ||
+            effectiveArbiterResult.evidence.trim().length === 0
+          ) {
             this.emit(
               input,
               'plan-review.needs_human_review',
               'warn',
               `final review arbiter returned empty evidence at iteration ${finalIterationIndex} — escalating to human`,
-              { iterationIndex: finalIterationIndex, outcome: arbiterResult.outcome },
+              { iterationIndex: finalIterationIndex, outcome: effectiveArbiterResult.outcome },
             );
             const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
               index: finalIterationIndex,
@@ -1766,16 +1799,16 @@ export class PlanReviewLoop {
             deps.loops.update(loop);
             return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
           }
-          if (arbiterResult.outcome === 'finding_invalid') {
+          if (effectiveArbiterResult.outcome === 'finding_invalid') {
             this.emit(
               input,
               'plan-review.final_review.arbiter.resolved',
               'info',
-              `arbiter resolved final review fail at iteration ${finalIterationIndex}: ${arbiterResult.outcome}`,
+              `arbiter resolved final review fail at iteration ${finalIterationIndex}: ${effectiveArbiterResult.outcome}`,
               {
-                ruling: arbiterResult.outcome,
+                ruling: effectiveArbiterResult.outcome,
                 resolvedBy: 'final-review-arbiter',
-                evidence: arbiterResult.evidence,
+                evidence: effectiveArbiterResult.evidence,
                 iterationIndex: finalIterationIndex,
               },
             );
@@ -1813,7 +1846,7 @@ export class PlanReviewLoop {
                 : {}),
             };
           } else if (
-            arbiterResult.outcome === 'finding_valid' &&
+            effectiveArbiterResult.outcome === 'finding_valid' &&
             !bonusIterationUsed &&
             options.bonusIteration !== false
           ) {
@@ -1822,7 +1855,7 @@ export class PlanReviewLoop {
               'plan-review.loop.trailing_review.bonus_fix_iteration',
               'info',
               `granting one-time bonus fix iteration for valid trailing finding at iteration ${finalIterationIndex}`,
-              { iterationIndex: finalIterationIndex, rationale: arbiterResult.rationale },
+              { iterationIndex: finalIterationIndex, rationale: effectiveArbiterResult.rationale },
             );
             bonusIterationUsed = true;
 
@@ -1849,7 +1882,7 @@ export class PlanReviewLoop {
 
             // 1. Bonus Fix
             const bonusFix = await deps.runFix(finalCtx, {
-              reconciliationContext: arbiterResult.rationale,
+              reconciliationContext: effectiveArbiterResult.rationale,
               metadata: {
                 iteration: finalIterationIndex,
                 invocation_type: 'initial',
@@ -2004,18 +2037,18 @@ export class PlanReviewLoop {
               input,
               'plan-review.final_review.arbiter.resolved',
               'info',
-              `arbiter could not resolve final review fail at iteration ${finalIterationIndex}: ${arbiterResult.outcome}`,
+              `arbiter could not resolve final review fail at iteration ${finalIterationIndex}: ${effectiveArbiterResult.outcome}`,
               {
-                ruling: arbiterResult.outcome,
-                evidence: arbiterResult.evidence,
+                ruling: effectiveArbiterResult.outcome,
+                evidence: effectiveArbiterResult.evidence,
                 iterationIndex: finalIterationIndex,
               },
             );
             if (
-              (arbiterResult.outcome === 'ambiguous' ||
-                arbiterResult.outcome === 'insufficient_evidence') &&
-              arbiterResult.evidence &&
-              arbiterResult.evidence.trim().length > 0
+              (effectiveArbiterResult.outcome === 'ambiguous' ||
+                effectiveArbiterResult.outcome === 'insufficient_evidence') &&
+              effectiveArbiterResult.evidence &&
+              effectiveArbiterResult.evidence.trim().length > 0
             ) {
               const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
                 index: finalIterationIndex,
@@ -2033,7 +2066,7 @@ export class PlanReviewLoop {
               return this.escalateToTerminalFix(
                 input,
                 loop,
-                'arbiter_' + arbiterResult.outcome,
+                'arbiter_' + effectiveArbiterResult.outcome,
                 history,
                 lastDeterministicDiagnostic,
               );

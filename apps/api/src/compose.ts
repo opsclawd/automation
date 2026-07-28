@@ -174,7 +174,6 @@ import {
   CONTRACT_VIOLATION_CODES,
   type RunWorkspaceTypecheckPort,
   verifyArbiterGrounding,
-  verifyPlanReviewArbiterGrounding,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -5206,14 +5205,6 @@ export function composeRoot(opts: ComposeOptions): Container {
                 });
               }
               const arbiterResult = withGroundingSources(parsed.data as ArbiterResult);
-              const groundingCheck = verifyPlanReviewArbiterGrounding(arbiterResult);
-              if (groundingCheck.status === 'ungrounded') {
-                return {
-                  ...arbiterResult,
-                  outcome: 'finding_invalid' as const,
-                  rationale: `Grounding verification failed: ${groundingCheck.reason === 'missing_quotes' ? 'arbiter provided no <quote> tags in evidence or rationale' : 'arbiter quoted text not found in plan or manifest'}. Unmatched quotes: ${groundingCheck.unmatchedQuotes.join('; ')}`,
-                };
-              }
               return arbiterResult;
             }
           : undefined;
@@ -5316,14 +5307,6 @@ export function composeRoot(opts: ComposeOptions): Container {
               });
             }
             const arbiterResult = withGroundingSources(parsed.data as ArbiterResult);
-            const groundingCheck = verifyPlanReviewArbiterGrounding(arbiterResult);
-            if (groundingCheck.status === 'ungrounded') {
-              return {
-                ...arbiterResult,
-                outcome: 'finding_invalid' as const,
-                rationale: `Grounding verification failed: ${groundingCheck.reason === 'missing_quotes' ? 'arbiter provided no <quote> tags in evidence or rationale' : 'arbiter quoted text not found in plan or manifest'}. Unmatched quotes: ${groundingCheck.unmatchedQuotes.join('; ')}`,
-              };
-            }
             return arbiterResult;
           }
         : undefined;
