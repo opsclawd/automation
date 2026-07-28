@@ -242,7 +242,10 @@ export interface PlanReviewLoopDeps {
    * and any blast-radius failures for structured event emission.
    */
   checkDeterministicPlan: (ctx: PlanReviewContext) => Promise<DeterministicPlanCheckResult>;
-  runArbiter?: (ctx: PlanReviewContext, fixResult: PlanFixResult) => Promise<ArbiterResult>;
+  runArbiter?: (
+    ctx: PlanReviewContext,
+    fixResult: PlanFixResult,
+  ) => Promise<PlanReviewArbiterResult>;
   /**
    * Distinct from `runArbiter`: invoked only for the trailing final-review-fail
    * path, which has no `PlanFixResult` (no fixer ran in that pass). Kept as a
@@ -257,7 +260,7 @@ export interface PlanReviewLoopDeps {
   runFinalReviewArbiter?: (
     ctx: PlanReviewContext,
     finalReview: PlanReviewResult,
-  ) => Promise<ArbiterResult>;
+  ) => Promise<PlanReviewArbiterResult>;
   loops: LoopRepositoryPort;
   events: EventBusPort;
   /** Max reviewer retries on `agentOutcome !== 'success'` (parity #297). Default 2. */
@@ -303,4 +306,11 @@ export interface PlanReviewLoopResult {
   proceedWithConcerns: boolean;
   /** Carried-forward known limitations string (populated when proceedWithConcerns). */
   knownLimitations?: string;
+}
+
+export interface PlanReviewArbiterResult extends ArbiterResult {
+  groundingSources: {
+    planExcerpt: string;
+    manifestExcerpt: string;
+  };
 }

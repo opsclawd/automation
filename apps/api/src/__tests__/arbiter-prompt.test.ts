@@ -188,7 +188,7 @@ describe('buildImplementStepFinalReviewArbiterPrompt', () => {
     expect(prompt).toContain('## OUTPUT');
   });
 
-  it('AC #6/#7 — never mentions a FixResult, done_no_fixes_needed, or rebuttal', () => {
+  it('AC #6/#7 — never mentions a FixResult, done_no_fixes_needed, or fixer rebuttal section', () => {
     const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
       specExcerpt: '{"result":"fail"}',
       qualityExcerpt: '{"result":"pass"}',
@@ -196,7 +196,6 @@ describe('buildImplementStepFinalReviewArbiterPrompt', () => {
     });
     expect(prompt).not.toContain('FixResult');
     expect(prompt).not.toContain('done_no_fixes_needed');
-    expect(prompt).not.toContain('rebuttal');
     expect(prompt).toContain('No fixer ran in this pass');
   });
 

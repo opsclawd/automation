@@ -173,6 +173,7 @@ import {
   buildTaskValidationCommands,
   CONTRACT_VIOLATION_CODES,
   type RunWorkspaceTypecheckPort,
+  verifyArbiterGrounding,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -3060,6 +3061,19 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         }
 
+        let planContent = '';
+        let manifestContent = '';
+        try {
+          planContent = await store.read(String(ctx.runId), 'plan.md');
+        } catch {
+          // plan.md not available
+        }
+        try {
+          manifestContent = await store.read(String(ctx.runId), 'task-manifest.json');
+        } catch {
+          // task-manifest.json not available
+        }
+
         const arbiterPrompt = buildWholePrArbiterPrompt({
           cwd: ctx.cwd,
           repoId: ctx.repoId,
@@ -3068,6 +3082,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           relevantExcerpts,
           fixDelta,
           fixRebuttal: fixResult.rebuttal ?? '',
+          planContent,
+          manifestContent,
         });
 
         writeFileSync(promptPath, arbiterPrompt, 'utf-8');
@@ -3136,7 +3152,21 @@ export function composeRoot(opts: ComposeOptions): Container {
           };
         }
 
-        return parsed.data as ArbiterResult;
+        const arbiterResult = parsed.data as ArbiterResult;
+
+        const groundingCheck = verifyArbiterGrounding(arbiterResult, [
+          planContent,
+          manifestContent,
+        ]);
+        if (groundingCheck.status === 'ungrounded') {
+          return {
+            ...arbiterResult,
+            outcome: 'finding_invalid' as const,
+            rationale: `Grounding verification failed: ${groundingCheck.reason === 'missing_quotes' ? 'arbiter provided no <quote> tags in evidence or rationale' : 'arbiter quoted text not found in plan.md or task-manifest.json'}. Unmatched quotes: ${groundingCheck.unmatchedQuotes.join('; ')}`,
+          };
+        }
+
+        return arbiterResult;
       };
 
       // Non-optional local so the ReviewFixHandler closure below can reference it
@@ -4386,7 +4416,8 @@ export function composeRoot(opts: ComposeOptions): Container {
                 rationale: `arbiter result.json unparseable: ${verdict.detail}`,
               };
             }
-            return arbiterResultSchema.parse(verdict.result) as LoopArbiterResult;
+            const arbiterResult = arbiterResultSchema.parse(verdict.result) as LoopArbiterResult;
+            return arbiterResult;
           }
         : undefined;
 
@@ -4521,7 +4552,16 @@ export function composeRoot(opts: ComposeOptions): Container {
                 rationale: `arbiter result.json Zod parse error: ${parsed.error.message}`,
               };
             }
-            return parsed.data as ImplementStepFinalReviewArbiterResult;
+            const arbiterResult = parsed.data as ImplementStepFinalReviewArbiterResult;
+            const groundingCheck = verifyArbiterGrounding(arbiterResult, [taskBody]);
+            if (groundingCheck.status === 'ungrounded') {
+              return {
+                ...arbiterResult,
+                outcome: 'finding_invalid' as const,
+                rationale: `Grounding verification failed: ${groundingCheck.reason === 'missing_quotes' ? 'arbiter provided no <quote> tags in evidence or rationale' : 'arbiter quoted text not found in task body'}. Unmatched quotes: ${groundingCheck.unmatchedQuotes.join('; ')}`,
+              };
+            }
+            return arbiterResult;
           }
         : undefined;
 
@@ -5081,6 +5121,11 @@ export function composeRoot(opts: ComposeOptions): Container {
               const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
               const { planExcerpt, findingsExcerpt, fixExcerpt, manifestExcerpt, designExcerpt } =
                 await readPlanReviewExcerpts(artifacts, String(ctx.runId));
+              const withGroundingSources = (result: ArbiterResult): PlanReviewArbiterResult =>
+                ({
+                  ...result,
+                  groundingSources: { planExcerpt, manifestExcerpt },
+                }) as PlanReviewArbiterResult;
               const arbiterPrompt = buildPlanReviewArbiterPrompt(
                 { cwd: ctx.cwd, runId: String(ctx.runId) },
                 {
@@ -5125,20 +5170,20 @@ export function composeRoot(opts: ComposeOptions): Container {
                   },
                 });
               } catch (err) {
-                return {
+                return withGroundingSources({
                   outcome: 'insufficient_evidence',
                   evidence: '',
                   rationale: `arbiter invocation threw: ${err instanceof Error ? err.message : String(err)}`,
-                };
+                });
               }
               const invocationId = newestInvocationId(String(ctx.runId));
               const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
               if (!inv) {
-                return {
+                return withGroundingSources({
                   outcome: 'insufficient_evidence',
                   evidence: '',
                   rationale: 'arbiter invocation produced no row',
-                };
+                });
               }
               const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
               const verdict = await extractResult({
@@ -5147,21 +5192,22 @@ export function composeRoot(opts: ComposeOptions): Container {
                 cwd: ctx.cwd,
               });
               if (!verdict.ok) {
-                return {
+                return withGroundingSources({
                   outcome: 'insufficient_evidence',
                   evidence: '',
                   rationale: `arbiter result.json unparseable: ${verdict.detail}`,
-                };
+                });
               }
               const parsed = arbiterResultSchema.safeParse(verdict.result);
               if (!parsed.success) {
-                return {
+                return withGroundingSources({
                   outcome: 'insufficient_evidence',
                   evidence: '',
                   rationale: 'Zod parse error',
-                };
+                });
               }
-              return parsed.data as PlanReviewArbiterResult;
+              const arbiterResult = withGroundingSources(parsed.data as ArbiterResult);
+              return arbiterResult;
             }
           : undefined;
 
@@ -5184,6 +5230,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
             const { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt } =
               await readPlanReviewFinalExcerpts(artifacts, String(ctx.runId));
+            const withGroundingSources = (result: ArbiterResult): PlanReviewArbiterResult =>
+              ({
+                ...result,
+                groundingSources: { planExcerpt, manifestExcerpt },
+              }) as PlanReviewArbiterResult;
             const arbiterPrompt = buildPlanReviewFinalReviewArbiterPrompt(
               { cwd: ctx.cwd, runId: String(ctx.runId) },
               { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt },
@@ -5221,20 +5272,20 @@ export function composeRoot(opts: ComposeOptions): Container {
                 },
               });
             } catch (err) {
-              return {
+              return withGroundingSources({
                 outcome: 'insufficient_evidence',
                 evidence: '',
                 rationale: `arbiter invocation threw: ${err instanceof Error ? err.message : String(err)}`,
-              };
+              });
             }
             const invocationId = newestInvocationId(String(ctx.runId));
             const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
             if (!inv) {
-              return {
+              return withGroundingSources({
                 outcome: 'insufficient_evidence',
                 evidence: '',
                 rationale: 'arbiter invocation produced no row',
-              };
+              });
             }
             const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
             const verdict = await extractResult({
@@ -5243,21 +5294,22 @@ export function composeRoot(opts: ComposeOptions): Container {
               cwd: ctx.cwd,
             });
             if (!verdict.ok) {
-              return {
+              return withGroundingSources({
                 outcome: 'insufficient_evidence',
                 evidence: '',
                 rationale: `arbiter result.json unparseable: ${verdict.detail}`,
-              };
+              });
             }
             const parsed = arbiterResultSchema.safeParse(verdict.result);
             if (!parsed.success) {
-              return {
+              return withGroundingSources({
                 outcome: 'insufficient_evidence',
                 evidence: '',
                 rationale: 'Zod parse error',
-              };
+              });
             }
-            return parsed.data as PlanReviewArbiterResult;
+            const arbiterResult = withGroundingSources(parsed.data as ArbiterResult);
+            return arbiterResult;
           }
         : undefined;
 

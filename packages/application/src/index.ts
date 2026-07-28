@@ -66,6 +66,7 @@ export type {
   EvidenceResolver,
   TerminalValidationResult,
   DeterministicPlanCheckResult,
+  PlanReviewArbiterResult,
 } from './plan-review/types.js';
 export * from './plan-review/plan-review-loop.js';
 export {
@@ -74,6 +75,13 @@ export {
   renderSignatureBlastRadiusDiagnostic,
   type SignatureBlastRadiusFailure,
 } from './plan-review/signature-blast-radius.js';
+export {
+  verifyArbiterGrounding,
+  verifyPlanReviewArbiterGrounding,
+  type ArbiterGroundingCheck,
+  type ArbiterGroundingStatus,
+  type ArbiterGroundingFailureReason,
+} from './plan-review/arbiter-grounding.js';
 export {
   parsePlanReviewFindings,
   planReviewFindingSchema,
