@@ -6,7 +6,9 @@ import { RunId, PhaseName } from '@ai-sdlc/domain';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeStepRepository } from '../../../test-doubles/fake-step-repository.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
+import { FakeValidationPort } from '../../../test-doubles/fake-validation-port.js';
 import type { PhaseHandlerContext } from '../../handler.js';
+import type { RunWorkspaceTypecheckInput } from '../../../ports/run-workspace-typecheck-port.js';
 
 function makeCtx(artifacts: FakeArtifactStore, git: FakeGitPort) {
   const events: OrchestratorEvent[] = [];
@@ -511,5 +513,225 @@ describe('ImplementHandler Commit Coverage', () => {
       expectedFiles: ['src/reference-only.ts'],
       missingFiles: ['src/reference-only.ts'],
     });
+  });
+
+  it('accepts missing files if validation and typecheck both pass', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const validationPort = new FakeValidationPort();
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: validation passes but files missing',
+          expected_files: ['src/a.ts', 'src/b.ts'],
+          validation_commands: ['pnpm vitest run src/test.spec.ts'],
+        },
+      ],
+    };
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: validation passes but files missing']),
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify(manifest),
+    });
+
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|post-step', ['src/a.ts']);
+
+    validationPort.result = [
+      {
+        command: 'pnpm vitest run src/test.spec.ts',
+        exitCode: 0,
+        durationMs: 100,
+        stdout: '',
+        stderr: '',
+        stdoutPath: '/tmp/validate/stdout',
+        stderrPath: '/tmp/validate/stderr',
+        outcome: 'passed',
+      },
+    ];
+
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'post-step');
+      return { outcome: 'success' };
+    });
+
+    const runWorkspaceTypecheck = vi.fn(async ({}: RunWorkspaceTypecheckInput) => ({ ok: true }));
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      validationPort,
+      runWorkspaceTypecheck,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const all = steps.listForRun(RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
+    expect(all[0]?.status).toBe('success');
+
+    const unaffected = events.filter((e) => e.type === 'step.unaffected_files_verified');
+    expect(unaffected).toHaveLength(1);
+    expect(unaffected[0]?.metadata).toMatchObject({
+      expectedFiles: ['src/a.ts', 'src/b.ts'],
+      missingFiles: ['src/b.ts'],
+    });
+
+    const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
+    expect(uncommitted).toHaveLength(0);
+  });
+
+  it('fails if missing files exist and validation command fails', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const validationPort = new FakeValidationPort();
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: validation fails',
+          expected_files: ['src/a.ts', 'src/b.ts'],
+          validation_commands: ['pnpm vitest run src/test.spec.ts'],
+        },
+      ],
+    };
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: validation fails']),
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify(manifest),
+    });
+
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|post-step', ['src/a.ts']);
+
+    validationPort.result = [
+      {
+        command: 'pnpm vitest run src/test.spec.ts',
+        exitCode: 1,
+        durationMs: 100,
+        stdout: '',
+        stderr: 'FAIL',
+        stdoutPath: '/tmp/validate/stdout',
+        stderrPath: '/tmp/validate/stderr',
+        outcome: 'failed',
+      },
+    ];
+
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'post-step');
+      return { outcome: 'success' };
+    });
+
+    const runWorkspaceTypecheck = vi.fn(async ({}: RunWorkspaceTypecheckInput) => ({ ok: true }));
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      validationPort,
+      runWorkspaceTypecheck,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    const all = steps.listForRun(RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
+    expect(all[0]?.status).toBe('failed');
+
+    const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
+    expect(uncommitted).toHaveLength(1);
+
+    const unaffected = events.filter((e) => e.type === 'step.unaffected_files_verified');
+    expect(unaffected).toHaveLength(0);
+  });
+
+  it('fails if missing files exist and typecheck fails', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const validationPort = new FakeValidationPort();
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: typecheck fails',
+          expected_files: ['src/a.ts', 'src/b.ts'],
+          validation_commands: ['pnpm vitest run src/test.spec.ts'],
+        },
+      ],
+    };
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: typecheck fails']),
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify(manifest),
+    });
+
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|post-step', ['src/a.ts']);
+
+    validationPort.result = [
+      {
+        command: 'pnpm vitest run src/test.spec.ts',
+        exitCode: 0,
+        durationMs: 100,
+        stdout: '',
+        stderr: '',
+        stdoutPath: '/tmp/validate/stdout',
+        stderrPath: '/tmp/validate/stderr',
+        outcome: 'passed',
+      },
+    ];
+
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'post-step');
+      return { outcome: 'success' };
+    });
+
+    const runWorkspaceTypecheck = vi.fn(async ({}: RunWorkspaceTypecheckInput) => ({
+      ok: false,
+      error: 'Type error',
+    }));
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      validationPort,
+      runWorkspaceTypecheck,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    const all = steps.listForRun(RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
+    expect(all[0]?.status).toBe('failed');
+
+    const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
+    expect(uncommitted).toHaveLength(1);
+
+    const unaffected = events.filter((e) => e.type === 'step.unaffected_files_verified');
+    expect(unaffected).toHaveLength(0);
   });
 });

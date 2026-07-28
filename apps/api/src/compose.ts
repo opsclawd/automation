@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   open as fsOpen,
   stat as fsStat,
@@ -171,6 +172,7 @@ import {
   type ValidationCommand,
   buildTaskValidationCommands,
   CONTRACT_VIOLATION_CODES,
+  type RunWorkspaceTypecheckPort,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -5415,6 +5417,19 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventBus: persistingEventBusForLoop,
       });
 
+      const runWorkspaceTypecheck: RunWorkspaceTypecheckPort = async ({ cwd }) => {
+        try {
+          await promisify(execFile)('pnpm', ['-r', 'typecheck'], {
+            cwd,
+            encoding: 'utf-8',
+          });
+          return { ok: true };
+        } catch (err) {
+          const error = err as { stdout?: string; stderr?: string };
+          return { ok: false, error: error.stdout || error.stderr || String(err) };
+        }
+      };
+
       if (runStep !== undefined) {
         phaseRegistry.register(
           new ImplementHandler({
@@ -5422,6 +5437,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             runStep,
             setup: worktreeSetup,
             lintTaskSize: lintTaskSizeDep,
+            validationPort: validationAdapter,
+            typecheckLogDir: (runUuid: string) => join(runsDir, runUuid, 'validate'),
+            runWorkspaceTypecheck,
           }),
         );
       }

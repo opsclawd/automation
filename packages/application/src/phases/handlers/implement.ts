@@ -7,6 +7,9 @@ import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import { validatePlanTaskList, derivePlanTasks, extractTaskBody } from '../plan-tasks.js';
 import type { TaskManifest, TaskManifestEntry } from '../plan-tasks.js';
+import type { ValidationPort } from '../../ports/validation-port.js';
+import type { RunWorkspaceTypecheckPort } from '../../ports/run-workspace-typecheck-port.js';
+import { buildTaskValidationCommands } from '../../task-validation-commands.js';
 
 export interface OversizedTask {
   taskNum: number;
@@ -58,6 +61,9 @@ export interface ImplementHandlerOpts {
   runStep: (sctx: StepRunContext) => Promise<StepRunResult>;
   setup?: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
   lintTaskSize?: (cwd: string, manifest: TaskManifest) => Promise<LintTaskSizeResult>;
+  validationPort?: ValidationPort;
+  runWorkspaceTypecheck?: RunWorkspaceTypecheckPort;
+  typecheckLogDir?: string | ((runUuid: string) => string);
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -355,35 +361,88 @@ export class ImplementHandler implements PhaseHandler {
           const missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
 
           if (missingFiles.length > 0) {
-            this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-            emit(
-              'step.uncommitted_files',
-              'error',
-              `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
-              {
-                expectedFiles,
-                committedFiles,
-                missingFiles,
-                preStepHead,
-                postStepHead,
-              },
-            );
-            emit(
-              'step.failed',
-              'error',
-              `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
-              {
-                index: d.index,
-                total: totalSteps,
-              },
-            );
-            return this.fail(
-              ctx,
-              emit,
-              'invalid_result',
-              `step ${d.index} (${d.title}) did not commit declared files: ${missingFiles.join(', ')}`,
-              'Ensure the implementation commits all files declared in expected_files.',
-            );
+            let verifiedUnaffected = false;
+            let verificationError: string | undefined;
+
+            if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
+              const validationCommands = buildTaskValidationCommands(manifest, d.index);
+              let validationsPassed = true;
+
+              if (validationCommands.length > 0) {
+                const logDir =
+                  typeof this.opts.typecheckLogDir === 'function'
+                    ? this.opts.typecheckLogDir(ctx.runUuid)
+                    : this.opts.typecheckLogDir ?? '/tmp';
+                const validationResult = await this.opts.validationPort.run({
+                  cwd: ctx.cwd,
+                  commands: validationCommands,
+                  timeoutSeconds: 300,
+                  logDir,
+                });
+                for (const cmdResult of validationResult) {
+                  if (cmdResult.outcome !== 'passed') {
+                    validationsPassed = false;
+                    verificationError =
+                      'validation failed: ' +
+                      cmdResult.command +
+                      '\n' +
+                      (cmdResult.stderr || cmdResult.stdout);
+                    break;
+                  }
+                }
+              } else {
+                validationsPassed = true;
+              }
+
+              if (validationsPassed) {
+                const typecheckResult = await this.opts.runWorkspaceTypecheck({ cwd: ctx.cwd });
+                if (typecheckResult.ok) {
+                  verifiedUnaffected = true;
+                } else {
+                  verificationError = typecheckResult.error;
+                }
+              }
+            }
+
+            if (verifiedUnaffected) {
+              emit(
+                'step.unaffected_files_verified',
+                'info',
+                `step ${d.index}/${totalSteps} verified missing files as unaffected: ${missingFiles.join(', ')}`,
+                { expectedFiles, committedFiles, missingFiles, preStepHead, postStepHead },
+              );
+            } else {
+              this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+              emit(
+                'step.uncommitted_files',
+                'error',
+                `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
+                {
+                  expectedFiles,
+                  committedFiles,
+                  missingFiles,
+                  preStepHead,
+                  postStepHead,
+                  verificationError,
+                },
+              );
+              emit(
+                'step.failed',
+                'error',
+                `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
+                {
+                  index: d.index,
+                  total: totalSteps,
+                },
+              );
+              return this.fail(
+                ctx,
+                emit,
+                'invalid_result',
+                `step ${d.index} (${d.title}) did not commit declared files: ${missingFiles.join(', ')}`,
+                'Ensure the implementation commits all files declared in expected_files.',
+              );
+            }
           }
         }
 
