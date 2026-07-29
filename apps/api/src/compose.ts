@@ -744,11 +744,11 @@ type DeclaredTaskFileFields = {
   files?: string[] | null;
 };
 
-function declaredFilesForStep(manifest: TaskManifest, stepIndex: number): string[] {
+export function declaredFilesForStep(manifest: TaskManifest, stepIndex: number): string[] {
   const task = manifest.tasks[stepIndex - 1] as DeclaredTaskFileFields | undefined;
   if (!task) return [];
 
-  return [...(task.expected_files ?? []), ...(task.files ?? [])].map((file) =>
+  return Array.from(new Set([...(task.expected_files ?? []), ...(task.files ?? [])])).map((file) =>
     file.replace(/\\/g, '/'),
   );
 }

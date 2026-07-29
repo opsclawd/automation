@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { buildSpecReviewPrompt, buildQualityReviewPrompt } from '../compose.js';
-
-const composeSource = readFileSync(new URL('../compose.ts', import.meta.url), 'utf-8');
-
-function sourceSection(pattern: RegExp): string {
-  const match = composeSource.match(pattern);
-  expect(match).toBeTruthy();
-  return match![0];
-}
+import {
+  buildSpecReviewPrompt,
+  buildQualityReviewPrompt,
+  declaredFilesForStep,
+} from '../compose.js';
+import type { TaskManifest } from '@ai-sdlc/application';
 
 describe('compose review-state wiring', () => {
   describe('buildSpecReviewPrompt with scope', () => {
@@ -122,35 +118,117 @@ describe('compose review-state wiring', () => {
     });
   });
 
+  describe('declaredFilesForStep', () => {
+    const manifest: TaskManifest = {
+      version: 1,
+      tasks: [
+        { n: 1, title: 'Task One', status: 'pending' },
+        { n: 2, title: 'Task Two', status: 'pending' },
+      ],
+    };
+
+    it('returns empty array when task does not exist', () => {
+      const result = declaredFilesForStep(manifest, 999);
+      expect(result).toEqual([]);
+    });
+
+    it('merges expected_files and files with normalization', () => {
+      const manifestWithFiles: TaskManifest = {
+        version: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task One',
+            status: 'pending',
+            expected_files: ['src/foo.ts', 'src\\bar\\test.ts'],
+            files: ['src/baz.ts'],
+          },
+        ],
+      };
+      const result = declaredFilesForStep(manifestWithFiles, 1);
+      expect(result).toEqual(['src/foo.ts', 'src/bar/test.ts', 'src/baz.ts']);
+    });
+
+    it('deduplicates paths when same file appears in both expected_files and files', () => {
+      const manifestWithDupes: TaskManifest = {
+        version: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task One',
+            status: 'pending',
+            expected_files: ['src/shared.ts', 'src/unique1.ts'],
+            files: ['src/shared.ts', 'src/unique2.ts'],
+          },
+        ],
+      };
+      const result = declaredFilesForStep(manifestWithDupes, 1);
+      expect(result).toEqual(['src/shared.ts', 'src/unique1.ts', 'src/unique2.ts']);
+    });
+
+    it('handles missing expected_files and files gracefully', () => {
+      const manifestEmpty: TaskManifest = {
+        version: 1,
+        tasks: [{ n: 1, title: 'Task One', status: 'pending' }],
+      };
+      const result = declaredFilesForStep(manifestEmpty, 1);
+      expect(result).toEqual([]);
+    });
+
+    it('uses one-based step index', () => {
+      const manifestWithFiles: TaskManifest = {
+        version: 1,
+        tasks: [
+          { n: 1, title: 'Task One', status: 'pending' },
+          {
+            n: 2,
+            title: 'Task Two',
+            status: 'pending',
+            files: ['step2/file.ts'],
+          },
+        ],
+      };
+      const result = declaredFilesForStep(manifestWithFiles, 2);
+      expect(result).toEqual(['step2/file.ts']);
+    });
+  });
+
   describe('wiring invariants', () => {
-    it('merges and normalizes V1 and V2 declared files for the current one-based step', () => {
-      const helper = sourceSection(
-        /function declaredFilesForStep[\s\S]*?(?=export interface BuildSpecReviewPromptOptions)/,
-      );
+    it('threads declaredFiles into spec and quality review prompts with same values', () => {
+      const manifest: TaskManifest = {
+        version: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Test Task',
+            status: 'pending',
+            files: ['src/a.ts', 'src/b.ts'],
+          },
+        ],
+      };
+      const declaredFiles = declaredFilesForStep(manifest, 1);
 
-      expect(helper).toContain('manifest.tasks[stepIndex - 1]');
-      expect(helper).toMatch(
-        /\.\.\.\(task\.expected_files \?\? \[\]\)[\s\S]*\.\.\.\(task\.files \?\? \[\]\)/,
-      );
-      expect(helper).toContain("file.replace(/\\\\/g, '/')");
-    });
+      const specPrompt = buildSpecReviewPrompt({
+        ctx: { stepIndex: 1, stepTitle: 'Test Task', cwd: '/tmp/test' },
+        typecheckSection: '## TYPECHECK RESULT\nResult: PASS',
+        scope: { mode: 'initial_full' },
+        declaredFiles,
+      });
 
-    it('threads the same declared file list into spec and quality review prompts', () => {
-      const specRunner = sourceSection(/const runSpecReview[\s\S]*?(?=const runQualityReview)/);
-      const qualityRunner = sourceSection(/const runQualityReview[\s\S]*?(?=const implRunFix)/);
+      const qualityPrompt = buildQualityReviewPrompt({
+        ctx: { stepIndex: 1, stepTitle: 'Test Task', cwd: '/tmp/test' },
+        typecheckSection: '## TYPECHECK RESULT\nResult: PASS',
+        scope: { mode: 'initial_full' },
+        declaredFiles,
+      });
 
-      for (const runner of [specRunner, qualityRunner]) {
-        expect(runner).toContain('declaredFilesForStep(ctx.manifest, ctx.stepIndex)');
-        expect(runner).toMatch(/build(?:Spec|Quality)ReviewPrompt\(\{[\s\S]*declaredFiles,/);
-      }
-    });
+      expect(specPrompt).toContain('## TASK FILE SCOPE');
+      expect(specPrompt).toContain('- src/a.ts');
+      expect(specPrompt).toContain('- src/b.ts');
 
-    it('uses an empty scope when the current manifest task is missing', () => {
-      const helper = sourceSection(
-        /function declaredFilesForStep[\s\S]*?(?=export interface BuildSpecReviewPromptOptions)/,
-      );
-
-      expect(helper).toContain('if (!task) return []');
+      expect(qualityPrompt).toContain('## TASK FILE SCOPE');
+      expect(qualityPrompt).toContain('- src/a.ts');
+      expect(qualityPrompt).toContain('- src/b.ts');
     });
   });
 });
