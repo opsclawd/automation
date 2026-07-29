@@ -50,6 +50,7 @@ export interface StepRunContext {
   ctx: PhaseHandlerContext;
   manifest: TaskManifest;
   planMd: string;
+  missingFiles?: string[];
 }
 
 export interface StepRunResult {
@@ -288,6 +289,7 @@ export class ImplementHandler implements PhaseHandler {
 
       let declaredFilesRetries = this.opts.maxDeclaredFilesRetries ?? 0;
       let declaredFilesRetryFailed = false;
+      let missingFiles: string[] | undefined;
       let result: StepRunResult;
 
       do {
@@ -300,6 +302,7 @@ export class ImplementHandler implements PhaseHandler {
             ctx,
             manifest: manifest!,
             planMd,
+            ...(missingFiles !== undefined ? { missingFiles } : {}),
           });
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
@@ -364,7 +367,7 @@ export class ImplementHandler implements PhaseHandler {
             }
 
             const committedSet = new Set(committedFiles.map((p) => p.replace(/\\/g, '/')));
-            const missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
+            missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
 
             if (missingFiles.length > 0) {
               let verifiedUnaffected = false;

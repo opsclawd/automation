@@ -769,9 +769,11 @@ describe('ImplementHandler Commit Coverage', () => {
     const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
       attempts++;
       if (attempts === 1) {
+        expect(_sctx.missingFiles).toBeUndefined();
         git.headByCwd.set(ctx.cwd, 'post-step-1');
         git.changedFilesResults.set('pre-step|post-step-1', ['src/a.ts']);
       } else {
+        expect(_sctx.missingFiles).toEqual(['src/b.ts']);
         git.headByCwd.set(ctx.cwd, 'post-step-2');
         git.changedFilesResults.set('pre-step|post-step-2', ['src/a.ts', 'src/b.ts']);
       }

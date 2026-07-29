@@ -47,3 +47,20 @@ export function buildImplementRetryScopeMetadata(
     additional_editable_files: canonical,
   };
 }
+
+export function renderMissingDeclaredFilesPrompt(files: string[] | undefined): string[] {
+  if (files === undefined || files.length === 0) {
+    return [];
+  }
+  const canonical = [...files].sort();
+  return [
+    '## MISSING DECLARED FILES — MUST CREATE',
+    '',
+    'The following files were declared in expected_files but were NOT committed',
+    'on the previous attempt. You MUST create and commit these files:',
+    ...canonical.map((f) => `- ${f}`),
+    '',
+    'These are brand new files that do not exist yet. Create them with appropriate',
+    'content before the typecheck and review gates run.',
+  ];
+}

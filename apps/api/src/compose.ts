@@ -248,6 +248,7 @@ import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { deriveTrustedImplicatedFiles } from './typecheck-implicated-files.js';
 import {
   renderImplementRetryScopePrompt,
+  renderMissingDeclaredFilesPrompt,
   buildImplementRetryScopeMetadata,
 } from './implement-retry-scope.js';
 import {
@@ -401,6 +402,7 @@ export function buildImplementPrompt(
   branchName: string,
   typecheckErrors?: TypescriptError[] | string,
   additionalEditableFiles?: string[],
+  missingDeclaredFiles?: string[],
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
@@ -446,6 +448,8 @@ export function buildImplementPrompt(
     'not write, modify, stage, or commit them in this run.',
     '',
     ...renderImplementRetryScopePrompt(additionalEditableFiles),
+    '',
+    ...renderMissingDeclaredFilesPrompt(missingDeclaredFiles),
     '',
     ...(structuredErrors !== undefined && structuredErrors.length > 0
       ? renderStructuredTypecheckErrors(structuredErrors)
@@ -3452,6 +3456,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           branchName,
           opts?.typecheckErrors,
           opts?.additionalEditableFiles,
+          ctx.metadata?.missingDeclaredFiles as string[] | undefined,
         );
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -5361,6 +5366,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         ctx: import('@ai-sdlc/application').PhaseHandlerContext;
         manifest: TaskManifest;
         planMd: string;
+        missingFiles?: string[];
       }): Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }> => {
         if (!implementStepLoop) throw new Error('implementStepLoop not initialized');
         const result = await implementStepLoop.execute({
@@ -5378,6 +5384,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             holisticThresholdIteration: config.phases.implement.holisticThresholdIteration,
             holisticThresholdFindings: config.phases.implement.holisticThresholdFindings,
           },
+          ...(sctx.missingFiles ? { missingDeclaredFiles: sctx.missingFiles } : {}),
         });
         return { outcome: result.outcome };
       };
