@@ -39,6 +39,11 @@ export interface ImplementStepOptions {
    * implicate trusted files not in `expected_files` or `files`.
    */
   additionalEditableFiles?: string[];
+  /**
+   * Declared expected_files that remained uncommitted after the previous
+   * outer ImplementHandler attempt.
+   */
+  priorAttemptMissingFiles?: string[];
 }
 
 export interface TypescriptError {
@@ -386,6 +391,17 @@ export interface ImplementStepLoopInput {
    * the precedent in `ReviewFixLoopOptions`. See `ImplementStepLoopOptions`.
    */
   options?: ImplementStepLoopOptions;
+  /**
+   * Files that were declared in expected_files but were not committed on a
+   * previous attempt. Passed to the implement agent so it knows which files
+   * to create on retry.
+   */
+  missingDeclaredFiles?: string[];
+  /**
+   * Declared expected_files that remained uncommitted after the previous
+   * outer ImplementHandler attempt.
+   */
+  priorAttemptMissingFiles?: string[];
 }
 
 export interface ImplementStepLoopResult {

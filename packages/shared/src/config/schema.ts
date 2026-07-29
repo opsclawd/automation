@@ -92,8 +92,8 @@ const phasesSchema = z.object({
       })
       .default({ enabled: false, timeoutMinutes: 10 }),
   }),
-  // implement.maxIterations is validated but not consumed by any shell loop.
-  // The implement phase runs each task once sequentially — no retry loop exists.
+  // implement.maxIterations bounds the inner review/fix loop.
+  // maxDeclaredFilesRetries provides an outer structural recovery budget.
   implement: z.object({
     maxIterations: z.number().int().positive().default(3),
     /**
@@ -105,6 +105,12 @@ const phasesSchema = z.object({
      * `@ai-sdlc/application/implement-step-loop`.
      */
     maxTypeCheckRetries: z.number().int().positive().default(5),
+    /**
+     * Maximum number of whole-Step retries when commit coverage still misses
+     * declared expected_files after the unaffected-files verification.
+     * Zero preserves immediate terminal failure. Defaults to one retry.
+     */
+    maxDeclaredFilesRetries: z.number().int().nonnegative().default(1),
     /**
      * Threshold for holistic re-derivation (#766). When the loop hits this
      * iteration index (1-based), it assesses repeat-offender files.

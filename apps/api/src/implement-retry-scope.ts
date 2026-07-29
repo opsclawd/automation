@@ -47,3 +47,36 @@ export function buildImplementRetryScopeMetadata(
     additional_editable_files: canonical,
   };
 }
+
+export function renderMissingDeclaredFilesPrompt(files: string[] | undefined): string[] {
+  if (files === undefined || files.length === 0) {
+    return [];
+  }
+  const canonical = [...files].sort();
+  return [
+    '## MISSING DECLARED FILES — MUST CREATE',
+    '',
+    'The following files were declared in expected_files but were NOT committed',
+    'on the previous attempt. You MUST create and commit these files:',
+    ...canonical.map((f) => `- ${f}`),
+    '',
+    'These are brand new files that do not exist yet. Create them with appropriate',
+    'content before the typecheck and review gates run.',
+  ];
+}
+
+export function renderDeclaredFilesRetryPrompt(priorAttemptMissingFiles?: string[]): string[] {
+  if (!priorAttemptMissingFiles?.length) return [];
+  return [
+    '## DECLARED FILES MISSED BY THE PREVIOUS ATTEMPT',
+    '',
+    'The previous attempt declared these files in expected_files but did not commit them.',
+    'You MUST modify and commit every file listed below during this attempt:',
+    '',
+    ...priorAttemptMissingFiles.map((file) => `- ${file}`),
+    '',
+    'Do not remove the declarations merely to satisfy commit coverage. Implement the task',
+    'behavior in these files, then run the task-scoped validation and commit the result.',
+    '',
+  ];
+}

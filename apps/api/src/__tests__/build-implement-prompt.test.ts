@@ -213,4 +213,31 @@ describe('buildImplementPrompt', () => {
       expect(prompt).not.toContain('TYPECHECK-AUTHORIZED SCOPE OVERRIDE');
     });
   });
+
+  describe('declared-files retry feedback', () => {
+    it('renders declared files missed by the previous attempt', () => {
+      const prompt = buildImplementPrompt(ctx, taskText, branchName, undefined, undefined, [
+        'scripts/collectors/on-chain-flow.ts',
+        'src/parser.ts',
+      ]);
+      expect(prompt).toContain('## DECLARED FILES MISSED BY THE PREVIOUS ATTEMPT');
+      expect(prompt).toContain('- scripts/collectors/on-chain-flow.ts');
+      expect(prompt).toContain('- src/parser.ts');
+      expect(prompt).toContain('modify and commit every file listed below');
+    });
+
+    it('omits declared-files feedback when the list is absent or empty', () => {
+      for (const priorAttemptMissingFiles of [undefined, []]) {
+        const prompt = buildImplementPrompt(
+          ctx,
+          taskText,
+          branchName,
+          undefined,
+          undefined,
+          priorAttemptMissingFiles,
+        );
+        expect(prompt).not.toContain('DECLARED FILES MISSED BY THE PREVIOUS ATTEMPT');
+      }
+    });
+  });
 });

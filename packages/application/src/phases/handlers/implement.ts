@@ -50,6 +50,12 @@ export interface StepRunContext {
   ctx: PhaseHandlerContext;
   manifest: TaskManifest;
   planMd: string;
+  missingFiles?: string[];
+  /**
+   * Declared expected_files that remained uncommitted after the previous
+   * outer ImplementHandler attempt.
+   */
+  priorAttemptMissingFiles?: string[];
 }
 
 export interface StepRunResult {
@@ -64,6 +70,7 @@ export interface ImplementHandlerOpts {
   validationPort?: ValidationPort;
   runWorkspaceTypecheck?: RunWorkspaceTypecheckPort;
   typecheckLogDir?: string | ((runUuid: string) => string);
+  maxDeclaredFilesRetries?: number;
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -285,151 +292,71 @@ export class ImplementHandler implements PhaseHandler {
         total: totalSteps,
       });
 
+      const maxDeclaredFilesRetries = this.opts.maxDeclaredFilesRetries ?? 1;
+      let declaredFilesRetryCount = 0;
+      let priorAttemptMissingFiles: string[] | undefined;
       let result: StepRunResult;
-      try {
-        result = await this.opts.runStep({
-          stepIndex: d.index,
-          stepTitle: d.title,
-          cwd: ctx.cwd,
-          ctx,
-          manifest: manifest!,
-          planMd,
-        });
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-        emit('step.failed', 'error', `step ${d.index}/${totalSteps} crashed: ${message}`, {
-          index: d.index,
-          total: totalSteps,
-        });
-        return this.fail(
-          ctx,
-          emit,
-          'command_failed',
-          `step ${d.index} (${d.title}) crashed: ${message}`,
-        );
-      }
 
-      if (result.outcome === 'success') {
-        const expectedFiles = declaredTaskFiles(task);
-        if (expectedFiles.length > 0) {
-          let postStepHead: string | undefined;
-          let committedFiles: string[] = [];
-          let verificationError: string | undefined;
+      while (true) {
+        try {
+          result = await this.opts.runStep({
+            stepIndex: d.index,
+            stepTitle: d.title,
+            cwd: ctx.cwd,
+            ctx,
+            manifest: manifest!,
+            planMd,
+            ...(priorAttemptMissingFiles !== undefined ? { priorAttemptMissingFiles } : {}),
+          });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+          emit('step.failed', 'error', `step ${d.index}/${totalSteps} crashed: ${message}`, {
+            index: d.index,
+            total: totalSteps,
+          });
+          return this.fail(
+            ctx,
+            emit,
+            'command_failed',
+            `step ${d.index} (${d.title}) crashed: ${message}`,
+          );
+        }
 
-          try {
-            if (!ctx.git?.headCommitSha || typeof ctx.git?.changedFiles !== 'function') {
-              throw new Error('ctx.git.changedFiles is not available');
-            }
-            postStepHead = await ctx.git.headCommitSha(ctx.cwd);
-            committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
-          } catch (e) {
-            verificationError = e instanceof Error ? e.message : String(e);
-          }
-
-          if (verificationError !== undefined) {
-            this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-            emit(
-              'step.uncommitted_files',
-              'error',
-              `step ${d.index}/${totalSteps} commit coverage query failed: ${verificationError}`,
-              {
-                expectedFiles,
-                preStepHead,
-                postStepHead,
-                error: verificationError,
-              },
-            );
-            emit(
-              'step.failed',
-              'error',
-              `step ${d.index}/${totalSteps} commit coverage query failed`,
-              {
-                index: d.index,
-                total: totalSteps,
-              },
-            );
-            return this.fail(
-              ctx,
-              emit,
-              'unknown',
-              `step ${d.index} (${d.title}) commit coverage query failed: ${verificationError}`,
-            );
-          }
-
-          const committedSet = new Set(committedFiles.map((p) => p.replace(/\\/g, '/')));
-          const missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
-
-          if (missingFiles.length > 0) {
-            let verifiedUnaffected = false;
+        if (result.outcome === 'success') {
+          const expectedFiles = declaredTaskFiles(task);
+          if (expectedFiles.length > 0) {
+            let postStepHead: string | undefined;
+            let committedFiles: string[] = [];
             let verificationError: string | undefined;
 
-            if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
-              const validationCommands = buildTaskValidationCommands(manifest, d.index);
-              let validationsPassed = true;
-
-              if (validationCommands.length > 0) {
-                const logDir =
-                  typeof this.opts.typecheckLogDir === 'function'
-                    ? this.opts.typecheckLogDir(ctx.runUuid)
-                    : this.opts.typecheckLogDir ?? '/tmp';
-                const validationResult = await this.opts.validationPort.run({
-                  cwd: ctx.cwd,
-                  commands: validationCommands,
-                  timeoutSeconds: 300,
-                  logDir,
-                });
-                for (const cmdResult of validationResult) {
-                  if (cmdResult.outcome !== 'passed') {
-                    validationsPassed = false;
-                    verificationError =
-                      'validation failed: ' +
-                      cmdResult.command +
-                      '\n' +
-                      (cmdResult.stderr || cmdResult.stdout);
-                    break;
-                  }
-                }
-              } else {
-                validationsPassed = true;
+            try {
+              if (!ctx.git?.headCommitSha || typeof ctx.git?.changedFiles !== 'function') {
+                throw new Error('ctx.git.changedFiles is not available');
               }
-
-              if (validationsPassed) {
-                const typecheckResult = await this.opts.runWorkspaceTypecheck({ cwd: ctx.cwd });
-                if (typecheckResult.ok) {
-                  verifiedUnaffected = true;
-                } else {
-                  verificationError = typecheckResult.error;
-                }
-              }
+              postStepHead = await ctx.git.headCommitSha(ctx.cwd);
+              committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
+            } catch (e) {
+              verificationError = e instanceof Error ? e.message : String(e);
             }
 
-            if (verifiedUnaffected) {
-              emit(
-                'step.unaffected_files_verified',
-                'info',
-                `step ${d.index}/${totalSteps} verified missing files as unaffected: ${missingFiles.join(', ')}`,
-                { expectedFiles, committedFiles, missingFiles, preStepHead, postStepHead },
-              );
-            } else {
+            if (verificationError !== undefined) {
               this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
               emit(
                 'step.uncommitted_files',
                 'error',
-                `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
+                `step ${d.index}/${totalSteps} commit coverage query failed: ${verificationError}`,
                 {
                   expectedFiles,
-                  committedFiles,
-                  missingFiles,
                   preStepHead,
                   postStepHead,
-                  verificationError,
+                  error: verificationError,
                 },
               );
               emit(
                 'step.failed',
                 'error',
-                `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
+                `step ${d.index}/${totalSteps} commit coverage query failed`,
                 {
                   index: d.index,
                   total: totalSteps,
@@ -438,49 +365,152 @@ export class ImplementHandler implements PhaseHandler {
               return this.fail(
                 ctx,
                 emit,
-                'invalid_result',
-                `step ${d.index} (${d.title}) did not commit declared files: ${missingFiles.join(', ')}`,
-                'Ensure the implementation commits all files declared in expected_files.',
+                'unknown',
+                `step ${d.index} (${d.title}) commit coverage query failed: ${verificationError}`,
               );
             }
-          }
-        }
 
-        this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
-        emit('step.completed', 'info', `step ${d.index}/${totalSteps} done`, {
-          index: d.index,
-          total: totalSteps,
-        });
-      } else if (result.outcome === 'needs_human_review') {
-        this.opts.steps.upsert({ ...step, status: 'needs_human_review', completedAt: ctx.now() });
-        emit(
-          'step.needs_human_review',
-          'warn',
-          `step ${d.index}/${totalSteps} needs human review`,
-          {
+            const committedSet = new Set(committedFiles.map((p) => p.replace(/\\/g, '/')));
+            const missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
+
+            if (missingFiles.length > 0) {
+              let verifiedUnaffected = false;
+              let verificationError: string | undefined;
+
+              if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
+                const validationCommands = buildTaskValidationCommands(manifest, d.index);
+                let validationsPassed = true;
+
+                if (validationCommands.length > 0) {
+                  const logDir =
+                    typeof this.opts.typecheckLogDir === 'function'
+                      ? this.opts.typecheckLogDir(ctx.runUuid)
+                      : (this.opts.typecheckLogDir ?? '/tmp');
+                  const validationResult = await this.opts.validationPort.run({
+                    cwd: ctx.cwd,
+                    commands: validationCommands,
+                    timeoutSeconds: 300,
+                    logDir,
+                  });
+                  for (const cmdResult of validationResult) {
+                    if (cmdResult.outcome !== 'passed') {
+                      validationsPassed = false;
+                      verificationError =
+                        'validation failed: ' +
+                        cmdResult.command +
+                        '\n' +
+                        (cmdResult.stderr || cmdResult.stdout);
+                      break;
+                    }
+                  }
+                } else {
+                  validationsPassed = true;
+                }
+
+                if (validationsPassed) {
+                  const typecheckResult = await this.opts.runWorkspaceTypecheck({ cwd: ctx.cwd });
+                  if (typecheckResult.ok) {
+                    verifiedUnaffected = true;
+                  } else {
+                    verificationError = typecheckResult.error;
+                  }
+                }
+              }
+
+              if (verifiedUnaffected) {
+                emit(
+                  'step.unaffected_files_verified',
+                  'info',
+                  `step ${d.index}/${totalSteps} verified missing files as unaffected: ${missingFiles.join(', ')}`,
+                  { expectedFiles, committedFiles, missingFiles, preStepHead, postStepHead },
+                );
+              } else if (declaredFilesRetryCount < maxDeclaredFilesRetries) {
+                declaredFilesRetryCount += 1;
+                priorAttemptMissingFiles = missingFiles;
+                this.opts.steps.upsert({ ...step, status: 'running' });
+                emit(
+                  'step.declared_files_retry',
+                  'warn',
+                  `step ${d.index}/${totalSteps} did not commit declared files; retrying attempt ${declaredFilesRetryCount}/${maxDeclaredFilesRetries}`,
+                  {
+                    index: d.index,
+                    attempt: declaredFilesRetryCount,
+                    maxRetries: maxDeclaredFilesRetries,
+                    expectedFiles,
+                    committedFiles,
+                    missingFiles,
+                    preStepHead,
+                    postStepHead,
+                    verificationError,
+                  },
+                );
+                continue;
+              } else {
+                this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+                emit(
+                  'step.uncommitted_files',
+                  'error',
+                  `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
+                  {
+                    expectedFiles,
+                    committedFiles,
+                    missingFiles,
+                    preStepHead,
+                    postStepHead,
+                    verificationError,
+                  },
+                );
+                emit(
+                  'step.failed',
+                  'error',
+                  `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
+                  {
+                    index: d.index,
+                    total: totalSteps,
+                  },
+                );
+                return this.fail(
+                  ctx,
+                  emit,
+                  'invalid_result',
+                  `step ${d.index} (${d.title}) did not commit declared files: ${missingFiles.join(', ')}`,
+                  'Ensure the implementation commits all files declared in expected_files.',
+                );
+              }
+            }
+          }
+
+          this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
+          emit('step.completed', 'info', `step ${d.index}/${totalSteps} done`, {
             index: d.index,
             total: totalSteps,
-          },
-        );
-        return this.needsHumanReview(
-          ctx,
-          emit,
-          'agent_incomplete',
-          `step ${d.index} (${d.title}) needs human review`,
-        );
-      } else {
-        // No-op re-verification recovery (synthesizing a missing
-        // implementation-log.md when the agent declared the step already
-        // done) happens inside runStep/runImplement itself, before the
-        // typecheck/spec-review/quality-review gates run — see #610. If
-        // runStep still reports a non-success outcome here, the step
-        // genuinely failed and there is nothing further to recover.
-        this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-        emit('step.failed', 'error', `step ${d.index}/${totalSteps} failed`, {
-          index: d.index,
-          total: totalSteps,
-        });
-        return this.fail(ctx, emit, 'agent_incomplete', `step ${d.index} (${d.title}) failed`);
+          });
+        } else if (result.outcome === 'needs_human_review') {
+          this.opts.steps.upsert({ ...step, status: 'needs_human_review', completedAt: ctx.now() });
+          emit(
+            'step.needs_human_review',
+            'warn',
+            `step ${d.index}/${totalSteps} needs human review`,
+            {
+              index: d.index,
+              total: totalSteps,
+            },
+          );
+          return this.needsHumanReview(
+            ctx,
+            emit,
+            'agent_incomplete',
+            `step ${d.index} (${d.title}) needs human review`,
+          );
+        } else {
+          this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+          emit('step.failed', 'error', `step ${d.index}/${totalSteps} failed`, {
+            index: d.index,
+            total: totalSteps,
+          });
+          return this.fail(ctx, emit, 'agent_incomplete', `step ${d.index} (${d.title}) failed`);
+        }
+        break;
       }
     }
 
