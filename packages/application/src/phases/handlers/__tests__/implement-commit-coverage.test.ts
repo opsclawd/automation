@@ -788,6 +788,8 @@ describe('ImplementHandler Commit Coverage', () => {
     expect(runStep).toHaveBeenCalledTimes(2);
     const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
     expect(uncommitted).toHaveLength(1);
+    const failed = events.filter((e) => e.type === 'step.failed');
+    expect(failed).toHaveLength(0);
     const completed = events.filter((e) => e.type === 'step.completed');
     expect(completed).toHaveLength(1);
   });

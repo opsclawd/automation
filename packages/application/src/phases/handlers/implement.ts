@@ -418,6 +418,25 @@ export class ImplementHandler implements PhaseHandler {
                   { expectedFiles, committedFiles, missingFiles, preStepHead, postStepHead },
                 );
               } else {
+                if (declaredFilesRetries > 0) {
+                  declaredFilesRetries--;
+                  declaredFilesRetryFailed = true;
+                  this.opts.steps.upsert({ ...step, status: 'running' });
+                  emit(
+                    'step.uncommitted_files',
+                    'warn',
+                    `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')} — retrying`,
+                    {
+                      expectedFiles,
+                      committedFiles,
+                      missingFiles,
+                      preStepHead,
+                      postStepHead,
+                      verificationError,
+                    },
+                  );
+                  continue;
+                }
                 this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
                 emit(
                   'step.uncommitted_files',
@@ -441,12 +460,6 @@ export class ImplementHandler implements PhaseHandler {
                     total: totalSteps,
                   },
                 );
-                if (declaredFilesRetries > 0) {
-                  declaredFilesRetries--;
-                  declaredFilesRetryFailed = true;
-                  this.opts.steps.upsert({ ...step, status: 'running' });
-                  continue;
-                }
                 return this.fail(
                   ctx,
                   emit,
