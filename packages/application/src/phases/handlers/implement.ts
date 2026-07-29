@@ -292,13 +292,12 @@ export class ImplementHandler implements PhaseHandler {
         total: totalSteps,
       });
 
-      let declaredFilesRetries = this.opts.maxDeclaredFilesRetries ?? 0;
-      let declaredFilesRetryFailed = false;
-      let missingFiles: string[] | undefined;
+      const maxDeclaredFilesRetries = this.opts.maxDeclaredFilesRetries ?? 1;
+      let declaredFilesRetryCount = 0;
+      let priorAttemptMissingFiles: string[] | undefined;
       let result: StepRunResult;
 
-      do {
-        declaredFilesRetryFailed = false;
+      while (true) {
         try {
           result = await this.opts.runStep({
             stepIndex: d.index,
@@ -307,7 +306,7 @@ export class ImplementHandler implements PhaseHandler {
             ctx,
             manifest: manifest!,
             planMd,
-            ...(missingFiles !== undefined ? { priorAttemptMissingFiles: missingFiles } : {}),
+            ...(priorAttemptMissingFiles !== undefined ? { priorAttemptMissingFiles } : {}),
           });
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
@@ -372,7 +371,7 @@ export class ImplementHandler implements PhaseHandler {
             }
 
             const committedSet = new Set(committedFiles.map((p) => p.replace(/\\/g, '/')));
-            missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
+            const missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
 
             if (missingFiles.length > 0) {
               let verifiedUnaffected = false;
@@ -425,26 +424,28 @@ export class ImplementHandler implements PhaseHandler {
                   `step ${d.index}/${totalSteps} verified missing files as unaffected: ${missingFiles.join(', ')}`,
                   { expectedFiles, committedFiles, missingFiles, preStepHead, postStepHead },
                 );
+              } else if (declaredFilesRetryCount < maxDeclaredFilesRetries) {
+                declaredFilesRetryCount += 1;
+                priorAttemptMissingFiles = missingFiles;
+                this.opts.steps.upsert({ ...step, status: 'running' });
+                emit(
+                  'step.declared_files_retry',
+                  'warn',
+                  `step ${d.index}/${totalSteps} did not commit declared files; retrying attempt ${declaredFilesRetryCount}/${maxDeclaredFilesRetries}`,
+                  {
+                    index: d.index,
+                    attempt: declaredFilesRetryCount,
+                    maxRetries: maxDeclaredFilesRetries,
+                    expectedFiles,
+                    committedFiles,
+                    missingFiles,
+                    preStepHead,
+                    postStepHead,
+                    verificationError,
+                  },
+                );
+                continue;
               } else {
-                if (declaredFilesRetries > 0) {
-                  declaredFilesRetries--;
-                  declaredFilesRetryFailed = true;
-                  this.opts.steps.upsert({ ...step, status: 'running' });
-                  emit(
-                    'step.uncommitted_files',
-                    'warn',
-                    `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')} — retrying`,
-                    {
-                      expectedFiles,
-                      committedFiles,
-                      missingFiles,
-                      preStepHead,
-                      postStepHead,
-                      verificationError,
-                    },
-                  );
-                  continue;
-                }
                 this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
                 emit(
                   'step.uncommitted_files',
@@ -502,12 +503,6 @@ export class ImplementHandler implements PhaseHandler {
             `step ${d.index} (${d.title}) needs human review`,
           );
         } else {
-          // No-op re-verification recovery (synthesizing a missing
-          // implementation-log.md when the agent declared the step already
-          // done) happens inside runStep/runImplement itself, before the
-          // typecheck/spec-review/quality-review gates run — see #610. If
-          // runStep still reports a non-success outcome here, the step
-          // genuinely failed and there is nothing further to recover.
           this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
           emit('step.failed', 'error', `step ${d.index}/${totalSteps} failed`, {
             index: d.index,
@@ -515,7 +510,8 @@ export class ImplementHandler implements PhaseHandler {
           });
           return this.fail(ctx, emit, 'agent_incomplete', `step ${d.index} (${d.title}) failed`);
         }
-      } while (declaredFilesRetryFailed);
+        break;
+      }
     }
 
     emit('implement.completed', 'info', 'implement complete');
