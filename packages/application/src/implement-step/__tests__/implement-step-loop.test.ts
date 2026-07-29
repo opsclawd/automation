@@ -553,6 +553,27 @@ describe('ImplementStepLoop', () => {
     expect(specCalls).toBe(2);
   });
 
+  it('passes prior declared-file misses to the initial implement invocation only', async () => {
+    const options: Array<ImplementStepOptions | undefined> = [];
+    const runImplement = vi.fn(
+      async (_ctx: StepLoopContext, opts?: ImplementStepOptions): Promise<ImplementResult> => {
+        options.push(opts);
+        return { invocationId: 'impl-1', agentOutcome: 'success' };
+      },
+    );
+
+    const result = await new ImplementStepLoop(makeDeps({ runImplement })).execute({
+      ...baseInput(),
+      priorAttemptMissingFiles: ['src/collector.ts', 'src/parser.ts'],
+    });
+
+    expect(result.outcome).toBe('success');
+    expect(runImplement).toHaveBeenCalledTimes(1);
+    expect(options[0]).toEqual({
+      priorAttemptMissingFiles: ['src/collector.ts', 'src/parser.ts'],
+    });
+  });
+
   it('does not escalate when fixFallbackProfile is undefined (even with two consecutive failures)', async () => {
     const { events, bus } = collectEvents();
     const deps = makeDeps({

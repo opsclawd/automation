@@ -248,7 +248,7 @@ import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { deriveTrustedImplicatedFiles } from './typecheck-implicated-files.js';
 import {
   renderImplementRetryScopePrompt,
-  renderMissingDeclaredFilesPrompt,
+  renderDeclaredFilesRetryPrompt,
   buildImplementRetryScopeMetadata,
 } from './implement-retry-scope.js';
 import {
@@ -402,7 +402,7 @@ export function buildImplementPrompt(
   branchName: string,
   typecheckErrors?: TypescriptError[] | string,
   additionalEditableFiles?: string[],
-  missingDeclaredFiles?: string[],
+  priorAttemptMissingFiles?: string[],
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
@@ -449,7 +449,7 @@ export function buildImplementPrompt(
     '',
     ...renderImplementRetryScopePrompt(additionalEditableFiles),
     '',
-    ...renderMissingDeclaredFilesPrompt(missingDeclaredFiles),
+    ...renderDeclaredFilesRetryPrompt(priorAttemptMissingFiles),
     '',
     ...(structuredErrors !== undefined && structuredErrors.length > 0
       ? renderStructuredTypecheckErrors(structuredErrors)
@@ -5367,6 +5367,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         manifest: TaskManifest;
         planMd: string;
         missingFiles?: string[];
+        priorAttemptMissingFiles?: string[];
       }): Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }> => {
         if (!implementStepLoop) throw new Error('implementStepLoop not initialized');
         const result = await implementStepLoop.execute({
@@ -5385,6 +5386,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             holisticThresholdFindings: config.phases.implement.holisticThresholdFindings,
           },
           ...(sctx.missingFiles ? { missingDeclaredFiles: sctx.missingFiles } : {}),
+          ...(sctx.priorAttemptMissingFiles?.length
+            ? { priorAttemptMissingFiles: sctx.priorAttemptMissingFiles }
+            : {}),
         });
         return { outcome: result.outcome };
       };

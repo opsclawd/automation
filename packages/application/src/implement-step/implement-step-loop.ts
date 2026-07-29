@@ -545,14 +545,20 @@ export class ImplementStepLoop {
     };
 
     // --- PRE-LOOP: IMPLEMENT ---
-    const implementResult = await this.runImplementWithFallback(input, {
-      ...baseCtx,
-      metadata: {
-        implementation_task_number: input.stepIndex,
-        iteration: 1,
-        invocation_type: 'initial',
+    const implementResult = await this.runImplementWithFallback(
+      input,
+      {
+        ...baseCtx,
+        metadata: {
+          implementation_task_number: input.stepIndex,
+          iteration: 1,
+          invocation_type: 'initial',
+        },
       },
-    });
+      input.priorAttemptMissingFiles?.length
+        ? { priorAttemptMissingFiles: input.priorAttemptMissingFiles }
+        : undefined,
+    );
     if (implementResult.agentOutcome !== 'success') {
       this.emit(input, 'loop.iteration.started', 'info', 'implementation step started', {
         index: 1,

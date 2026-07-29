@@ -51,6 +51,11 @@ export interface StepRunContext {
   manifest: TaskManifest;
   planMd: string;
   missingFiles?: string[];
+  /**
+   * Declared expected_files that remained uncommitted after the previous
+   * outer ImplementHandler attempt.
+   */
+  priorAttemptMissingFiles?: string[];
 }
 
 export interface StepRunResult {
