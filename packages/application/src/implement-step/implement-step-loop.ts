@@ -13,6 +13,8 @@ import type {
   ImplementStepLoopResult,
   QualityReviewResult,
   SpecReviewResult,
+  SpecReviewOptions,
+  QualityReviewOptions,
   StepLoopContext,
   TypecheckResult,
   TypescriptError,
@@ -967,6 +969,8 @@ export class ImplementStepLoop {
       const shouldReviewSpec = dirtyDims.includes('spec') || isInFinalPair;
       do {
         specReviewAttempts += 1;
+        const specReviewOpts =
+          scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : undefined;
         specReview = shouldReviewSpec
           ? await deps.runSpecReview(
               {
@@ -979,6 +983,7 @@ export class ImplementStepLoop {
               },
               tcResult,
               specScope,
+              specReviewOpts,
             )
           : {
               invocationId: '',
@@ -1007,6 +1012,10 @@ export class ImplementStepLoop {
             },
           );
           await this.runCleanArtifacts(ctx);
+          const specReviewArtifactRecoveryOpts: SpecReviewOptions = {
+            artifactRecoveryRetry: true,
+            ...(scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : {}),
+          };
           specReview = await deps.runSpecReview(
             {
               ...ctx,
@@ -1018,7 +1027,7 @@ export class ImplementStepLoop {
             },
             tcResult,
             specScope,
-            { artifactRecoveryRetry: true },
+            specReviewArtifactRecoveryOpts,
           );
           specReviewAttemptInvocationIds.push(specReview.invocationId);
           if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
@@ -1124,6 +1133,8 @@ export class ImplementStepLoop {
       let qualityReviewAttempts = 0;
       const qualityReviewAttemptInvocationIds: string[] = [];
       const shouldReviewQuality = dirtyDims.includes('quality') || isInFinalPair;
+      const qualityReviewOpts =
+        scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : undefined;
       do {
         qualityReviewAttempts += 1;
         qualityReview = shouldReviewQuality
@@ -1138,6 +1149,7 @@ export class ImplementStepLoop {
               },
               tcResult,
               qualityScope,
+              qualityReviewOpts,
             )
           : {
               invocationId: '',
@@ -1166,6 +1178,10 @@ export class ImplementStepLoop {
             },
           );
           await this.runCleanArtifacts(ctx);
+          const qualityReviewArtifactRecoveryOpts: QualityReviewOptions = {
+            artifactRecoveryRetry: true,
+            ...(scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : {}),
+          };
           qualityReview = await deps.runQualityReview(
             {
               ...ctx,
@@ -1177,7 +1193,7 @@ export class ImplementStepLoop {
             },
             tcResult,
             qualityScope,
-            { artifactRecoveryRetry: true },
+            qualityReviewArtifactRecoveryOpts,
           );
           qualityReviewAttemptInvocationIds.push(qualityReview.invocationId);
           if (qualityReview.agentOutcome === 'success' && qualityReview.verdict !== undefined) {
@@ -1820,12 +1836,19 @@ export class ImplementStepLoop {
           const contradictionScope: ReviewScopeOptions = {
             mode: 'intermediate_delta',
           };
+          const contradictionReviewOpts =
+            scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : undefined;
           let rerunSpec = specReview;
           if (specReview.verdict === 'fail') {
-            rerunSpec = await deps.runSpecReview(ctx, tcResult, {
-              ...contradictionScope,
-              dimensions: ['spec'],
-            });
+            rerunSpec = await deps.runSpecReview(
+              ctx,
+              tcResult,
+              {
+                ...contradictionScope,
+                dimensions: ['spec'],
+              },
+              contradictionReviewOpts,
+            );
             this.emit(
               input,
               'step.spec-review.attempts',
@@ -1840,10 +1863,15 @@ export class ImplementStepLoop {
           }
           let rerunQuality = qualityReview;
           if (qualityReview.verdict === 'fail') {
-            rerunQuality = await deps.runQualityReview(ctx, tcResult, {
-              ...contradictionScope,
-              dimensions: ['quality'],
-            });
+            rerunQuality = await deps.runQualityReview(
+              ctx,
+              tcResult,
+              {
+                ...contradictionScope,
+                dimensions: ['quality'],
+              },
+              contradictionReviewOpts,
+            );
             this.emit(
               input,
               'step.quality-review.attempts',

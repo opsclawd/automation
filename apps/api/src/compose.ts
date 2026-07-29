@@ -3855,7 +3855,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mode: 'initial_full' | 'intermediate_delta' | 'final_full';
           dimensions?: Array<'spec' | 'quality'>;
         },
-        opts?: { artifactRecoveryRetry?: boolean },
+        opts?: { artifactRecoveryRetry?: boolean; additionalEditableFiles?: string[] },
       ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -3876,11 +3876,16 @@ export function composeRoot(opts: ComposeOptions): Container {
           if (!(err instanceof ArtifactNotFoundError)) throw err;
         }
         const declaredFiles = declaredFilesForStep(ctx.manifest, ctx.stepIndex);
+        const additionalFiles = opts?.additionalEditableFiles ?? [];
+        const mergedDeclaredFiles =
+          additionalFiles.length > 0
+            ? [...new Set([...declaredFiles, ...additionalFiles])].sort()
+            : declaredFiles;
         const reviewPrompt = buildSpecReviewPrompt({
           ctx: { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
           typecheckSection,
           implReport,
-          declaredFiles,
+          declaredFiles: mergedDeclaredFiles,
           scope,
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
@@ -3997,7 +4002,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mode: 'initial_full' | 'intermediate_delta' | 'final_full';
           dimensions?: Array<'spec' | 'quality'>;
         },
-        opts?: { artifactRecoveryRetry?: boolean },
+        opts?: { artifactRecoveryRetry?: boolean; additionalEditableFiles?: string[] },
       ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -4011,10 +4016,15 @@ export function composeRoot(opts: ComposeOptions): Container {
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to quality checks until the type error is resolved.`;
 
         const declaredFiles = declaredFilesForStep(ctx.manifest, ctx.stepIndex);
+        const additionalFiles = opts?.additionalEditableFiles ?? [];
+        const mergedDeclaredFiles =
+          additionalFiles.length > 0
+            ? [...new Set([...declaredFiles, ...additionalFiles])].sort()
+            : declaredFiles;
         const reviewPrompt = buildQualityReviewPrompt({
           ctx: { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
           typecheckSection,
-          declaredFiles,
+          declaredFiles: mergedDeclaredFiles,
           scope,
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
