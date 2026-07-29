@@ -739,6 +739,20 @@ class SingleRepoAdapter implements RepositoryPort {
   }
 }
 
+type DeclaredTaskFileFields = {
+  expected_files?: string[] | null;
+  files?: string[] | null;
+};
+
+function declaredFilesForStep(manifest: TaskManifest, stepIndex: number): string[] {
+  const task = manifest.tasks[stepIndex - 1] as DeclaredTaskFileFields | undefined;
+  if (!task) return [];
+
+  return [...(task.expected_files ?? []), ...(task.files ?? [])].map((file) =>
+    file.replace(/\\/g, '/'),
+  );
+}
+
 export interface BuildSpecReviewPromptOptions {
   ctx: { stepIndex: number; stepTitle: string; cwd: string };
   typecheckSection: string;
@@ -3862,10 +3876,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         } catch (err) {
           if (!(err instanceof ArtifactNotFoundError)) throw err;
         }
+        const declaredFiles = declaredFilesForStep(ctx.manifest, ctx.stepIndex);
         const reviewPrompt = buildSpecReviewPrompt({
           ctx: { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
           typecheckSection,
           implReport,
+          declaredFiles,
           scope,
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
@@ -3995,9 +4011,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return QUALITY_FAIL for it."
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to quality checks until the type error is resolved.`;
 
+        const declaredFiles = declaredFilesForStep(ctx.manifest, ctx.stepIndex);
         const reviewPrompt = buildQualityReviewPrompt({
           ctx: { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
           typecheckSection,
+          declaredFiles,
           scope,
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');

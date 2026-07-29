@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { buildSpecReviewPrompt, buildQualityReviewPrompt } from '../compose.js';
+
+const composeSource = readFileSync(new URL('../compose.ts', import.meta.url), 'utf-8');
+
+function sourceSection(pattern: RegExp): string {
+  const match = composeSource.match(pattern);
+  expect(match).toBeTruthy();
+  return match![0];
+}
 
 describe('compose review-state wiring', () => {
   describe('buildSpecReviewPrompt with scope', () => {
@@ -110,6 +119,38 @@ describe('compose review-state wiring', () => {
       });
       expect(prompt).toContain('## UNRESOLVED FINDINGS (from prior review)');
       expect(prompt).toContain('Memory leak');
+    });
+  });
+
+  describe('wiring invariants', () => {
+    it('merges and normalizes V1 and V2 declared files for the current one-based step', () => {
+      const helper = sourceSection(
+        /function declaredFilesForStep[\s\S]*?(?=export interface BuildSpecReviewPromptOptions)/,
+      );
+
+      expect(helper).toContain('manifest.tasks[stepIndex - 1]');
+      expect(helper).toMatch(
+        /\.\.\.\(task\.expected_files \?\? \[\]\)[\s\S]*\.\.\.\(task\.files \?\? \[\]\)/,
+      );
+      expect(helper).toContain("file.replace(/\\\\/g, '/')");
+    });
+
+    it('threads the same declared file list into spec and quality review prompts', () => {
+      const specRunner = sourceSection(/const runSpecReview[\s\S]*?(?=const runQualityReview)/);
+      const qualityRunner = sourceSection(/const runQualityReview[\s\S]*?(?=const implRunFix)/);
+
+      for (const runner of [specRunner, qualityRunner]) {
+        expect(runner).toContain('declaredFilesForStep(ctx.manifest, ctx.stepIndex)');
+        expect(runner).toMatch(/build(?:Spec|Quality)ReviewPrompt\(\{[\s\S]*declaredFiles,/);
+      }
+    });
+
+    it('uses an empty scope when the current manifest task is missing', () => {
+      const helper = sourceSection(
+        /function declaredFilesForStep[\s\S]*?(?=export interface BuildSpecReviewPromptOptions)/,
+      );
+
+      expect(helper).toContain('if (!task) return []');
     });
   });
 });
