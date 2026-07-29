@@ -748,9 +748,8 @@ export function declaredFilesForStep(manifest: TaskManifest, stepIndex: number):
   const task = manifest.tasks[stepIndex - 1] as DeclaredTaskFileFields | undefined;
   if (!task) return [];
 
-  return Array.from(new Set([...(task.expected_files ?? []), ...(task.files ?? [])])).map((file) =>
-    file.replace(/\\/g, '/'),
-  );
+  const allFiles = [...(task.expected_files ?? []), ...(task.files ?? [])];
+  return Array.from(new Set(allFiles.map((file) => file.replace(/\\/g, '/'))));
 }
 
 export interface BuildSpecReviewPromptOptions {

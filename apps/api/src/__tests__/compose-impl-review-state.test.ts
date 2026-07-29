@@ -166,6 +166,23 @@ describe('compose review-state wiring', () => {
       expect(result).toEqual(['src/shared.ts', 'src/unique1.ts', 'src/unique2.ts']);
     });
 
+    it('deduplicates when the same file uses backslashes in one array and forward slashes in another', () => {
+      const manifestWithMixedSeparators: TaskManifest = {
+        version: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task One',
+            status: 'pending',
+            expected_files: ['src/foo.ts'],
+            files: ['src\\foo.ts'],
+          },
+        ],
+      };
+      const result = declaredFilesForStep(manifestWithMixedSeparators, 1);
+      expect(result).toEqual(['src/foo.ts']);
+    });
+
     it('handles missing expected_files and files gracefully', () => {
       const manifestEmpty: TaskManifest = {
         version: 1,
