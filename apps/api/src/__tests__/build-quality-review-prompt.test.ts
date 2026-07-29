@@ -124,4 +124,30 @@ describe('buildQualityReviewPrompt', () => {
     expect(prompt).toContain('## PRIOR DISPOSITIONS');
     expect(prompt).toContain('fp1: rebutted');
   });
+
+  it('limits quality-review failures to the declared file scope in every review mode', () => {
+    for (const mode of ['initial_full', 'intermediate_delta', 'final_full'] as const) {
+      const prompt = buildQualityReviewPrompt({
+        ...makeOptions({ mode }),
+        declaredFiles: [
+          'packages/shared/src/config/schema.ts',
+          'packages/shared/src/config/__tests__/loader.test.ts',
+        ],
+      });
+
+      expect(prompt).toContain('## TASK FILE SCOPE');
+      expect(prompt).toContain('- packages/shared/src/config/schema.ts');
+      expect(prompt).toContain('- packages/shared/src/config/__tests__/loader.test.ts');
+      expect(prompt).toContain('Findings in files outside this list MUST NOT cause `result: fail`');
+      expect(prompt).toContain('informational `P3`');
+    }
+  });
+
+  it('leaves quality-review scope unbounded when declared files are absent or empty', () => {
+    const absent = buildQualityReviewPrompt(makeOptions());
+    const empty = buildQualityReviewPrompt({ ...makeOptions(), declaredFiles: [] });
+
+    expect(absent).not.toContain('## TASK FILE SCOPE');
+    expect(empty).not.toContain('## TASK FILE SCOPE');
+  });
 });

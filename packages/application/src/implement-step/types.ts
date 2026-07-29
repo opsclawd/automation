@@ -281,10 +281,12 @@ export interface ReviewState {
 
 export interface SpecReviewOptions {
   artifactRecoveryRetry?: boolean;
+  additionalEditableFiles?: string[];
 }
 
 export interface QualityReviewOptions {
   artifactRecoveryRetry?: boolean;
+  additionalEditableFiles?: string[];
 }
 
 export interface ImplementStepLoopDeps {

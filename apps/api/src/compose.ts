@@ -739,10 +739,24 @@ class SingleRepoAdapter implements RepositoryPort {
   }
 }
 
+type DeclaredTaskFileFields = {
+  expected_files?: string[] | null;
+  files?: string[] | null;
+};
+
+export function declaredFilesForStep(manifest: TaskManifest, stepIndex: number): string[] {
+  const task = manifest.tasks[stepIndex - 1] as DeclaredTaskFileFields | undefined;
+  if (!task) return [];
+
+  const allFiles = [...(task.expected_files ?? []), ...(task.files ?? [])];
+  return Array.from(new Set(allFiles.map((file) => file.replace(/\\/g, '/'))));
+}
+
 export interface BuildSpecReviewPromptOptions {
   ctx: { stepIndex: number; stepTitle: string; cwd: string };
   typecheckSection: string;
   implReport?: string;
+  declaredFiles?: string[];
   scope: {
     mode: 'initial_full' | 'intermediate_delta' | 'final_full';
     dimensions?: Array<'spec' | 'quality'>;
@@ -763,8 +777,24 @@ export interface BuildSpecReviewPromptOptions {
   };
 }
 
+function appendTaskFileScope(sections: string[], declaredFiles: string[] | undefined): void {
+  if (!declaredFiles || declaredFiles.length === 0) return;
+
+  sections.push(
+    '## TASK FILE SCOPE',
+    '',
+    "This task's declared scope is limited to:",
+    ...declaredFiles.map((file) => `- ${file}`),
+    '',
+    'Findings in files outside this list MUST NOT cause `result: fail` for this review.',
+    'This step did not touch those files and is not responsible for them.',
+    'If you spot a real issue outside this list, report it only as an informational `P3` finding.',
+    '',
+  );
+}
+
 export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): string {
-  const { ctx, typecheckSection, implReport = '', scope } = options;
+  const { ctx, typecheckSection, implReport = '', scope, declaredFiles } = options;
   const { mode, baseIdentity, snapshotIdentity, unresolvedFindings, dispositions } = scope;
   const reportExcerpt = implReport.split('\n').slice(0, 50).join('\n');
 
@@ -849,6 +879,8 @@ export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): st
     );
   }
 
+  appendTaskFileScope(sections, declaredFiles);
+
   sections.push(
     '## CONTEXT',
     '',
@@ -900,6 +932,7 @@ export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): st
 export interface BuildQualityReviewPromptOptions {
   ctx: { stepIndex: number; stepTitle: string; cwd: string };
   typecheckSection: string;
+  declaredFiles?: string[];
   scope: {
     mode: 'initial_full' | 'intermediate_delta' | 'final_full';
     dimensions?: Array<'spec' | 'quality'>;
@@ -921,7 +954,7 @@ export interface BuildQualityReviewPromptOptions {
 }
 
 export function buildQualityReviewPrompt(options: BuildQualityReviewPromptOptions): string {
-  const { ctx, typecheckSection, scope } = options;
+  const { ctx, typecheckSection, scope, declaredFiles } = options;
   const { mode, baseIdentity, snapshotIdentity, unresolvedFindings, dispositions } = scope;
 
   const sections: string[] = [];
@@ -1000,6 +1033,8 @@ export function buildQualityReviewPrompt(options: BuildQualityReviewPromptOption
       '',
     );
   }
+
+  appendTaskFileScope(sections, declaredFiles);
 
   sections.push(
     '## CONTEXT',
@@ -3820,7 +3855,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mode: 'initial_full' | 'intermediate_delta' | 'final_full';
           dimensions?: Array<'spec' | 'quality'>;
         },
-        opts?: { artifactRecoveryRetry?: boolean },
+        opts?: { artifactRecoveryRetry?: boolean; additionalEditableFiles?: string[] },
       ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -3840,10 +3875,17 @@ export function composeRoot(opts: ComposeOptions): Container {
         } catch (err) {
           if (!(err instanceof ArtifactNotFoundError)) throw err;
         }
+        const declaredFiles = declaredFilesForStep(ctx.manifest, ctx.stepIndex);
+        const additionalFiles = opts?.additionalEditableFiles ?? [];
+        const mergedDeclaredFiles =
+          additionalFiles.length > 0
+            ? [...new Set([...declaredFiles, ...additionalFiles])].sort()
+            : declaredFiles;
         const reviewPrompt = buildSpecReviewPrompt({
           ctx: { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
           typecheckSection,
           implReport,
+          declaredFiles: mergedDeclaredFiles,
           scope,
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
@@ -3960,7 +4002,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mode: 'initial_full' | 'intermediate_delta' | 'final_full';
           dimensions?: Array<'spec' | 'quality'>;
         },
-        opts?: { artifactRecoveryRetry?: boolean },
+        opts?: { artifactRecoveryRetry?: boolean; additionalEditableFiles?: string[] },
       ) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -3973,9 +4015,16 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return QUALITY_FAIL for it."
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to quality checks until the type error is resolved.`;
 
+        const declaredFiles = declaredFilesForStep(ctx.manifest, ctx.stepIndex);
+        const additionalFiles = opts?.additionalEditableFiles ?? [];
+        const mergedDeclaredFiles =
+          additionalFiles.length > 0
+            ? [...new Set([...declaredFiles, ...additionalFiles])].sort()
+            : declaredFiles;
         const reviewPrompt = buildQualityReviewPrompt({
           ctx: { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
           typecheckSection,
+          declaredFiles: mergedDeclaredFiles,
           scope,
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
