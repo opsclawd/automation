@@ -743,6 +743,7 @@ export interface BuildSpecReviewPromptOptions {
   ctx: { stepIndex: number; stepTitle: string; cwd: string };
   typecheckSection: string;
   implReport?: string;
+  declaredFiles?: string[];
   scope: {
     mode: 'initial_full' | 'intermediate_delta' | 'final_full';
     dimensions?: Array<'spec' | 'quality'>;
@@ -763,8 +764,24 @@ export interface BuildSpecReviewPromptOptions {
   };
 }
 
+function appendTaskFileScope(sections: string[], declaredFiles: string[] | undefined): void {
+  if (!declaredFiles || declaredFiles.length === 0) return;
+
+  sections.push(
+    '## TASK FILE SCOPE',
+    '',
+    "This task's declared scope is limited to:",
+    ...declaredFiles.map((file) => `- ${file}`),
+    '',
+    'Findings in files outside this list MUST NOT cause `result: fail` for this review.',
+    'This step did not touch those files and is not responsible for them.',
+    'If you spot a real issue outside this list, report it only as an informational `P3` finding.',
+    '',
+  );
+}
+
 export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): string {
-  const { ctx, typecheckSection, implReport = '', scope } = options;
+  const { ctx, typecheckSection, implReport = '', scope, declaredFiles } = options;
   const { mode, baseIdentity, snapshotIdentity, unresolvedFindings, dispositions } = scope;
   const reportExcerpt = implReport.split('\n').slice(0, 50).join('\n');
 
@@ -849,6 +866,8 @@ export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): st
     );
   }
 
+  appendTaskFileScope(sections, declaredFiles);
+
   sections.push(
     '## CONTEXT',
     '',
@@ -900,6 +919,7 @@ export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): st
 export interface BuildQualityReviewPromptOptions {
   ctx: { stepIndex: number; stepTitle: string; cwd: string };
   typecheckSection: string;
+  declaredFiles?: string[];
   scope: {
     mode: 'initial_full' | 'intermediate_delta' | 'final_full';
     dimensions?: Array<'spec' | 'quality'>;
@@ -921,7 +941,7 @@ export interface BuildQualityReviewPromptOptions {
 }
 
 export function buildQualityReviewPrompt(options: BuildQualityReviewPromptOptions): string {
-  const { ctx, typecheckSection, scope } = options;
+  const { ctx, typecheckSection, scope, declaredFiles } = options;
   const { mode, baseIdentity, snapshotIdentity, unresolvedFindings, dispositions } = scope;
 
   const sections: string[] = [];
@@ -1000,6 +1020,8 @@ export function buildQualityReviewPrompt(options: BuildQualityReviewPromptOption
       '',
     );
   }
+
+  appendTaskFileScope(sections, declaredFiles);
 
   sections.push(
     '## CONTEXT',
