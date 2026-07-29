@@ -307,7 +307,7 @@ export class ImplementHandler implements PhaseHandler {
             ctx,
             manifest: manifest!,
             planMd,
-            ...(missingFiles !== undefined ? { missingFiles } : {}),
+            ...(missingFiles !== undefined ? { priorAttemptMissingFiles: missingFiles } : {}),
           });
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);

@@ -337,10 +337,6 @@ export class ImplementStepLoop {
       }
     };
 
-    const metadata: Record<string, unknown> = {};
-    if (input.missingDeclaredFiles) {
-      metadata.missingDeclaredFiles = input.missingDeclaredFiles;
-    }
     const baseCtx: StepLoopContext = {
       loopId: loop.id,
       runId: input.runId,
@@ -352,7 +348,6 @@ export class ImplementStepLoop {
       iterationIndex: 1,
       manifest: input.manifest,
       planMd: input.planMd,
-      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     };
 
     // --- History helpers (closure over deps/loop) ---

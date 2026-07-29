@@ -3456,7 +3456,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           branchName,
           opts?.typecheckErrors,
           opts?.additionalEditableFiles,
-          ctx.metadata?.missingDeclaredFiles as string[] | undefined,
+          opts?.priorAttemptMissingFiles,
         );
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -5385,7 +5385,6 @@ export function composeRoot(opts: ComposeOptions): Container {
             holisticThresholdIteration: config.phases.implement.holisticThresholdIteration,
             holisticThresholdFindings: config.phases.implement.holisticThresholdFindings,
           },
-          ...(sctx.missingFiles ? { missingDeclaredFiles: sctx.missingFiles } : {}),
           ...(sctx.priorAttemptMissingFiles?.length
             ? { priorAttemptMissingFiles: sctx.priorAttemptMissingFiles }
             : {}),
