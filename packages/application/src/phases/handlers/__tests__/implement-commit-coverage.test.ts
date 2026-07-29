@@ -734,4 +734,159 @@ describe('ImplementHandler Commit Coverage', () => {
     const unaffected = events.filter((e) => e.type === 'step.unaffected_files_verified');
     expect(unaffected).toHaveLength(0);
   });
+
+  it('retries when missing declared files and maxDeclaredFilesRetries > 0, succeeding on retry', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: retry missing file',
+          expected_files: ['src/a.ts', 'src/b.ts'],
+        },
+      ],
+    };
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: retry missing file']),
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify(manifest),
+    });
+
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+
+    let attempts = 0;
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      attempts++;
+      if (attempts === 1) {
+        git.headByCwd.set(ctx.cwd, 'post-step-1');
+        git.changedFilesResults.set('pre-step|post-step-1', ['src/a.ts']);
+      } else {
+        git.headByCwd.set(ctx.cwd, 'post-step-2');
+        git.changedFilesResults.set('pre-step|post-step-2', ['src/a.ts', 'src/b.ts']);
+      }
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 1,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(runStep).toHaveBeenCalledTimes(2);
+    const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
+    expect(uncommitted).toHaveLength(1);
+    const completed = events.filter((e) => e.type === 'step.completed');
+    expect(completed).toHaveLength(1);
+  });
+
+  it('retries up to maxDeclaredFilesRetries times and fails if missing files persist', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: retry persistent failure',
+          expected_files: ['src/a.ts', 'src/b.ts'],
+        },
+      ],
+    };
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: retry persistent failure']),
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify(manifest),
+    });
+
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+
+    let attempts = 0;
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      attempts++;
+      git.headByCwd.set(ctx.cwd, `post-step-${attempts}`);
+      git.changedFilesResults.set(`pre-step|post-step-${attempts}`, ['src/a.ts']);
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 2,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    expect(runStep).toHaveBeenCalledTimes(3);
+    const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
+    expect(uncommitted).toHaveLength(3);
+  });
+
+  it('does not retry when maxDeclaredFilesRetries is 0', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: no retries',
+          expected_files: ['src/a.ts', 'src/b.ts'],
+        },
+      ],
+    };
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: no retries']),
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify(manifest),
+    });
+
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'post-step');
+      git.changedFilesResults.set('pre-step|post-step', ['src/a.ts']);
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 0,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    expect(runStep).toHaveBeenCalledTimes(1);
+    const uncommitted = events.filter((e) => e.type === 'step.uncommitted_files');
+    expect(uncommitted).toHaveLength(1);
+  });
 });

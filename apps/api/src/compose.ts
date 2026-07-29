@@ -5492,6 +5492,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             validationPort: validationAdapter,
             typecheckLogDir: (runUuid: string) => join(runsDir, runUuid, 'validate'),
             runWorkspaceTypecheck,
+            maxDeclaredFilesRetries: config.phases.implement.maxDeclaredFilesRetries,
           }),
         );
       }
