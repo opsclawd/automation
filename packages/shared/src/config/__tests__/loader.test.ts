@@ -631,6 +631,48 @@ describe('phases.implement.maxTypeCheckRetries', () => {
   });
 });
 
+describe('phases.implement.maxDeclaredFilesRetries', () => {
+  it('parses maxDeclaredFilesRetries when provided', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5, maxDeclaredFilesRetries: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    expect(loadConfig(dir).phases.implement.maxDeclaredFilesRetries).toBe(3);
+  });
+
+  it('maxDeclaredFilesRetries defaults to 1 when omitted', () => {
+    const dir = makeRepo(BASE_CONFIG);
+    expect(loadConfig(dir).phases.implement.maxDeclaredFilesRetries).toBe(1);
+  });
+
+  it('accepts maxDeclaredFilesRetries of 0 to disable retries', () => {
+    const parsed = JSON.parse(BASE_CONFIG);
+    parsed.phases.implement.maxDeclaredFilesRetries = 0;
+    expect(
+      loadConfig(makeRepo(JSON.stringify(parsed))).phases.implement.maxDeclaredFilesRetries,
+    ).toBe(0);
+  });
+
+  it('rejects negative maxDeclaredFilesRetries', () => {
+    const parsed = JSON.parse(BASE_CONFIG);
+    parsed.phases.implement.maxDeclaredFilesRetries = -1;
+    expect(() => loadConfig(makeRepo(JSON.stringify(parsed)))).toThrow(/maxDeclaredFilesRetries/);
+  });
+
+  it('rejects non-integer maxDeclaredFilesRetries', () => {
+    const parsed = JSON.parse(BASE_CONFIG);
+    parsed.phases.implement.maxDeclaredFilesRetries = 1.5;
+    expect(() => loadConfig(makeRepo(JSON.stringify(parsed)))).toThrow(/maxDeclaredFilesRetries/);
+  });
+});
+
 describe('planReview.deltaScopedReReview (#716)', () => {
   it('defaults to true when planReview config is provided without the field', () => {
     const repo = makeRepo(
