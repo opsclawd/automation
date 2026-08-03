@@ -16,13 +16,13 @@ If code changes are required:
 1. Edit the relevant source files
 2. Commit your changes:
    a. Record HEAD before: \`PRE_HEAD=$(git rev-parse HEAD)\`
-   b. Stage and commit: \`git add -A && git commit -m "fix: address PR review feedback"\`
+   b. Stage and commit: \`git add -A -- . ':!issue.md' ':!issue-comments.md' ':!design.md' ':!plan.md' ':!task-context-step-*.md' ':!task-manifest.json' ':!plan-review-findings.md' ':!plan-fix-result.json' ':!quality-review-result*.json' ':!spec-review-result*.json' ':!fix-result*.json' ':!result.json' ':!prompt.md' && git commit -m "fix: address PR review feedback"\`
    c. If git commit exits non-zero, the pre-commit hook failed. Read the hook/lint
       output, FIX the reported errors, and retry the commit. Never report a fixed action with a failed or skipped commit.
    d. After a successful commit, confirm HEAD advanced:
       \`[ "$(git rev-parse HEAD)" != "$PRE_HEAD" ] || { echo "COMMIT DID NOT ADVANCE HEAD"; exit 1; }\`
    e. Confirm clean worktree:
-      \`[ -z "$(git status --porcelain)" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }\`
+      \`[ -z "$(git status --porcelain -- . ':!issue.md' ':!issue-comments.md' ':!design.md' ':!plan.md' ':!task-context-step-*.md' ':!task-manifest.json' ':!plan-review-findings.md' ':!plan-fix-result.json' ':!quality-review-result*.json' ':!spec-review-result*.json' ':!fix-result*.json' ':!result.json' ':!prompt.md')" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }\`
 3. Do NOT push. The orchestrator will push only after validation passes.
 
 If ${isBatch ? 'comments are' : 'the comment is'} invalid, include your reasoning in replyBody.
