@@ -233,4 +233,36 @@ describe('buildImplementStepFixPrompt', () => {
       prompt.indexOf('## CONTEXT'),
     );
   });
+
+  it('implement-step fix contract stages source changes while excluding orchestrator artifacts', async () => {
+    const exclusions = [
+      "':!issue.md'",
+      "':!issue-comments.md'",
+      "':!design.md'",
+      "':!plan.md'",
+      "':!task-context-step-*.md'",
+      "':!task-manifest.json'",
+      "':!plan-review-findings.md'",
+      "':!plan-fix-result.json'",
+      "':!quality-review-result*.json'",
+      "':!spec-review-result*.json'",
+      "':!fix-result*.json'",
+      "':!result.json'",
+      "':!prompt.md'",
+    ];
+    const artifacts = makeStore();
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', input);
+    const lines = prompt.split('\n');
+    const stagingLine = lines.find((line) => line.includes('Stage and commit:'));
+    const statusLine = lines.find((line) => line.includes('git status --porcelain'));
+
+    expect(stagingLine).toContain('git add -A -- .');
+    expect(statusLine).toContain('git status --porcelain -- .');
+    for (const exclusion of exclusions) {
+      expect(stagingLine).toContain(exclusion);
+      expect(statusLine).toContain(exclusion);
+    }
+    expect(prompt).toContain('Only write "done_with_fixes"');
+    expect(prompt).toContain('## WHAT THE REVIEWERS FOUND (verbatim)');
+  });
 });
