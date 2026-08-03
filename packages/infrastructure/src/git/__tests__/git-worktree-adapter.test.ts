@@ -5,7 +5,7 @@ import { join, resolve, isAbsolute } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { git } from '../git-runner.js';
-import { GitWorktreeAdapter, orchestratorExcludePatterns } from '../git-worktree-adapter.js';
+import { GitWorktreeAdapter } from '../git-worktree-adapter.js';
 import { clearTempDirs, getTempDirs, makeTempRepo, makeRepoWithRemote } from './helpers.js';
 
 let _extraDirs: string[] = [];
@@ -444,6 +444,30 @@ describe('cleanUntracked()', () => {
 });
 
 describe('Artifact Guarding & Cleanup', () => {
+  const sampleExcludePatterns = Object.freeze([
+    'validation.headsha',
+    'review-fix-plan.json',
+    'review-task-manifest.json',
+    'review-triage.md',
+    'code-review.md',
+    'review.md',
+    'task-manifest.json',
+    'implementation-log.md',
+    'arbiter-result.json',
+    'review-loop-history.json',
+    'implement-step-history-*.json',
+    'compound-draft.md',
+    'validation.result',
+    'result.json',
+    'fix-validate-done.marker',
+    'plan-review-passed.marker',
+    '*.patch',
+    'issue.md',
+    'design.md',
+    'plan.md',
+  ]);
+  const adapter = new GitWorktreeAdapter(sampleExcludePatterns);
+
   describe('seedArtifactExcludes()', () => {
     it('writes every canonical artifact and *.patch', async () => {
       const repoPath = await makeTempRepo();
@@ -455,7 +479,7 @@ describe('Artifact Guarding & Cleanup', () => {
         : resolve(repoPath, gitCommonDir, 'info', 'exclude');
       const content = await readFile(excludeFile, 'utf8');
 
-      const expectedPatterns = orchestratorExcludePatterns();
+      const expectedPatterns = sampleExcludePatterns;
       for (const pattern of expectedPatterns) {
         expect(content).toContain(pattern);
       }
@@ -476,7 +500,7 @@ describe('Artifact Guarding & Cleanup', () => {
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean);
-      const expectedPatterns = orchestratorExcludePatterns();
+      const expectedPatterns = sampleExcludePatterns;
 
       for (const pattern of expectedPatterns) {
         const occurrences = lines.filter((l) => l === pattern).length;

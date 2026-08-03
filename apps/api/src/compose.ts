@@ -174,6 +174,7 @@ import {
   CONTRACT_VIOLATION_CODES,
   type RunWorkspaceTypecheckPort,
   verifyArbiterGrounding,
+  orchestratorExcludePatterns,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -2279,7 +2280,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   };
 
   const abortRegistry = new AbortRegistry();
-  const gitAdapter = new GitWorktreeAdapter();
+  const gitAdapter = new GitWorktreeAdapter(orchestratorExcludePatterns());
 
   const cancelRun = new CancelRun({
     runRepository,

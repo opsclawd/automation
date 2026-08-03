@@ -1073,6 +1073,12 @@ exit 1
     const scriptPath = fakeScript(0);
     const c = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
     expect(c.git).toBeInstanceOf(GitWorktreeAdapter);
+    expect(
+      (c.git as unknown as { excludePatterns: readonly string[] }).excludePatterns,
+    ).toBeDefined();
+    expect(
+      (c.git as unknown as { excludePatterns: readonly string[] }).excludePatterns.length,
+    ).toBeGreaterThan(0);
   });
 
   it('exposes workerRegistry and workerLoopDeps on the container when agent config is present', () => {

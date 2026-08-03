@@ -28,7 +28,11 @@ export function isOrchestratorArtifactPath(path: string): boolean {
 }
 
 export function orchestratorExcludePatterns(): readonly string[] {
-  return Object.freeze([...ORCHESTRATOR_ARTIFACT_PATHS, ORCHESTRATOR_PATCH_EXCLUDE]);
+  return Object.freeze([
+    ...ORCHESTRATOR_ARTIFACT_PATHS,
+    ORCHESTRATOR_PATCH_EXCLUDE,
+    ...PROMPT_ORCHESTRATOR_ARTIFACT_PATHS,
+  ]);
 }
 
 export const PROMPT_ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
@@ -47,11 +51,7 @@ export const PROMPT_ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
 ] as const);
 
 export function getGitCommitExcludePathspecs(): readonly string[] {
-  const allPatterns = [
-    ...ORCHESTRATOR_ARTIFACT_PATHS,
-    ORCHESTRATOR_PATCH_EXCLUDE,
-    ...PROMPT_ORCHESTRATOR_ARTIFACT_PATHS,
-  ];
+  const allPatterns = orchestratorExcludePatterns();
   const unique = Array.from(new Set(allPatterns));
   return Object.freeze(unique.map((p) => `':!${p}'`));
 }
