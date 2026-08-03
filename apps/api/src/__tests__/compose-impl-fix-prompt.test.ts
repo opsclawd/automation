@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createFilesystemArtifactStore } from '@ai-sdlc/infrastructure';
 import { buildImplementStepFixPrompt } from '../compose.js';
+import { getGitCommitExcludePathspecs } from '@ai-sdlc/application';
 import {
   QUALITY_REVIEW_RESULT_ARTIFACT,
   SPEC_REVIEW_RESULT_ARTIFACT,
@@ -235,21 +236,7 @@ describe('buildImplementStepFixPrompt', () => {
   });
 
   it('implement-step fix contract stages source changes while excluding orchestrator artifacts', async () => {
-    const exclusions = [
-      "':!issue.md'",
-      "':!issue-comments.md'",
-      "':!design.md'",
-      "':!plan.md'",
-      "':!task-context-step-*.md'",
-      "':!task-manifest.json'",
-      "':!plan-review-findings.md'",
-      "':!plan-fix-result.json'",
-      "':!quality-review-result*.json'",
-      "':!spec-review-result*.json'",
-      "':!fix-result*.json'",
-      "':!result.json'",
-      "':!prompt.md'",
-    ];
+    const exclusions = getGitCommitExcludePathspecs();
     const artifacts = makeStore();
     const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', input);
     const lines = prompt.split('\n');

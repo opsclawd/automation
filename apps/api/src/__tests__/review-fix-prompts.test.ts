@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from '../review-fix-prompts.js';
-import { type ArchitectPlan } from '@ai-sdlc/application';
+import { type ArchitectPlan, getGitCommitExcludePathspecs } from '@ai-sdlc/application';
 
 describe('review-fix prompts builders', () => {
   describe('buildReviewFixReviewPrompt', () => {
@@ -100,21 +100,7 @@ describe('review-fix prompts builders', () => {
     });
 
     it('review-fix commit contract stages source changes while excluding orchestrator artifacts', () => {
-      const exclusions = [
-        "':!issue.md'",
-        "':!issue-comments.md'",
-        "':!design.md'",
-        "':!plan.md'",
-        "':!task-context-step-*.md'",
-        "':!task-manifest.json'",
-        "':!plan-review-findings.md'",
-        "':!plan-fix-result.json'",
-        "':!quality-review-result*.json'",
-        "':!spec-review-result*.json'",
-        "':!fix-result*.json'",
-        "':!result.json'",
-        "':!prompt.md'",
-      ];
+      const exclusions = getGitCommitExcludePathspecs();
 
       const result = buildReviewFixFixPrompt({
         cwd: '/test/cwd',

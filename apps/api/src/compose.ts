@@ -292,6 +292,7 @@ import {
   WORKSPACE_CONSTRAINTS,
   type SelectedPrReviewContext,
   type SelectedPrReviewContextSection,
+  getGitCommitExcludePathspecsString,
 } from '@ai-sdlc/application';
 
 async function readTail(filePath: string, maxBytes: number = 65536): Promise<string> {
@@ -1130,6 +1131,7 @@ export async function buildImplementStepFixPrompt(
   runId: string,
   input: BuildImplementStepFixPromptInput,
 ): Promise<string> {
+  const excludes = getGitCommitExcludePathspecsString();
   const readFindings = async (
     archive: string,
   ): Promise<
@@ -1335,13 +1337,13 @@ export async function buildImplementStepFixPrompt(
     '## COMMIT CONTRACT',
     'After fixing, commit your change before writing result.json:',
     '  1. Record HEAD before: `PRE_HEAD=$(git rev-parse HEAD)`',
-    "  2. Stage and commit: `git add -A -- . ':!issue.md' ':!issue-comments.md' ':!design.md' ':!plan.md' ':!task-context-step-*.md' ':!task-manifest.json' ':!plan-review-findings.md' ':!plan-fix-result.json' ':!quality-review-result*.json' ':!spec-review-result*.json' ':!fix-result*.json' ':!result.json' ':!prompt.md' && git commit -m \"fix: review findings\"`",
+    `  2. Stage and commit: \`git add -A -- . ${excludes} && git commit -m "fix: review findings"\``,
     '  3. If git commit exits non-zero, the pre-commit hook failed. Read the hook/lint',
     '     output, FIX the reported errors, and retry the commit. Never report',
     '     result="done_with_fixes" with a failed or skipped commit.',
     '  4. After a successful commit, confirm HEAD advanced:',
     '     `[ "$(git rev-parse HEAD)" != "$PRE_HEAD" ] || { echo "COMMIT DID NOT ADVANCE HEAD"; exit 1; }`',
-    "  5. Confirm clean worktree:\n     `[ -z \"$(git status --porcelain -- . ':!issue.md' ':!issue-comments.md' ':!design.md' ':!plan.md' ':!task-context-step-*.md' ':!task-manifest.json' ':!plan-review-findings.md' ':!plan-fix-result.json' ':!quality-review-result*.json' ':!spec-review-result*.json' ':!fix-result*.json' ':!result.json' ':!prompt.md')\" ] || { echo \"WORKTREE DIRTY AFTER COMMIT\"; exit 1; }`",
+    `  5. Confirm clean worktree:\n     \`[ -z "$(git status --porcelain -- . ${excludes})" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }\``,
     '  6. Only write "done_with_fixes" in result.json after steps 4 and 5 both pass.',
   ].join('\n');
 }

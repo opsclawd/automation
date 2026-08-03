@@ -1,22 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { getPostPrReviewCommitPolicy } from '../prompts/constants.js';
+import { getGitCommitExcludePathspecs } from '../artifacts/orchestrator-artifacts.js';
 
 describe('post-pr-review commit policy', () => {
-  const exclusions = [
-    "':!issue.md'",
-    "':!issue-comments.md'",
-    "':!design.md'",
-    "':!plan.md'",
-    "':!task-context-step-*.md'",
-    "':!task-manifest.json'",
-    "':!plan-review-findings.md'",
-    "':!plan-fix-result.json'",
-    "':!quality-review-result*.json'",
-    "':!spec-review-result*.json'",
-    "':!fix-result*.json'",
-    "':!result.json'",
-    "':!prompt.md'",
-  ];
+  const exclusions = getGitCommitExcludePathspecs();
 
   it('single-comment policy excludes orchestrator artifacts from staging and cleanliness checks', () => {
     const policy = getPostPrReviewCommitPolicy(false);
