@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from '../review-fix-prompts.js';
-import { type ArchitectPlan } from '@ai-sdlc/application';
+import { type ArchitectPlan, getGitCommitExcludePathspecs } from '@ai-sdlc/application';
 
 describe('review-fix prompts builders', () => {
   describe('buildReviewFixReviewPrompt', () => {
@@ -97,6 +97,28 @@ describe('review-fix prompts builders', () => {
 
       expect(result).toContain('## RECONCILIATION CONTEXT');
       expect(result).toContain('Finding is valid because the API requires composition-root wiring');
+    });
+
+    it('review-fix commit contract stages source changes while excluding orchestrator artifacts', () => {
+      const exclusions = getGitCommitExcludePathspecs();
+
+      const result = buildReviewFixFixPrompt({
+        cwd: '/test/cwd',
+        repoId: 'test-repo',
+        useFallback: false,
+      });
+
+      const stagingLine = result.split('\n').find((line) => line.includes('Stage and commit:'));
+      const statusLine = result.split('\n').find((line) => line.includes('git status --porcelain'));
+
+      expect(stagingLine).toContain('git add -A -- .');
+      expect(statusLine).toContain('git status --porcelain -- .');
+      for (const exclusion of exclusions) {
+        expect(stagingLine).toContain(exclusion);
+        expect(statusLine).toContain(exclusion);
+      }
+      expect(stagingLine).toContain('git commit -m "fix: review findings"');
+      expect(result).toContain('COMMIT DID NOT ADVANCE HEAD');
     });
   });
 });

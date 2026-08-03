@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createFilesystemArtifactStore } from '@ai-sdlc/infrastructure';
 import { buildImplementStepFixPrompt } from '../compose.js';
+import { getGitCommitExcludePathspecs } from '@ai-sdlc/application';
 import {
   QUALITY_REVIEW_RESULT_ARTIFACT,
   SPEC_REVIEW_RESULT_ARTIFACT,
@@ -232,5 +233,23 @@ describe('buildImplementStepFixPrompt', () => {
     expect(prompt.indexOf('## HOLISTIC RE-DERIVATION REQUIRED')).toBeLessThan(
       prompt.indexOf('## CONTEXT'),
     );
+  });
+
+  it('implement-step fix contract stages source changes while excluding orchestrator artifacts', async () => {
+    const exclusions = getGitCommitExcludePathspecs();
+    const artifacts = makeStore();
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', input);
+    const lines = prompt.split('\n');
+    const stagingLine = lines.find((line) => line.includes('Stage and commit:'));
+    const statusLine = lines.find((line) => line.includes('git status --porcelain'));
+
+    expect(stagingLine).toContain('git add -A -- .');
+    expect(statusLine).toContain('git status --porcelain -- .');
+    for (const exclusion of exclusions) {
+      expect(stagingLine).toContain(exclusion);
+      expect(statusLine).toContain(exclusion);
+    }
+    expect(prompt).toContain('Only write "done_with_fixes"');
+    expect(prompt).toContain('## WHAT THE REVIEWERS FOUND (verbatim)');
   });
 });

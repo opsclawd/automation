@@ -9,32 +9,12 @@ import type {
 import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { git, GitFailedError } from './git-runner.js';
 
-export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
-  'validation.headsha',
-  'review-fix-plan.json',
-  'review-task-manifest.json',
-  'review-triage.md',
-  'code-review.md',
-  'review.md',
-  'task-manifest.json',
-  'implementation-log.md',
-  'arbiter-result.json',
-  'review-loop-history.json',
-  'implement-step-history-*.json',
-  'compound-draft.md',
-  'validation.result',
-  'result.json',
-  'fix-validate-done.marker',
-  'plan-review-passed.marker',
-] as const);
-
-export const ORCHESTRATOR_PATCH_EXCLUDE = '*.patch';
-
-export function orchestratorExcludePatterns(): readonly string[] {
-  return Object.freeze([...ORCHESTRATOR_ARTIFACT_PATHS, ORCHESTRATOR_PATCH_EXCLUDE]);
-}
-
 export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
+  private readonly excludePatterns: readonly string[];
+
+  constructor(excludePatterns: readonly string[] = []) {
+    this.excludePatterns = Object.freeze([...excludePatterns]);
+  }
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     const { repoLocalBasePath, worktreePath, branch, baseBranch } = input;
 
@@ -217,7 +197,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     const lines = content.split('\n').map((l) => l.trim());
     const existingSet = new Set(lines);
 
-    const patterns = orchestratorExcludePatterns();
+    const patterns = this.excludePatterns;
     const toAppend: string[] = [];
     for (const pattern of patterns) {
       if (!existingSet.has(pattern)) {
@@ -300,7 +280,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
 
     const resolvedArtifacts = new Set<string>();
     for (const candidate of allCandidates) {
-      for (const pattern of ORCHESTRATOR_ARTIFACT_PATHS) {
+      for (const pattern of this.excludePatterns) {
         if (matchPattern(candidate, pattern)) {
           resolvedArtifacts.add(candidate);
           break;

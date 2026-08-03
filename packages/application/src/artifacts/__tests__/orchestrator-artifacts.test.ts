@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ORCHESTRATOR_ARTIFACT_PATHS,
   ORCHESTRATOR_PATCH_EXCLUDE,
+  PROMPT_ORCHESTRATOR_ARTIFACT_PATHS,
   orchestratorArtifactPathSet,
   isOrchestratorArtifactPath,
   orchestratorExcludePatterns,
@@ -48,7 +49,11 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
 
   it('should return correct exclude patterns', () => {
     const patterns = orchestratorExcludePatterns();
-    expect(patterns).toEqual([...ORCHESTRATOR_ARTIFACT_PATHS, '*.patch']);
+    expect(patterns).toEqual([
+      ...ORCHESTRATOR_ARTIFACT_PATHS,
+      '*.patch',
+      ...PROMPT_ORCHESTRATOR_ARTIFACT_PATHS,
+    ]);
     expect(Object.isFrozen(patterns)).toBe(true);
   });
 });
