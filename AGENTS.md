@@ -24,6 +24,8 @@ later.
 
 GitHub Issues via `gh` are the intake surface for this repo's automation work and follow-up. See `docs/agents/issue-tracker.md`.
 
+**Critical rule:** Issues intended for orchestrator runs must follow the approximately 1.5K–2K-character Goldilocks format and include `Goal`, `Verified Evidence`, `Anchored Design`, `Explicit Traps / Non-goals`, `Acceptance Criteria`, and resolved `Open Questions`. See `docs/agents/issue-tracker.md` for the detailed guidance.
+
 ### Triage labels
 
 Use the repo's automation labels: `ai:in-progress`, `ai:blocked`, `ai:failed`, `ai:needs-human-review`, `ai:pr-ready`. See `docs/agents/triage-labels.md`.
