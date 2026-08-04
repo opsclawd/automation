@@ -28,7 +28,7 @@ Every issue must include:
 - `Acceptance Criteria` — observable conditions that define completion.
 - `Open Questions` — resolved to `None`, `None.`, `N/A`, or `N/A.` before an orchestrator run starts.
 
-The current orchestrator validation fails fast when `Goal` or `Acceptance Criteria` is missing, or when `Open Questions` is missing or unresolved. The Goldilocks length and the three additional sections are authoring requirements documented here; programmatic validation of them is outside this change.
+The Goldilocks length and required sections are authoring requirements documented here; programmatic validation of them is outside this change.
 
 ## When a skill says "publish to the issue tracker"
 
