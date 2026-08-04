@@ -17,13 +17,18 @@ Infer the repo from `git remote -v`; `gh` does this automatically inside a clone
 
 ## For orchestrator runs
 
-Issue bodies intended to drive `scripts/ai-run-issue-v2` must include:
+Issue bodies intended to drive the orchestrator must follow the **Goldilocks format**: target approximately 1.5K–2K characters. Avoid both a roughly 400-character wishlist that forces the agent to guess and a roughly 5,000-character blueprint that over-specifies the solution. The target is a strong guideline, not a hard character limit; use enough detail to establish evidence, direction, and boundaries.
 
-- `Goal`
-- `Acceptance Criteria`
-- `Open Questions` resolved to `None`, `None.`, `N/A`, or `N/A.`
+Every issue must include:
 
-The orchestrator validates those sections and will fail fast if the issue body is incomplete or still has unresolved open questions.
+- `Goal` — the outcome the work must achieve.
+- `Verified Evidence` — facts confirmed in the repository or runtime, with concrete paths, symbols, or observed behavior where useful.
+- `Anchored Design` — the intended approach tied to existing code or documentation, while leaving implementation details to the agent.
+- `Explicit Traps / Non-goals` — boundaries, known failure modes, and work that must not be included.
+- `Acceptance Criteria` — observable conditions that define completion.
+- `Open Questions` — resolved to `None`, `None.`, `N/A`, or `N/A.` before an orchestrator run starts.
+
+The current orchestrator validation fails fast when `Goal` or `Acceptance Criteria` is missing, or when `Open Questions` is missing or unresolved. The Goldilocks length and the three additional sections are authoring requirements documented here; programmatic validation of them is outside this change.
 
 ## When a skill says "publish to the issue tracker"
 
