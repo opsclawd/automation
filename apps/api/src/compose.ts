@@ -5902,6 +5902,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               repoId: ctx.repoFullName,
               cwd: ctx.cwd,
               maxIterations: config.phases.reviewFix.maxIterations,
+              ...(ctx.startCommitSha ? { baselineCommitSha: ctx.startCommitSha } : {}),
               ...(config.phases.reviewFix.maxConsecutiveFixFailures !== undefined
                 ? { maxConsecutiveFixFailures: config.phases.reviewFix.maxConsecutiveFixFailures }
                 : {}),

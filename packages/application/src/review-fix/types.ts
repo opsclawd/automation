@@ -250,6 +250,12 @@ export interface ReviewFixLoopInput {
   cwd: string;
   maxIterations: number;
   /**
+   * Commit recorded when the Run worktree was prepared, before implementation.
+   * When present with deps.git, successful exits are checked for target files
+   * restored to this baseline.
+   */
+  baselineCommitSha?: string;
+  /**
    * Optional hard cap on consecutive fixer failures. See schema docs.
    * Undefined = no extra cap (default behaviour preserved).
    */

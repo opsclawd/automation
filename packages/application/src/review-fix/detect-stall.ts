@@ -94,7 +94,9 @@ export interface TrendDetectionResult {
 const SEVERITY_MULTIPLIER: Record<string, number> = {
   critical: 4,
   high: 2,
+  error: 2,
   medium: 1,
+  warning: 1,
   low: 0.5,
 };
 
