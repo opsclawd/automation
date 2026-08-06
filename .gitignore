@@ -74,3 +74,23 @@ task-*-complete.md
 /plan-fix-result.json
 /validate/
 
+!/review-fix-plan.json
+!/review-task-manifest.json
+!/review-triage.md
+!/code-review.md
+!/review.md
+!/task-manifest.json
+!/implementation-log.md
+!/arbiter-result.json
+!/review-loop-history.json
+!/compound-draft.md
+!/fix-validate-done.marker
+!/plan-review-passed.marker
+!/issue.md
+!/issue-comments.md
+!/design.md
+!/plan.md
+!/plan-review-findings.md
+!/plan-fix-result.json
+!/prompt.md
+!*.result

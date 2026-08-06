@@ -99,10 +99,16 @@ export class CreatePrHandler implements PhaseHandler {
             add: ['ai:pr-ready'],
           });
         } catch (e) {
-          emit(
-            'github.label_update_failed',
-            'warn',
-            `label update failed: ${(e as Error).message}`,
+          const msg = `failed to update issue labels: ${(e as Error).message}`;
+          emit('github.label_update_failed', 'error', msg);
+          emit('create_pr.failed', 'error', msg);
+          return this._fail(
+            ctx,
+            'github_failed',
+            msg,
+            true,
+            "Restore the issue's expected label state and resume create-pr.",
+            writtenArtifacts,
           );
         }
         emit('create_pr.completed', 'info', 'create-pr complete');
@@ -227,18 +233,7 @@ export class CreatePrHandler implements PhaseHandler {
       );
     }
 
-    // Update issue labels (non-fatal on failure)
-    try {
-      await ctx.github.updateIssueLabels(ctx.repoFullName, ctx.issueNumber, {
-        remove: ['ai:in-progress'],
-        add: ['ai:pr-ready'],
-      });
-    } catch (e) {
-      emit('github.label_update_failed', 'warn', `label update failed: ${(e as Error).message}`);
-    }
-
-    // Write pr-url.txt artifact. PR is already created on GitHub at this point;
-    // retrying would produce a duplicate, so canRetry: false is required.
+    // Write pr-url.txt artifact immediately after PR creation so resume is idempotent if labels fail.
     try {
       await ctx.artifacts.write({
         runId: ctx.runUuid,
@@ -246,6 +241,7 @@ export class CreatePrHandler implements PhaseHandler {
         relativePath: 'pr-url.txt',
         contents: prUrl + '\n',
       });
+      writtenArtifacts.push('pr-url.txt');
     } catch (e) {
       const msg = `failed to write pr-url.txt: ${(e as Error).message}`;
       emit('create_pr.failed', 'error', msg);
@@ -255,6 +251,26 @@ export class CreatePrHandler implements PhaseHandler {
         msg,
         false,
         `PR created at ${prUrl} but pr-url.txt write failed. Verify PR and record URL manually, then resume.`,
+        writtenArtifacts,
+      );
+    }
+
+    // Update issue labels (fatal on failure; resume safe because pr-url.txt is already written)
+    try {
+      await ctx.github.updateIssueLabels(ctx.repoFullName, ctx.issueNumber, {
+        remove: ['ai:in-progress'],
+        add: ['ai:pr-ready'],
+      });
+    } catch (e) {
+      const msg = `failed to update issue labels: ${(e as Error).message}`;
+      emit('github.label_update_failed', 'error', msg);
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'github_failed',
+        msg,
+        true,
+        "Restore the issue's expected label state and resume create-pr.",
         writtenArtifacts,
       );
     }
@@ -560,7 +576,7 @@ export function _removeSection(body: string, header: string): string {
     return before;
   }
 
-  const remaining = body.slice(headerLineEnd + 1);
+  const remaining = body.slice(headerLineEnd);
   const nextHeaderOffset = remaining.search(/\n## /);
   if (nextHeaderOffset === -1) {
     return before;
@@ -590,7 +606,7 @@ export function _removeValidationSteps(body: string): string {
   }
 
   const headerLine = body.slice(0, headerLineEnd);
-  const remaining = body.slice(headerLineEnd + 1);
+  const remaining = body.slice(headerLineEnd);
 
   const nextHeaderOffset = remaining.search(/\n## /);
   if (nextHeaderOffset === -1) {
