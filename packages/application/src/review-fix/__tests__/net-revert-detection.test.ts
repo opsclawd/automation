@@ -23,9 +23,7 @@ import type {
   ReviewStepOptions,
 } from '../types.js';
 
-type InputWithBaseline = ReviewFixLoopInput & { baselineCommitSha: string };
-
-function inputWithBaseline(overrides?: Partial<InputWithBaseline>): InputWithBaseline {
+function inputWithBaseline(overrides?: Partial<ReviewFixLoopInput>): ReviewFixLoopInput {
   return {
     runId: RunId('run-net-revert'),
     phaseId: PhaseName('review-fix'),
@@ -132,6 +130,19 @@ function makeHarness(options: HarnessOptions = {}) {
   const loops = new FakeLoopRepository();
   let idCount = 0;
 
+  const historyEntries: import('../types.js').ReviewLoopHistoryEntry[] = [];
+  const loopHistory: ReviewFixLoopDeps['loopHistory'] = {
+    async read() {
+      return historyEntries;
+    },
+    async append(_ctx, entry) {
+      historyEntries.push(entry);
+    },
+    format() {
+      return '';
+    },
+  };
+
   const deps: ReviewFixLoopDeps = {
     runPostFixGate: async () => ({ outcome: 'pass', output: '' }),
     runReview,
@@ -142,6 +153,7 @@ function makeHarness(options: HarnessOptions = {}) {
     now: () => new Date('2026-01-01T00:00:00Z'),
     idFactory: () => `loop-${++idCount}`,
     git,
+    loopHistory,
     findingEvidenceInspector: options.findingEvidenceInspector,
     artifactStore: options.artifactStore,
     runArbiter: options.runArbiter,
