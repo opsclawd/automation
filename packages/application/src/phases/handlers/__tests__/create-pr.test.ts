@@ -534,6 +534,82 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(github.createdPrInputs).toHaveLength(0);
     expect(github.labelChanges).toHaveLength(0);
   });
+
+  describe('branch ancestry gating', () => {
+    it('fails before push when the head branch is already contained in the base branch', async () => {
+      const { git, github, ctx, events } = await build();
+      git.ancestorResults.set('feat/issue-7|main', true);
+
+      const res = await HANDLER.run(ctx);
+      expect(res.outcome).toBe('failed');
+      if (res.outcome === 'failed') {
+        expect(res.failure.kind).toBe('git_failed');
+        expect(res.failure.canRetry).toBe(false);
+        expect(res.failure.message).toContain('feat/issue-7');
+        expect(res.failure.message).toContain('main');
+      }
+
+      expect(git.pushes).toHaveLength(0);
+      expect(github.createdPrInputs).toHaveLength(0);
+      expect(github.labelChanges).toHaveLength(0);
+
+      const failedEvents = events.filter((e) => e.type === 'create_pr.failed');
+      expect(failedEvents).toHaveLength(1);
+      const completedEvents = events.filter((e) => e.type === 'create_pr.completed');
+      expect(completedEvents).toHaveLength(0);
+    });
+
+    it('creates a replacement for a merged pull request when the head branch has new commits', async () => {
+      const { artifacts, github, git, ctx, events } = await build();
+      const existingUrl = 'https://github.com/acme/widgets/pull/42';
+      github.prs.set('acme/widgets/42', {
+        number: 42,
+        url: existingUrl,
+        state: 'merged',
+        headRefName: 'feat/issue-7',
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'pr-url.txt',
+        contents: existingUrl + '\n',
+      });
+      git.ancestorResults.set('feat/issue-7|main', false);
+
+      const res = await HANDLER.run(ctx);
+      expect(res.outcome).toBe('passed');
+
+      const reused = events.filter((e) => e.type === 'pr.reused');
+      expect(reused).toHaveLength(0);
+
+      expect(git.pushes).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+
+      const written = (await artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+      expect(written).toBe(github.createdPrs[0]!.url);
+    });
+
+    it('fails when branch ancestry cannot be determined', async () => {
+      const { git, github, ctx, events } = await build();
+      vi.spyOn(git, 'isAncestor').mockRejectedValue(new Error('git command failed: merge-base'));
+
+      const res = await HANDLER.run(ctx);
+      expect(res.outcome).toBe('failed');
+      if (res.outcome === 'failed') {
+        expect(res.failure.kind).toBe('git_failed');
+        expect(res.failure.canRetry).toBe(true);
+        expect(res.failure.message).toContain('git command failed: merge-base');
+      }
+
+      expect(git.pushes).toHaveLength(0);
+      expect(github.createdPrInputs).toHaveLength(0);
+      expect(github.labelChanges).toHaveLength(0);
+
+      const failedEvents = events.filter((e) => e.type === 'create_pr.failed');
+      expect(failedEvents).toHaveLength(1);
+      const completedEvents = events.filter((e) => e.type === 'create_pr.completed');
+      expect(completedEvents).toHaveLength(0);
+    });
+  });
 });
 
 describe('PR body truncation logic (_truncateBody, _removeSection, _removeValidationSteps)', () => {

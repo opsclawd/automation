@@ -143,6 +143,7 @@ export class CreatePrHandler implements PhaseHandler {
     }
 
     // ── Stage 3: Branch hygiene before deterministic GitHub operations ──
+    const headBranch = this.opts.headBranch(ctx);
     const baseBranch = ctx.baseBranch ?? 'main';
 
     // Clean up orchestrator artifacts now that the PR body has been assembled.
@@ -156,13 +157,42 @@ export class CreatePrHandler implements PhaseHandler {
       // ignore
     }
 
+    let fullyMerged = false;
+    try {
+      fullyMerged = await ctx.git.isAncestor(ctx.cwd, headBranch, baseBranch);
+    } catch (e) {
+      const msg = `failed to check branch ancestry for ${headBranch} against ${baseBranch}: ${(e as Error).message}`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        true,
+        'Verify local refs and git repository state, then resume create-pr.',
+        writtenArtifacts,
+      );
+    }
+
+    if (fullyMerged) {
+      const msg = `head branch ${headBranch} is already contained in base branch ${baseBranch} (no new commits)`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        false,
+        'Add new commits to the head branch or stop the Run.',
+        writtenArtifacts,
+      );
+    }
+
     const title = _firstHeadingOrLine(summary, ctx.issueNumber);
 
     // Push the branch so gh pr create's --head ref exists on remote.
     try {
-      await ctx.git.push({ cwd: ctx.cwd, branch: this.opts.headBranch(ctx) });
+      await ctx.git.push({ cwd: ctx.cwd, branch: headBranch });
     } catch (e) {
-      const msg = `failed to push branch ${this.opts.headBranch(ctx)}: ${(e as Error).message}`;
+      const msg = `failed to push branch ${headBranch}: ${(e as Error).message}`;
       emit('create_pr.failed', 'error', msg);
       return this._fail(
         ctx,
@@ -178,7 +208,7 @@ export class CreatePrHandler implements PhaseHandler {
       const pr = await ctx.github.createPullRequest({
         repoFullName: ctx.repoFullName,
         baseBranch,
-        headBranch: this.opts.headBranch(ctx),
+        headBranch,
         title,
         body: summary,
       });
