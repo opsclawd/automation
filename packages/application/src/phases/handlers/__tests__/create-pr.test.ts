@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CreatePrHandler } from '../create-pr.js';
+import {
+  CreatePrHandler,
+  _truncateBody,
+  _removeSection,
+  _removeValidationSteps,
+} from '../create-pr.js';
 import { FakeArtifactStore, FakeGitPort, FakeGitHubPort } from '../../../test-doubles/index.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
@@ -528,5 +533,184 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(git.pushes).toHaveLength(0);
     expect(github.createdPrInputs).toHaveLength(0);
     expect(github.labelChanges).toHaveLength(0);
+  });
+});
+
+describe('PR body truncation logic (_truncateBody, _removeSection, _removeValidationSteps)', () => {
+  describe('_removeSection', () => {
+    it('removes section and preserves blank line block spacing between surrounding sections', () => {
+      const input = [
+        '## Review Findings',
+        '- Critical/High: 0',
+        '- Medium/Low: 0',
+        '',
+        '## Autonomous Actions',
+        '### Arbiter Rationale (Task 1)',
+        'Deviated from plan.',
+        '',
+        '## Artifacts',
+        'Run logs and artifacts: ai/issues/7/',
+      ].join('\n');
+
+      const expected = [
+        '## Review Findings',
+        '- Critical/High: 0',
+        '- Medium/Low: 0',
+        '',
+        '## Artifacts',
+        'Run logs and artifacts: ai/issues/7/',
+      ].join('\n');
+
+      const output = _removeSection(input, '## Autonomous Actions');
+      expect(output).toBe(expected);
+      expect(output).not.toContain('0## Artifacts');
+    });
+
+    it('correctly handles single-line section content without skipping lines or deleting adjacent sections', () => {
+      const input = [
+        '## Review Findings',
+        '- Critical/High: 0',
+        '',
+        '## Autonomous Actions',
+        'Single rationale line',
+        '',
+        '## Artifacts',
+        'Run logs: ai/issues/7/',
+      ].join('\n');
+
+      const output = _removeSection(input, '## Autonomous Actions');
+      expect(output).toContain('## Review Findings\n- Critical/High: 0\n\n## Artifacts');
+      expect(output).toContain('Run logs: ai/issues/7/');
+      expect(output).not.toContain('Single rationale line');
+    });
+
+    it('removes a section at the end of body', () => {
+      const input = [
+        '## Review Findings',
+        '- Critical/High: 0',
+        '',
+        '## Autonomous Actions',
+        '### Rationale',
+        'Some detail',
+      ].join('\n');
+
+      const output = _removeSection(input, '## Autonomous Actions');
+      expect(output).toBe('## Review Findings\n- Critical/High: 0');
+    });
+
+    it('returns body unchanged if header is not present', () => {
+      const input = '## Tasks\n- Task 1\n\n## Changes\n- Change 1';
+      expect(_removeSection(input, '## Autonomous Actions')).toBe(input);
+    });
+  });
+
+  describe('_removeValidationSteps', () => {
+    it('strips step details while keeping ## Validation status line and preserving block spacing', () => {
+      const input = [
+        '## Changes',
+        '- File modified',
+        '',
+        '## Validation: passed',
+        '- build: passed',
+        '- test: passed',
+        '',
+        '## Review Findings',
+        '- Critical/High: 0',
+      ].join('\n');
+
+      const expected = [
+        '## Changes',
+        '- File modified',
+        '',
+        '## Validation: passed',
+        '',
+        '## Review Findings',
+        '- Critical/High: 0',
+      ].join('\n');
+
+      const output = _removeValidationSteps(input);
+      expect(output).toBe(expected);
+      expect(output).not.toContain('- build: passed');
+      expect(output).not.toContain('passed## Review Findings');
+    });
+
+    it('returns body unchanged when validation section has no steps', () => {
+      const input = [
+        '## Changes',
+        '- File modified',
+        '',
+        '## Validation: passed',
+        '',
+        '## Review Findings',
+        '- Critical/High: 0',
+      ].join('\n');
+
+      expect(_removeValidationSteps(input)).toBe(input);
+    });
+  });
+
+  describe('_truncateBody', () => {
+    it('removes Autonomous Actions first when exceeding byte limit', () => {
+      const body = [
+        '# Title',
+        '',
+        '## Tasks',
+        '- Task 1',
+        '',
+        '## Changes',
+        '- Diff stat',
+        '',
+        '## Validation: passed',
+        '- build: passed',
+        '',
+        '## Review Findings',
+        '- Critical/High: 0',
+        '',
+        '## Autonomous Actions',
+        'Long autonomous actions details...',
+        '',
+        '## Artifacts',
+        'Run logs: ai/issues/1/',
+      ].join('\n');
+
+      // Set maxBytes small enough to force removal of Autonomous Actions but fit the rest
+      const truncated = _truncateBody(body, 320);
+      expect(truncated).not.toContain('## Autonomous Actions');
+      expect(truncated).toContain('## Review Findings');
+      expect(truncated).toContain('## Artifacts');
+      expect(truncated).toContain('PR body truncated to fit within GitHub size limits');
+    });
+
+    it('progressively strips Review Findings and Validation steps if body remains too large', () => {
+      const body = [
+        '# Title',
+        '',
+        '## Tasks',
+        '- Task 1',
+        '',
+        '## Changes',
+        '- Diff stat',
+        '',
+        '## Validation: passed',
+        '- build: passed',
+        '- test: passed',
+        '',
+        '## Review Findings',
+        '- Critical/High: 1',
+        '',
+        '## Autonomous Actions',
+        'Autonomous rationale',
+        '',
+        '## Artifacts',
+        'Run logs',
+      ].join('\n');
+
+      const truncated = _truncateBody(body, 170);
+      expect(truncated).not.toContain('## Autonomous Actions');
+      expect(truncated).not.toContain('## Review Findings');
+      expect(truncated).not.toContain('- build: passed');
+      expect(truncated).toContain('## Validation: passed');
+      expect(truncated).toContain('PR body truncated');
+    });
   });
 });

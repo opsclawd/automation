@@ -470,11 +470,11 @@ function _parseReviewFindings(reviewText: string): string {
 // GitHub PR body limit is 256 KB; stay well under to leave room for GitHub's response envelope.
 const MAX_PR_BODY_BYTES = 240_000;
 
-function _truncateBody(body: string): string {
+export function _truncateBody(body: string, maxBytesOverride?: number): string {
   const footer =
     '\n\n---\n> PR body truncated to fit within GitHub size limits. Some artifact content omitted.';
 
-  const maxBytes = MAX_PR_BODY_BYTES - Buffer.byteLength(footer, 'utf-8');
+  const maxBytes = (maxBytesOverride ?? MAX_PR_BODY_BYTES) - Buffer.byteLength(footer, 'utf-8');
 
   // Try stripping autonomous actions section first (most variable)
   let candidate = _removeSection(body, '## Autonomous Actions');
@@ -505,30 +505,70 @@ function _truncateBody(body: string): string {
 }
 
 /** Remove a section header and all content until the next section header or EOF. */
-function _removeSection(body: string, header: string): string {
-  const idx = body.indexOf(`\n${header}\n`);
-  if (idx === -1) return body;
-  const afterHeader = body.indexOf('\n', idx + header.length + 2);
-  if (afterHeader === -1) return body.slice(0, Math.max(0, idx)).trimEnd();
+export function _removeSection(body: string, header: string): string {
+  let idx = -1;
+  if (body.startsWith(`${header}\n`) || body === header) {
+    idx = 0;
+  } else {
+    const found = body.indexOf(`\n${header}\n`);
+    if (found !== -1) {
+      idx = found + 1;
+    } else {
+      const eofFound = body.indexOf(`\n${header}`);
+      if (eofFound !== -1 && eofFound + 1 + header.length === body.length) {
+        idx = eofFound + 1;
+      }
+    }
+  }
 
-  const remaining = body.slice(afterHeader + 1);
-  const nextHeader = remaining.search(/\n## /);
-  const end = nextHeader === -1 ? remaining.length : nextHeader + 1;
-  return body.slice(0, Math.max(0, idx)).trimEnd() + remaining.slice(end);
+  if (idx === -1) return body;
+
+  const before = body.slice(0, idx).trimEnd();
+  const headerLineEnd = body.indexOf('\n', idx);
+
+  if (headerLineEnd === -1) {
+    return before;
+  }
+
+  const remaining = body.slice(headerLineEnd + 1);
+  const nextHeaderOffset = remaining.search(/\n## /);
+  if (nextHeaderOffset === -1) {
+    return before;
+  }
+
+  const nextSection = remaining.slice(nextHeaderOffset + 1);
+  return before ? `${before}\n\n${nextSection}` : nextSection;
 }
 
-/** Remove all ## Validation: content between the header and the next ## header or EOF. */
-function _removeValidationSteps(body: string): string {
-  const idx = body.indexOf('\n## Validation:');
-  if (idx === -1) return body;
-  const afterHeader = body.indexOf('\n', idx + 1);
-  if (afterHeader === -1) return body.slice(0, Math.max(0, idx)).trimEnd();
+/** Remove all ## Validation: steps content between the header status line and the next ## header or EOF. */
+export function _removeValidationSteps(body: string): string {
+  let idx = -1;
+  if (body.startsWith('## Validation:')) {
+    idx = 0;
+  } else {
+    const found = body.indexOf('\n## Validation:');
+    if (found !== -1) {
+      idx = found + 1;
+    }
+  }
 
-  // After the validation status line, look for either '## Review Findings' or EOF
-  const remaining = body.slice(afterHeader + 1);
-  const nextSection = remaining.search(/\n## /);
-  const end = nextSection === -1 ? remaining.length : nextSection + 1;
-  return body.slice(0, Math.max(0, idx)).trimEnd() + remaining.slice(end);
+  if (idx === -1) return body;
+
+  const headerLineEnd = body.indexOf('\n', idx);
+  if (headerLineEnd === -1) {
+    return body;
+  }
+
+  const headerLine = body.slice(0, headerLineEnd);
+  const remaining = body.slice(headerLineEnd + 1);
+
+  const nextHeaderOffset = remaining.search(/\n## /);
+  if (nextHeaderOffset === -1) {
+    return headerLine.trimEnd();
+  }
+
+  const nextSection = remaining.slice(nextHeaderOffset + 1);
+  return `${headerLine.trimEnd()}\n\n${nextSection}`;
 }
 
 function _firstHeadingOrLine(summary: string, issueNumber: number): string {
