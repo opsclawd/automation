@@ -61,17 +61,60 @@ export class CreatePrHandler implements PhaseHandler {
     }
 
     if (prUrl) {
-      emit('pr.reused', 'info', `reusing existing PR url ${prUrl}`, { url: prUrl });
-      try {
-        await ctx.github.updateIssueLabels(ctx.repoFullName, ctx.issueNumber, {
-          remove: ['ai:in-progress'],
-          add: ['ai:pr-ready'],
-        });
-      } catch (e) {
-        emit('github.label_update_failed', 'warn', `label update failed: ${(e as Error).message}`);
+      const prNumber = _parsePrNumber(prUrl);
+      if (prNumber === undefined) {
+        const msg = `invalid pr-url.txt artifact content: ${prUrl}`;
+        emit('create_pr.failed', 'error', msg);
+        return this._fail(
+          ctx,
+          'github_failed',
+          msg,
+          false,
+          'Fix or remove pr-url.txt artifact and resume.',
+          writtenArtifacts,
+        );
       }
-      emit('create_pr.completed', 'info', 'create-pr complete');
-      return { outcome: 'passed' };
+
+      let existingPr;
+      try {
+        existingPr = await ctx.github.getPr(ctx.repoFullName, prNumber);
+      } catch (e) {
+        const msg = `failed to inspect pull request #${prNumber} referenced by pr-url.txt: ${(e as Error).message}`;
+        emit('create_pr.failed', 'error', msg);
+        return this._fail(
+          ctx,
+          'github_failed',
+          msg,
+          true,
+          'Verify GitHub API access or PR existence; resume create-pr.',
+          writtenArtifacts,
+        );
+      }
+
+      if (existingPr.state === 'open') {
+        emit('pr.reused', 'info', `reusing existing PR url ${prUrl}`, { url: prUrl });
+        try {
+          await ctx.github.updateIssueLabels(ctx.repoFullName, ctx.issueNumber, {
+            remove: ['ai:in-progress'],
+            add: ['ai:pr-ready'],
+          });
+        } catch (e) {
+          emit(
+            'github.label_update_failed',
+            'warn',
+            `label update failed: ${(e as Error).message}`,
+          );
+        }
+        emit('create_pr.completed', 'info', 'create-pr complete');
+        return { outcome: 'passed' };
+      }
+
+      emit(
+        'pr.stale',
+        'info',
+        `existing PR #${existingPr.number} at ${prUrl} is ${existingPr.state}; creating replacement PR`,
+        { number: existingPr.number, url: prUrl, state: existingPr.state },
+      );
     }
 
     // ── Stage 2: Deterministic PR summary assembly ──
@@ -493,4 +536,15 @@ function _firstHeadingOrLine(summary: string, issueNumber: number): string {
   if (heading) return heading.replace(/^#+\s*/, '').trim();
   const firstLine = summary.split('\n').find((l) => l.trim().length > 0);
   return firstLine?.trim() ?? `Resolve issue #${issueNumber}`;
+}
+
+function _parsePrNumber(prUrl: string): number | undefined {
+  try {
+    const parsed = new URL(prUrl);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
+    const match = parsed.pathname.match(/\/pull\/([1-9]\d*)\/?$/);
+    return match ? Number(match[1]) : undefined;
+  } catch {
+    return undefined;
+  }
 }

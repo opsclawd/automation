@@ -288,9 +288,15 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(summary).not.toContain('- typecheck: failed');
   });
 
-  it('does not create a second PR when pr-url.txt already exists (idempotency)', async () => {
+  it('reuses pr-url.txt only when the referenced pull request is open', async () => {
     const { artifacts, github, ctx, events } = await build();
-    const existingUrl = 'https://example/pr/existing';
+    const existingUrl = 'https://github.com/acme/widgets/pull/42';
+    github.prs.set('acme/widgets/42', {
+      number: 42,
+      url: existingUrl,
+      state: 'open',
+      headRefName: 'feat/issue-7',
+    });
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'pr-url.txt',
@@ -318,6 +324,110 @@ describe('CreatePrHandler — deterministic assembly', () => {
       add: ['ai:pr-ready'],
       remove: ['ai:in-progress'],
     });
+  });
+
+  it('creates a replacement pull request when pr-url.txt references a merged pull request', async () => {
+    const { artifacts, github, ctx, events } = await build();
+    const existingUrl = 'https://github.com/acme/widgets/pull/42';
+    github.prs.set('acme/widgets/42', {
+      number: 42,
+      url: existingUrl,
+      state: 'merged',
+      headRefName: 'feat/issue-7',
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'pr-url.txt',
+      contents: existingUrl + '\n',
+    });
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    const reused = events.filter((e) => e.type === 'pr.reused');
+    expect(reused).toHaveLength(0);
+
+    expect(github.createdPrInputs).toHaveLength(1);
+
+    const written = (await artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+    expect(written).toBe(github.createdPrs[0]!.url);
+  });
+
+  it('creates a replacement pull request when pr-url.txt references a closed pull request', async () => {
+    const { artifacts, github, ctx, events } = await build();
+    const existingUrl = 'https://github.com/acme/widgets/pull/42';
+    github.prs.set('acme/widgets/42', {
+      number: 42,
+      url: existingUrl,
+      state: 'closed',
+      headRefName: 'feat/issue-7',
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'pr-url.txt',
+      contents: existingUrl + '\n',
+    });
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    const reused = events.filter((e) => e.type === 'pr.reused');
+    expect(reused).toHaveLength(0);
+
+    expect(github.createdPrInputs).toHaveLength(1);
+
+    const written = (await artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+    expect(written).toBe(github.createdPrs[0]!.url);
+  });
+
+  it('fails when pr-url.txt is not a parseable pull request URL', async () => {
+    const { artifacts, github, git, ctx, events } = await build();
+    const invalidUrl = 'https://github.com/acme/widgets/issues/42';
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'pr-url.txt',
+      contents: invalidUrl + '\n',
+    });
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('github_failed');
+      expect(res.failure.canRetry).toBe(false);
+      expect(res.failure.message).toContain(invalidUrl);
+    }
+
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+    expect(github.labelChanges).toHaveLength(0);
+
+    const completed = events.filter((e) => e.type === 'create_pr.completed');
+    expect(completed).toHaveLength(0);
+  });
+
+  it('fails when the pull request referenced by pr-url.txt cannot be inspected', async () => {
+    const { artifacts, github, git, ctx, events } = await build();
+    const existingUrl = 'https://github.com/acme/widgets/pull/999';
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'pr-url.txt',
+      contents: existingUrl + '\n',
+    });
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('github_failed');
+      expect(res.failure.canRetry).toBe(true);
+      expect(res.failure.message).toContain('no pr acme/widgets#999');
+    }
+
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+    expect(github.labelChanges).toHaveLength(0);
+
+    const completed = events.filter((e) => e.type === 'create_pr.completed');
+    expect(completed).toHaveLength(0);
   });
 
   it('returns github_failed when createPullRequest throws', async () => {
