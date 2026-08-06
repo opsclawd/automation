@@ -61,17 +61,66 @@ export class CreatePrHandler implements PhaseHandler {
     }
 
     if (prUrl) {
-      emit('pr.reused', 'info', `reusing existing PR url ${prUrl}`, { url: prUrl });
-      try {
-        await ctx.github.updateIssueLabels(ctx.repoFullName, ctx.issueNumber, {
-          remove: ['ai:in-progress'],
-          add: ['ai:pr-ready'],
-        });
-      } catch (e) {
-        emit('github.label_update_failed', 'warn', `label update failed: ${(e as Error).message}`);
+      const prNumber = _parsePrNumber(prUrl);
+      if (prNumber === undefined) {
+        const msg = `invalid pr-url.txt artifact content: ${prUrl}`;
+        emit('create_pr.failed', 'error', msg);
+        return this._fail(
+          ctx,
+          'github_failed',
+          msg,
+          false,
+          'Fix or remove pr-url.txt artifact and resume.',
+          writtenArtifacts,
+        );
       }
-      emit('create_pr.completed', 'info', 'create-pr complete');
-      return { outcome: 'passed' };
+
+      let existingPr;
+      try {
+        existingPr = await ctx.github.getPr(ctx.repoFullName, prNumber);
+      } catch (e) {
+        const msg = `failed to inspect pull request #${prNumber} referenced by pr-url.txt: ${(e as Error).message}`;
+        emit('create_pr.failed', 'error', msg);
+        return this._fail(
+          ctx,
+          'github_failed',
+          msg,
+          true,
+          'Verify GitHub API access or PR existence; resume create-pr.',
+          writtenArtifacts,
+        );
+      }
+
+      if (existingPr.state === 'open') {
+        emit('pr.reused', 'info', `reusing existing PR url ${prUrl}`, { url: prUrl });
+        try {
+          await ctx.github.updateIssueLabels(ctx.repoFullName, ctx.issueNumber, {
+            remove: ['ai:in-progress'],
+            add: ['ai:pr-ready'],
+          });
+        } catch (e) {
+          const msg = `failed to update issue labels: ${(e as Error).message}`;
+          emit('github.label_update_failed', 'error', msg);
+          emit('create_pr.failed', 'error', msg);
+          return this._fail(
+            ctx,
+            'github_failed',
+            msg,
+            true,
+            "Restore the issue's expected label state and resume create-pr.",
+            writtenArtifacts,
+          );
+        }
+        emit('create_pr.completed', 'info', 'create-pr complete');
+        return { outcome: 'passed' };
+      }
+
+      emit(
+        'pr.stale',
+        'info',
+        `existing PR #${existingPr.number} at ${prUrl} is ${existingPr.state}; creating replacement PR`,
+        { number: existingPr.number, url: prUrl, state: existingPr.state },
+      );
     }
 
     // ── Stage 2: Deterministic PR summary assembly ──
@@ -100,6 +149,7 @@ export class CreatePrHandler implements PhaseHandler {
     }
 
     // ── Stage 3: Branch hygiene before deterministic GitHub operations ──
+    const headBranch = this.opts.headBranch(ctx);
     const baseBranch = ctx.baseBranch ?? 'main';
 
     // Clean up orchestrator artifacts now that the PR body has been assembled.
@@ -113,13 +163,42 @@ export class CreatePrHandler implements PhaseHandler {
       // ignore
     }
 
+    let fullyMerged = false;
+    try {
+      fullyMerged = await ctx.git.isAncestor(ctx.cwd, headBranch, baseBranch);
+    } catch (e) {
+      const msg = `failed to check branch ancestry for ${headBranch} against ${baseBranch}: ${(e as Error).message}`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        true,
+        'Verify local refs and git repository state, then resume create-pr.',
+        writtenArtifacts,
+      );
+    }
+
+    if (fullyMerged) {
+      const msg = `head branch ${headBranch} is already contained in base branch ${baseBranch} (no new commits)`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        false,
+        'Add new commits to the head branch or stop the Run.',
+        writtenArtifacts,
+      );
+    }
+
     const title = _firstHeadingOrLine(summary, ctx.issueNumber);
 
     // Push the branch so gh pr create's --head ref exists on remote.
     try {
-      await ctx.git.push({ cwd: ctx.cwd, branch: this.opts.headBranch(ctx) });
+      await ctx.git.push({ cwd: ctx.cwd, branch: headBranch });
     } catch (e) {
-      const msg = `failed to push branch ${this.opts.headBranch(ctx)}: ${(e as Error).message}`;
+      const msg = `failed to push branch ${headBranch}: ${(e as Error).message}`;
       emit('create_pr.failed', 'error', msg);
       return this._fail(
         ctx,
@@ -135,7 +214,7 @@ export class CreatePrHandler implements PhaseHandler {
       const pr = await ctx.github.createPullRequest({
         repoFullName: ctx.repoFullName,
         baseBranch,
-        headBranch: this.opts.headBranch(ctx),
+        headBranch,
         title,
         body: summary,
       });
@@ -154,18 +233,7 @@ export class CreatePrHandler implements PhaseHandler {
       );
     }
 
-    // Update issue labels (non-fatal on failure)
-    try {
-      await ctx.github.updateIssueLabels(ctx.repoFullName, ctx.issueNumber, {
-        remove: ['ai:in-progress'],
-        add: ['ai:pr-ready'],
-      });
-    } catch (e) {
-      emit('github.label_update_failed', 'warn', `label update failed: ${(e as Error).message}`);
-    }
-
-    // Write pr-url.txt artifact. PR is already created on GitHub at this point;
-    // retrying would produce a duplicate, so canRetry: false is required.
+    // Write pr-url.txt artifact immediately after PR creation so resume is idempotent if labels fail.
     try {
       await ctx.artifacts.write({
         runId: ctx.runUuid,
@@ -173,6 +241,7 @@ export class CreatePrHandler implements PhaseHandler {
         relativePath: 'pr-url.txt',
         contents: prUrl + '\n',
       });
+      writtenArtifacts.push('pr-url.txt');
     } catch (e) {
       const msg = `failed to write pr-url.txt: ${(e as Error).message}`;
       emit('create_pr.failed', 'error', msg);
@@ -182,6 +251,26 @@ export class CreatePrHandler implements PhaseHandler {
         msg,
         false,
         `PR created at ${prUrl} but pr-url.txt write failed. Verify PR and record URL manually, then resume.`,
+        writtenArtifacts,
+      );
+    }
+
+    // Update issue labels (fatal on failure; resume safe because pr-url.txt is already written)
+    try {
+      await ctx.github.updateIssueLabels(ctx.repoFullName, ctx.issueNumber, {
+        remove: ['ai:in-progress'],
+        add: ['ai:pr-ready'],
+      });
+    } catch (e) {
+      const msg = `failed to update issue labels: ${(e as Error).message}`;
+      emit('github.label_update_failed', 'error', msg);
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'github_failed',
+        msg,
+        true,
+        "Restore the issue's expected label state and resume create-pr.",
         writtenArtifacts,
       );
     }
@@ -427,11 +516,11 @@ function _parseReviewFindings(reviewText: string): string {
 // GitHub PR body limit is 256 KB; stay well under to leave room for GitHub's response envelope.
 const MAX_PR_BODY_BYTES = 240_000;
 
-function _truncateBody(body: string): string {
+export function _truncateBody(body: string, maxBytesOverride?: number): string {
   const footer =
     '\n\n---\n> PR body truncated to fit within GitHub size limits. Some artifact content omitted.';
 
-  const maxBytes = MAX_PR_BODY_BYTES - Buffer.byteLength(footer, 'utf-8');
+  const maxBytes = (maxBytesOverride ?? MAX_PR_BODY_BYTES) - Buffer.byteLength(footer, 'utf-8');
 
   // Try stripping autonomous actions section first (most variable)
   let candidate = _removeSection(body, '## Autonomous Actions');
@@ -462,30 +551,70 @@ function _truncateBody(body: string): string {
 }
 
 /** Remove a section header and all content until the next section header or EOF. */
-function _removeSection(body: string, header: string): string {
-  const idx = body.indexOf(`\n${header}\n`);
-  if (idx === -1) return body;
-  const afterHeader = body.indexOf('\n', idx + header.length + 2);
-  if (afterHeader === -1) return body.slice(0, Math.max(0, idx)).trimEnd();
+export function _removeSection(body: string, header: string): string {
+  let idx = -1;
+  if (body.startsWith(`${header}\n`) || body === header) {
+    idx = 0;
+  } else {
+    const found = body.indexOf(`\n${header}\n`);
+    if (found !== -1) {
+      idx = found + 1;
+    } else {
+      const eofFound = body.indexOf(`\n${header}`);
+      if (eofFound !== -1 && eofFound + 1 + header.length === body.length) {
+        idx = eofFound + 1;
+      }
+    }
+  }
 
-  const remaining = body.slice(afterHeader + 1);
-  const nextHeader = remaining.search(/\n## /);
-  const end = nextHeader === -1 ? remaining.length : nextHeader + 1;
-  return body.slice(0, Math.max(0, idx)).trimEnd() + remaining.slice(end);
+  if (idx === -1) return body;
+
+  const before = body.slice(0, idx).trimEnd();
+  const headerLineEnd = body.indexOf('\n', idx);
+
+  if (headerLineEnd === -1) {
+    return before;
+  }
+
+  const remaining = body.slice(headerLineEnd);
+  const nextHeaderOffset = remaining.search(/\n## /);
+  if (nextHeaderOffset === -1) {
+    return before;
+  }
+
+  const nextSection = remaining.slice(nextHeaderOffset + 1);
+  return before ? `${before}\n\n${nextSection}` : nextSection;
 }
 
-/** Remove all ## Validation: content between the header and the next ## header or EOF. */
-function _removeValidationSteps(body: string): string {
-  const idx = body.indexOf('\n## Validation:');
-  if (idx === -1) return body;
-  const afterHeader = body.indexOf('\n', idx + 1);
-  if (afterHeader === -1) return body.slice(0, Math.max(0, idx)).trimEnd();
+/** Remove all ## Validation: steps content between the header status line and the next ## header or EOF. */
+export function _removeValidationSteps(body: string): string {
+  let idx = -1;
+  if (body.startsWith('## Validation:')) {
+    idx = 0;
+  } else {
+    const found = body.indexOf('\n## Validation:');
+    if (found !== -1) {
+      idx = found + 1;
+    }
+  }
 
-  // After the validation status line, look for either '## Review Findings' or EOF
-  const remaining = body.slice(afterHeader + 1);
-  const nextSection = remaining.search(/\n## /);
-  const end = nextSection === -1 ? remaining.length : nextSection + 1;
-  return body.slice(0, Math.max(0, idx)).trimEnd() + remaining.slice(end);
+  if (idx === -1) return body;
+
+  const headerLineEnd = body.indexOf('\n', idx);
+  if (headerLineEnd === -1) {
+    return body;
+  }
+
+  const headerLine = body.slice(0, headerLineEnd);
+  const remaining = body.slice(headerLineEnd);
+
+  const nextHeaderOffset = remaining.search(/\n## /);
+  if (nextHeaderOffset === -1) {
+    return headerLine.trimEnd();
+  }
+
+  const nextSection = remaining.slice(nextHeaderOffset + 1);
+  return `${headerLine.trimEnd()}\n\n${nextSection}`;
 }
 
 function _firstHeadingOrLine(summary: string, issueNumber: number): string {
@@ -493,4 +622,15 @@ function _firstHeadingOrLine(summary: string, issueNumber: number): string {
   if (heading) return heading.replace(/^#+\s*/, '').trim();
   const firstLine = summary.split('\n').find((l) => l.trim().length > 0);
   return firstLine?.trim() ?? `Resolve issue #${issueNumber}`;
+}
+
+function _parsePrNumber(prUrl: string): number | undefined {
+  try {
+    const parsed = new URL(prUrl);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
+    const match = parsed.pathname.match(/\/pull\/([1-9]\d*)\/?$/);
+    return match ? Number(match[1]) : undefined;
+  } catch {
+    return undefined;
+  }
 }

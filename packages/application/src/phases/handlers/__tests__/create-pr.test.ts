@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CreatePrHandler } from '../create-pr.js';
+import {
+  CreatePrHandler,
+  _truncateBody,
+  _removeSection,
+  _removeValidationSteps,
+} from '../create-pr.js';
 import { FakeArtifactStore, FakeGitPort, FakeGitHubPort } from '../../../test-doubles/index.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
@@ -288,9 +293,15 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(summary).not.toContain('- typecheck: failed');
   });
 
-  it('does not create a second PR when pr-url.txt already exists (idempotency)', async () => {
+  it('reuses pr-url.txt only when the referenced pull request is open', async () => {
     const { artifacts, github, ctx, events } = await build();
-    const existingUrl = 'https://example/pr/existing';
+    const existingUrl = 'https://github.com/acme/widgets/pull/42';
+    github.prs.set('acme/widgets/42', {
+      number: 42,
+      url: existingUrl,
+      state: 'open',
+      headRefName: 'feat/issue-7',
+    });
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'pr-url.txt',
@@ -318,6 +329,110 @@ describe('CreatePrHandler — deterministic assembly', () => {
       add: ['ai:pr-ready'],
       remove: ['ai:in-progress'],
     });
+  });
+
+  it('creates a replacement pull request when pr-url.txt references a merged pull request', async () => {
+    const { artifacts, github, ctx, events } = await build();
+    const existingUrl = 'https://github.com/acme/widgets/pull/42';
+    github.prs.set('acme/widgets/42', {
+      number: 42,
+      url: existingUrl,
+      state: 'merged',
+      headRefName: 'feat/issue-7',
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'pr-url.txt',
+      contents: existingUrl + '\n',
+    });
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    const reused = events.filter((e) => e.type === 'pr.reused');
+    expect(reused).toHaveLength(0);
+
+    expect(github.createdPrInputs).toHaveLength(1);
+
+    const written = (await artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+    expect(written).toBe(github.createdPrs[0]!.url);
+  });
+
+  it('creates a replacement pull request when pr-url.txt references a closed pull request', async () => {
+    const { artifacts, github, ctx, events } = await build();
+    const existingUrl = 'https://github.com/acme/widgets/pull/42';
+    github.prs.set('acme/widgets/42', {
+      number: 42,
+      url: existingUrl,
+      state: 'closed',
+      headRefName: 'feat/issue-7',
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'pr-url.txt',
+      contents: existingUrl + '\n',
+    });
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    const reused = events.filter((e) => e.type === 'pr.reused');
+    expect(reused).toHaveLength(0);
+
+    expect(github.createdPrInputs).toHaveLength(1);
+
+    const written = (await artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+    expect(written).toBe(github.createdPrs[0]!.url);
+  });
+
+  it('fails when pr-url.txt is not a parseable pull request URL', async () => {
+    const { artifacts, github, git, ctx, events } = await build();
+    const invalidUrl = 'https://github.com/acme/widgets/issues/42';
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'pr-url.txt',
+      contents: invalidUrl + '\n',
+    });
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('github_failed');
+      expect(res.failure.canRetry).toBe(false);
+      expect(res.failure.message).toContain(invalidUrl);
+    }
+
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+    expect(github.labelChanges).toHaveLength(0);
+
+    const completed = events.filter((e) => e.type === 'create_pr.completed');
+    expect(completed).toHaveLength(0);
+  });
+
+  it('fails when the pull request referenced by pr-url.txt cannot be inspected', async () => {
+    const { artifacts, github, git, ctx, events } = await build();
+    const existingUrl = 'https://github.com/acme/widgets/pull/999';
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'pr-url.txt',
+      contents: existingUrl + '\n',
+    });
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('github_failed');
+      expect(res.failure.canRetry).toBe(true);
+      expect(res.failure.message).toContain('no pr acme/widgets#999');
+    }
+
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+    expect(github.labelChanges).toHaveLength(0);
+
+    const completed = events.filter((e) => e.type === 'create_pr.completed');
+    expect(completed).toHaveLength(0);
   });
 
   it('returns github_failed when createPullRequest throws', async () => {
@@ -418,5 +533,429 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(git.pushes).toHaveLength(0);
     expect(github.createdPrInputs).toHaveLength(0);
     expect(github.labelChanges).toHaveLength(0);
+  });
+
+  describe('branch ancestry gating', () => {
+    it('fails before push when the head branch is already contained in the base branch', async () => {
+      const { git, github, ctx, events } = await build();
+      git.ancestorResults.set('feat/issue-7|main', true);
+
+      const res = await HANDLER.run(ctx);
+      expect(res.outcome).toBe('failed');
+      if (res.outcome === 'failed') {
+        expect(res.failure.kind).toBe('git_failed');
+        expect(res.failure.canRetry).toBe(false);
+        expect(res.failure.message).toContain('feat/issue-7');
+        expect(res.failure.message).toContain('main');
+      }
+
+      expect(git.pushes).toHaveLength(0);
+      expect(github.createdPrInputs).toHaveLength(0);
+      expect(github.labelChanges).toHaveLength(0);
+
+      const failedEvents = events.filter((e) => e.type === 'create_pr.failed');
+      expect(failedEvents).toHaveLength(1);
+      const completedEvents = events.filter((e) => e.type === 'create_pr.completed');
+      expect(completedEvents).toHaveLength(0);
+    });
+
+    it('creates a replacement for a merged pull request when the head branch has new commits', async () => {
+      const { artifacts, github, git, ctx, events } = await build();
+      const existingUrl = 'https://github.com/acme/widgets/pull/42';
+      github.prs.set('acme/widgets/42', {
+        number: 42,
+        url: existingUrl,
+        state: 'merged',
+        headRefName: 'feat/issue-7',
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'pr-url.txt',
+        contents: existingUrl + '\n',
+      });
+      git.ancestorResults.set('feat/issue-7|main', false);
+
+      const res = await HANDLER.run(ctx);
+      expect(res.outcome).toBe('passed');
+
+      const reused = events.filter((e) => e.type === 'pr.reused');
+      expect(reused).toHaveLength(0);
+
+      expect(git.pushes).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+
+      const written = (await artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+      expect(written).toBe(github.createdPrs[0]!.url);
+    });
+
+    it('fails when branch ancestry cannot be determined', async () => {
+      const { git, github, ctx, events } = await build();
+      vi.spyOn(git, 'isAncestor').mockRejectedValue(new Error('git command failed: merge-base'));
+
+      const res = await HANDLER.run(ctx);
+      expect(res.outcome).toBe('failed');
+      if (res.outcome === 'failed') {
+        expect(res.failure.kind).toBe('git_failed');
+        expect(res.failure.canRetry).toBe(true);
+        expect(res.failure.message).toContain('git command failed: merge-base');
+      }
+
+      expect(git.pushes).toHaveLength(0);
+      expect(github.createdPrInputs).toHaveLength(0);
+      expect(github.labelChanges).toHaveLength(0);
+
+      const failedEvents = events.filter((e) => e.type === 'create_pr.failed');
+      expect(failedEvents).toHaveLength(1);
+      const completedEvents = events.filter((e) => e.type === 'create_pr.completed');
+      expect(completedEvents).toHaveLength(0);
+    });
+  });
+
+  describe('label transitions and resume safety', () => {
+    it('fails when label transition fails while reusing an open pull request', async () => {
+      const { artifacts, github, ctx, events } = await build();
+      const existingUrl = 'https://github.com/acme/widgets/pull/42';
+      github.prs.set('acme/widgets/42', {
+        number: 42,
+        url: existingUrl,
+        state: 'open',
+        headRefName: 'feat/issue-7',
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'pr-url.txt',
+        contents: existingUrl + '\n',
+      });
+
+      github.updateIssueLabels = vi.fn().mockRejectedValue(new Error('label update rate limited'));
+
+      const res = await HANDLER.run(ctx);
+
+      expect(res.outcome).toBe('failed');
+      if (res.outcome === 'failed') {
+        expect(res.failure.kind).toBe('github_failed');
+        expect(res.failure.canRetry).toBe(true);
+        expect(res.failure.message).toContain('label update rate limited');
+      }
+
+      const labelError = events.find((e) => e.type === 'github.label_update_failed');
+      expect(labelError).toBeDefined();
+      expect(labelError?.level).toBe('error');
+
+      const completed = events.filter((e) => e.type === 'create_pr.completed');
+      expect(completed).toHaveLength(0);
+
+      expect(github.createdPrInputs).toHaveLength(0);
+    });
+
+    it('persists a newly created pull request before failing its label transition', async () => {
+      const { artifacts, github, ctx, events } = await build();
+
+      const createdPr = {
+        number: 1,
+        url: 'https://github.com/acme/widgets/pull/1',
+        state: 'open' as const,
+      };
+      github.createPullRequest = vi.fn().mockImplementation(async (input) => {
+        github.createdPrInputs.push(input);
+        github.createdPrs.push(createdPr);
+        return createdPr;
+      });
+
+      github.updateIssueLabels = vi.fn().mockRejectedValue(new Error('label update rate limited'));
+
+      const res = await HANDLER.run(ctx);
+
+      expect(res.outcome).toBe('failed');
+      if (res.outcome === 'failed') {
+        expect(res.failure.kind).toBe('github_failed');
+        expect(res.failure.canRetry).toBe(true);
+        expect(res.failure.artifacts).toContain('pr-url.txt');
+      }
+
+      const written = (await artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+      expect(written).toBe(createdPr.url);
+
+      const labelError = events.find((e) => e.type === 'github.label_update_failed');
+      expect(labelError).toBeDefined();
+      expect(labelError?.level).toBe('error');
+
+      const completed = events.filter((e) => e.type === 'create_pr.completed');
+      expect(completed).toHaveLength(0);
+    });
+
+    it('resumes a created pull request after a label transition failure without creating a duplicate', async () => {
+      const { artifacts, github, ctx } = await build();
+
+      const createdPr = {
+        number: 1,
+        url: 'https://github.com/acme/widgets/pull/1',
+        state: 'open' as const,
+      };
+      github.createPullRequest = vi.fn().mockImplementation(async (input) => {
+        github.createdPrInputs.push(input);
+        github.createdPrs.push(createdPr);
+        return createdPr;
+      });
+
+      const originalUpdate = github.updateIssueLabels.bind(github);
+      github.updateIssueLabels = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('temporary label failure'));
+
+      const res1 = await HANDLER.run(ctx);
+      expect(res1.outcome).toBe('failed');
+      expect(github.createdPrInputs).toHaveLength(1);
+
+      const createdUrl = (await artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+      expect(createdUrl).toBe(createdPr.url);
+
+      // Seed GitHub PR store so Stage 1 getPr can inspect the existing open PR
+      github.prs.set(`acme/widgets/${createdPr.number}`, {
+        number: createdPr.number,
+        url: createdPr.url,
+        state: 'open',
+        headRefName: 'feat/issue-7',
+      });
+
+      // Restore updateIssueLabels to succeed
+      github.updateIssueLabels = vi.fn().mockImplementation(originalUpdate);
+
+      const res2 = await HANDLER.run(ctx);
+      expect(res2.outcome).toBe('passed');
+      expect(github.createdPrInputs).toHaveLength(1); // No second PR created!
+      expect(github.labelChanges).toHaveLength(1);
+      expect(github.labelChanges[0]).toMatchObject({
+        add: ['ai:pr-ready'],
+        remove: ['ai:in-progress'],
+      });
+    });
+
+    it('passes only after the required label transition succeeds', async () => {
+      const { github, ctx, events } = await build();
+
+      const order: string[] = [];
+      github.updateIssueLabels = vi.fn().mockImplementation(async (repo, issue, labels) => {
+        order.push('updateIssueLabels');
+        github.labelChanges.push({ repoFullName: repo, issueNumber: issue, ...labels });
+      });
+
+      ctx.events.publish = (_u: string, e: OrchestratorEvent) => {
+        events.push(e);
+        if (e.type === 'create_pr.completed') {
+          order.push('create_pr.completed');
+        }
+      };
+
+      const res = await HANDLER.run(ctx);
+      expect(res.outcome).toBe('passed');
+      expect(order).toEqual(['updateIssueLabels', 'create_pr.completed']);
+      expect(github.labelChanges[0]).toMatchObject({
+        add: ['ai:pr-ready'],
+        remove: ['ai:in-progress'],
+      });
+    });
+  });
+});
+
+describe('PR body truncation logic (_truncateBody, _removeSection, _removeValidationSteps)', () => {
+  describe('_removeSection', () => {
+    it('removes section and preserves blank line block spacing between surrounding sections', () => {
+      const input = [
+        '## Review Findings',
+        '- Critical/High: 0',
+        '- Medium/Low: 0',
+        '',
+        '## Autonomous Actions',
+        '### Arbiter Rationale (Task 1)',
+        'Deviated from plan.',
+        '',
+        '## Artifacts',
+        'Run logs and artifacts: ai/issues/7/',
+      ].join('\n');
+
+      const expected = [
+        '## Review Findings',
+        '- Critical/High: 0',
+        '- Medium/Low: 0',
+        '',
+        '## Artifacts',
+        'Run logs and artifacts: ai/issues/7/',
+      ].join('\n');
+
+      const output = _removeSection(input, '## Autonomous Actions');
+      expect(output).toBe(expected);
+      expect(output).not.toContain('0## Artifacts');
+    });
+
+    it('correctly handles single-line section content without skipping lines or deleting adjacent sections', () => {
+      const input = [
+        '## Review Findings',
+        '- Critical/High: 0',
+        '',
+        '## Autonomous Actions',
+        'Single rationale line',
+        '',
+        '## Artifacts',
+        'Run logs: ai/issues/7/',
+      ].join('\n');
+
+      const output = _removeSection(input, '## Autonomous Actions');
+      expect(output).toContain('## Review Findings\n- Critical/High: 0\n\n## Artifacts');
+      expect(output).toContain('Run logs: ai/issues/7/');
+      expect(output).not.toContain('Single rationale line');
+    });
+
+    it('removes a section at the end of body', () => {
+      const input = [
+        '## Review Findings',
+        '- Critical/High: 0',
+        '',
+        '## Autonomous Actions',
+        '### Rationale',
+        'Some detail',
+      ].join('\n');
+
+      const output = _removeSection(input, '## Autonomous Actions');
+      expect(output).toBe('## Review Findings\n- Critical/High: 0');
+    });
+
+    it('returns body unchanged if header is not present', () => {
+      const input = '## Tasks\n- Task 1\n\n## Changes\n- Change 1';
+      expect(_removeSection(input, '## Autonomous Actions')).toBe(input);
+    });
+
+    it('handles compactly-spaced markdown without blank lines before next header', () => {
+      const input = [
+        '## Review Findings',
+        '- Critical/High: 0',
+        '## Autonomous Actions',
+        'Single rationale line',
+        '## Artifacts',
+        'Run logs: ai/issues/7/',
+      ].join('\n');
+
+      const output = _removeSection(input, '## Autonomous Actions');
+      expect(output).toBe(
+        '## Review Findings\n- Critical/High: 0\n\n## Artifacts\nRun logs: ai/issues/7/',
+      );
+    });
+  });
+
+  describe('_removeValidationSteps', () => {
+    it('strips step details while keeping ## Validation status line and preserving block spacing', () => {
+      const input = [
+        '## Changes',
+        '- File modified',
+        '',
+        '## Validation: passed',
+        '- build: passed',
+        '- test: passed',
+        '',
+        '## Review Findings',
+        '- Critical/High: 0',
+      ].join('\n');
+
+      const expected = [
+        '## Changes',
+        '- File modified',
+        '',
+        '## Validation: passed',
+        '',
+        '## Review Findings',
+        '- Critical/High: 0',
+      ].join('\n');
+
+      const output = _removeValidationSteps(input);
+      expect(output).toBe(expected);
+      expect(output).not.toContain('- build: passed');
+      expect(output).not.toContain('passed## Review Findings');
+    });
+
+    it('handles compactly-spaced markdown without blank lines before next header', () => {
+      const input = ['## Validation: PASSED', '- step 1', '## Artifacts', 'Run logs'].join('\n');
+
+      const output = _removeValidationSteps(input);
+      expect(output).toBe('## Validation: PASSED\n\n## Artifacts\nRun logs');
+    });
+
+    it('returns body unchanged when validation section has no steps', () => {
+      const input = [
+        '## Changes',
+        '- File modified',
+        '',
+        '## Validation: passed',
+        '',
+        '## Review Findings',
+        '- Critical/High: 0',
+      ].join('\n');
+
+      expect(_removeValidationSteps(input)).toBe(input);
+    });
+  });
+
+  describe('_truncateBody', () => {
+    it('removes Autonomous Actions first when exceeding byte limit', () => {
+      const body = [
+        '# Title',
+        '',
+        '## Tasks',
+        '- Task 1',
+        '',
+        '## Changes',
+        '- Diff stat',
+        '',
+        '## Validation: passed',
+        '- build: passed',
+        '',
+        '## Review Findings',
+        '- Critical/High: 0',
+        '',
+        '## Autonomous Actions',
+        'Long autonomous actions details...',
+        '',
+        '## Artifacts',
+        'Run logs: ai/issues/1/',
+      ].join('\n');
+
+      // Set maxBytes small enough to force removal of Autonomous Actions but fit the rest
+      const truncated = _truncateBody(body, 320);
+      expect(truncated).not.toContain('## Autonomous Actions');
+      expect(truncated).toContain('## Review Findings');
+      expect(truncated).toContain('## Artifacts');
+      expect(truncated).toContain('PR body truncated to fit within GitHub size limits');
+    });
+
+    it('progressively strips Review Findings and Validation steps if body remains too large', () => {
+      const body = [
+        '# Title',
+        '',
+        '## Tasks',
+        '- Task 1',
+        '',
+        '## Changes',
+        '- Diff stat',
+        '',
+        '## Validation: passed',
+        '- build: passed',
+        '- test: passed',
+        '',
+        '## Review Findings',
+        '- Critical/High: 1',
+        '',
+        '## Autonomous Actions',
+        'Autonomous rationale',
+        '',
+        '## Artifacts',
+        'Run logs',
+      ].join('\n');
+
+      const truncated = _truncateBody(body, 170);
+      expect(truncated).not.toContain('## Autonomous Actions');
+      expect(truncated).not.toContain('## Review Findings');
+      expect(truncated).not.toContain('- build: passed');
+      expect(truncated).toContain('## Validation: passed');
+      expect(truncated).toContain('PR body truncated');
+    });
   });
 });
