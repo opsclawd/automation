@@ -46,6 +46,10 @@ scratch. For example:
   `signature_changes` fields — do not remove them or convert them to V1 format.
 - When showing example task headers for illustration only (not real task headings), indent them by
   at least 2 spaces or wrap in inline code — a real task heading always starts at column 0.
+- TEST-FIRST COMMIT ORDER: Do not merge a regression-proof task into its implementation task. If the
+  plan reproduces a bug with a failing test in an earlier numbered task and fixes it in a later one,
+  preserve that separation while repairing — renumber them if required, but keep the proof ahead of
+  the fix and keep the implementation source change out of the proof task.
 
 ## CRITICAL RULES
 
