@@ -99,7 +99,7 @@ describe('validation-cache-policy regressions', () => {
     expect(results[3]?.stdout).toContain('typecheck:TURBO_FORCE=true');
   });
 
-  it('leaves build cache policy unchanged', async () => {
+  it('preserves caller cache state for build and unrelated commands', async () => {
     const logDir = freshDir();
     const cwd = createFixtureCwd();
     const adapter = new ProcessValidationAdapter();
@@ -142,18 +142,46 @@ describe('validation-cache-policy regressions', () => {
     expect(results[2]?.stdout).toContain('build:TURBO_FORCE=false');
   });
 
-  it('creates both recorded log files for an empty-output command', async () => {
+  it('creates log targets for skipped empty successful and failed commands', async () => {
     const logDir = freshDir();
+    const cwd = freshDir();
+    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ scripts: {} }));
     const adapter = new ProcessValidationAdapter();
 
-    const [result] = await adapter.run({
-      cwd: process.cwd(),
-      commands: [[process.execPath, '-e', '']],
+    const results = await adapter.run({
+      cwd,
+      commands: [
+        'pnpm non-existent-script',
+        [process.execPath, '-e', ''],
+        [process.execPath, '-e', 'console.log("success-out"); console.error("success-err")'],
+        [process.execPath, '-e', 'console.error("fail-err"); process.exit(1)'],
+      ] as ValidationCommand[],
       timeoutSeconds: 30,
       logDir,
     });
 
-    expect(readFileSync(resolveRecordedPath(logDir, result!.stdoutPath), 'utf8')).toBe('');
-    expect(readFileSync(resolveRecordedPath(logDir, result!.stderrPath), 'utf8')).toBe('');
+    expect(results[0]?.outcome).toBe('skipped');
+    expect(readFileSync(resolveRecordedPath(logDir, results[0]!.stdoutPath), 'utf8')).toBe('');
+    expect(readFileSync(resolveRecordedPath(logDir, results[0]!.stderrPath), 'utf8')).toContain(
+      'Skipped:',
+    );
+
+    expect(results[1]?.outcome).toBe('passed');
+    expect(readFileSync(resolveRecordedPath(logDir, results[1]!.stdoutPath), 'utf8')).toBe('');
+    expect(readFileSync(resolveRecordedPath(logDir, results[1]!.stderrPath), 'utf8')).toBe('');
+
+    expect(results[2]?.outcome).toBe('passed');
+    expect(readFileSync(resolveRecordedPath(logDir, results[2]!.stdoutPath), 'utf8')).toContain(
+      'success-out',
+    );
+    expect(readFileSync(resolveRecordedPath(logDir, results[2]!.stderrPath), 'utf8')).toContain(
+      'success-err',
+    );
+
+    expect(results[3]?.outcome).toBe('failed');
+    expect(readFileSync(resolveRecordedPath(logDir, results[3]!.stdoutPath), 'utf8')).toBe('');
+    expect(readFileSync(resolveRecordedPath(logDir, results[3]!.stderrPath), 'utf8')).toContain(
+      'fail-err',
+    );
   });
 });
