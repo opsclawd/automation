@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { join, relative, isAbsolute } from 'node:path';
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import {
   AgentInvocationId,
   AgentProfileName,
@@ -399,6 +399,37 @@ export class AgentRuntimeRouter implements AgentPort {
       patch.endCommitSha = result.endCommitSha;
     }
     this.opts.invocationRepository.update(id, patch);
+
+    if (
+      result.outcome === 'failed' &&
+      result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)
+    ) {
+      try {
+        const count = this.opts.invocationRepository.countConsecutiveProviderFailures(
+          request.profile,
+        );
+        if (result.stderrPath) {
+          const content = readFileSync(result.stderrPath, 'utf-8');
+          const firstNewlineIndex = content.indexOf('\n');
+          let updated: string;
+          if (firstNewlineIndex !== -1) {
+            let firstLine = content.slice(0, firstNewlineIndex);
+            let eol = '\n';
+            if (firstLine.endsWith('\r')) {
+              firstLine = firstLine.slice(0, -1);
+              eol = '\r\n';
+            }
+            const rest = content.slice(firstNewlineIndex + 1);
+            updated = `${firstLine} (consecutive failures: ${count})${eol}${rest}`;
+          } else {
+            updated = `${content} (consecutive failures: ${count})`;
+          }
+          writeFileSync(result.stderrPath, updated, 'utf-8');
+        }
+      } catch {
+        // Enrichment error containment: leave persisted invocation and result unchanged
+      }
+    }
 
     // Persist token usage if the adapter reported it
     // NOTE: wrapped in try/catch so a DB error doesn't skip the fallback
