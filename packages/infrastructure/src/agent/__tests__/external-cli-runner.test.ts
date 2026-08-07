@@ -991,5 +991,28 @@ describe('runExternalCli', () => {
         rmSync(artifactsDir, { recursive: true, force: true });
       }
     });
+
+    it('reclassifies outcome to failed when provider error appears in stdout (exit 0)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        const result = await runExternalCli({
+          runtime: 'antigravity',
+          bin: 'bash',
+          args: ['-c', 'echo "AI_APICallError: HTTP 401 Unauthorized"'],
+          cwd,
+          artifactsDir,
+          model: 'test',
+        });
+        expect(result.outcome).toBe('failed');
+        expect(result.contractViolations).toContain('provider_error');
+        expect(readFileSync(result.stderrPath, 'utf-8')).toContain(
+          'PROVIDER_ERROR: AI_APICallError: HTTP 401 Unauthorized',
+        );
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
   });
 });

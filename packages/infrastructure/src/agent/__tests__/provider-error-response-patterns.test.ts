@@ -21,4 +21,11 @@ describe('provider error response patterns', () => {
     expect(testProviderErrorPatterns(response)).toBeTruthy();
     expect(testQuotaPatterns(response)).toBeTruthy();
   });
+
+  it('matches HTTP 401 provider responses', () => {
+    expect(testProviderErrorPatterns('API call failed: status 401')).toBeTruthy();
+    expect(testProviderErrorPatterns('HTTP 401 Unauthorized')).toBeTruthy();
+    expect(testProviderErrorPatterns('statusCode: 401')).toBeTruthy();
+    expect(testProviderErrorPatterns('unrelated error in 401 lines')).toBeFalsy();
+  });
 });
