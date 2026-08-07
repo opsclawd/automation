@@ -17,6 +17,11 @@ import {
 import { extractEvidence } from './extract-evidence.js';
 import { appendRebuttalToCodeReview } from './append-rebuttal.js';
 import { verifyFixCommit } from '../fix-commit-verifier.js';
+import {
+  captureNetRevertBaseline,
+  checkForNetReverts,
+  type NetRevertBaseline,
+} from './net-revert-guard.js';
 import type {
   ReviewFixLoopDeps,
   ReviewFixLoopInput,
@@ -148,6 +153,12 @@ export class ReviewFixLoop {
       now: deps.now(),
     });
     deps.loops.insert(loop);
+
+    const baseline = await captureNetRevertBaseline({
+      ...(deps.git ? { git: deps.git } : {}),
+      cwd: input.cwd,
+      ...(input.baselineCommitSha ? { baselineCommitSha: input.baselineCommitSha } : {}),
+    });
 
     let consecutiveFixFailures = 0;
     // Trackers for the optional runaway-protection caps (#667). Kept
@@ -1144,11 +1155,11 @@ export class ReviewFixLoop {
         this.deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'resolved');
         await this.appendHistoryEntry(ctx, review, fix, reval, 'resolved', input);
-        return {
+        return await this.finalizeOutcome(input, baseline, {
           loop: thisLoop,
           phaseOutcome: 'passed',
           loopStatus: 'converged',
-        };
+        });
       }
 
       const hasContradiction = fix.verdict === 'done_no_fixes_needed' && !isRebutted;
@@ -1233,11 +1244,11 @@ export class ReviewFixLoop {
           deps.loops.update(thisLoop);
           this.emitIterationCompleted(input, iterationIndex, 'resolved');
           await this.appendHistoryEntry(ctx, review, fix, reval, 'resolved', input);
-          return {
+          return await this.finalizeOutcome(input, baseline, {
             loop: thisLoop,
             phaseOutcome: 'passed',
             loopStatus: 'converged',
-          };
+          });
         }
 
         if (arbiterResult.outcome === 'finding_valid') {
@@ -1388,7 +1399,11 @@ export class ReviewFixLoop {
     loop = thisLoop;
 
     if (loop.status === 'converged') {
-      return { loop, phaseOutcome: 'passed', loopStatus: 'converged' };
+      return await this.finalizeOutcome(input, baseline, {
+        loop,
+        phaseOutcome: 'passed',
+        loopStatus: 'converged',
+      });
     }
     if (loop.status === 'failed') {
       return { loop, phaseOutcome: 'failed', loopStatus: 'failed' };
@@ -1452,13 +1467,13 @@ export class ReviewFixLoop {
             trendMode,
           },
         );
-        return {
+        return await this.finalizeOutcome(input, baseline, {
           loop,
           phaseOutcome: 'passed',
           loopStatus: 'converged_with_notes',
           needsHumanReview: true,
           residualFindingsCount: residualFindings.length,
-        };
+        });
       }
     }
 
@@ -1477,6 +1492,63 @@ export class ReviewFixLoop {
       phaseOutcome: 'failed',
       loopStatus: 'exhausted',
       residualFindingsCount: lastOffendingFindings.length,
+    };
+  }
+
+  private async finalizeOutcome(
+    input: ReviewFixLoopInput,
+    baseline: NetRevertBaseline,
+    candidate: ReviewFixLoopResult,
+  ): Promise<ReviewFixLoopResult> {
+    const check = await checkForNetReverts({
+      ...(this.deps.git ? { git: this.deps.git } : {}),
+      cwd: input.cwd,
+      baseline,
+    });
+
+    if (check.kind === 'pass') return candidate;
+
+    const failedLoop = {
+      ...candidate.loop,
+      status: 'failed' as const,
+      completedAt: this.deps.now(),
+    };
+    this.deps.loops.update(failedLoop);
+
+    if (check.kind === 'reverted') {
+      this.emit(
+        input,
+        'review_fix.net_revert_detected',
+        'warn',
+        `net revert detected: ${check.revertedFiles.length} file(s) restored to baseline`,
+        {
+          baselineCommitSha: baseline.kind === 'captured' ? baseline.baselineCommitSha : undefined,
+          targetFiles: baseline.kind === 'captured' ? baseline.targetFiles : [],
+          currentChangedFiles: [...check.currentChangedFiles].sort(),
+          revertedFiles: [...check.revertedFiles].sort(),
+        },
+      );
+    } else if (check.kind === 'indeterminate') {
+      this.emit(
+        input,
+        'review_fix.net_revert_check_failed',
+        'error',
+        `net revert check failed at ${check.stage} stage: ${check.error}`,
+        {
+          stage: check.stage,
+          error: check.error,
+        },
+      );
+    }
+
+    return {
+      loop: failedLoop,
+      phaseOutcome: 'failed',
+      loopStatus: 'failed',
+      needsHumanReview: true,
+      ...(candidate.residualFindingsCount !== undefined
+        ? { residualFindingsCount: candidate.residualFindingsCount }
+        : {}),
     };
   }
 

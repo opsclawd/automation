@@ -147,5 +147,8 @@ describe('compose runArbiter wiring', () => {
     expect(src).toContain('const reviewFixLoopInstance = new ReviewFixLoop({');
     expect(src).toContain('runArbiter: runWholePrArbiter,');
     expect(src).toContain('buildWholePrArbiterPrompt');
+    expect(src).toContain(
+      '...(ctx.startCommitSha ? { baselineCommitSha: ctx.startCommitSha } : {}),',
+    );
   });
 });
