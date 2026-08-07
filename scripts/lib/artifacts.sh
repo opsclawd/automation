@@ -42,6 +42,7 @@ result.json
 fix-validate-done.marker
 plan-review-passed.marker
 pr-summary.md
+pr-url.txt
 implementation-log-task-*.md
 issue.md
 issue-comments.md
