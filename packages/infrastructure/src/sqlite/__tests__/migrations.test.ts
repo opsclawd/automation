@@ -360,4 +360,17 @@ describe('migrations', () => {
 
     db.close();
   });
+
+  it('0033 adds the profile invocation history index', () => {
+    const db = openDatabase(':memory:');
+    applyMigrations(db);
+    applyMigrations(db);
+
+    const cols = db
+      .prepare(`PRAGMA index_info('idx_agent_invocations_profile_started_id')`)
+      .all() as Array<{ name: string }>;
+    const names = cols.map((c) => c.name);
+    expect(names).toEqual(['profile', 'started_at', 'id']);
+    db.close();
+  });
 });

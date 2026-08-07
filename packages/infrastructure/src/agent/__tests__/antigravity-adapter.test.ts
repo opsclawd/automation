@@ -230,15 +230,17 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.exitCode).toBe(0);
   });
 
-  it('does not mistakenly classify provider error text in stdout as provider_error', async () => {
+  it('classifies a swallowed stdout provider response as failed when the process exits 0', async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-agy-provider-error-stdout-only.sh'),
       artifactsDir: cwd,
     });
     const r = await adapter.invoke(req(cwd));
-    expect(r.outcome).toBe('success');
-    expect(r.contractViolations).not.toContain('provider_error');
+    expect(r.outcome).toBe('failed');
+    expect(r.contractViolations).toContain('provider_error');
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
   });
 
   it('detects provider error in stderr when process exits nonzero', async () => {

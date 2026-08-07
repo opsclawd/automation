@@ -1,10 +1,12 @@
 import type {
   AgentInvocation,
   AgentInvocationId,
+  AgentProfileName,
   AgentRuntimeKind,
   PhaseName,
   RunId,
 } from '@ai-sdlc/domain';
+import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
 import type {
   AgentInvocationPort,
   AgentInvocationUpdatePatch,
@@ -49,5 +51,35 @@ export class FakeAgentInvocationPort implements AgentInvocationPort {
 
   listByRuntime(runtime: AgentRuntimeKind): AgentInvocation[] {
     return this.rows.filter((r) => r.runtime === runtime).map((r) => ({ ...r }));
+  }
+
+  countConsecutiveProviderFailures(profile: AgentProfileName): number {
+    const completedProfileRows = this.rows.filter(
+      (r) => r.profile === profile && r.endedAt !== undefined,
+    );
+
+    completedProfileRows.sort((a, b) => {
+      const timeA = a.startedAt.getTime();
+      const timeB = b.startedAt.getTime();
+      if (timeA !== timeB) {
+        return timeB - timeA;
+      }
+      return b.id.localeCompare(a.id);
+    });
+
+    let count = 0;
+    for (const row of completedProfileRows) {
+      const isProviderFailure =
+        row.outcome === 'failed' &&
+        row.contractViolations?.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR);
+
+      if (isProviderFailure) {
+        count++;
+      } else {
+        break;
+      }
+    }
+
+    return count;
   }
 }

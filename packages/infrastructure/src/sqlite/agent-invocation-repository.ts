@@ -1,4 +1,5 @@
 import type { Db } from './database.js';
+import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import {
   AgentInvocationId,
   AgentProfileName,
@@ -226,5 +227,43 @@ export class AgentInvocationRepository {
       .prepare(`SELECT * FROM agent_invocations WHERE runtime = ? ORDER BY started_at ASC`)
       .all(runtime) as Row[];
     return rows.map(rowToInvocation);
+  }
+
+  countConsecutiveProviderFailures(profile: AgentProfileName): number {
+    const rows = this.db
+      .prepare(
+        `SELECT id, outcome, contract_violations
+         FROM agent_invocations
+         WHERE profile = ? AND ended_at IS NOT NULL
+         ORDER BY started_at DESC, id DESC`,
+      )
+      .iterate(profile) as Iterable<{
+      id: string;
+      outcome: string | null;
+      contract_violations: string;
+    }>;
+
+    let count = 0;
+    for (const row of rows) {
+      let violations: string[] = [];
+      try {
+        violations = JSON.parse(row.contract_violations) as string[];
+      } catch {
+        violations = [];
+      }
+
+      const isProviderFailure =
+        row.outcome === 'failed' &&
+        Array.isArray(violations) &&
+        violations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR);
+
+      if (isProviderFailure) {
+        count++;
+      } else {
+        break;
+      }
+    }
+
+    return count;
   }
 }

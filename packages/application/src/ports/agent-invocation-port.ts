@@ -1,6 +1,7 @@
 import type {
   AgentInvocation,
   AgentInvocationId,
+  AgentProfileName,
   AgentRuntimeKind,
   PhaseName,
   RunId,
@@ -30,4 +31,5 @@ export interface AgentInvocationPort {
   listByRun(runId: RunId): AgentInvocation[];
   listByRunAndPhase(runId: RunId, phaseId: PhaseName): AgentInvocation[];
   listByRuntime(runtime: AgentRuntimeKind): AgentInvocation[];
+  countConsecutiveProviderFailures(profile: AgentProfileName): number;
 }
