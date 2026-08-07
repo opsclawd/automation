@@ -1,4 +1,5 @@
 import type { Db } from './database.js';
+import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import {
   AgentInvocationId,
   AgentProfileName,
@@ -236,7 +237,11 @@ export class AgentInvocationRepository {
          WHERE profile = ? AND ended_at IS NOT NULL
          ORDER BY started_at DESC, id DESC`,
       )
-      .all(profile) as { id: string; outcome: string | null; contract_violations: string }[];
+      .iterate(profile) as Iterable<{
+      id: string;
+      outcome: string | null;
+      contract_violations: string;
+    }>;
 
     let count = 0;
     for (const row of rows) {
@@ -250,7 +255,7 @@ export class AgentInvocationRepository {
       const isProviderFailure =
         row.outcome === 'failed' &&
         Array.isArray(violations) &&
-        violations.includes('provider_error');
+        violations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR);
 
       if (isProviderFailure) {
         count++;

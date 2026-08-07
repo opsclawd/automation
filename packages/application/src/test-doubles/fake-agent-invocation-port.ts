@@ -6,6 +6,7 @@ import type {
   PhaseName,
   RunId,
 } from '@ai-sdlc/domain';
+import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
 import type {
   AgentInvocationPort,
   AgentInvocationUpdatePatch,
@@ -69,7 +70,8 @@ export class FakeAgentInvocationPort implements AgentInvocationPort {
     let count = 0;
     for (const row of completedProfileRows) {
       const isProviderFailure =
-        row.outcome === 'failed' && row.contractViolations?.includes('provider_error');
+        row.outcome === 'failed' &&
+        row.contractViolations?.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR);
 
       if (isProviderFailure) {
         count++;
