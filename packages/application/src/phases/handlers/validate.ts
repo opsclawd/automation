@@ -113,25 +113,16 @@ export class ValidateHandler implements PhaseHandler {
     }
 
     if (passed) {
-      let existingHeadSha: string | undefined;
       try {
-        const raw = await ctx.artifacts.read(ctx.runUuid, 'validation.headsha');
-        existingHeadSha = raw.trim();
+        const currentSha = await ctx.git.headCommitSha(ctx.cwd);
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: 'validate',
+          relativePath: 'validation.headsha',
+          contents: `${currentSha.trim()}\n`,
+        });
       } catch {
-        existingHeadSha = undefined;
-      }
-      if (!existingHeadSha) {
-        try {
-          const currentSha = await ctx.git.headCommitSha(ctx.cwd);
-          await ctx.artifacts.write({
-            runId: ctx.runUuid,
-            phaseId: 'validate',
-            relativePath: 'validation.headsha',
-            contents: `${currentSha.trim()}\n`,
-          });
-        } catch {
-          // non-fatal if headCommitSha fails or artifact write fails
-        }
+        // non-fatal if headCommitSha fails or artifact write fails
       }
 
       await ctx.artifacts.write({

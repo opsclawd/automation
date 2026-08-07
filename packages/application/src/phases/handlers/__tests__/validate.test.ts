@@ -271,7 +271,7 @@ describe('ValidateHandler', () => {
       ]);
     });
 
-    it('does not write failure.json on validation pass and writes validation.headsha if absent', async () => {
+    it('does not write failure.json on validation pass and writes validation.headsha', async () => {
       const { runValidation } = deps('passed');
       const { ctx, artifacts } = makeCtx();
       ctx.git.headByCwd.set('/tmp/wt', 'head-sha-123');
@@ -297,6 +297,30 @@ describe('ValidateHandler', () => {
         'validation.headsha',
       );
       expect(headsha.trim()).toBe('head-sha-123');
+    });
+
+    it('overwrites validation.headsha on subsequent successful validations', async () => {
+      const { runValidation } = deps('passed');
+      const { ctx, artifacts } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha-123');
+      const handler = new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+      });
+
+      await handler.run(ctx);
+
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha-456');
+      await handler.run(ctx);
+
+      const headsha = await artifacts.read(
+        '550e8400-e29b-41d4-a716-446655440000',
+        'validation.headsha',
+      );
+      expect(headsha.trim()).toBe('head-sha-456');
     });
 
     it('emits validate.artifact_write_failed when artifact write throws', async () => {
