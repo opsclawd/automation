@@ -90,7 +90,7 @@ describe('ValidateHandler clean-worktree gate', () => {
     expect(validation.lastInput).toBeUndefined();
   });
 
-  it('defers validation and writes failure.json when uncommitted source paths exist and fixValidateEnabled is true', async () => {
+  it('fails validation with canRetry false and does not write failure.json when uncommitted source paths exist, even if fixValidateEnabled is true', async () => {
     const { ctx, git, validation } = fixture;
     git.statusByCwd.set('/tmp/wt', ' M packages/application/src/a.ts\n');
     const handler = new ValidateHandler({
@@ -103,16 +103,15 @@ describe('ValidateHandler clean-worktree gate', () => {
 
     const result = await handler.run(ctx);
 
-    expect(result.outcome).toBe('deferred');
-    const content = await ctx.artifacts.read(
-      '550e8400-e29b-41d4-a716-446655440000',
-      'validate/failure.json',
-    );
-    const parsed = JSON.parse(content);
-    expect(parsed.phase).toBe('validate');
-    expect(parsed.kind).toBe('git_failed');
-    expect(parsed.canRetry).toBe(true);
-    expect(parsed.message).toContain('packages/application/src/a.ts');
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('git_failed');
+      expect(result.failure.canRetry).toBe(false);
+      expect(result.failure.message).toContain('packages/application/src/a.ts');
+    }
+    await expect(
+      ctx.artifacts.read('550e8400-e29b-41d4-a716-446655440000', 'validate/failure.json'),
+    ).rejects.toThrow();
     expect(validation.lastInput).toBeUndefined();
   });
 

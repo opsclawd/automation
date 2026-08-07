@@ -51,26 +51,12 @@ export class ValidateHandler implements PhaseHandler {
         phase: 'validate',
         kind: 'git_failed',
         message,
-        canRetry: Boolean(this.opts.fixValidateEnabled),
+        canRetry: false,
         suggestedAction:
           'Return to implementation and commit or discard the listed source changes.',
         artifacts: [],
         detectedAt: ctx.now(),
       };
-      if (this.opts.fixValidateEnabled) {
-        try {
-          await ctx.artifacts.write({
-            runId: ctx.runUuid,
-            phaseId: 'validate',
-            relativePath: 'validate/failure.json',
-            contents: JSON.stringify(failure, null, 2),
-          });
-        } catch {
-          emit('validate.artifact_write_failed', 'warn', 'failed to write failure.json artifact');
-        }
-        emit('validate.deferred', 'warn', message, { paths: dirtyPaths });
-        return { outcome: 'deferred' };
-      }
       emit('validate.failed', 'error', message, { paths: dirtyPaths });
       return { outcome: 'failed', failure };
     }
@@ -127,6 +113,27 @@ export class ValidateHandler implements PhaseHandler {
     }
 
     if (passed) {
+      let existingHeadSha: string | undefined;
+      try {
+        const raw = await ctx.artifacts.read(ctx.runUuid, 'validation.headsha');
+        existingHeadSha = raw.trim();
+      } catch {
+        existingHeadSha = undefined;
+      }
+      if (!existingHeadSha) {
+        try {
+          const currentSha = await ctx.git.headCommitSha(ctx.cwd);
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            phaseId: 'validate',
+            relativePath: 'validation.headsha',
+            contents: `${currentSha.trim()}\n`,
+          });
+        } catch {
+          // non-fatal if headCommitSha fails or artifact write fails
+        }
+      }
+
       await ctx.artifacts.write({
         runId: ctx.runUuid,
         phaseId: 'validate',

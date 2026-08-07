@@ -71,6 +71,34 @@ export class CreatePrHandler implements PhaseHandler {
       );
     }
 
+    let validationHeadSha: string | undefined;
+    try {
+      const rawHead = await ctx.artifacts.read(ctx.runUuid, 'validation.headsha');
+      validationHeadSha = rawHead.trim().split('\n')[0];
+    } catch {
+      validationHeadSha = undefined;
+    }
+
+    let currentHeadSha: string | undefined;
+    try {
+      currentHeadSha = (await ctx.git.headCommitSha(ctx.cwd)).trim();
+    } catch {
+      currentHeadSha = undefined;
+    }
+
+    if (!validationHeadSha || !currentHeadSha || validationHeadSha !== currentHeadSha) {
+      const msg = `Validation SHA (${validationHeadSha || 'missing'}) does not match current HEAD SHA (${currentHeadSha || 'unknown'}). PR creation blocked.`;
+      emit('create_pr.blocked', 'error', msg);
+      return this._fail(
+        ctx,
+        'validation_failed',
+        msg,
+        false,
+        'Re-run validation on current HEAD before creating a PR.',
+        writtenArtifacts,
+      );
+    }
+
     // ── Stage 1: Idempotency — reuse existing PR if pr-url.txt exists ──
     let prUrl: string | undefined;
     try {

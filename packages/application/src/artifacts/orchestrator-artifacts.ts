@@ -11,6 +11,7 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'review-loop-history.json',
   'implement-step-history-*.json',
   'compound-draft.md',
+  'compound.md',
   'validation.result',
   'result.json',
   'fix-validate-done.marker',

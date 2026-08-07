@@ -26,6 +26,7 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
       'review-loop-history.json',
       'implement-step-history-*.json',
       'compound-draft.md',
+      'compound.md',
       'validation.result',
       'result.json',
       'fix-validate-done.marker',

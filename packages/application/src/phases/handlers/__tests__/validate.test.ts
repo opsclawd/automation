@@ -271,9 +271,10 @@ describe('ValidateHandler', () => {
       ]);
     });
 
-    it('does not write failure.json on validation pass', async () => {
+    it('does not write failure.json on validation pass and writes validation.headsha if absent', async () => {
       const { runValidation } = deps('passed');
       const { ctx, artifacts } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha-123');
       await new ValidateHandler({
         runValidation,
         commands: ['pnpm build'],
@@ -283,13 +284,19 @@ describe('ValidateHandler', () => {
       }).run(ctx);
 
       const list = await artifacts.list('550e8400-e29b-41d4-a716-446655440000');
-      expect(list).toHaveLength(1);
-      expect(list[0]?.relativePath).toBe('validation.result');
+      expect(list).toHaveLength(2);
+      const paths = list.map((a) => a.relativePath).sort();
+      expect(paths).toEqual(['validation.headsha', 'validation.result']);
       const contents = await artifacts.read(
         '550e8400-e29b-41d4-a716-446655440000',
         'validation.result',
       );
       expect(contents).toBe('passed\n');
+      const headsha = await artifacts.read(
+        '550e8400-e29b-41d4-a716-446655440000',
+        'validation.headsha',
+      );
+      expect(headsha.trim()).toBe('head-sha-123');
     });
 
     it('emits validate.artifact_write_failed when artifact write throws', async () => {

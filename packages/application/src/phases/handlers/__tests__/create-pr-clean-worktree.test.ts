@@ -19,6 +19,11 @@ describe('CreatePrHandler clean-worktree gate', () => {
       relativePath: 'validation.result',
       contents: 'passed\n',
     });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'validation.headsha',
+      contents: 'base-sha\n',
+    });
 
     github = new FakeGitHubPort();
     github.issues.set('acme/widgets/7', {
