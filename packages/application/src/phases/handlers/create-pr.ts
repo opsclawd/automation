@@ -3,6 +3,7 @@ import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError, type Artifact } from '../../ports/artifact-store.js';
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
+import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
 
 export interface CreatePrHandlerOpts {
   headBranch: (ctx: PhaseHandlerContext) => string;
@@ -17,6 +18,37 @@ export class CreatePrHandler implements PhaseHandler {
     emit('create_pr.started', 'info', 'starting create-pr');
 
     const writtenArtifacts: string[] = [];
+
+    // ── Stage -1: Clean-worktree gate — dirty source blocks PR creation ──
+    let rawStatus: string;
+    try {
+      rawStatus = await ctx.git.status(ctx.cwd);
+    } catch (e) {
+      const msg = `failed to inspect git status: ${(e as Error).message}`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        false,
+        'Check git repository state and permissions.',
+        writtenArtifacts,
+      );
+    }
+
+    const dirtyPaths = uncommittedSourcePaths(rawStatus);
+    if (dirtyPaths.length > 0) {
+      const msg = `PR creation blocked by uncommitted source changes: ${dirtyPaths.join(', ')}`;
+      emit('create_pr.blocked', 'error', msg, { paths: dirtyPaths });
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        false,
+        'Return to implementation and commit or discard the listed source changes.',
+        writtenArtifacts,
+      );
+    }
 
     // ── Stage 0: Hard gate — validation must pass before creating a PR (#514) ──
     let validationResult: string | undefined;
@@ -35,6 +67,34 @@ export class CreatePrHandler implements PhaseHandler {
         msg,
         false,
         'Re-run the issue to fix validation failures before creating a PR.',
+        writtenArtifacts,
+      );
+    }
+
+    let validationHeadSha: string | undefined;
+    try {
+      const rawHead = await ctx.artifacts.read(ctx.runUuid, 'validation.headsha');
+      validationHeadSha = rawHead.trim().split('\n')[0];
+    } catch {
+      validationHeadSha = undefined;
+    }
+
+    let currentHeadSha: string | undefined;
+    try {
+      currentHeadSha = (await ctx.git.headCommitSha(ctx.cwd)).trim();
+    } catch {
+      currentHeadSha = undefined;
+    }
+
+    if (!validationHeadSha || !currentHeadSha || validationHeadSha !== currentHeadSha) {
+      const msg = `Validation SHA (${validationHeadSha || 'missing'}) does not match current HEAD SHA (${currentHeadSha || 'unknown'}). PR creation blocked.`;
+      emit('create_pr.blocked', 'error', msg);
+      return this._fail(
+        ctx,
+        'validation_failed',
+        msg,
+        false,
+        'Re-run validation on current HEAD before creating a PR.',
         writtenArtifacts,
       );
     }

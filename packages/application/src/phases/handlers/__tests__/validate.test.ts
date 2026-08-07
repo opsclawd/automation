@@ -4,6 +4,7 @@ import { RunValidation } from '../../../run-validation.js';
 import { FakeValidationPort } from '../../../test-doubles/fake-validation-port.js';
 import { FakeValidationRunRepository } from '../../../test-doubles/fake-validation-run-repository.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
+import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { ValidationCommandResult } from '../../../ports/validation-port.js';
@@ -53,6 +54,7 @@ function deps(passing: 'passed' | 'failed') {
 function makeCtx() {
   const events: OrchestratorEvent[] = [];
   const artifacts = new FakeArtifactStore();
+  const git = new FakeGitPort();
   const ctx = {
     runId: 'human-readable-run',
     runUuid: '550e8400-e29b-41d4-a716-446655440000',
@@ -61,7 +63,7 @@ function makeCtx() {
     cwd: '/tmp/wt',
     artifacts,
     github: {} as PhaseHandlerContext['github'],
-    git: {} as PhaseHandlerContext['git'],
+    git,
     agent: {} as PhaseHandlerContext['agent'],
     events: {
       publish: (_u: string, e: OrchestratorEvent) => {
@@ -269,9 +271,10 @@ describe('ValidateHandler', () => {
       ]);
     });
 
-    it('does not write failure.json on validation pass', async () => {
+    it('does not write failure.json on validation pass and writes validation.headsha', async () => {
       const { runValidation } = deps('passed');
       const { ctx, artifacts } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha-123');
       await new ValidateHandler({
         runValidation,
         commands: ['pnpm build'],
@@ -281,13 +284,43 @@ describe('ValidateHandler', () => {
       }).run(ctx);
 
       const list = await artifacts.list('550e8400-e29b-41d4-a716-446655440000');
-      expect(list).toHaveLength(1);
-      expect(list[0]?.relativePath).toBe('validation.result');
+      expect(list).toHaveLength(2);
+      const paths = list.map((a) => a.relativePath).sort();
+      expect(paths).toEqual(['validation.headsha', 'validation.result']);
       const contents = await artifacts.read(
         '550e8400-e29b-41d4-a716-446655440000',
         'validation.result',
       );
       expect(contents).toBe('passed\n');
+      const headsha = await artifacts.read(
+        '550e8400-e29b-41d4-a716-446655440000',
+        'validation.headsha',
+      );
+      expect(headsha.trim()).toBe('head-sha-123');
+    });
+
+    it('overwrites validation.headsha on subsequent successful validations', async () => {
+      const { runValidation } = deps('passed');
+      const { ctx, artifacts } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha-123');
+      const handler = new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+      });
+
+      await handler.run(ctx);
+
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha-456');
+      await handler.run(ctx);
+
+      const headsha = await artifacts.read(
+        '550e8400-e29b-41d4-a716-446655440000',
+        'validation.headsha',
+      );
+      expect(headsha.trim()).toBe('head-sha-456');
     });
 
     it('emits validate.artifact_write_failed when artifact write throws', async () => {

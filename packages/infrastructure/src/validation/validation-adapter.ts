@@ -73,6 +73,11 @@ export function bareScriptName(command: string): string | undefined {
   return name;
 }
 
+function mustBypassTurboCache(commandText: string): boolean {
+  const script = bareScriptName(commandText);
+  return script === 'test' || script === 'typecheck';
+}
+
 function packageHasScript(cwd: string, script: string): boolean {
   try {
     const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf-8')) as {
@@ -109,6 +114,9 @@ export class ProcessValidationAdapter implements ValidationPort {
       const stdoutAbs = join(input.logDir, `${i}-${slug}.stdout.log`);
       const stderrAbs = join(input.logDir, `${i}-${slug}.stderr.log`);
 
+      writeFileSync(stdoutAbs, '');
+      writeFileSync(stderrAbs, '');
+
       const started = Date.now();
       let stdout = '';
       let stderr = '';
@@ -138,6 +146,7 @@ export class ProcessValidationAdapter implements ValidationPort {
       }
 
       try {
+        const forceTurbo = mustBypassTurboCache(commandText);
         const options: Options = {
           cwd: input.cwd,
           reject: false,
@@ -146,6 +155,7 @@ export class ProcessValidationAdapter implements ValidationPort {
           env: {
             ...process.env,
             ...(input.env ?? {}),
+            ...(forceTurbo ? { TURBO_FORCE: 'true' } : {}),
           },
         };
 

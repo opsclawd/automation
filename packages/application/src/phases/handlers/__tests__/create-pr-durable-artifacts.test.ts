@@ -74,6 +74,11 @@ async function build() {
   });
   await artifacts.write({
     runId: ctx.runUuid,
+    relativePath: 'validation.headsha',
+    contents: 'base-sha\n',
+  });
+  await artifacts.write({
+    runId: ctx.runUuid,
     relativePath: 'implementation-log.md',
     contents: '# Implementation Log\nDurable implementation summary.\n\nMore details.\n',
   });

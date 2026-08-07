@@ -12,11 +12,16 @@ import type { OrchestratorEvent } from '@ai-sdlc/shared';
 /** IMPORTANT: must NOT seed artifacts — absence/fallback tests rely on empty store. */
 async function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
   const artifacts = new FakeArtifactStore();
-  // Seed validation.result to 'passed' by default so tests pass Stage 0 gate
+  // Seed validation.result and validation.headsha by default so tests pass Stage 0 gate
   await artifacts.write({
     runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
     relativePath: 'validation.result',
     contents: 'passed\n',
+  });
+  await artifacts.write({
+    runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    relativePath: 'validation.headsha',
+    contents: 'base-sha\n',
   });
 
   const github = new FakeGitHubPort();
@@ -263,6 +268,52 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(git.pushes).toHaveLength(0);
     expect(github.createdPrInputs).toHaveLength(0);
     expect(github.labelChanges).toHaveLength(0);
+  });
+
+  it('fails when validation.headsha is absent', async () => {
+    const { ctx, events, git, github } = await build();
+    const storeNoHeadSha = new FakeArtifactStore();
+    await storeNoHeadSha.write({
+      runId: ctx.runUuid,
+      relativePath: 'validation.result',
+      contents: 'passed\n',
+    });
+    const ctxNoHeadSha = { ...ctx, artifacts: storeNoHeadSha } as unknown as PhaseHandlerContext;
+
+    const res = await HANDLER.run(ctxNoHeadSha);
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('validation_failed');
+      expect(res.failure.message).toContain(
+        'Validation SHA (missing) does not match current HEAD SHA (base-sha)',
+      );
+    }
+
+    const blockedEvent = events.find((e) => e.type === 'create_pr.blocked');
+    expect(blockedEvent).toBeDefined();
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+  });
+
+  it('fails when validation.headsha does not match current HEAD SHA', async () => {
+    const { artifacts, ctx, git, github } = await build();
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'validation.headsha',
+      contents: 'old-sha\n',
+    });
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('validation_failed');
+      expect(res.failure.message).toContain(
+        'Validation SHA (old-sha) does not match current HEAD SHA (base-sha)',
+      );
+    }
+
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
   });
 
   it('correctly marks failed validation steps from validate.log sentinels', async () => {
