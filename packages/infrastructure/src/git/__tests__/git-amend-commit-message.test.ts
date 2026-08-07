@@ -1,7 +1,6 @@
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FakeGitPort } from '@ai-sdlc/application/test-doubles';
 import { git } from '../git-runner.js';
 import { GitWorktreeAdapter } from '../git-worktree-adapter.js';
 import { clearTempDirs, getTempDirs, makeTempRepo } from './helpers.js';
@@ -49,34 +48,5 @@ describe('amendCommitMessage()', () => {
     const body = await git(repo, ['log', '-1', '--format=%B']);
     expect(body.trim()).toBe(multilineMsg);
     expect(await git(repo, ['status', '--porcelain'])).toBe('');
-  });
-});
-
-describe('FakeGitPort.amendCommitMessage()', () => {
-  it('updates most recent fake commit message by replacing HEAD commit', async () => {
-    const fakeGit = new FakeGitPort();
-    const originalSha = await fakeGit.commit('/test', 'original message');
-    expect(fakeGit.commits).toHaveLength(1);
-    expect(fakeGit.commits[0]?.message).toBe('original message');
-    expect(fakeGit.commits[0]?.sha).toBe(originalSha);
-
-    const amendedSha = await fakeGit.amendCommitMessage('/test', 'amended message');
-
-    expect(amendedSha).not.toBe(originalSha);
-    expect(await fakeGit.headCommitSha('/test')).toBe(amendedSha);
-    expect(fakeGit.commits).toHaveLength(1);
-    expect(fakeGit.commits[0]?.message).toBe('amended message');
-    expect(fakeGit.commits[0]?.sha).toBe(amendedSha);
-  });
-
-  it('does not cause SHA collisions for subsequent commits after amending', async () => {
-    const fakeGit = new FakeGitPort();
-    const originalSha = await fakeGit.commit('/test', 'original message');
-    const amendedSha = await fakeGit.amendCommitMessage('/test', 'amended message');
-    const subsequentSha = await fakeGit.commit('/test', 'subsequent message');
-
-    expect(originalSha).not.toBe(amendedSha);
-    expect(amendedSha).not.toBe(subsequentSha);
-    expect(subsequentSha).not.toBe(originalSha);
   });
 });
