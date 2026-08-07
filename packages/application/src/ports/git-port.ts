@@ -36,7 +36,7 @@ export interface GitPort {
   diffStat(cwd: string, base: string, head?: string): Promise<string>;
   addAll(cwd: string): Promise<void>;
   commit(cwd: string, message: string): Promise<string>;
-  amendCommitMessage?(cwd: string, message: string): Promise<string>;
+  amendCommitMessage(cwd: string, message: string): Promise<string>;
   push(input: PushInput): Promise<void>;
   remoteRef(input: { cwd: string; remote: string; ref: string }): Promise<string | undefined>;
   isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean>;

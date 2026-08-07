@@ -53,17 +53,19 @@ describe('amendCommitMessage()', () => {
 });
 
 describe('FakeGitPort.amendCommitMessage()', () => {
-  it('updates most recent fake commit message and records amended commit', async () => {
+  it('updates most recent fake commit message by replacing HEAD commit', async () => {
     const fakeGit = new FakeGitPort();
     const originalSha = await fakeGit.commit('/test', 'original message');
+    expect(fakeGit.commits).toHaveLength(1);
     expect(fakeGit.commits[0]?.message).toBe('original message');
+    expect(fakeGit.commits[0]?.sha).toBe(originalSha);
 
     const amendedSha = await fakeGit.amendCommitMessage('/test', 'amended message');
 
     expect(amendedSha).not.toBe(originalSha);
     expect(await fakeGit.headCommitSha('/test')).toBe(amendedSha);
+    expect(fakeGit.commits).toHaveLength(1);
     expect(fakeGit.commits[0]?.message).toBe('amended message');
-    expect(fakeGit.commits[1]?.message).toBe('amended message');
-    expect(fakeGit.commits[1]?.sha).toBe(amendedSha);
+    expect(fakeGit.commits[0]?.sha).toBe(amendedSha);
   });
 });

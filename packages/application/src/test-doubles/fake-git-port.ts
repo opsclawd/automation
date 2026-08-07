@@ -69,12 +69,20 @@ export class FakeGitPort implements GitPort {
   }
 
   async amendCommitMessage(cwd: string, message: string): Promise<string> {
-    const lastCommit = [...this.commits].reverse().find((c) => c.cwd === cwd);
-    if (lastCommit) {
-      lastCommit.message = message;
+    let lastIndex = -1;
+    for (let i = this.commits.length - 1; i >= 0; i--) {
+      if (this.commits[i]?.cwd === cwd) {
+        lastIndex = i;
+        break;
+      }
     }
     const sha = `fake-sha-${this.commits.length + 1}`;
-    this.commits.push({ cwd, message, sha });
+    const commit = { cwd, message, sha };
+    if (lastIndex !== -1) {
+      this.commits[lastIndex] = commit;
+    } else {
+      this.commits.push(commit);
+    }
     this.headByCwd.set(cwd, sha);
     return sha;
   }

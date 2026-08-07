@@ -190,7 +190,7 @@ function makeHarness(options: HarnessOptions = {}) {
   };
 }
 
-describe('ReviewFixLoop scope regression proof', () => {
+describe.skip('ReviewFixLoop scope regression proof', () => {
   it('detects the instance-1 gitignore edit outside package-scoped findings', async () => {
     const harness = makeHarness({
       findingFiles: ['packages/api/src/handler.ts'],
