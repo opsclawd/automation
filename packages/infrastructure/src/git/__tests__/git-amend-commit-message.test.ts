@@ -68,4 +68,15 @@ describe('FakeGitPort.amendCommitMessage()', () => {
     expect(fakeGit.commits[0]?.message).toBe('amended message');
     expect(fakeGit.commits[0]?.sha).toBe(amendedSha);
   });
+
+  it('does not cause SHA collisions for subsequent commits after amending', async () => {
+    const fakeGit = new FakeGitPort();
+    const originalSha = await fakeGit.commit('/test', 'original message');
+    const amendedSha = await fakeGit.amendCommitMessage('/test', 'amended message');
+    const subsequentSha = await fakeGit.commit('/test', 'subsequent message');
+
+    expect(originalSha).not.toBe(amendedSha);
+    expect(amendedSha).not.toBe(subsequentSha);
+    expect(subsequentSha).not.toBe(originalSha);
+  });
 });

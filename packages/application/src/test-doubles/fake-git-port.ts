@@ -61,8 +61,10 @@ export class FakeGitPort implements GitPort {
     // No-op for now, could track calls if needed
   }
 
+  private shaCounter = 0;
+
   async commit(cwd: string, message: string): Promise<string> {
-    const sha = `fake-sha-${this.commits.length + 1}`;
+    const sha = `fake-sha-${++this.shaCounter}`;
     this.commits.push({ cwd, message, sha });
     this.headByCwd.set(cwd, sha);
     return sha;
@@ -76,7 +78,7 @@ export class FakeGitPort implements GitPort {
         break;
       }
     }
-    const sha = `fake-sha-${this.commits.length + 1}`;
+    const sha = `fake-sha-${++this.shaCounter}`;
     const commit = { cwd, message, sha };
     if (lastIndex !== -1) {
       this.commits[lastIndex] = commit;
