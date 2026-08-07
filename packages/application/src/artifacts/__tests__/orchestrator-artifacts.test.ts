@@ -6,6 +6,7 @@ import {
   orchestratorArtifactPathSet,
   isOrchestratorArtifactPath,
   orchestratorExcludePatterns,
+  uncommittedSourcePaths,
 } from '../orchestrator-artifacts.js';
 
 describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => {
@@ -29,6 +30,7 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
       'result.json',
       'fix-validate-done.marker',
       'plan-review-passed.marker',
+      'pr-summary.md',
     ];
     expect(ORCHESTRATOR_ARTIFACT_PATHS).toEqual(expected);
     expect(Object.isFrozen(ORCHESTRATOR_ARTIFACT_PATHS)).toBe(true);
@@ -55,5 +57,39 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
       ...PROMPT_ORCHESTRATOR_ARTIFACT_PATHS,
     ]);
     expect(Object.isFrozen(patterns)).toBe(true);
+  });
+});
+
+describe('uncommittedSourcePaths', () => {
+  it('returns empty array when status is empty', () => {
+    expect(uncommittedSourcePaths('')).toEqual([]);
+  });
+
+  it('filters out orchestrator artifacts and patch files at root', () => {
+    const status = [
+      ' M plan.md',
+      '?? implementation-log-task-1.md',
+      '?? changes.patch',
+      ' M pr-summary.md',
+    ].join('\n');
+    expect(uncommittedSourcePaths(status)).toEqual([]);
+  });
+
+  it('preserves nested files even if they match root artifact names', () => {
+    const status = [' M src/plan.md', '?? docs/changes.patch'].join('\n');
+    expect(uncommittedSourcePaths(status)).toEqual(['docs/changes.patch', 'src/plan.md']);
+  });
+
+  it('handles renames, backslashes, duplicates and sorts the output', () => {
+    const status = [
+      'R  old\\path.ts -> new\\path.ts',
+      ' M packages\\app.ts',
+      ' M packages/app.ts',
+    ].join('\n');
+    expect(uncommittedSourcePaths(status)).toEqual([
+      'new/path.ts',
+      'old/path.ts',
+      'packages/app.ts',
+    ]);
   });
 });

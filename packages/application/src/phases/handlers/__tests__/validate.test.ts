@@ -4,6 +4,7 @@ import { RunValidation } from '../../../run-validation.js';
 import { FakeValidationPort } from '../../../test-doubles/fake-validation-port.js';
 import { FakeValidationRunRepository } from '../../../test-doubles/fake-validation-run-repository.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
+import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { ValidationCommandResult } from '../../../ports/validation-port.js';
@@ -53,6 +54,7 @@ function deps(passing: 'passed' | 'failed') {
 function makeCtx() {
   const events: OrchestratorEvent[] = [];
   const artifacts = new FakeArtifactStore();
+  const git = new FakeGitPort();
   const ctx = {
     runId: 'human-readable-run',
     runUuid: '550e8400-e29b-41d4-a716-446655440000',
@@ -61,7 +63,7 @@ function makeCtx() {
     cwd: '/tmp/wt',
     artifacts,
     github: {} as PhaseHandlerContext['github'],
-    git: {} as PhaseHandlerContext['git'],
+    git,
     agent: {} as PhaseHandlerContext['agent'],
     events: {
       publish: (_u: string, e: OrchestratorEvent) => {

@@ -466,6 +466,8 @@ export function createComposedOrchestrationHarness(
 
   const config = opts.agentConfig ?? makeMinimalAgentConfig(opts.validationCommands ?? ['echo ok']);
   writeFileSync(path.join(targetRoot, '.ai-orchestrator.json'), JSON.stringify(config));
+  execFileSync('git', ['add', '.'], { cwd: targetRoot });
+  execFileSync('git', ['commit', '-m', 'add harness setup files'], { cwd: targetRoot });
 
   const scriptPath = path.join(automationRoot, 'fake.sh');
   writeFileSync(scriptPath, '#!/usr/bin/env bash\necho ok\nexit 0\n');

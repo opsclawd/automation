@@ -3,6 +3,7 @@ import type { Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import type { RunValidation } from '../../run-validation.js';
+import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
 
 export interface ValidateHandlerOpts {
   runValidation: RunValidation;
@@ -22,6 +23,43 @@ export class ValidateHandler implements PhaseHandler {
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
     emit('validate.started', 'info', 'validate started');
+
+    let statusOutput: string;
+    try {
+      statusOutput = await ctx.git.status(ctx.cwd);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: 'validate',
+        kind: 'git_failed',
+        message: `failed to inspect git status: ${message}`,
+        canRetry: false,
+        suggestedAction: 'Check git repository state and permissions.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+      emit('validate.failed', 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+
+    const dirtyPaths = uncommittedSourcePaths(statusOutput);
+    if (dirtyPaths.length > 0) {
+      const message = `Validation blocked by uncommitted source changes: ${dirtyPaths.join(', ')}`;
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: 'validate',
+        kind: 'git_failed',
+        message,
+        canRetry: false,
+        suggestedAction:
+          'Return to implementation and commit or discard the listed source changes.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+      emit('validate.failed', 'error', message, { paths: dirtyPaths });
+      return { outcome: 'failed', failure };
+    }
 
     if (this.opts.commands.length === 0) {
       const message = 'no validation commands configured (validation.commands is empty)';

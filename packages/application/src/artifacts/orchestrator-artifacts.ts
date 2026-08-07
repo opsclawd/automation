@@ -15,6 +15,7 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'result.json',
   'fix-validate-done.marker',
   'plan-review-passed.marker',
+  'pr-summary.md',
 ] as const);
 
 export const ORCHESTRATOR_PATCH_EXCLUDE = '*.patch';
@@ -33,6 +34,25 @@ export function orchestratorExcludePatterns(): readonly string[] {
     ORCHESTRATOR_PATCH_EXCLUDE,
     ...PROMPT_ORCHESTRATOR_ARTIFACT_PATHS,
   ]);
+}
+
+function matchesRootPattern(path: string, pattern: string): boolean {
+  const regexString =
+    '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$';
+  return new RegExp(regexString).test(path);
+}
+
+export function uncommittedSourcePaths(status: string): string[] {
+  const patterns = orchestratorExcludePatterns();
+  const sourcePaths = status
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((line) => (line.length > 3 ? line.slice(3).split(' -> ') : []))
+    .map((path) => path.replace(/\\/g, '/'))
+    .filter((path) => path.length > 0)
+    .filter((path) => !patterns.some((pattern) => matchesRootPattern(path, pattern)));
+
+  return [...new Set(sourcePaths)].sort();
 }
 
 export const PROMPT_ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([

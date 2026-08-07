@@ -40,6 +40,7 @@ validation.result
 result.json
 fix-validate-done.marker
 plan-review-passed.marker
+pr-summary.md
 implementation-log-task-*.md
 task-context-step-*.md
 plan.md
