@@ -54,8 +54,9 @@ export type VerdictOutcome<V> =
       ok: true;
       verdict: V;
       overridden?: boolean;
-      offendingFindings?: Array<{ severity: string; summary: string }>;
+      offendingFindings?: Array<{ severity: string; summary: string; files?: string[] }>;
       rebuttal?: string;
+      outOfScopeReasons?: Record<string, string>;
     }
   | {
       ok: false;
@@ -148,6 +149,9 @@ export async function readFixVerdict(
   return {
     ok: true,
     verdict: fixResult.result,
+    ...(fixResult.out_of_scope_reasons && Object.keys(fixResult.out_of_scope_reasons).length > 0
+      ? { outOfScopeReasons: fixResult.out_of_scope_reasons }
+      : {}),
     // The schema requires a non-empty rebuttal for done_no_fixes_needed;
     // carry it so the loop can append it to code-review.md when accepted.
     ...(fixResult.result === 'done_no_fixes_needed' ? { rebuttal: fixResult.rebuttal } : {}),

@@ -2694,6 +2694,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           deterministicDiagnostic?: string;
           attemptKind?: 'standard' | 'deterministic';
           reconciliationContext?: string;
+          allowedFiles?: string[];
         },
       ): Promise<FixStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
@@ -2706,6 +2707,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const fixPrompt = buildReviewFixFixPrompt({
           cwd: ctx.cwd,
           repoId: ctx.repoId,
+          allowedFiles: opts.allowedFiles,
           historyContext: opts.historyContext,
           architectPlan: opts.architectPlan,
           useFallback: opts.useFallback,
@@ -2843,6 +2845,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           ...(verdict.ok && verdict.verdict !== undefined ? { verdict: verdict.verdict } : {}),
           ...(headBeforeFix !== undefined ? { headBeforeFix } : {}),
           ...(verdict.ok && verdict.rebuttal !== undefined ? { rebuttal: verdict.rebuttal } : {}),
+          ...(verdict.ok && verdict.outOfScopeReasons !== undefined
+            ? { outOfScopeReasons: verdict.outOfScopeReasons }
+            : {}),
           ...(!verdict.ok
             ? {
                 classification: verdict.classification,
@@ -4264,6 +4269,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? {
                 verdict: fixVerdict.verdict,
                 ...(fixVerdict.rebuttal ? { rebuttal: fixVerdict.rebuttal } : {}),
+                ...(fixVerdict.outOfScopeReasons
+                  ? { outOfScopeReasons: fixVerdict.outOfScopeReasons }
+                  : {}),
               }
             : {
                 classification: fixVerdict.classification,

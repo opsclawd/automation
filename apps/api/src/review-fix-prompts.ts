@@ -29,6 +29,7 @@ export interface BuildReviewPromptInput {
 export interface BuildFixPromptInput {
   cwd: string;
   repoId: string;
+  allowedFiles?: string[] | undefined;
   historyContext?: string | undefined;
   architectPlan?: ArchitectPlan | undefined;
   useFallback: boolean;
@@ -70,7 +71,8 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
     '- low: style, formatting, minor improvements',
     '',
     'After writing the review, write a result.json file with:',
-    '{ "result": "pass" | "fail", "findings": [{ "severity": "...", "summary": "..." }] }',
+    '{\n  "result": "pass" | "fail",\n  "findings": [\n    {\n      "severity": "high",\n      "summary": "Missing guard",\n      "files": ["packages/application/src/example.ts"]\n    }\n  ]\n}',
+    'Every finding must list one or more exact repository-relative paths in the "files" array, without line suffixes.',
     'Use "pass" when there are no significant findings, "fail" when changes are needed.',
     '',
   ];
@@ -178,6 +180,17 @@ export function buildReviewFixFixPrompt(input: BuildFixPromptInput): string {
     'Review findings: ./code-review.md',
     '',
   ];
+
+  if (input.allowedFiles && input.allowedFiles.length > 0) {
+    sections.push(
+      '## FINDING FILE SCOPE',
+      'The findings are anchored to the following repository-relative files:',
+      ...input.allowedFiles.map((f) => `- ${f}`),
+      '',
+      'Adjacent edits outside this set are allowed when justified. However, for every edited path outside this set, you MUST provide an entry in `out_of_scope_reasons` mapping the path to a brief justification.',
+      '',
+    );
+  }
 
   if (input.historyContext) {
     sections.push(input.historyContext);

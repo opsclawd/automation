@@ -222,3 +222,25 @@ describe('buildWholePrArbiterPrompt', () => {
     expect(prompt).toContain('## FIX DELTA');
   });
 });
+
+describe('prompt contract consistency for finding anchors and fixer reasons', () => {
+  it('renders matching reviewer anchors and fixer scope instructions', () => {
+    const reviewPrompt = buildReviewFixReviewPrompt({
+      cwd: '/test/cwd',
+      repoId: 'test-repo',
+      defaultBranch: 'main',
+    });
+    expect(reviewPrompt).toContain('"files": ["packages/application/src/example.ts"]');
+    expect(reviewPrompt).toMatch(/repository-relative/i);
+
+    const fixPrompt = buildReviewFixFixPrompt({
+      cwd: '/test/cwd',
+      repoId: 'test-repo',
+      useFallback: false,
+      allowedFiles: ['packages/application/src/example.ts'],
+    });
+    expect(fixPrompt).toContain('## FINDING FILE SCOPE');
+    expect(fixPrompt).toContain('packages/application/src/example.ts');
+    expect(fixPrompt).toContain('out_of_scope_reasons');
+  });
+});
