@@ -43,6 +43,12 @@ import type {
   DispositionHistoryEntry,
 } from '../review-state/types.js';
 import { fingerprintFinding } from '../review-state/fingerprint.js';
+import {
+  deriveAllowedFiles,
+  assessChangedFiles,
+  formatScopeWarning,
+  buildFindingCommitMessage,
+} from './review-fix-scope.js';
 
 async function computeNewState(
   prevState: ReviewDimensionState | undefined,
@@ -171,7 +177,7 @@ export class ReviewFixLoop {
     let lastIterationHadFixCommit = false;
     let outstandingFailedRevalidation = false;
     let lastPostFixGateFailed = false;
-    let lastOffendingFindings: Array<{ severity: string; summary: string }> = [];
+    let lastOffendingFindings: Array<{ severity: string; summary: string; files?: string[] }> = [];
     const states = deps.reviewStateRepository?.listDimensionStates(
       String(input.runId),
       String(input.phaseId),
@@ -181,6 +187,7 @@ export class ReviewFixLoop {
     let lastReviewedCommitSha = integrationState?.latestSnapshot?.identity;
     let lastFixVerdict: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix' | undefined;
     let pendingReconciliationContext: string | undefined;
+    let pendingScopeReviewContext: string | undefined;
     const findingHistory: Array<Set<string>> = [];
     let headRevalidated = true;
     const unfoundedHistory: FindingHistoryEntry[] = [];
@@ -244,6 +251,7 @@ export class ReviewFixLoop {
         const escalateForFixFailures =
           consecutiveFixFailures >= 2 && input.fixFallbackProfile !== undefined;
         const useFallback = escalateForFixFailures;
+        const allowedFiles = deriveAllowedFiles(lastOffendingFindings, input.cwd);
         const fix = await deps.runFix(ctx, {
           useFallback,
           ...(useFallback && lastFixInvocationId !== undefined
@@ -253,6 +261,7 @@ export class ReviewFixLoop {
           ...(fixerHistoryContext ? { historyContext: fixerHistoryContext } : {}),
           deterministicDiagnostic: gateResult.output,
           attemptKind: 'deterministic',
+          ...(allowedFiles.length > 0 ? { allowedFiles } : {}),
         });
         lastFixInvocationId = fix.invocationId;
         lastFixVerdict = fix.verdict;
@@ -347,6 +356,19 @@ export class ReviewFixLoop {
               cwd: ctx.cwd,
               expectedHead: fix.headBeforeFix,
             });
+            if (verification.kind === 'advanced') {
+              const scopeResult = await this.finalizeScopeAndCommitMessage({
+                ctx,
+                loopInput: input,
+                headBeforeFix: fix.headBeforeFix,
+                headAfterFix: verification.headAfterFix,
+                findings: lastOffendingFindings,
+                ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
+              });
+              if (scopeResult.pendingScopeWarning) {
+                pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+              }
+            }
             if (verification.kind === 'uncommitted_changes') {
               this.emit(
                 input,
@@ -373,6 +395,17 @@ export class ReviewFixLoop {
                   committedSha = await this.deps.git!.commit(ctx.cwd, message);
                 } catch {}
                 if (committedSha) {
+                  const scopeResult = await this.finalizeScopeAndCommitMessage({
+                    ctx,
+                    loopInput: input,
+                    headBeforeFix: fix.headBeforeFix ?? 'HEAD',
+                    headAfterFix: committedSha,
+                    findings: lastOffendingFindings,
+                    ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
+                  });
+                  if (scopeResult.pendingScopeWarning) {
+                    pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+                  }
                   autoCommitted = true;
                   lastIterationHadFixCommit = true;
                   headRevalidated = false;
@@ -572,11 +605,19 @@ export class ReviewFixLoop {
         },
       );
       const historyContext = await this.readHistoryContext(ctx, 'reviewer', input);
+      let combinedHistoryContext = historyContext;
+      if (pendingScopeReviewContext) {
+        combinedHistoryContext = historyContext
+          ? `${historyContext}\n\n${pendingScopeReviewContext}`
+          : pendingScopeReviewContext;
+      }
+      pendingScopeReviewContext = undefined;
+
       const reviewMode: ReviewMode =
         iterationIndex === 1 ? 'integration_full' : 'intermediate_delta';
       const reviewOptions = {
         ...(gateResult && gateResult.outcome === 'pass' ? { gateResult } : {}),
-        ...(historyContext ? { historyContext } : {}),
+        ...(combinedHistoryContext ? { historyContext: combinedHistoryContext } : {}),
         ...(iterationIndex >= 2 && lastReviewedCommitSha && (opts.deltaScopedReReview ?? true)
           ? { prevReviewedCommitSha: lastReviewedCommitSha }
           : {}),
@@ -756,6 +797,7 @@ export class ReviewFixLoop {
 
       // --- FIX ---
       const fixerHistoryContext = await this.readHistoryContext(ctx, 'fixer', input);
+      const allowedFiles = deriveAllowedFiles(review.offendingFindings ?? [], input.cwd);
       const fix = await deps.runFix(ctx, {
         useFallback,
         ...(useFallback && lastFixInvocationId !== undefined
@@ -766,6 +808,7 @@ export class ReviewFixLoop {
         ...(pendingReconciliationContext
           ? { reconciliationContext: pendingReconciliationContext }
           : {}),
+        ...(allowedFiles.length > 0 ? { allowedFiles } : {}),
       });
       pendingReconciliationContext = undefined;
       lastFixInvocationId = fix.invocationId;
@@ -852,6 +895,19 @@ export class ReviewFixLoop {
             cwd: ctx.cwd,
             expectedHead: fix.headBeforeFix,
           });
+          if (verification.kind === 'advanced') {
+            const scopeResult = await this.finalizeScopeAndCommitMessage({
+              ctx,
+              loopInput: input,
+              headBeforeFix: fix.headBeforeFix,
+              headAfterFix: verification.headAfterFix,
+              findings: review.offendingFindings ?? [],
+              ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
+            });
+            if (scopeResult.pendingScopeWarning) {
+              pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+            }
+          }
           if (verification.kind === 'uncommitted_changes') {
             this.emit(
               input,
@@ -910,6 +966,17 @@ export class ReviewFixLoop {
               }
 
               if (committedSha) {
+                const scopeResult = await this.finalizeScopeAndCommitMessage({
+                  ctx,
+                  loopInput: input,
+                  headBeforeFix: fix.headBeforeFix ?? 'HEAD',
+                  headAfterFix: committedSha,
+                  findings: review.offendingFindings ?? [],
+                  ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
+                });
+                if (scopeResult.pendingScopeWarning) {
+                  pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+                }
                 this.emit(
                   input,
                   'fix.auto_commit.succeeded',
@@ -1844,5 +1911,106 @@ export class ReviewFixLoop {
         error: errorMsg,
       });
     }
+  }
+
+  private async finalizeScopeAndCommitMessage(inputData: {
+    ctx: StepContext;
+    loopInput: ReviewFixLoopInput;
+    headBeforeFix: string;
+    headAfterFix: string;
+    findings: Array<{ summary: string; severity?: string; files?: string[] }>;
+    reasons?: Record<string, string>;
+  }): Promise<{ headAfterFix: string; pendingScopeWarning?: string }> {
+    if (!this.deps.git) {
+      return { headAfterFix: inputData.headAfterFix };
+    }
+
+    let headAfterFix = inputData.headAfterFix;
+    let pendingWarning: string | undefined;
+
+    try {
+      const changedFiles = await this.deps.git.changedFiles(
+        inputData.ctx.cwd,
+        inputData.headBeforeFix,
+        headAfterFix,
+      );
+
+      const allowedFiles = deriveAllowedFiles(inputData.findings, inputData.ctx.cwd);
+      const assessment = assessChangedFiles({
+        changedFiles,
+        allowedFiles,
+        ...(inputData.reasons ? { reasons: inputData.reasons } : {}),
+        cwd: inputData.ctx.cwd,
+      });
+
+      if (assessment.outOfScopeFiles.length > 0) {
+        this.emit(
+          inputData.loopInput,
+          'review_fix.out_of_scope_write',
+          'warn',
+          `out-of-scope files modified in review/fix iteration ${inputData.ctx.iterationIndex}`,
+          {
+            iterationIndex: inputData.ctx.iterationIndex,
+            allowedFiles: assessment.allowedFiles,
+            changedFiles: assessment.changedFiles,
+            outOfScopeFiles: assessment.outOfScopeFiles,
+          },
+        );
+        pendingWarning = formatScopeWarning(assessment);
+      }
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.emit(
+        inputData.loopInput,
+        'review_fix.scope_check_failed',
+        'warn',
+        `scope check failed at iteration ${inputData.ctx.iterationIndex}: ${errorMsg}`,
+        {
+          iterationIndex: inputData.ctx.iterationIndex,
+          error: errorMsg,
+        },
+      );
+      pendingWarning = `Warning: Scope check could not be verified for the previous fix (iteration ${inputData.ctx.iterationIndex}) due to diff inspection failure: ${errorMsg}`;
+    }
+
+    if (typeof this.deps.git.amendCommitMessage === 'function') {
+      try {
+        const changedFilesForMsg = await this.deps.git
+          .changedFiles(inputData.ctx.cwd, inputData.headBeforeFix, headAfterFix)
+          .catch(() => []);
+        const message = buildFindingCommitMessage(inputData.findings, changedFilesForMsg);
+        const replacementSha = await this.deps.git.amendCommitMessage(inputData.ctx.cwd, message);
+        if (replacementSha) {
+          headAfterFix = replacementSha;
+        }
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        this.emit(
+          inputData.loopInput,
+          'review_fix.commit_message_amend_failed',
+          'warn',
+          `commit message amendment failed at iteration ${inputData.ctx.iterationIndex}: ${errorMsg}`,
+          {
+            iterationIndex: inputData.ctx.iterationIndex,
+            error: errorMsg,
+          },
+        );
+      }
+    } else {
+      this.emit(
+        inputData.loopInput,
+        'review_fix.commit_message_amend_skipped',
+        'info',
+        `commit message amendment skipped at iteration ${inputData.ctx.iterationIndex}: git.amendCommitMessage not supported`,
+        {
+          iterationIndex: inputData.ctx.iterationIndex,
+        },
+      );
+    }
+
+    return {
+      headAfterFix,
+      ...(pendingWarning ? { pendingScopeWarning: pendingWarning } : {}),
+    };
   }
 }

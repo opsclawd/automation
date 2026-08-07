@@ -231,8 +231,8 @@ export function buildReviewFixFixPrompt(input: BuildFixPromptInput): string {
     '- If a finding is invalid, skip it.',
     '',
     'After fixing, write a result.json file with exactly one of:',
-    '{ "result": "done_with_fixes" }',
-    '{ "result": "done_no_fixes_needed", "rebuttal": "explain why no fixes are needed" }',
+    '{ "result": "done_with_fixes", "out_of_scope_reasons": {} }',
+    '{ "result": "done_no_fixes_needed", "rebuttal": "explain why no fixes are needed", "out_of_scope_reasons": {} }',
     '{ "result": "cannot_fix" }',
   );
 

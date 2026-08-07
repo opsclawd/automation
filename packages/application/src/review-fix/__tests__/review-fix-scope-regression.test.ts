@@ -14,14 +14,11 @@ import type {
   ReviewStepOptions,
   PostFixGateResult,
 } from '../types.js';
-
-type AnchoredReviewResult = ReviewStepResult & {
-  offendingFindings: Array<{ severity: string; summary: string; files: string[] }>;
-};
-
-type ReasonedFixResult = FixStepResult & {
-  outOfScopeReasons?: Record<string, string>;
-};
+import {
+  normalizeRepositoryPath,
+  deriveAllowedFiles,
+  assessChangedFiles,
+} from '../review-fix-scope.js';
 
 function collectEvents() {
   const events: Array<{ type: string; metadata: Record<string, unknown> }> = [];
@@ -52,6 +49,8 @@ interface HarnessOptions {
   changedFiles?: string[];
   outOfScopeReasons?: Record<string, string>;
   branchType?: 'standard' | 'deterministic' | 'auto_commit';
+  throwOnChangedFiles?: boolean;
+  failAmendCommitMessage?: boolean;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -66,14 +65,39 @@ function makeHarness(options: HarnessOptions = {}) {
   const findingFiles = options.findingFiles ?? ['packages/api/src/handler.ts'];
   const changedFiles = options.changedFiles ?? ['packages/api/src/handler.ts', '.gitignore'];
 
-  if (branchType === 'auto_commit') {
+  if (options.throwOnChangedFiles) {
+    const origChangedFiles = git.changedFiles.bind(git);
+    git.changedFiles = async (cwd: string, base: string, head?: string) => {
+      if (
+        base === baseSha ||
+        base === 'fix-head-1' ||
+        base === 'fake-sha-1' ||
+        base === 'fake-sha-2'
+      ) {
+        throw new Error('git diff failed');
+      }
+      return origChangedFiles(cwd, base, head);
+    };
+  } else if (branchType === 'auto_commit') {
     git.statusByCwd.set('/worktree', 'M .gitignore');
     git.changedFilesResults.set(`${baseSha}|fake-sha-1`, changedFiles);
   } else if (branchType === 'deterministic') {
     git.changedFilesResults.set('fix-head-1|fix-head-2', changedFiles);
+    git.changedFilesResults.set('fake-sha-1|fix-head-2', changedFiles);
+    git.changedFilesResults.set('fake-sha-1|fake-sha-2', changedFiles);
+    git.changedFilesResults.set('fake-sha-2|fix-head-2', changedFiles);
+    git.changedFilesResults.set('fake-sha-2|fake-sha-3', changedFiles);
     git.changedFilesResults.set(`${baseSha}|fix-head-1`, ['packages/api/src/handler.ts']);
+    git.changedFilesResults.set(`${baseSha}|fake-sha-1`, ['packages/api/src/handler.ts']);
   } else {
     git.changedFilesResults.set(`${baseSha}|${headSha}`, changedFiles);
+    git.changedFilesResults.set(`${baseSha}|fake-sha-1`, changedFiles);
+  }
+
+  if (options.failAmendCommitMessage) {
+    git.amendCommitMessage = async () => {
+      throw new Error('amend failed');
+    };
   }
 
   let reviewCount = 0;
@@ -82,7 +106,7 @@ function makeHarness(options: HarnessOptions = {}) {
   const runReview = async (_ctx: unknown, opts?: ReviewStepOptions): Promise<ReviewStepResult> => {
     reviewCount++;
     if (reviewCount === 1) {
-      const res: AnchoredReviewResult = {
+      const res: ReviewStepResult = {
         invocationId: 'rev-1',
         agentOutcome: 'success',
         verdict: 'fail',
@@ -114,7 +138,7 @@ function makeHarness(options: HarnessOptions = {}) {
     }
 
     if (branchType === 'auto_commit') {
-      const res: ReasonedFixResult = {
+      const res: FixStepResult = {
         invocationId: `fix-${fixCount}`,
         agentOutcome: 'success',
         verdict: 'done_with_fixes',
@@ -127,7 +151,7 @@ function makeHarness(options: HarnessOptions = {}) {
     await git.commit('/worktree', `fix ${fixCount}`);
     git.headByCwd.set('/worktree', nextHead);
 
-    const res: ReasonedFixResult = {
+    const res: FixStepResult = {
       invocationId: `fix-${fixCount}`,
       agentOutcome: 'success',
       verdict: 'done_with_fixes',
@@ -190,7 +214,50 @@ function makeHarness(options: HarnessOptions = {}) {
   };
 }
 
-describe.skip('ReviewFixLoop scope regression proof', () => {
+describe('ReviewFixLoop scope regression proof', () => {
+  it('normalizes safe repository paths and rejects escaping anchors', () => {
+    const cwd = '/worktree';
+    expect(normalizeRepositoryPath('packages/api/src/handler.ts', cwd)).toBe(
+      'packages/api/src/handler.ts',
+    );
+    expect(normalizeRepositoryPath('./packages/api/src/handler.ts', cwd)).toBe(
+      'packages/api/src/handler.ts',
+    );
+    expect(normalizeRepositoryPath('packages\\api\\src\\handler.ts', cwd)).toBe(
+      'packages/api/src/handler.ts',
+    );
+    expect(normalizeRepositoryPath('/worktree/packages/api/src/handler.ts', cwd)).toBe(
+      'packages/api/src/handler.ts',
+    );
+    expect(normalizeRepositoryPath('../outside.ts', cwd)).toBeUndefined();
+    expect(normalizeRepositoryPath('/outside/file.ts', cwd)).toBeUndefined();
+    expect(normalizeRepositoryPath('packages/../../outside.ts', cwd)).toBeUndefined();
+
+    const findings = [
+      { files: ['packages/api/src/handler.ts', '../outside.ts', './packages/api/src/handler.ts'] },
+    ];
+    expect(deriveAllowedFiles(findings, cwd)).toEqual(['packages/api/src/handler.ts']);
+
+    const legacyScalarFindings = [
+      { file: 'packages/api/src/legacy.ts' },
+      { files: ['packages/api/src/handler.ts'] },
+    ];
+    expect(deriveAllowedFiles(legacyScalarFindings, cwd)).toEqual([
+      'packages/api/src/handler.ts',
+      'packages/api/src/legacy.ts',
+    ]);
+
+    const assessment = assessChangedFiles({
+      changedFiles: ['packages/api/src/handler.ts', '../outside.ts'],
+      allowedFiles: ['packages/api/src/handler.ts'],
+      cwd,
+    });
+    expect(assessment.allowedFiles).toEqual(['packages/api/src/handler.ts']);
+    expect(assessment.outOfScopeFiles).toEqual([
+      { path: '../outside.ts', reason: 'No justification provided by fixer.' },
+    ]);
+  });
+
   it('detects the instance-1 gitignore edit outside package-scoped findings', async () => {
     const harness = makeHarness({
       findingFiles: ['packages/api/src/handler.ts'],
@@ -304,6 +371,10 @@ describe.skip('ReviewFixLoop scope regression proof', () => {
       'packages/api/src/handler.ts',
       'unrelated.ts',
     ]);
+    harness.git.changedFilesResults.set('run-start-sha|fake-sha-1', [
+      'packages/api/src/handler.ts',
+      'unrelated.ts',
+    ]);
 
     await harness.loop.execute(baseInput());
     expect(harness.events.some((e) => e.type === 'review_fix.out_of_scope_write')).toBe(false);
@@ -352,5 +423,33 @@ describe.skip('ReviewFixLoop scope regression proof', () => {
         }),
       );
     }
+  });
+
+  it('surfaces an indeterminate scope check without blocking the fix', async () => {
+    const harness = makeHarness({
+      throwOnChangedFiles: true,
+    });
+    const result = await harness.loop.execute(baseInput());
+    expect(result.phaseOutcome).toBe('passed');
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        type: 'review_fix.scope_check_failed',
+      }),
+    );
+    const secondOpts = harness.getSecondReviewOpts();
+    expect(secondOpts?.historyContext).toContain('Scope check could not be verified');
+  });
+
+  it('continues after a commit-message amendment failure', async () => {
+    const harness = makeHarness({
+      failAmendCommitMessage: true,
+    });
+    const result = await harness.loop.execute(baseInput());
+    expect(result.phaseOutcome).toBe('passed');
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        type: 'review_fix.commit_message_amend_failed',
+      }),
+    );
   });
 });
