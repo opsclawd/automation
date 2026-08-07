@@ -51,12 +51,26 @@ export class ValidateHandler implements PhaseHandler {
         phase: 'validate',
         kind: 'git_failed',
         message,
-        canRetry: false,
+        canRetry: Boolean(this.opts.fixValidateEnabled),
         suggestedAction:
           'Return to implementation and commit or discard the listed source changes.',
         artifacts: [],
         detectedAt: ctx.now(),
       };
+      if (this.opts.fixValidateEnabled) {
+        try {
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            phaseId: 'validate',
+            relativePath: 'validate/failure.json',
+            contents: JSON.stringify(failure, null, 2),
+          });
+        } catch {
+          emit('validate.artifact_write_failed', 'warn', 'failed to write failure.json artifact');
+        }
+        emit('validate.deferred', 'warn', message, { paths: dirtyPaths });
+        return { outcome: 'deferred' };
+      }
       emit('validate.failed', 'error', message, { paths: dirtyPaths });
       return { outcome: 'failed', failure };
     }

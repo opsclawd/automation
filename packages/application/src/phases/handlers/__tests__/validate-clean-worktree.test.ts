@@ -90,6 +90,32 @@ describe('ValidateHandler clean-worktree gate', () => {
     expect(validation.lastInput).toBeUndefined();
   });
 
+  it('defers validation and writes failure.json when uncommitted source paths exist and fixValidateEnabled is true', async () => {
+    const { ctx, git, validation } = fixture;
+    git.statusByCwd.set('/tmp/wt', ' M packages/application/src/a.ts\n');
+    const handler = new ValidateHandler({
+      runValidation: fixture.handler['opts'].runValidation,
+      commands: ['pnpm build'],
+      timeoutSeconds: 300,
+      logDir: '/tmp/wt/.ai-runs/r1/validate',
+      fixValidateEnabled: true,
+    });
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('deferred');
+    const content = await ctx.artifacts.read(
+      '550e8400-e29b-41d4-a716-446655440000',
+      'validate/failure.json',
+    );
+    const parsed = JSON.parse(content);
+    expect(parsed.phase).toBe('validate');
+    expect(parsed.kind).toBe('git_failed');
+    expect(parsed.canRetry).toBe(true);
+    expect(parsed.message).toContain('packages/application/src/a.ts');
+    expect(validation.lastInput).toBeUndefined();
+  });
+
   it('allows exact and wildcarded orchestrator artifacts', async () => {
     const { handler, ctx, git, validation } = fixture;
     git.statusByCwd.set(

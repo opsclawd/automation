@@ -54,6 +54,9 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
     expect(patterns).toEqual([
       ...ORCHESTRATOR_ARTIFACT_PATHS,
       '*.patch',
+      '*.diff',
+      '*-diff.txt',
+      'diff.txt',
       ...PROMPT_ORCHESTRATOR_ARTIFACT_PATHS,
     ]);
     expect(Object.isFrozen(patterns)).toBe(true);
@@ -65,12 +68,15 @@ describe('uncommittedSourcePaths', () => {
     expect(uncommittedSourcePaths('')).toEqual([]);
   });
 
-  it('filters out orchestrator artifacts and patch files at root', () => {
+  it('filters out orchestrator artifacts, patch, and diff files at root', () => {
     const status = [
       ' M plan.md',
       '?? implementation-log-task-1.md',
       '?? changes.patch',
       ' M pr-summary.md',
+      '?? fix.diff',
+      ' M bar-diff.txt',
+      '?? diff.txt',
     ].join('\n');
     expect(uncommittedSourcePaths(status)).toEqual([]);
   });

@@ -20,6 +20,12 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
 
 export const ORCHESTRATOR_PATCH_EXCLUDE = '*.patch';
 
+export const ORCHESTRATOR_DIFF_EXCLUDES = Object.freeze([
+  '*.diff',
+  '*-diff.txt',
+  'diff.txt',
+] as const);
+
 export const orchestratorArtifactPathSet = new Set<string>(
   ORCHESTRATOR_ARTIFACT_PATHS,
 ) as ReadonlySet<string>;
@@ -32,25 +38,27 @@ export function orchestratorExcludePatterns(): readonly string[] {
   return Object.freeze([
     ...ORCHESTRATOR_ARTIFACT_PATHS,
     ORCHESTRATOR_PATCH_EXCLUDE,
+    ...ORCHESTRATOR_DIFF_EXCLUDES,
     ...PROMPT_ORCHESTRATOR_ARTIFACT_PATHS,
   ]);
 }
 
-function matchesRootPattern(path: string, pattern: string): boolean {
+function patternToRegExp(pattern: string): RegExp {
   const regexString =
     '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$';
-  return new RegExp(regexString).test(path);
+  return new RegExp(regexString);
 }
 
 export function uncommittedSourcePaths(status: string): string[] {
   const patterns = orchestratorExcludePatterns();
+  const compiledRegexes = patterns.map(patternToRegExp);
   const sourcePaths = status
     .split('\n')
     .filter(Boolean)
     .flatMap((line) => (line.length > 3 ? line.slice(3).split(' -> ') : []))
     .map((path) => path.replace(/\\/g, '/'))
     .filter((path) => path.length > 0)
-    .filter((path) => !patterns.some((pattern) => matchesRootPattern(path, pattern)));
+    .filter((path) => !compiledRegexes.some((regex) => regex.test(path)));
 
   return [...new Set(sourcePaths)].sort();
 }
