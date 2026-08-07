@@ -61,9 +61,27 @@ export class FakeGitPort implements GitPort {
     // No-op for now, could track calls if needed
   }
 
+  private shaCounter = 0;
+
   async commit(cwd: string, message: string): Promise<string> {
-    const sha = `fake-sha-${this.commits.length + 1}`;
+    const sha = `fake-sha-${++this.shaCounter}`;
     this.commits.push({ cwd, message, sha });
+    this.headByCwd.set(cwd, sha);
+    return sha;
+  }
+
+  async amendCommitMessage(cwd: string, message: string): Promise<string> {
+    const headSha = this.headByCwd.get(cwd);
+    const headIndex = this.commits.findIndex(
+      (commit) => commit.cwd === cwd && commit.sha === headSha,
+    );
+    const sha = `fake-sha-${++this.shaCounter}`;
+    const commit = { cwd, message, sha };
+    if (headIndex !== -1) {
+      this.commits[headIndex] = commit;
+    } else {
+      this.commits.push(commit);
+    }
     this.headByCwd.set(cwd, sha);
     return sha;
   }

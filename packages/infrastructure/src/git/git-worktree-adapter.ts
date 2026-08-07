@@ -101,6 +101,11 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     return git(cwd, ['rev-parse', 'HEAD']);
   }
 
+  async amendCommitMessage(cwd: string, message: string): Promise<string> {
+    await git(cwd, ['commit', '--amend', '-m', message]);
+    return git(cwd, ['rev-parse', 'HEAD']);
+  }
+
   async push(input: PushInput): Promise<void> {
     const { cwd, branch, remote = 'origin' } = input;
     // 300s: pre-push hooks that run a full build can take ~2 minutes

@@ -262,7 +262,7 @@ describe('readReviewVerdict severity gate', () => {
       ok: true,
       verdict: 'fail',
       overridden: true,
-      offendingFindings: [{ severity: 'high', summary: 'unused export' }],
+      offendingFindings: [{ severity: 'high', summary: 'unused export', files: [] }],
     });
   });
 
@@ -369,7 +369,7 @@ describe('readReviewVerdict severity gate', () => {
       ok: true,
       verdict: 'fail',
       overridden: true,
-      offendingFindings: [{ severity: 'medium', summary: 'missing test' }],
+      offendingFindings: [{ severity: 'medium', summary: 'missing test', files: [] }],
     });
   });
 
@@ -396,7 +396,7 @@ describe('readReviewVerdict severity gate', () => {
       ok: true,
       verdict: 'fail',
       overridden: true,
-      offendingFindings: [{ severity: 'critical', summary: 'data loss' }],
+      offendingFindings: [{ severity: 'critical', summary: 'data loss', files: [] }],
     });
   });
 
@@ -422,7 +422,7 @@ describe('readReviewVerdict severity gate', () => {
     expect(v).toEqual({
       ok: true,
       verdict: 'fail',
-      offendingFindings: [{ severity: 'high', summary: 'real bug' }],
+      offendingFindings: [{ severity: 'high', summary: 'real bug', files: [] }],
     });
   });
 
@@ -464,7 +464,7 @@ describe('readReviewVerdict severity gate', () => {
     expect(v).toEqual({
       ok: true,
       verdict: 'fail',
-      offendingFindings: [{ severity: 'info', summary: 'note' }],
+      offendingFindings: [{ severity: 'info', summary: 'note', files: [] }],
     });
   });
 
@@ -492,8 +492,8 @@ describe('readReviewVerdict severity gate', () => {
       ok: true,
       verdict: 'fail',
       offendingFindings: [
-        { severity: 'low', summary: 'cosmetic' },
-        { severity: 'info', summary: 'unparseable note' },
+        { severity: 'low', summary: 'cosmetic', files: [] },
+        { severity: 'info', summary: 'unparseable note', files: [] },
       ],
     });
   });
@@ -516,7 +516,7 @@ describe('readReviewVerdict severity gate', () => {
     expect(v).toEqual({
       ok: true,
       verdict: 'fail',
-      offendingFindings: [{ severity: 'high', summary: 'command injection' }],
+      offendingFindings: [{ severity: 'high', summary: 'command injection', files: [] }],
     });
   });
 
@@ -543,7 +543,9 @@ describe('readReviewVerdict severity gate', () => {
       ok: true,
       verdict: 'fail',
       overridden: true,
-      offendingFindings: [{ severity: 'P1', summary: 'run object inconsistent with DB patch' }],
+      offendingFindings: [
+        { severity: 'P1', summary: 'run object inconsistent with DB patch', files: [] },
+      ],
     });
   });
 
@@ -596,7 +598,7 @@ describe('readReviewVerdict severity gate', () => {
     expect(v).toEqual({
       ok: true,
       verdict: 'fail',
-      offendingFindings: [{ severity: 'P0', summary: 'data loss' }],
+      offendingFindings: [{ severity: 'P0', summary: 'data loss', files: [] }],
     });
   });
 
@@ -622,7 +624,7 @@ describe('readReviewVerdict severity gate', () => {
     expect(v).toEqual({
       ok: true,
       verdict: 'fail',
-      offendingFindings: [{ severity: 'high', summary: 'real bug' }],
+      offendingFindings: [{ severity: 'high', summary: 'real bug', files: [] }],
     });
   });
 
@@ -649,8 +651,8 @@ describe('readReviewVerdict severity gate', () => {
       ok: true,
       verdict: 'fail',
       offendingFindings: [
-        { severity: 'P3', summary: 'nit' },
-        { severity: 'P9', summary: 'unmappable label' },
+        { severity: 'P3', summary: 'nit', files: [] },
+        { severity: 'P9', summary: 'unmappable label', files: [] },
       ],
     });
   });

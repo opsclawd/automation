@@ -38,7 +38,7 @@ export interface ReviewStepResult {
   agentOutcome: StepAgentOutcome;
   verdict?: 'pass' | 'fail';
   overridden?: boolean;
-  offendingFindings?: Array<{ severity: string; summary: string }>;
+  offendingFindings?: Array<{ severity: string; summary: string; files?: string[] }>;
   excerpt?: string;
   /**
    * The commit SHA at the start of this review's diff scope — captured by
@@ -71,6 +71,7 @@ export interface FixStepResult {
    * when the rebuttal is accepted.
    */
   rebuttal?: string;
+  outOfScopeReasons?: Record<string, string>;
   metadata?: Record<string, unknown>;
   classification?: string;
   violationCode?: string;
@@ -106,6 +107,7 @@ export interface FixStepOptions {
   historyContext?: string;
   deterministicDiagnostic?: string;
   attemptKind?: 'standard' | 'deterministic';
+  allowedFiles?: string[];
 }
 
 export interface PostFixGateResult {
@@ -193,7 +195,7 @@ export interface ReviewLoopHistoryEntry {
   review: {
     verdict?: 'pass' | 'fail';
     invocationId?: string;
-    offendingFindings?: Array<{ severity: string; summary: string }>;
+    offendingFindings?: Array<{ severity: string; summary: string; files?: string[] }>;
     excerpt?: string;
     reviewedCommitSha?: string;
     classification?: string;
