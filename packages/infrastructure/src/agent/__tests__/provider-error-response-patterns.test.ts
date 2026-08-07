@@ -6,8 +6,10 @@ describe('provider error response patterns', () => {
     expect(testProviderErrorPatterns('API call failed: HTTP 429')).toBeTruthy();
   });
 
-  it('matches HTTP 401 provider responses', () => {
-    expect(testProviderErrorPatterns('API call failed: HTTP 401 Unauthorized')).toBeTruthy();
+  it('matches HTTP 500 provider responses', () => {
+    expect(
+      testProviderErrorPatterns('API call failed: HTTP 500 Internal Server Error'),
+    ).toBeTruthy();
   });
 
   it('matches RESOURCE_EXHAUSTED provider responses', () => {
