@@ -38,7 +38,13 @@ export async function git(cwd: string, args: string[], timeoutMs?: number): Prom
       cwd,
       timeout: timeoutMs ?? 30_000,
     });
-    return stdout.trim();
+    // trimEnd, not trim: `git status --porcelain` encodes status in a fixed
+    // 3-character prefix (`XY<space>PATH`), and an unstaged modification leads
+    // with a space. Trimming the front strips that space from the first line
+    // only, so a positional `slice(3)` then eats a real path character —
+    // silently corrupting exactly one path per listing. No git command emits
+    // leading whitespace that a caller needs removed.
+    return stdout.trimEnd();
   } catch (err) {
     const execaErr = err as { stderr?: string; timedOut?: boolean; code?: string };
     if (execaErr.code === 'ENOENT') {

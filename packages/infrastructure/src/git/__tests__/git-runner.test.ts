@@ -1,4 +1,5 @@
-import { rm } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { git, GitFailedError } from '../git-runner.js';
@@ -16,6 +17,18 @@ describe('git()', () => {
 
     const result = await git(repoPath, ['log', '--format=%s', '-1']);
     expect(result).toBe('initial commit');
+  });
+
+  it('preserves the leading space of porcelain status so path prefixes survive', async () => {
+    const repoPath = await makeTempRepo();
+    await writeFile(join(repoPath, 'README.md'), 'changed\n');
+
+    const status = await git(repoPath, ['status', '--porcelain']);
+
+    // ` M README.md` — the leading space is part of the fixed 3-char prefix.
+    // Trimming it makes a positional slice(3) eat the path's first character.
+    expect(status.startsWith(' M ')).toBe(true);
+    expect(status.split('\n')[0]!.slice(3)).toBe('README.md');
   });
 
   it('rejects with GitFailedError on non-zero exit', async () => {

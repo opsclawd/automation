@@ -17,6 +17,9 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'fix-validate-done.marker',
   'plan-review-passed.marker',
   'pr-summary.md',
+  // create-pr writes this itself, then its own clean-worktree guard reads the
+  // tree on resume — omitting it made create-pr block on its own output.
+  'pr-url.txt',
 ] as const);
 
 export const ORCHESTRATOR_PATCH_EXCLUDE = '*.patch';

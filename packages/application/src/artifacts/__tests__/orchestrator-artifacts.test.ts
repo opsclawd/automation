@@ -32,6 +32,7 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
       'fix-validate-done.marker',
       'plan-review-passed.marker',
       'pr-summary.md',
+      'pr-url.txt',
     ];
     expect(ORCHESTRATOR_ARTIFACT_PATHS).toEqual(expected);
     expect(Object.isFrozen(ORCHESTRATOR_ARTIFACT_PATHS)).toBe(true);
@@ -75,6 +76,7 @@ describe('uncommittedSourcePaths', () => {
       '?? implementation-log-task-1.md',
       '?? changes.patch',
       ' M pr-summary.md',
+      '?? pr-url.txt',
       '?? fix.diff',
       ' M bar-diff.txt',
       '?? diff.txt',
