@@ -13,6 +13,7 @@ export const PROVIDER_ERROR_PATTERNS = [
   /\bProviderError:/i,
   /\bAPIError:/i,
   /(?:status(?:Code)?|HTTP)\D{0,12}5\d{2}\b/i,
+  /(?:status(?:Code)?|HTTP)\D{0,12}401\b/i,
   /RESOURCE_EXHAUSTED/i,
   ...QUOTA_PATTERNS,
 ] as const;
