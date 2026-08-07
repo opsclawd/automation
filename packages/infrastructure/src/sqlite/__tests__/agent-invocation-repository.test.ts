@@ -39,6 +39,16 @@ function sample(overrides: Partial<AgentInvocation> = {}): AgentInvocation {
   };
 }
 
+function providerFailure(overrides: Partial<AgentInvocation> = {}): AgentInvocation {
+  return sample({
+    id: AgentInvocationId('inv-' + Math.random().toString(36).slice(2)),
+    outcome: 'failed',
+    contractViolations: ['provider_error'],
+    endedAt: new Date('2026-05-22T10:01:30.000Z'),
+    ...overrides,
+  });
+}
+
 function setupDb() {
   const db = openDatabase(':memory:');
   applyMigrations(db);
@@ -127,5 +137,137 @@ describe('AgentInvocationRepository', () => {
       classification: 'changed',
       newKey: 'newVal',
     });
+  });
+
+  it('counts only the newest consecutive provider failures for a profile', () => {
+    const { db } = setupDb();
+    const repo = new AgentInvocationRepository(db);
+    const p1 = AgentProfileName('p1');
+    const base = new Date('2026-05-22T10:00:00.000Z').getTime();
+
+    repo.insert(
+      sample({
+        id: AgentInvocationId('inv-a'),
+        profile: p1,
+        outcome: 'success',
+        startedAt: new Date(base),
+        endedAt: new Date(base + 1000),
+      }),
+    );
+    repo.insert(
+      providerFailure({
+        id: AgentInvocationId('inv-b'),
+        profile: p1,
+        startedAt: new Date(base + 2000),
+        endedAt: new Date(base + 3000),
+      }),
+    );
+    repo.insert(
+      providerFailure({
+        id: AgentInvocationId('inv-c'),
+        profile: p1,
+        startedAt: new Date(base + 4000),
+        endedAt: new Date(base + 5000),
+      }),
+    );
+
+    expect(repo.countConsecutiveProviderFailures(p1)).toBe(2);
+  });
+
+  it('resets the provider failure streak after a non-provider completion', () => {
+    const { db } = setupDb();
+    const repo = new AgentInvocationRepository(db);
+    const p1 = AgentProfileName('p1');
+    const base = new Date('2026-05-22T10:00:00.000Z').getTime();
+
+    repo.insert(
+      providerFailure({
+        id: AgentInvocationId('inv-a'),
+        profile: p1,
+        startedAt: new Date(base),
+        endedAt: new Date(base + 1000),
+      }),
+    );
+    repo.insert(
+      sample({
+        id: AgentInvocationId('inv-b'),
+        profile: p1,
+        outcome: 'failed',
+        contractViolations: ['contract_violation'],
+        startedAt: new Date(base + 2000),
+        endedAt: new Date(base + 3000),
+      }),
+    );
+
+    expect(repo.countConsecutiveProviderFailures(p1)).toBe(0);
+  });
+
+  it('ignores other profiles and unfinished invocations in the provider failure streak', () => {
+    const { db } = setupDb();
+    const repo = new AgentInvocationRepository(db);
+    const p1 = AgentProfileName('p1');
+    const p2 = AgentProfileName('p2');
+    const base = new Date('2026-05-22T10:00:00.000Z').getTime();
+
+    repo.insert(
+      providerFailure({
+        id: AgentInvocationId('inv-a'),
+        profile: p1,
+        startedAt: new Date(base),
+        endedAt: new Date(base + 1000),
+      }),
+    );
+    repo.insert(
+      providerFailure({
+        id: AgentInvocationId('inv-b'),
+        profile: p1,
+        startedAt: new Date(base + 2000),
+        endedAt: new Date(base + 3000),
+      }),
+    );
+    repo.insert(
+      sample({
+        id: AgentInvocationId('inv-c'),
+        profile: p2,
+        outcome: 'success',
+        startedAt: new Date(base + 4000),
+        endedAt: new Date(base + 5000),
+      }),
+    );
+    repo.insert(
+      sample({
+        id: AgentInvocationId('inv-d'),
+        profile: p1,
+        startedAt: new Date(base + 6000),
+        endedAt: undefined,
+      }),
+    );
+
+    expect(repo.countConsecutiveProviderFailures(p1)).toBe(2);
+  });
+
+  it('orders equal timestamps deterministically when counting provider failures', () => {
+    const { db } = setupDb();
+    const repo = new AgentInvocationRepository(db);
+    const p1 = AgentProfileName('p1');
+    const sameTime = new Date('2026-05-22T10:00:00.000Z');
+
+    repo.insert(
+      providerFailure({ id: AgentInvocationId('inv-1'), profile: p1, startedAt: sameTime }),
+    );
+    repo.insert(
+      sample({
+        id: AgentInvocationId('inv-2'),
+        profile: p1,
+        outcome: 'success',
+        startedAt: sameTime,
+        endedAt: sameTime,
+      }),
+    );
+    repo.insert(
+      providerFailure({ id: AgentInvocationId('inv-3'), profile: p1, startedAt: sameTime }),
+    );
+
+    expect(repo.countConsecutiveProviderFailures(p1)).toBe(1);
   });
 });

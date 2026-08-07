@@ -1,6 +1,7 @@
 import type {
   AgentInvocation,
   AgentInvocationId,
+  AgentProfileName,
   AgentRuntimeKind,
   PhaseName,
   RunId,
@@ -49,5 +50,34 @@ export class FakeAgentInvocationPort implements AgentInvocationPort {
 
   listByRuntime(runtime: AgentRuntimeKind): AgentInvocation[] {
     return this.rows.filter((r) => r.runtime === runtime).map((r) => ({ ...r }));
+  }
+
+  countConsecutiveProviderFailures(profile: AgentProfileName): number {
+    const completedProfileRows = this.rows.filter(
+      (r) => r.profile === profile && r.endedAt !== undefined,
+    );
+
+    completedProfileRows.sort((a, b) => {
+      const timeA = a.startedAt.getTime();
+      const timeB = b.startedAt.getTime();
+      if (timeA !== timeB) {
+        return timeB - timeA;
+      }
+      return b.id.localeCompare(a.id);
+    });
+
+    let count = 0;
+    for (const row of completedProfileRows) {
+      const isProviderFailure =
+        row.outcome === 'failed' && row.contractViolations?.includes('provider_error');
+
+      if (isProviderFailure) {
+        count++;
+      } else {
+        break;
+      }
+    }
+
+    return count;
   }
 }

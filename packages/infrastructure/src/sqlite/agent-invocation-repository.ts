@@ -227,4 +227,38 @@ export class AgentInvocationRepository {
       .all(runtime) as Row[];
     return rows.map(rowToInvocation);
   }
+
+  countConsecutiveProviderFailures(profile: AgentProfileName): number {
+    const rows = this.db
+      .prepare(
+        `SELECT id, outcome, contract_violations
+         FROM agent_invocations
+         WHERE profile = ? AND ended_at IS NOT NULL
+         ORDER BY started_at DESC, id DESC`,
+      )
+      .all(profile) as { id: string; outcome: string | null; contract_violations: string }[];
+
+    let count = 0;
+    for (const row of rows) {
+      let violations: string[] = [];
+      try {
+        violations = JSON.parse(row.contract_violations) as string[];
+      } catch {
+        violations = [];
+      }
+
+      const isProviderFailure =
+        row.outcome === 'failed' &&
+        Array.isArray(violations) &&
+        violations.includes('provider_error');
+
+      if (isProviderFailure) {
+        count++;
+      } else {
+        break;
+      }
+    }
+
+    return count;
+  }
 }
