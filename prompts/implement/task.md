@@ -5,17 +5,28 @@
 {{var:WORKSPACE_CONSTRAINTS}}
 
 You are running implement Step {{taskIndex}} of a plan. Your job is to make
-the code changes this step describes and then produce the two required
-artifacts. Treat them as two distinct, numbered steps.
+the code changes this step describes, ensure commit coverage, and then produce
+the two required artifacts. Treat them as distinct, numbered steps.
 
 ## Step N — Make the code change (or verify nothing needs changing)
 
-If the step needs implementation work, do it now: edit files, run
-`pnpm -r typecheck`, commit. If a prior attempt already implemented this
+If the step needs implementation work, do it now: edit files and validate
+implementation work. If a prior attempt already implemented this
 step (check `git log` against the startCommitSha), verify that the prior
 commit still satisfies the step's acceptance criteria and proceed.
 
-## FINAL ACTION (Step N+1) — Unconditional file write
+## MANDATORY COMMIT (Step N+1) — Unconditional commit-coverage gate
+
+Every invocation must complete the commit coverage gate before writing artifacts.
+New or changed implementation files must be reviewed with `git status`, staged by
+explicit path, and committed. You must not use `git add -A`, because orchestrator
+artifacts must stay out of the implementation commit. A prior implementation
+commit may be verified against `startCommitSha` instead of creating an empty
+commit. Expected implementation files left uncommitted cause the orchestrator's
+commit coverage contract to fail even if tests pass and artifacts exist.
+Skipping this step fails the orchestrator's contract validation.
+
+## FINAL ACTION (Step N+2) — Unconditional file write
 
 Before you stop, you MUST write exactly one file named `implementation-log.md`
 at the worktree root (`./implementation-log.md`, NOT `implementation-log-task-{{taskIndex}}.md`,
@@ -36,9 +47,9 @@ If your Step needs no implementation work because a prior commit already
 implements it, the FINAL ACTION still runs. Treat the write as the
 contract — your prose DONE does not satisfy the contract.
 
-## MANDATORY RESULT FILE (Step N+2) — narrow status only
+## MANDATORY RESULT FILE (Step N+3) — narrow status only
 
-Only after the FINAL ACTION above is complete, write EXACTLY ONE of the
+Only after the Step N+2 FINAL ACTION above is complete, write EXACTLY ONE of the
 status words to `./implement-task-{{taskIndex}}.result` and stop.
 
     echo "DONE" > implement-task-{{taskIndex}}.result
