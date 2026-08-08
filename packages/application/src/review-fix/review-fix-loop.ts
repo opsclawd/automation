@@ -1,3 +1,4 @@
+import { classifyPostFixGateFailure } from './post-fix-gate-classification.js';
 import {
   createLoop,
   startIteration,
@@ -175,6 +176,9 @@ export class ReviewFixLoop {
     let lastFixInvocationId: string | undefined;
     let lastFailingCategory: string | undefined;
     let lastIterationHadFixCommit = false;
+    // Head range of the most recent fix commit, so a failing post-fix gate can be
+    // attributed to that delta (automation#878).
+    let lastFixHeadRange: { before: string; after: string } | undefined;
     let outstandingFailedRevalidation = false;
     let lastPostFixGateFailed = false;
     let lastOffendingFindings: Array<{ severity: string; summary: string; files?: string[] }> = [];
@@ -237,6 +241,29 @@ export class ReviewFixLoop {
       }
 
       if (lastPostFixGateFailed && gateResult) {
+        // Distinguish "the diff is wrong" from "the workspace is inconsistent".
+        // Run 5b57a291 failed here on packages/domain typecheck errors that did
+        // not reproduce, burning iterations on an environment fault
+        // (automation#878). Classification is recorded so the two are
+        // distinguishable in the run record.
+        let lastFixChangedFiles: string[] | undefined;
+        if (this.deps.git && lastFixHeadRange) {
+          try {
+            lastFixChangedFiles = await this.deps.git.changedFiles(
+              ctx.cwd,
+              lastFixHeadRange.before,
+              lastFixHeadRange.after,
+            );
+          } catch {
+            // Undetermined delta fails closed as a code defect.
+            lastFixChangedFiles = undefined;
+          }
+        }
+        const gateClassification = classifyPostFixGateFailure({
+          output: gateResult.output,
+          changedFiles: lastFixChangedFiles,
+        });
+
         this.emit(
           input,
           'deterministic_fix',
@@ -244,8 +271,30 @@ export class ReviewFixLoop {
           `post-fix gate failure: ${gateResult.output}`,
           {
             diagnostic: gateResult.output,
+            classification: gateClassification.classification,
+            ...(gateClassification.classification === 'workspace_inconsistency'
+              ? {
+                  reportingPackage: gateClassification.reportingPackage,
+                  driftDiagnostic: gateClassification.diagnostic,
+                }
+              : {}),
+            ...(lastFixChangedFiles ? { lastFixChangedFiles } : {}),
           },
         );
+
+        if (gateClassification.classification === 'workspace_inconsistency') {
+          this.emit(
+            input,
+            'loop.deterministic_gate.workspace_inconsistency',
+            'warn',
+            `post-fix gate failure attributed to workspace inconsistency in ${gateClassification.reportingPackage}, not to the diff under review`,
+            {
+              reportingPackage: gateClassification.reportingPackage,
+              diagnostic: gateClassification.diagnostic,
+              ...(lastFixChangedFiles ? { lastFixChangedFiles } : {}),
+            },
+          );
+        }
 
         const fixerHistoryContext = await this.readHistoryContext(ctx, 'fixer', input);
         const escalateForFixFailures =
@@ -357,6 +406,10 @@ export class ReviewFixLoop {
               expectedHead: fix.headBeforeFix,
             });
             if (verification.kind === 'advanced') {
+              lastFixHeadRange = {
+                before: fix.headBeforeFix,
+                after: verification.headAfterFix,
+              };
               const scopeResult = await this.finalizeScopeAndCommitMessage({
                 ctx,
                 loopInput: input,
