@@ -50,3 +50,28 @@ describe('amendCommitMessage()', () => {
     expect(await git(repo, ['status', '--porcelain'])).toBe('');
   });
 });
+
+describe('commit()', () => {
+  it('commit stores a real subject, blank line, and list-item body', async () => {
+    const repo = await makeTempRepo();
+    const message = 'feat: preserve formatting\n\nDetails:\n- item one\n- item two';
+    await writeFile(join(repo, 'formatted.txt'), 'formatted\n');
+    await git(repo, ['add', 'formatted.txt']);
+
+    await adapter.commit(repo, message);
+
+    expect(await git(repo, ['log', '-1', '--format=%s'])).toBe('feat: preserve formatting');
+    expect(await git(repo, ['log', '-1', '--format=%B'])).toBe(message);
+  });
+
+  it('commit preserves a legitimate literal backslash-n sequence', async () => {
+    const repo = await makeTempRepo();
+    const message = String.raw`docs: explain \n parsing`;
+    await writeFile(join(repo, 'literal.txt'), 'literal\n');
+    await git(repo, ['add', 'literal.txt']);
+
+    await adapter.commit(repo, message);
+
+    expect(await git(repo, ['log', '-1', '--format=%B'])).toBe(message);
+  });
+});
