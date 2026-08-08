@@ -323,3 +323,143 @@ describe('ImplementHandler Declared Files Retry State Machine', () => {
     expect(events.filter((e) => e.type === 'step.uncommitted_files')).toHaveLength(0);
   });
 });
+
+describe('uncommitted declared files cannot be dismissed as unaffected', () => {
+  it('retries instead of verifying when a declared file is written but not committed', async () => {
+    // Reproduces run c7fa0c37 (sol-usdc-clmm-intelligence#165): the step wrote
+    // src/b.ts and never committed it. Validation and typecheck run against the
+    // working tree, which still holds that file, so both pass — and the step was
+    // marked "verified unaffected" while its work sat uncommitted. See #869.
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const validationPort = new FakeValidationPort();
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: writes a declared file without committing it',
+          expected_files: ['src/a.ts', 'src/b.ts'],
+          validation_commands: ['pnpm vitest run src/test.spec.ts'],
+        },
+      ],
+    };
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: writes a declared file without committing it']),
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify(manifest),
+    });
+
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|post-step', ['src/a.ts']);
+    // src/b.ts exists on disk, uncommitted — exactly what git status reports.
+    git.statusByCwd.set(ctx.cwd, ' M src/b.ts');
+
+    validationPort.result = [
+      {
+        command: 'pnpm vitest run src/test.spec.ts',
+        exitCode: 0,
+        durationMs: 100,
+        stdout: '',
+        stderr: '',
+        stdoutPath: '/tmp/validate/stdout',
+        stderrPath: '/tmp/validate/stderr',
+        outcome: 'passed',
+      },
+    ];
+
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'post-step');
+      return { outcome: 'success' };
+    });
+
+    // Passes, because the working tree still contains the uncommitted file.
+    const runWorkspaceTypecheck = vi.fn(async ({}: RunWorkspaceTypecheckInput) => ({ ok: true }));
+
+    await new ImplementHandler({
+      steps,
+      runStep,
+      validationPort,
+      runWorkspaceTypecheck,
+      maxDeclaredFilesRetries: 1,
+    }).run(ctx);
+
+    expect(events.filter((e) => e.type === 'step.unaffected_files_verified')).toHaveLength(0);
+    expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(1);
+  });
+
+  it('still verifies genuinely unaffected files when the worktree is clean', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const validationPort = new FakeValidationPort();
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: declared file turned out unnecessary',
+          expected_files: ['src/a.ts', 'src/b.ts'],
+          validation_commands: ['pnpm vitest run src/test.spec.ts'],
+        },
+      ],
+    };
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: declared file turned out unnecessary']),
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify(manifest),
+    });
+
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|post-step', ['src/a.ts']);
+    git.statusByCwd.set(ctx.cwd, ''); // clean — src/b.ts genuinely not needed
+
+    validationPort.result = [
+      {
+        command: 'pnpm vitest run src/test.spec.ts',
+        exitCode: 0,
+        durationMs: 100,
+        stdout: '',
+        stderr: '',
+        stdoutPath: '/tmp/validate/stdout',
+        stderrPath: '/tmp/validate/stderr',
+        outcome: 'passed',
+      },
+    ];
+
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'post-step');
+      return { outcome: 'success' };
+    });
+    const runWorkspaceTypecheck = vi.fn(async ({}: RunWorkspaceTypecheckInput) => ({ ok: true }));
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      validationPort,
+      runWorkspaceTypecheck,
+      maxDeclaredFilesRetries: 1,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(events.filter((e) => e.type === 'step.unaffected_files_verified')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
+  });
+});

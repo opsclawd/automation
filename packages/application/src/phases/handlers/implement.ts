@@ -10,6 +10,7 @@ import type { TaskManifest, TaskManifestEntry } from '../plan-tasks.js';
 import type { ValidationPort } from '../../ports/validation-port.js';
 import type { RunWorkspaceTypecheckPort } from '../../ports/run-workspace-typecheck-port.js';
 import { buildTaskValidationCommands } from '../../task-validation-commands.js';
+import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
 
 export interface OversizedTask {
   taskNum: number;
@@ -377,7 +378,29 @@ export class ImplementHandler implements PhaseHandler {
               let verifiedUnaffected = false;
               let verificationError: string | undefined;
 
-              if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
+              // `missingFiles` is derived from what the step COMMITTED, so the
+              // evidence that dismisses it must come from the same reference.
+              // Validation and typecheck run against the WORKING TREE, which
+              // still holds anything the agent wrote but never committed — so
+              // they pass precisely in the case this check exists to catch, and
+              // the step gets marked "verified unaffected" while its work sits
+              // uncommitted. Refuse to even consider that dismissal while a
+              // declared file is dirty; fall through to declared_files_retry so
+              // the agent is asked to commit. See automation#869.
+              let uncommittedDeclared: string[] = [];
+              try {
+                const status = await ctx.git.status(ctx.cwd);
+                const dirty = new Set(uncommittedSourcePaths(status));
+                uncommittedDeclared = missingFiles.filter((f) => dirty.has(f));
+              } catch {
+                // If git status is unavailable we cannot prove the tree is
+                // clean, so fall through to the retry rather than dismissing.
+                uncommittedDeclared = missingFiles;
+              }
+
+              if (uncommittedDeclared.length > 0) {
+                verificationError = `declared files written but not committed: ${uncommittedDeclared.join(', ')}`;
+              } else if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
                 const validationCommands = buildTaskValidationCommands(manifest, d.index);
                 let validationsPassed = true;
 
