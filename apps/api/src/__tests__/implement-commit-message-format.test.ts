@@ -16,9 +16,11 @@ describe('implement commit message formatting', () => {
     );
 
     for (const instructions of [generated, template]) {
-      expect(instructions).toContain("git commit -F - <<'COMMIT_MESSAGE'\n");
-      expect(instructions).toContain('COMMIT_MESSAGE\n');
-      expect(instructions).toMatch(/type: concise subject\n\s*\n\s*Optional body with list items:/);
+      expect(instructions).toContain("\ngit commit -F - <<'COMMIT_MESSAGE'\n");
+      expect(instructions).toContain('\nCOMMIT_MESSAGE\n');
+      expect(instructions).toContain(
+        "\ngit commit -F - <<'COMMIT_MESSAGE'\ntype: concise subject\n\nOptional body with list items:\n- first detail\n- second detail\nCOMMIT_MESSAGE\n",
+      );
       expect(instructions).toContain('Do not encode line breaks as literal `\\n`');
     }
 
