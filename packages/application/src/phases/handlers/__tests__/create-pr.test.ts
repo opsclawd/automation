@@ -1010,3 +1010,83 @@ describe('PR body truncation logic (_truncateBody, _removeSection, _removeValida
     });
   });
 });
+
+describe('create-pr re-validates a stale or missing validation SHA', () => {
+  function handlerWith(passed: boolean, calls: string[]) {
+    return new CreatePrHandler({
+      headBranch: () => 'feat/issue-7',
+      revalidate: {
+        runValidation: {
+          execute: async (input: { cwd: string }) => {
+            calls.push(input.cwd);
+            return {
+              passed,
+              validationRun: { commands: [] },
+            };
+          },
+        } as never,
+        commands: ['pnpm test'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/revalidate',
+      },
+    });
+  }
+
+  it('proceeds when re-validation of current HEAD passes, and records the new SHA', async () => {
+    // review-fix and compound commit after validate, so a stale SHA is the
+    // normal case — blocking on it made create-pr unreachable for most runs.
+    const { artifacts, ctx, github } = await build();
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'validation.headsha',
+      contents: 'old-sha\n',
+    });
+    const calls: string[] = [];
+
+    const res = await handlerWith(true, calls).run(ctx);
+
+    expect(res.outcome).toBe('passed');
+    expect(calls).toHaveLength(1);
+    expect(github.createdPrInputs).toHaveLength(1);
+    expect((await artifacts.read(ctx.runUuid, 'validation.headsha')).trim()).toBe('base-sha');
+  });
+
+  it('re-validates when the SHA is missing entirely (validate deferred to fix-validate)', async () => {
+    const { ctx, github } = await build();
+    const store = new FakeArtifactStore();
+    await store.write({
+      runId: ctx.runUuid,
+      relativePath: 'validation.result',
+      contents: 'passed\n',
+    });
+    const ctxNoSha = { ...ctx, artifacts: store } as unknown as PhaseHandlerContext;
+    const calls: string[] = [];
+
+    const res = await handlerWith(true, calls).run(ctxNoSha);
+
+    expect(res.outcome).toBe('passed');
+    expect(calls).toHaveLength(1);
+    expect(github.createdPrInputs).toHaveLength(1);
+  });
+
+  it('still blocks when re-validation of current HEAD fails', async () => {
+    const { artifacts, ctx, git, github } = await build();
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'validation.headsha',
+      contents: 'old-sha\n',
+    });
+    const calls: string[] = [];
+
+    const res = await handlerWith(false, calls).run(ctx);
+
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('validation_failed');
+      expect(res.failure.message).toContain('Re-validation of current HEAD failed');
+    }
+    expect(calls).toHaveLength(1);
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+  });
+});

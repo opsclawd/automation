@@ -4,6 +4,7 @@ import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.
 import { createEventEmitter } from '../handler.js';
 import type { RunValidation } from '../../run-validation.js';
 import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
+import { recordValidationHeadSha } from '../validation-headsha.js';
 
 export interface ValidateHandlerOpts {
   runValidation: RunValidation;
@@ -113,17 +114,7 @@ export class ValidateHandler implements PhaseHandler {
     }
 
     if (passed) {
-      try {
-        const currentSha = await ctx.git.headCommitSha(ctx.cwd);
-        await ctx.artifacts.write({
-          runId: ctx.runUuid,
-          phaseId: 'validate',
-          relativePath: 'validation.headsha',
-          contents: `${currentSha.trim()}\n`,
-        });
-      } catch {
-        // non-fatal if headCommitSha fails or artifact write fails
-      }
+      await recordValidationHeadSha(ctx, 'validate');
 
       await ctx.artifacts.write({
         runId: ctx.runUuid,

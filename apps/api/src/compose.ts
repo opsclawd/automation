@@ -5945,6 +5945,16 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(
         new CreatePrHandler({
           headBranch: (ctx) => `ai/issue-${ctx.issueNumber}`,
+          // review-fix and compound commit after validate, so the recorded
+          // validation SHA is routinely stale by the time create-pr runs.
+          // Those commits are genuinely unvalidated — validate them rather
+          // than blocking the run or trusting the earlier result.
+          revalidate: {
+            runValidation,
+            commands: config.validation.commands,
+            timeoutSeconds: config.validation.timeout,
+            logDir: join(runsDir, 'create-pr-revalidate'),
+          },
         }),
       );
 

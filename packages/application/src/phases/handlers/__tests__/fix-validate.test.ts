@@ -164,3 +164,37 @@ describe('FixValidateHandler', () => {
     });
   });
 });
+
+describe('fix-validate records the validated commit', () => {
+  it('writes validation.headsha when the loop converges', async () => {
+    // validate deferred here instead of passing, so it never wrote a headsha.
+    // Without this, create-pr reads `(missing)` and blocks a converged run.
+    const { ctx, artifacts } = makeCtx({ withFailureJson: true });
+    (ctx as { git: unknown }).git = {
+      headCommitSha: async () => 'abc123def456\n',
+    } as PhaseHandlerContext['git'];
+
+    const handler = new FixValidateHandler({
+      runLoop: async () => ({ phaseOutcome: 'passed' as const, loopStatus: 'converged' as const }),
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('passed');
+    expect((await artifacts.read(RUN_UUID, 'validation.headsha')).trim()).toBe('abc123def456');
+  });
+
+  it('does not write validation.headsha when the loop fails', async () => {
+    const { ctx, artifacts } = makeCtx({ withFailureJson: true });
+    (ctx as { git: unknown }).git = {
+      headCommitSha: async () => 'abc123def456\n',
+    } as PhaseHandlerContext['git'];
+
+    const handler = new FixValidateHandler({
+      runLoop: async () => ({ phaseOutcome: 'failed' as const, loopStatus: 'failed' as const }),
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    await expect(artifacts.read(RUN_UUID, 'validation.headsha')).rejects.toThrow();
+  });
+});
