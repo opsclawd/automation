@@ -26,6 +26,21 @@ commit. Expected implementation files left uncommitted cause the orchestrator's
 commit coverage contract to fail even if tests pass and artifacts exist.
 Skipping this step fails the orchestrator's contract validation.
 
+Use stdin for every variable commit message, with real line breaks in the quoted
+heredoc. Do not encode line breaks as literal `\n`, and do not replace legitimate
+`\n` text in a message:
+
+```bash
+git add <files>
+git commit -F - <<'COMMIT_MESSAGE'
+type: concise subject
+
+Optional body with list items:
+- first detail
+- second detail
+COMMIT_MESSAGE
+```
+
 ## FINAL ACTION (Step N+2) — Unconditional file write
 
 Before you stop, you MUST write exactly one file named `implementation-log.md`
