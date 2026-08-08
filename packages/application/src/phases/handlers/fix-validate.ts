@@ -2,6 +2,7 @@ import type { PhaseName, Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
+import { recordValidationHeadSha } from '../validation-headsha.js';
 
 export interface FixValidateHandlerOpts {
   runLoop: (ctx: PhaseHandlerContext) => Promise<{
@@ -37,6 +38,10 @@ export class FixValidateHandler implements PhaseHandler {
     try {
       const result = await this.opts.runLoop(ctx);
       if (result.phaseOutcome === 'passed') {
+        // Convergence means validation passed against the commits this loop
+        // produced. Record that commit — validate never did, because it
+        // deferred here instead of passing.
+        await recordValidationHeadSha(ctx, 'fix-validate');
         emit('fix_validate.completed', 'info', 'fix-validate converged');
         return { outcome: 'passed' };
       }

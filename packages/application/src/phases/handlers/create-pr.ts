@@ -4,9 +4,25 @@ import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError, type Artifact } from '../../ports/artifact-store.js';
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
 import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
+import { recordValidationHeadSha } from '../validation-headsha.js';
+import { RunId } from '@ai-sdlc/domain';
+import type { RunValidation } from '../../run-validation.js';
 
 export interface CreatePrHandlerOpts {
   headBranch: (ctx: PhaseHandlerContext) => string;
+  /**
+   * Used to re-validate when the recorded validation SHA is missing or stale.
+   * Phases after validate (review-fix, compound) legitimately commit, which
+   * moves HEAD, so a stale SHA is the normal case rather than an error — but
+   * those commits genuinely are unvalidated, so the answer is to validate them,
+   * not to trust the old result.
+   */
+  revalidate?: {
+    runValidation: RunValidation;
+    commands: string[];
+    timeoutSeconds: number;
+    logDir: string;
+  };
 }
 
 export class CreatePrHandler implements PhaseHandler {
@@ -87,16 +103,54 @@ export class CreatePrHandler implements PhaseHandler {
     }
 
     if (!validationHeadSha || !currentHeadSha || validationHeadSha !== currentHeadSha) {
-      const msg = `Validation SHA (${validationHeadSha || 'missing'}) does not match current HEAD SHA (${currentHeadSha || 'unknown'}). PR creation blocked.`;
-      emit('create_pr.blocked', 'error', msg);
-      return this._fail(
-        ctx,
-        'validation_failed',
-        msg,
-        false,
-        'Re-run validation on current HEAD before creating a PR.',
-        writtenArtifacts,
-      );
+      const staleMsg = `Validation SHA (${validationHeadSha || 'missing'}) does not match current HEAD SHA (${currentHeadSha || 'unknown'}).`;
+
+      if (!this.opts.revalidate || !currentHeadSha) {
+        const msg = `${staleMsg} PR creation blocked.`;
+        emit('create_pr.blocked', 'error', msg);
+        return this._fail(
+          ctx,
+          'validation_failed',
+          msg,
+          false,
+          'Re-run validation on current HEAD before creating a PR.',
+          writtenArtifacts,
+        );
+      }
+
+      emit('create_pr.revalidating', 'info', `${staleMsg} Re-validating current HEAD.`);
+      let revalidated = false;
+      try {
+        const result = await this.opts.revalidate.runValidation.execute({
+          runId: RunId(ctx.runUuid),
+          phaseId: this.phase,
+          cwd: ctx.cwd,
+          logDir: this.opts.revalidate.logDir,
+          commands: this.opts.revalidate.commands,
+          timeoutSeconds: this.opts.revalidate.timeoutSeconds,
+          env: { GITHUB_REPOSITORY: ctx.repoFullName },
+        });
+        revalidated = result.passed;
+      } catch (e) {
+        emit('create_pr.revalidation_error', 'error', (e as Error).message);
+        revalidated = false;
+      }
+
+      if (!revalidated) {
+        const msg = `${staleMsg} Re-validation of current HEAD failed. PR creation blocked.`;
+        emit('create_pr.blocked', 'error', msg);
+        return this._fail(
+          ctx,
+          'validation_failed',
+          msg,
+          false,
+          'Fix the failing validation on current HEAD, then resume create-pr.',
+          writtenArtifacts,
+        );
+      }
+
+      await recordValidationHeadSha(ctx, this.phase);
+      emit('create_pr.revalidated', 'info', 'current HEAD passed re-validation');
     }
 
     // ── Stage 1: Idempotency — reuse existing PR if pr-url.txt exists ──
