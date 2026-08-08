@@ -70,13 +70,14 @@ export function renderDeclaredFilesRetryPrompt(priorAttemptMissingFiles?: string
   return [
     '## DECLARED FILES MISSED BY THE PREVIOUS ATTEMPT',
     '',
-    'The previous attempt declared these files in expected_files but did not commit them.',
-    'You MUST modify and commit every file listed below during this attempt:',
+    'If the previous attempt changed these files, that uncommitted work is still in your working tree.',
+    'Inspect git status to check existing uncommitted work and modify and commit every file listed below:',
     '',
     ...priorAttemptMissingFiles.map((file) => `- ${file}`),
     '',
-    'Do not remove the declarations merely to satisfy commit coverage. Implement the task',
-    'behavior in these files, then run the task-scoped validation and commit the result.',
+    '- If a listed file already contains correct changes: review and stage it; do not reimplement it.',
+    '- If a listed file is absent or incomplete: implement the required behavior.',
+    'Then run task-scoped validation, validate and commit every listed file.',
     '',
   ];
 }
