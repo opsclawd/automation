@@ -5951,6 +5951,9 @@ export function composeRoot(opts: ComposeOptions): Container {
               ...(result.needsHumanReview !== undefined
                 ? { needsHumanReview: result.needsHumanReview }
                 : {}),
+              ...(result.humanReviewReason !== undefined
+                ? { humanReviewReason: result.humanReviewReason }
+                : {}),
             };
           },
         }),

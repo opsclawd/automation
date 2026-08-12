@@ -20,13 +20,16 @@ vi.mock('@ai-sdlc/infrastructure', async (importOriginal) => {
           join(request.cwd, 'result.json'),
           JSON.stringify(
             fail
-              ? { result: 'fail', findings: [{ severity: 'high', summary: 'stub' }] }
+              ? {
+                  result: 'fail',
+                  findings: [{ severity: 'high', summary: 'stub in stub.ts', files: ['stub.ts'] }],
+                }
               : { result: 'pass', findings: [] },
           ),
         );
         writeFileSync(
           join(request.cwd, 'code-review.md'),
-          fail ? '# Review failed\n' : '# Review passed\n',
+          fail ? '# Review failed\n`stub.ts:1`\n' : '# Review passed\n',
         );
         return {
           runtime: 'opencode' as const,
@@ -94,6 +97,7 @@ describe('run-review-fix integration', () => {
     git('config', 'user.name', 'test');
     git('config', 'commit.gpgsign', 'false');
     writeFileSync(join(repoRoot, 'pnpm-workspace.yaml'), 'packages: []\n');
+    writeFileSync(join(repoRoot, 'stub.ts'), '// stub file\n');
     git('add', '-A');
     git('commit', '-qm', 'init');
   });

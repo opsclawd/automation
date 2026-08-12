@@ -287,5 +287,7 @@ export interface ReviewFixLoopResult {
    * `RUN_STATUS.needs_human_review`.
    */
   needsHumanReview?: boolean;
+  /** Operator-facing reason for a needs-human-review short circuit. */
+  humanReviewReason?: string;
   residualFindingsCount?: number;
 }

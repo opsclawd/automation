@@ -192,9 +192,11 @@ export class ReviewFixLoop {
     let lastFixVerdict: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix' | undefined;
     let pendingReconciliationContext: string | undefined;
     let pendingScopeReviewContext: string | undefined;
-    const findingHistory: Array<Set<string>> = [];
+    const findingArrayHistory: Array<
+      Array<{ severity: string; summary: string; files?: string[] }>
+    > = [];
+    const unfoundedPingPongHistory: FindingHistoryEntry[] = [];
     let headRevalidated = true;
-    const unfoundedHistory: FindingHistoryEntry[] = [];
 
     const opts = { ...(this.deps.options ?? {}), ...(input.options ?? {}) };
     const endOnReview = opts.endOnReview ?? true;
@@ -743,42 +745,42 @@ export class ReviewFixLoop {
         break;
       }
 
-      if (deps.reviewStateRepository) {
-        const snapshot: ReviewSnapshot = {
-          kind: 'git',
-          identity: review.reviewedCommitSha || '',
-          capturedAt: deps.now().toISOString(),
-        };
-        const nextState = await computeNewState(
-          integrationState,
-          review.verdict === 'pass' ? [] : (review.offendingFindings ?? []),
-          lastFixVerdict,
-          snapshot,
-          deps.now(),
-        );
-        deps.reviewStateRepository.appendAttempt({
-          attemptId: review.invocationId,
-          runId: String(input.runId),
-          scope: String(input.phaseId),
-          step: String(input.phaseId),
-          reviewMode,
-          dimension: 'integration',
-          snapshot,
-          verdict: review.verdict,
-          createdAt: deps.now().toISOString(),
-          artifacts: [],
-        });
-        deps.reviewStateRepository.upsertDimensionState(
-          String(input.runId),
-          String(input.phaseId),
-          String(input.phaseId),
-          nextState,
-        );
-        integrationState = nextState;
-        lastReviewedCommitSha = snapshot.identity;
-      }
-
       if (review.verdict === 'pass') {
+        if (deps.reviewStateRepository) {
+          const snapshot: ReviewSnapshot = {
+            kind: 'git',
+            identity: review.reviewedCommitSha || '',
+            capturedAt: deps.now().toISOString(),
+          };
+          const nextState = await computeNewState(
+            integrationState,
+            [],
+            lastFixVerdict,
+            snapshot,
+            deps.now(),
+          );
+          deps.reviewStateRepository.appendAttempt({
+            attemptId: review.invocationId,
+            runId: String(input.runId),
+            scope: String(input.phaseId),
+            step: String(input.phaseId),
+            reviewMode,
+            dimension: 'integration',
+            snapshot,
+            verdict: review.verdict,
+            createdAt: deps.now().toISOString(),
+            artifacts: [],
+          });
+          deps.reviewStateRepository.upsertDimensionState(
+            String(input.runId),
+            String(input.phaseId),
+            String(input.phaseId),
+            nextState,
+          );
+          integrationState = nextState;
+          lastReviewedCommitSha = snapshot.identity;
+        }
+
         if (outstandingFailedRevalidation || !headRevalidated) {
           const reval = await deps.runRevalidation(ctx);
           outstandingFailedRevalidation = !reval.passed;
@@ -807,23 +809,173 @@ export class ReviewFixLoop {
         break;
       }
 
-      // --- STRUCTURAL EVIDENCE CHECK (rebuttal-aware convergence) ---
+      // --- STRUCTURAL EVIDENCE CHECK & FILTERING (Step 2) ---
+      const originalFindings = review.offendingFindings ?? [];
       const unfoundedList = await this.checkReviewerEvidence(input, review, iterationIndex);
-      const unfoundedCount = unfoundedList.length;
       const unfoundedFingerprints = fingerprintFindings(unfoundedList);
+      const groundedFindings = originalFindings.filter(
+        (finding) => !unfoundedFingerprints.has(finding.summary.trim().toLowerCase()),
+      );
 
-      // --- OSCILLATION / STALL DETECTION ---
-      const normalizedFindings = fingerprintFindings(review.offendingFindings ?? []);
-      findingHistory.push(normalizedFindings);
-      if (findingHistory.length > 3) {
-        findingHistory.splice(0, findingHistory.length - 3);
+      if (unfoundedList.length > 0) {
+        this.emit(
+          input,
+          'review.evidence.dropped',
+          'warn',
+          `dropped ${unfoundedList.length} unfounded reviewer finding(s)`,
+          {
+            iterationIndex,
+            droppedCount: unfoundedList.length,
+            remainingCount: groundedFindings.length,
+            dropped: unfoundedList.map((u) => ({
+              severity: u.severity,
+              summary: u.summary,
+              ...(u.evidence ? { evidence: u.evidence } : {}),
+            })),
+          },
+        );
       }
+
+      review = {
+        ...review,
+        offendingFindings: groundedFindings,
+      };
+      lastOffendingFindings = groundedFindings;
+
+      // --- ALL-DROPPED NO-OP TRANSITION (Step 3) ---
+      if (originalFindings.length > 0 && groundedFindings.length === 0) {
+        lastIterationHadFixCommit = false;
+        const reval = await deps.runRevalidation(ctx);
+        if (reval.passed) {
+          thisLoop = completeIteration(thisLoop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(thisLoop);
+          this.emitIterationCompleted(input, iterationIndex, 'resolved');
+          await this.appendHistoryEntry(ctx, review, undefined, reval, 'resolved', input);
+          return await this.finalizeOutcome(input, baseline, {
+            loop: thisLoop,
+            phaseOutcome: 'passed',
+            loopStatus: 'converged',
+          });
+        }
+        outstandingFailedRevalidation = true;
+        lastIterationHadFixCommit = false;
+      }
+
+      if (deps.reviewStateRepository) {
+        const snapshot: ReviewSnapshot = {
+          kind: 'git',
+          identity: review.reviewedCommitSha || '',
+          capturedAt: deps.now().toISOString(),
+        };
+        const nextState = await computeNewState(
+          integrationState,
+          groundedFindings,
+          lastFixVerdict,
+          snapshot,
+          deps.now(),
+        );
+        deps.reviewStateRepository.appendAttempt({
+          attemptId: review.invocationId,
+          runId: String(input.runId),
+          scope: String(input.phaseId),
+          step: String(input.phaseId),
+          reviewMode,
+          dimension: 'integration',
+          snapshot,
+          verdict: review.verdict ?? 'fail',
+          createdAt: deps.now().toISOString(),
+          artifacts: [],
+        });
+        deps.reviewStateRepository.upsertDimensionState(
+          String(input.runId),
+          String(input.phaseId),
+          String(input.phaseId),
+          nextState,
+        );
+        integrationState = nextState;
+        lastReviewedCommitSha = snapshot.identity;
+      }
+
+      // --- OSCILLATION / STALL DETECTION (Step 4) ---
+      findingArrayHistory.push(groundedFindings);
+      if (findingArrayHistory.length > 3) {
+        findingArrayHistory.splice(0, findingArrayHistory.length - 3);
+      }
+      const findingHistory = findingArrayHistory.map((arr) => fingerprintFindings(arr));
       const stall = detectStall(findingHistory);
 
-      // --- REBUTTAL-AWARE CONVERGENCE (after the fix step returns) ---
-      // The actual convergence check fires after `runFix` runs and reports its
-      // verdict — see below. Here we just record the unfounded count so the
-      // post-fix branch can read it.
+      if (stall === 'oscillation' && findingArrayHistory.length >= 3) {
+        const currentFindings = groundedFindings;
+        const middleFindings = findingArrayHistory[findingArrayHistory.length - 2]!;
+        const prevPrevFindings = findingArrayHistory[findingArrayHistory.length - 3]!;
+
+        const currentFps = fingerprintFindings(currentFindings);
+        const middleFps = fingerprintFindings(middleFindings);
+        const prevPrevFps = fingerprintFindings(prevPrevFindings);
+
+        const demandA = currentFindings.find((f) => {
+          const fp = f.summary.trim().toLowerCase();
+          return prevPrevFps.has(fp) && !middleFps.has(fp);
+        });
+
+        if (demandA) {
+          const candidatesB = middleFindings.filter((f) => {
+            const fp = f.summary.trim().toLowerCase();
+            return !currentFps.has(fp);
+          });
+
+          if (candidatesB.length > 0) {
+            const filesA = new Set(
+              (demandA.files ?? []).map((f) => f.replace(/\\/g, '/').trim().toLowerCase()),
+            );
+            const candidatesWithOverlap = candidatesB.filter((fB) =>
+              (fB.files ?? []).some((f) => filesA.has(f.replace(/\\/g, '/').trim().toLowerCase())),
+            );
+            const demandB =
+              candidatesWithOverlap.length > 0 ? candidatesWithOverlap[0]! : candidatesB[0]!;
+
+            const humanReviewReason =
+              `review/fix oscillation detected between "${demandA.summary}" and ` +
+              `"${demandB.summary}"; human adjudication required`;
+
+            const sharedFiles = (demandA.files ?? []).filter((fA) =>
+              (demandB.files ?? []).some(
+                (fB) =>
+                  fA.replace(/\\/g, '/').trim().toLowerCase() ===
+                  fB.replace(/\\/g, '/').trim().toLowerCase(),
+              ),
+            );
+
+            const fpA = demandA.summary.trim().toLowerCase();
+            const fpB = demandB.summary.trim().toLowerCase();
+
+            this.emit(input, 'review.oscillation.detected', 'warn', humanReviewReason, {
+              iterationIndex,
+              demandA: demandA.summary,
+              demandASummary: demandA.summary,
+              demandAFingerprint: fpA,
+              demandB: demandB.summary,
+              demandBSummary: demandB.summary,
+              demandBFingerprint: fpB,
+              ...(sharedFiles.length > 0 ? { sharedFiles } : {}),
+            });
+
+            thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+            deps.loops.update(thisLoop);
+            this.emitIterationCompleted(input, iterationIndex, 'failed');
+            await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
+
+            return {
+              loop: thisLoop,
+              phaseOutcome: 'failed',
+              loopStatus: 'failed',
+              needsHumanReview: true,
+              humanReviewReason,
+              residualFindingsCount: groundedFindings.length,
+            };
+          }
+        }
+      }
 
       // --- decide fallback (use-case-owned triggers) ---
       const escalateForFixFailures =
@@ -850,7 +1002,7 @@ export class ReviewFixLoop {
 
       // --- FIX ---
       const fixerHistoryContext = await this.readHistoryContext(ctx, 'fixer', input);
-      const allowedFiles = deriveAllowedFiles(review.offendingFindings ?? [], input.cwd);
+      const allowedFiles = deriveAllowedFiles(groundedFindings, input.cwd);
       const fix = await deps.runFix(ctx, {
         useFallback,
         ...(useFallback && lastFixInvocationId !== undefined
@@ -876,6 +1028,11 @@ export class ReviewFixLoop {
         consecutiveFixFailuresForCap += 1;
         lastIterationHadFixCommit = false;
 
+        unfoundedPingPongHistory.push({
+          findings: unfoundedFingerprints,
+          ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
+        });
+
         // --- RUNAWAY-PROTECTION CAP: maxConsecutiveFixFailures (#667) ---
         const consecutiveCap = input.maxConsecutiveFixFailures;
         const capHit =
@@ -892,12 +1049,6 @@ export class ReviewFixLoop {
         deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, outcome);
         await this.appendHistoryEntry(ctx, review, fix, undefined, outcome, input);
-        // Record fixer verdict in unfounded-history even on fix failure so
-        // the ping-pong detector can see it.
-        unfoundedHistory.push({
-          findings: unfoundedFingerprints,
-          ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
-        });
         await this.runCleanArtifacts(ctx);
 
         if (capHit) {
@@ -933,6 +1084,35 @@ export class ReviewFixLoop {
         consecutiveFixFailuresForCap += 1;
       }
       lastIterationHadFixCommit = fix.verdict === 'done_with_fixes';
+
+      unfoundedPingPongHistory.push({
+        findings: unfoundedFingerprints,
+        ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
+      });
+
+      const unfoundedLimit = deps.unfoundedPingPongLimit ?? 4;
+      if (detectUnfoundedPingPong(unfoundedPingPongHistory, unfoundedLimit)) {
+        const humanReviewReason = `unfounded finding ping-pong detected across ${unfoundedLimit} iterations; human adjudication required`;
+        this.emit(input, 'review.unfounded_pingpong.detected', 'warn', humanReviewReason, {
+          iterationIndex,
+          unfoundedCount: unfoundedList.length,
+          limit: unfoundedLimit,
+        });
+        thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(thisLoop);
+        this.emitIterationCompleted(input, iterationIndex, 'failed');
+        await this.appendHistoryEntry(ctx, review, fix, undefined, 'failed', input);
+
+        return {
+          loop: thisLoop,
+          phaseOutcome: 'failed',
+          loopStatus: 'failed',
+          needsHumanReview: true,
+          humanReviewReason,
+          residualFindingsCount: groundedFindings.length,
+        };
+      }
+
       if (fix.verdict === 'done_with_fixes') {
         headRevalidated = false;
         lastPostFixGateFailed = false;
@@ -1078,10 +1258,6 @@ export class ReviewFixLoop {
                 dirtyFiles: verification.dirtyFiles,
                 statusOutput: verification.statusOutput,
               });
-              unfoundedHistory.push({
-                findings: unfoundedFingerprints,
-                ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
-              });
               // Do NOT call this.deps.rollbackFix here (plan-review P0, #679):
               // this branch means the fixer left uncommitted changes in the
               // tree (e.g. a pre-commit hook rejected the commit). That dirty
@@ -1150,10 +1326,6 @@ export class ReviewFixLoop {
               kind: 'no_commit_claimed',
               statusOutput: verification.statusOutput,
             });
-            unfoundedHistory.push({
-              findings: unfoundedFingerprints,
-              ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
-            });
             await this.runCleanArtifacts(ctx);
             const consecutiveCap = input.maxConsecutiveFixFailures;
             if (
@@ -1219,70 +1391,7 @@ export class ReviewFixLoop {
         lastFailingCategory = reval.category;
       }
 
-      // Update the unfounded-history after we know the fixer's verdict so
-      // `detectUnfoundedPingPong` can see it.
-      unfoundedHistory.push({
-        findings: unfoundedFingerprints,
-        ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
-      });
-
-      // --- REBUTTAL-AWARE CONVERGENCE ---
-      // If every finding was unfounded AND the fixer returned
-      // `done_no_fixes_needed`, accept the rebuttal and converge.
-      const findings = review.offendingFindings ?? [];
-      const allUnfounded = unfoundedCount === findings.length && findings.length > 0;
-      const isRebutted = allUnfounded && fix.verdict === 'done_no_fixes_needed' && reval.passed;
-
-      if (isRebutted) {
-        // Append the rebuttal to code-review.md for human/PR-review visibility.
-        if (this.deps.artifactStore) {
-          const append = await appendRebuttalToCodeReview(this.deps.artifactStore, {
-            runId: String(input.runId),
-            phaseId: String(input.phaseId),
-            iterationIndex,
-            rebuttal: fix.rebuttal ?? '(no rebuttal text provided)',
-            unfoundedFindings: unfoundedList,
-          });
-          if (!append.written) {
-            this.emit(
-              input,
-              'review.rebuttal.append_skipped',
-              'warn',
-              `failed to append rebuttal to code-review.md: ${append.reason ?? 'unknown'}`,
-              {
-                iterationIndex,
-                reason: append.reason,
-              },
-            );
-          }
-        }
-        this.emit(
-          input,
-          'review.rebuttal.accepted',
-          'info',
-          `accepted fixer rebuttal: ${findings.length} unfounded findings`,
-          {
-            iterationIndex,
-            unfoundedCount: unfoundedCount,
-          },
-        );
-        thisLoop = completeIteration(thisLoop, {
-          outcome: 'resolved',
-          fixInvocationId: fix.invocationId,
-          revalidationId: reval.validationRunId,
-          now: this.deps.now(),
-        });
-        this.deps.loops.update(thisLoop);
-        this.emitIterationCompleted(input, iterationIndex, 'resolved');
-        await this.appendHistoryEntry(ctx, review, fix, reval, 'resolved', input);
-        return await this.finalizeOutcome(input, baseline, {
-          loop: thisLoop,
-          phaseOutcome: 'passed',
-          loopStatus: 'converged',
-        });
-      }
-
-      const hasContradiction = fix.verdict === 'done_no_fixes_needed' && !isRebutted;
+      const hasContradiction = fix.verdict === 'done_no_fixes_needed';
       if (hasContradiction && deps.runArbiter !== undefined) {
         this.emit(
           input,
@@ -1349,7 +1458,7 @@ export class ReviewFixLoop {
               phaseId: String(input.phaseId),
               iterationIndex,
               rebuttal: fix.rebuttal ?? '(no rebuttal text provided)',
-              unfoundedFindings: findings.map((f) => ({
+              unfoundedFindings: (review.offendingFindings ?? []).map((f) => ({
                 severity: f.severity,
                 summary: f.summary,
               })),
@@ -1388,7 +1497,7 @@ export class ReviewFixLoop {
             outcome: 'unresolved',
             fixInvocationId: fix.invocationId,
             revalidationId: reval.validationRunId,
-            now: this.deps.now(),
+            now: deps.now(),
           });
           deps.loops.update(thisLoop);
           await this.appendHistoryEntry(ctx, review, fix, reval, 'unresolved', input);
@@ -1396,50 +1505,6 @@ export class ReviewFixLoop {
           consecutiveFixFailures = 0;
           continue;
         }
-      }
-
-      // Short-circuit on `unfounded_pingpong`: every recent iteration had
-      // unfounded findings AND the fixer rebutted every time. Escalate to
-      // `needs_human_review` rather than burning the budget.
-      const pingPongLimit = this.deps.unfoundedPingPongLimit ?? 4;
-      const isPingPong =
-        unfoundedCount > 0 &&
-        fix.verdict === 'done_no_fixes_needed' &&
-        detectUnfoundedPingPong(unfoundedHistory, pingPongLimit);
-
-      if (isPingPong) {
-        thisLoop = completeIteration(thisLoop, {
-          outcome: 'failed',
-          fixInvocationId: fix.invocationId,
-          revalidationId: reval.validationRunId,
-          now: this.deps.now(),
-        });
-        this.deps.loops.update(thisLoop);
-        this.emitIterationCompleted(input, iterationIndex, 'failed');
-        await this.appendHistoryEntry(ctx, review, fix, reval, 'failed', input);
-        this.emit(
-          input,
-          'review.evidence.pingpong',
-          'warn',
-          `unfounded-pingpong detected: ${pingPongLimit} consecutive unfounded iterations`,
-          {
-            iterationIndex,
-            unfoundedCount,
-            limit: pingPongLimit,
-          },
-        );
-        return {
-          loop: thisLoop,
-          phaseOutcome: 'failed',
-          loopStatus:
-            thisLoop.status === 'converged'
-              ? 'converged'
-              : thisLoop.status === 'failed'
-                ? 'failed'
-                : 'exhausted',
-          needsHumanReview: true,
-          residualFindingsCount: lastOffendingFindings.length,
-        };
       }
 
       // Default path: complete the iteration as fixed or unresolved.
@@ -1882,17 +1947,36 @@ export class ReviewFixLoop {
     }> = [];
 
     for (const f of findings) {
-      const matched = evidence.filter((e) => {
-        const summaryLc = f.summary.toLowerCase();
-        // Heuristic: match evidence whose path appears in the summary.
+      let matched = evidence.filter((e) => {
         if (!e.path) return false;
+        const summaryLc = f.summary.toLowerCase();
         const basename = e.path.split('/').pop()?.toLowerCase();
-        return basename !== undefined && summaryLc.includes(basename);
+        const fFiles = f.files ?? [];
+        if (basename !== undefined && summaryLc.includes(basename)) return true;
+        if (
+          fFiles.some(
+            (file) =>
+              file.toLowerCase() === e.path.toLowerCase() ||
+              (basename !== undefined && file.toLowerCase().endsWith(basename)),
+          )
+        ) {
+          return true;
+        }
+        return false;
       });
+
+      if (matched.length === 0) {
+        const fFiles = f.files ?? [];
+        if (fFiles.length > 0) {
+          matched = fFiles.map((path) => ({ path }));
+        }
+      }
+
       if (matched.length === 0) {
         unfounded.push({ severity: f.severity, summary: f.summary });
         continue;
       }
+
       let anyConfirmed = false;
       for (const e of matched) {
         const result = await this.deps.findingEvidenceInspector({

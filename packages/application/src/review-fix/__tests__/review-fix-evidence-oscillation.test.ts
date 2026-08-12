@@ -160,7 +160,51 @@ describe('ReviewFixLoop Evidence Inspection and Oscillation', () => {
 
     expect(result.phaseOutcome).toBe('failed');
     expect(result.loopStatus).toBe('exhausted');
-    expect(runFix).not.toHaveBeenCalled();
+    expect(runFix).toHaveBeenCalledTimes(1);
+  });
+
+  it('short-circuits to needsHumanReview when unfoundedPingPongLimit is reached', async () => {
+    const fakeInspector = new FakeFindingEvidenceInspector();
+    fakeInspector.setNext({ evidenceConfirmed: false, reason: 'unfounded finding' });
+    const runFix = vi.fn().mockImplementation(
+      async (): Promise<FixStepResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_no_fixes_needed',
+        rebuttal: 'Finding is invalid because of X',
+      }),
+    );
+
+    const { deps, events } = makeDeps({
+      unfoundedPingPongLimit: 2,
+      findingEvidenceInspector: makeFindingEvidenceInspector(fakeInspector),
+      runReview: async () => ({
+        invocationId: 'rev-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [demandA],
+      }),
+      runRevalidation: async () => ({
+        validationRunId: 'val-1',
+        passed: false,
+      }),
+      runFix,
+    });
+
+    const result = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
+
+    expect(result.phaseOutcome).toBe('failed');
+    expect(result.needsHumanReview).toBe(true);
+    expect(result.humanReviewReason).toContain(
+      'unfounded finding ping-pong detected across 2 iterations',
+    );
+    expect(runFix).toHaveBeenCalledTimes(2);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'review.unfounded_pingpong.detected',
+        metadata: expect.objectContaining({ limit: 2, unfoundedCount: 1 }),
+      }),
+    );
   });
 
   it('passes only grounded findings to the fixer and records every drop', async () => {
@@ -174,7 +218,7 @@ describe('ReviewFixLoop Evidence Inspection and Oscillation', () => {
 
     const fakeInspector = new FakeFindingEvidenceInspector();
     fakeInspector.setResultFn((input) => {
-      if (input.finding.files?.includes('real.ts')) {
+      if (input.evidence.path.includes('real.ts')) {
         return { evidenceConfirmed: true, reason: 'file exists' };
       }
       return { evidenceConfirmed: false, reason: 'file missing' };

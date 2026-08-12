@@ -618,13 +618,13 @@ describe('ReviewFixLoop', () => {
         },
       });
 
-      await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
+      const result = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
 
-      expect(fixCalls[2]?.useFallback).toBe(true);
+      expect(fixCalls.length).toBe(2);
+      expect(result.needsHumanReview).toBe(true);
 
-      const esc = events.filter((e) => e.type === 'phase.fallback.escalated');
-      expect(esc.length).toBeGreaterThanOrEqual(1);
-      expect(esc.some((e) => e.metadata.triggerReason === 'oscillation_detected')).toBe(true);
+      const oscEvent = events.find((e) => e.type === 'review.oscillation.detected');
+      expect(oscEvent).toBeDefined();
     });
 
     it('escalates when the same finding persists across 3 iterations (no_progress)', async () => {
@@ -1517,107 +1517,6 @@ describe('ReviewFixLoop', () => {
       expect(out.loop.iterations[0]?.outcome).toBe('fixed');
       expect(out.loop.iterations[1]?.outcome).toBe('resolved');
     });
-
-    it('short-circuits to needs_human_review on unfounded_pingpong after 4 iterations', async () => {
-      const evidenceFake = new FakeFindingEvidenceInspector();
-      // First finding: grounded (real evidence). Second: unfounded.
-      evidenceFake.setResultFn((i) => {
-        if (i.evidence.path === 'real.ts') {
-          return { evidenceConfirmed: true, reason: 'ok' };
-        }
-        return { evidenceConfirmed: false, reason: 'path missing' };
-      });
-      const artifactStore = new FakeArtifactStore();
-      await artifactStore.write({
-        runId: 'run-1',
-        relativePath: 'code-review.md',
-        contents: 'Finding 1: `real.ts:12`\nFinding 2: `fake.ts:34`',
-      });
-      let reviewCalls = 0;
-      const deps = makeDeps({
-        findingEvidenceInspector: makeFindingEvidenceInspector(evidenceFake),
-        artifactStore,
-        unfoundedPingPongLimit: 4,
-        runReview: async () => {
-          reviewCalls += 1;
-          return {
-            invocationId: `rev-${reviewCalls}`,
-            agentOutcome: 'success' as const,
-            verdict: 'fail' as const,
-            offendingFindings: [
-              { severity: 'high', summary: 'real issue in real.ts' },
-              { severity: 'high', summary: 'fabricated in fake.ts' },
-            ],
-          };
-        },
-        runFix: async () => ({
-          invocationId: 'fix',
-          agentOutcome: 'success' as const,
-          verdict: 'done_no_fixes_needed' as const,
-          rebuttal: 'the finding is fabricated',
-        }),
-        runRevalidation: async () => ({ validationRunId: 'v', passed: false }),
-      });
-      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 10 });
-      // After 4 consecutive iterations of (1 unfounded + done_no_fixes_needed),
-      // short-circuit to needs_human_review (NOT exhausted).
-      expect(out.phaseOutcome).toBe('failed');
-      expect(out.needsHumanReview).toBe(true);
-      expect(out.loop.status).not.toBe('exhausted');
-      expect(out.loop.iterations.length).toBeLessThanOrEqual(10);
-    });
-
-    it('does not short-circuit when unfounded_pingpong detector sees done_with_fixes in the window', async () => {
-      const evidenceFake = new FakeFindingEvidenceInspector();
-      // First finding: grounded (real evidence). Second: unfounded.
-      evidenceFake.setResultFn((i) => {
-        if (i.evidence.path === 'real.ts') {
-          return { evidenceConfirmed: true, reason: 'ok' };
-        }
-        return { evidenceConfirmed: false, reason: 'path missing' };
-      });
-      const artifactStore = new FakeArtifactStore();
-      await artifactStore.write({
-        runId: 'run-1',
-        relativePath: 'code-review.md',
-        contents: 'Finding 1: `real.ts:12`\nFinding 2: `fake.ts:34`',
-      });
-      let reviewCalls = 0;
-      const deps = makeDeps({
-        findingEvidenceInspector: makeFindingEvidenceInspector(evidenceFake),
-        artifactStore,
-        unfoundedPingPongLimit: 4,
-        runReview: async () => {
-          reviewCalls += 1;
-          return {
-            invocationId: `rev-${reviewCalls}`,
-            agentOutcome: 'success' as const,
-            verdict: 'fail' as const,
-            offendingFindings: [
-              { severity: 'high', summary: 'real issue in real.ts' },
-              { severity: 'high', summary: 'fabricated in fake.ts' },
-            ],
-          };
-        },
-        runFix: async () => {
-          // Iteration 1: done_with_fixes (a real attempt). 2..5: done_no_fixes_needed.
-          return {
-            invocationId: 'fix',
-            agentOutcome: 'success' as const,
-            verdict:
-              reviewCalls <= 1 ? ('done_with_fixes' as const) : ('done_no_fixes_needed' as const),
-            ...(reviewCalls > 1 ? { rebuttal: 'still fabricated' } : {}),
-          };
-        },
-        runRevalidation: async () => ({ validationRunId: 'v', passed: false }),
-      });
-      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 6 });
-      // Because iteration 1 had done_with_fixes, the 4-iteration window
-      // (iter 2..5) is all done_no_fixes_needed → ping-pong fires → NHR.
-      // Actually iter 2..5 is 4 entries → trigger.
-      expect(out.needsHumanReview).toBe(true);
-      expect(out.phaseOutcome).toBe('failed');
-    });
   });
 
   describe('endOnReview (#627)', () => {
@@ -1757,9 +1656,14 @@ describe('ReviewFixLoop', () => {
         [
           { severity: 'high', summary: 'a' },
           { severity: 'high', summary: 'b' },
+          { severity: 'high', summary: 'c' },
         ],
-        [{ severity: 'high', summary: 'a' }],
-        [{ severity: 'medium', summary: 'b' }],
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'medium', summary: 'a' }],
+        [{ severity: 'medium', summary: 'a' }],
       ];
       const deps = makeDepsWithHistory({
         runReview: async () => {
@@ -1787,9 +1691,14 @@ describe('ReviewFixLoop', () => {
         [
           { severity: 'high', summary: 'a' },
           { severity: 'high', summary: 'b' },
+          { severity: 'high', summary: 'c' },
         ],
-        [{ severity: 'high', summary: 'a' }],
-        [{ severity: 'medium', summary: 'b' }],
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'medium', summary: 'a' }],
+        [{ severity: 'medium', summary: 'a' }],
       ];
       const deps = makeDepsWithHistory({
         runRevalidation: async () => ({ validationRunId: 'v', passed: false, category: 'build' }),
@@ -1816,10 +1725,14 @@ describe('ReviewFixLoop', () => {
         [
           { severity: 'high', summary: 'a' },
           { severity: 'high', summary: 'b' },
+          { severity: 'high', summary: 'c' },
         ],
-        [{ severity: 'high', summary: 'a' }],
-        [{ severity: 'medium', summary: 'b' }],
-        [{ severity: 'medium', summary: 'b' }],
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'medium', summary: 'a' }],
+        [{ severity: 'medium', summary: 'a' }],
       ];
       const deps = makeDepsWithHistory({
         runPostFixGate: async (ctx) => {
@@ -1851,10 +1764,14 @@ describe('ReviewFixLoop', () => {
         [
           { severity: 'high', summary: 'a' },
           { severity: 'high', summary: 'b' },
+          { severity: 'high', summary: 'c' },
         ],
-        [{ severity: 'high', summary: 'a' }],
-        [{ severity: 'medium', summary: 'b' }],
-        [{ severity: 'medium', summary: 'b' }],
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'medium', summary: 'a' }],
+        [{ severity: 'medium', summary: 'a' }],
       ];
       const deps = makeDepsWithHistory({
         options: { trendAwareExit: { mode: 'lenient' } },
@@ -1887,9 +1804,14 @@ describe('ReviewFixLoop', () => {
         [
           { severity: 'high', summary: 'a' },
           { severity: 'high', summary: 'b' },
+          { severity: 'high', summary: 'c' },
         ],
-        [{ severity: 'high', summary: 'a' }],
-        [{ severity: 'medium', summary: 'b' }],
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'medium', summary: 'a' }],
+        [{ severity: 'medium', summary: 'a' }],
       ];
       const deps = makeDepsWithHistory({
         options: { trendAwareExit: { enabled: false } },
