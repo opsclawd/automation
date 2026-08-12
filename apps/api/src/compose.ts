@@ -3243,6 +3243,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         loopHistory,
         findingEvidenceInspector: createFindingEvidenceInspector(),
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
+        readWorktreeFile: async (cwd: string, relativePath: string) => {
+          try {
+            return readFileSync(join(cwd, relativePath), 'utf-8');
+          } catch {
+            return undefined;
+          }
+        },
         reviewStateRepository,
         runArbiter: runWholePrArbiter,
         options: {

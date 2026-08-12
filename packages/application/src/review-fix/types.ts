@@ -150,6 +150,11 @@ export interface ReviewFixLoopDeps {
    */
   artifactStore?: ArtifactStore;
   /**
+   * Optional worktree file reader port to read files directly from the CWD
+   * when artifactStore is absent or when reading from artifactStore fails.
+   */
+  readWorktreeFile?: (cwd: string, relativePath: string) => Promise<string | undefined>;
+  /**
    * Threshold for `unfounded_pingpong` short-circuit. When the last
    * `unfoundedPingPongLimit` iterations all have unfounded findings AND
    * the fixer returned `done_no_fixes_needed`, return `needsHumanReview`.

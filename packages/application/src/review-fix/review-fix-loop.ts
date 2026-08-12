@@ -13,6 +13,7 @@ import {
   detectStall,
   detectUnfoundedPingPong,
   fingerprintFindings,
+  fingerprintSingleFinding,
   type FindingHistoryEntry,
 } from './detect-stall.js';
 import { extractEvidence } from './extract-evidence.js';
@@ -814,7 +815,7 @@ export class ReviewFixLoop {
       const unfoundedList = await this.checkReviewerEvidence(input, review, iterationIndex);
       const unfoundedFingerprints = fingerprintFindings(unfoundedList);
       const groundedFindings = originalFindings.filter(
-        (finding) => !unfoundedFingerprints.has(finding.summary.trim().toLowerCase()),
+        (finding) => !unfoundedFingerprints.has(fingerprintSingleFinding(finding)),
       );
 
       if (unfoundedList.length > 0) {
@@ -914,13 +915,13 @@ export class ReviewFixLoop {
         const prevPrevFps = fingerprintFindings(prevPrevFindings);
 
         const demandA = currentFindings.find((f) => {
-          const fp = f.summary.trim().toLowerCase();
+          const fp = fingerprintSingleFinding(f);
           return prevPrevFps.has(fp) && !middleFps.has(fp);
         });
 
         if (demandA) {
           const candidatesB = middleFindings.filter((f) => {
-            const fp = f.summary.trim().toLowerCase();
+            const fp = fingerprintSingleFinding(f);
             return !currentFps.has(fp);
           });
 
@@ -946,8 +947,8 @@ export class ReviewFixLoop {
               ),
             );
 
-            const fpA = demandA.summary.trim().toLowerCase();
-            const fpB = demandB.summary.trim().toLowerCase();
+            const fpA = fingerprintSingleFinding(demandA);
+            const fpB = fingerprintSingleFinding(demandB);
 
             this.emit(input, 'review.oscillation.detected', 'warn', humanReviewReason, {
               iterationIndex,
@@ -1932,6 +1933,13 @@ export class ReviewFixLoop {
     if (this.deps.artifactStore) {
       try {
         markdown = await this.deps.artifactStore.read(String(input.runId), 'code-review.md');
+      } catch {
+        markdown = '';
+      }
+    }
+    if (!markdown && this.deps.readWorktreeFile && input.cwd) {
+      try {
+        markdown = (await this.deps.readWorktreeFile(input.cwd, 'code-review.md')) ?? '';
       } catch {
         markdown = '';
       }

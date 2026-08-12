@@ -52,7 +52,7 @@ export function detectUnfoundedPingPong(
   history: readonly FindingHistoryEntry[],
   windowSize = 4,
 ): boolean {
-  if (history.length < windowSize) return false;
+  if (windowSize <= 0 || history.length < windowSize) return false;
   const window = history.slice(history.length - windowSize);
 
   const allRebutted = window.every(
@@ -71,13 +71,21 @@ export function detectUnfoundedPingPong(
 }
 
 /**
+ * Fingerprint a single finding by normalizing its summary (trim + lowercase).
+ */
+export function fingerprintSingleFinding(finding: { summary: string } | string): string {
+  const summary = typeof finding === 'string' ? finding : finding.summary;
+  return (summary ?? '').trim().toLowerCase();
+}
+
+/**
  * Build a normalized fingerprint set for a finding list. Lowercase + trim,
  * matching the pre-#623 normalization in `review-fix-loop.ts` lines 137-139.
  */
 export function fingerprintFindings(
   findings: ReadonlyArray<{ severity: string; summary: string }>,
 ): Set<string> {
-  return new Set(findings.map((f) => (f.summary ?? '').trim().toLowerCase()));
+  return new Set(findings.map(fingerprintSingleFinding));
 }
 
 export interface TrendDetectionOptions {

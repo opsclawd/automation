@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
 import { describe, it, expect, vi } from 'vitest';
 import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
@@ -405,4 +408,64 @@ describe('ReviewFixLoop Evidence Inspection and Oscillation', () => {
       expect(oscillationEvents).toHaveLength(0);
     },
   );
+
+  it('falls back to reading code-review.md from input.cwd when artifactStore is absent', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'review-test-'));
+    const codeReviewPath = path.join(tmpDir, 'code-review.md');
+    await fs.writeFile(codeReviewPath, '# Review\n- Grounded finding in real.ts');
+
+    try {
+      const fakeInspector = new FakeFindingEvidenceInspector();
+      fakeInspector.setResultFn((input) => {
+        if (input.evidence.path.includes('real.ts')) {
+          return { evidenceConfirmed: true, reason: 'file exists' };
+        }
+        return { evidenceConfirmed: false, reason: 'file missing' };
+      });
+
+      const groundedFinding = {
+        severity: 'high',
+        summary: 'Grounded finding',
+        files: ['real.ts'],
+      };
+
+      let reviewCount = 0;
+      const { deps, events } = makeDeps({
+        artifactStore: undefined,
+        findingEvidenceInspector: makeFindingEvidenceInspector(fakeInspector),
+        runReview: async () => {
+          reviewCount++;
+          if (reviewCount === 1) {
+            return {
+              invocationId: 'rev-1',
+              agentOutcome: 'success',
+              verdict: 'fail',
+              offendingFindings: [groundedFinding],
+            };
+          }
+          return {
+            invocationId: 'rev-2',
+            agentOutcome: 'success',
+            verdict: 'pass',
+          };
+        },
+        runFix: async (): Promise<FixStepResult> => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+        }),
+      });
+
+      const result = await new ReviewFixLoop(deps).execute({
+        ...baseInput(),
+        cwd: tmpDir,
+      });
+
+      expect(result.phaseOutcome).toBe('passed');
+      const evidenceDroppedEvent = events.find((e) => e.type === 'review.evidence.dropped');
+      expect(evidenceDroppedEvent).toBeUndefined();
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
