@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   detectUnfoundedPingPong,
   fingerprintFindings,
+  fingerprintSingleFinding,
   type FindingHistoryEntry,
 } from '../detect-stall.js';
 
@@ -75,6 +76,22 @@ describe('detectUnfoundedPingPong', () => {
     ];
     expect(detectUnfoundedPingPong(history, 3)).toBe(true);
     expect(detectUnfoundedPingPong(history, 4)).toBe(false);
+  });
+
+  it('handles windowSize 0 or negative without crashing', () => {
+    const history = [
+      entry(['finding-1'], 'done_no_fixes_needed'),
+      entry(['finding-1'], 'done_no_fixes_needed'),
+    ];
+    expect(detectUnfoundedPingPong(history, 0)).toBe(false);
+    expect(detectUnfoundedPingPong(history, -1)).toBe(false);
+  });
+});
+
+describe('fingerprintSingleFinding', () => {
+  it('lowercases and trims object summaries and strings', () => {
+    expect(fingerprintSingleFinding({ summary: '  Type Error ' })).toBe('type error');
+    expect(fingerprintSingleFinding('  Type Error ')).toBe('type error');
   });
 });
 

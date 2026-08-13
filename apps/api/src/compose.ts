@@ -3243,6 +3243,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         loopHistory,
         findingEvidenceInspector: createFindingEvidenceInspector(),
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
+        readWorktreeFile: async (cwd: string, relativePath: string) => {
+          try {
+            return await fsReadFile(join(cwd, relativePath), 'utf-8');
+          } catch {
+            return undefined;
+          }
+        },
         reviewStateRepository,
         runArbiter: runWholePrArbiter,
         options: {
@@ -5950,6 +5957,9 @@ export function composeRoot(opts: ComposeOptions): Container {
               loopStatus: result.loopStatus,
               ...(result.needsHumanReview !== undefined
                 ? { needsHumanReview: result.needsHumanReview }
+                : {}),
+              ...(result.humanReviewReason !== undefined
+                ? { humanReviewReason: result.humanReviewReason }
                 : {}),
             };
           },

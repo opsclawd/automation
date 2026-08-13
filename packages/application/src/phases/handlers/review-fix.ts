@@ -11,6 +11,8 @@ export interface ReviewFixHandlerOpts {
     loopStatus: 'converged' | 'converged_with_notes' | 'failed' | 'exhausted';
     /** True when the loop short-circuited via the unfounded_pingpong path. */
     needsHumanReview?: boolean;
+    /** Operator-facing reason for a needs-human-review short circuit. */
+    humanReviewReason?: string;
   }>;
 }
 
@@ -54,7 +56,9 @@ export class ReviewFixHandler implements PhaseHandler {
       loopStatus === 'exhausted' ? 'exhausted' : 'failed';
     const isHumanReview = result.needsHumanReview === true;
     const verboseMessage = isHumanReview
-      ? 'review/fix loop short-circuited to needs_human_review (unfounded reviewer findings)'
+      ? result.humanReviewReason && result.humanReviewReason.trim().length > 0
+        ? result.humanReviewReason
+        : 'review/fix loop short-circuited to needs_human_review (unfounded reviewer findings)'
       : terminalStatus === 'exhausted'
         ? 'review/fix loop exhausted without converging'
         : 'review/fix loop failed';
