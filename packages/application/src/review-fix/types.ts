@@ -9,7 +9,7 @@ import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { FindingEvidenceInspectorPort } from '../ports/finding-evidence-inspector-port.js';
-import type { ArtifactStore } from '../ports.js';
+import type { ArtifactStore, ReadWorktreeFilePort } from '../ports.js';
 import type { GitPort } from '../ports/git-port.js';
 import type {
   ReviewMode,
@@ -153,7 +153,7 @@ export interface ReviewFixLoopDeps {
    * Optional worktree file reader port to read files directly from the CWD
    * when artifactStore is absent or when reading from artifactStore fails.
    */
-  readWorktreeFile?: (cwd: string, relativePath: string) => Promise<string | undefined>;
+  readWorktreeFile?: ReadWorktreeFilePort;
   /**
    * Threshold for `unfounded_pingpong` short-circuit. When the last
    * `unfoundedPingPongLimit` iterations all have unfounded findings AND

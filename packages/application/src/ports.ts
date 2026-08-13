@@ -117,6 +117,11 @@ export interface RunBashScriptResult {
 
 export type RunBashScriptFn = (input: RunBashScriptInput) => Promise<RunBashScriptResult>;
 
+export type ReadWorktreeFilePort = (
+  cwd: string,
+  relativePath: string,
+) => Promise<string | undefined>;
+
 export interface TmpDirectoryHandle {
   readonly tmpDir: string;
   remove(): void;

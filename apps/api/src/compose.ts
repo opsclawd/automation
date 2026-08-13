@@ -3245,7 +3245,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
         readWorktreeFile: async (cwd: string, relativePath: string) => {
           try {
-            return readFileSync(join(cwd, relativePath), 'utf-8');
+            return await fsReadFile(join(cwd, relativePath), 'utf-8');
           } catch {
             return undefined;
           }
