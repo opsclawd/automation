@@ -392,9 +392,6 @@ export class ImplementHandler implements PhaseHandler {
 
               if (statusProvedAllMissingDirty) {
                 try {
-                  if (typeof ctx.git.add !== 'function') {
-                    throw new Error('ctx.git.add is not available');
-                  }
                   await ctx.git.add(ctx.cwd, uncommittedDeclared);
                   await ctx.git.commit(ctx.cwd, task?.title ?? d.title);
                   postStepHead = await ctx.git.headCommitSha(ctx.cwd);
@@ -433,7 +430,7 @@ export class ImplementHandler implements PhaseHandler {
                 }
 
                 if (uncommittedDeclared.length > 0) {
-                  verificationError = `declared files written but not committed: ${uncommittedDeclared.join(', ')}`;
+                  verificationError ??= `declared files written but not committed: ${uncommittedDeclared.join(', ')}`;
                 } else if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
                   const validationCommands = buildTaskValidationCommands(manifest, d.index);
                   let validationsPassed = true;

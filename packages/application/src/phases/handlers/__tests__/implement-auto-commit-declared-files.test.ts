@@ -308,7 +308,58 @@ describe('ImplementHandler Auto-Commit Declared Files State Machine', () => {
     expect(runStep).toHaveBeenCalledTimes(2);
     expect(events.filter((e) => e.type === 'step.unaffected_files_verified')).toHaveLength(0);
     expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(1);
+    expect(
+      (
+        events.find((e) => e.type === 'step.declared_files_retry')?.metadata as Record<
+          string,
+          unknown
+        >
+      )?.verificationError,
+    ).toBe('git status failed before auto-commit: git status failed');
     expect(events.filter((e) => e.type === 'step.uncommitted_files')).toHaveLength(1);
+    expect(
+      (events.find((e) => e.type === 'step.uncommitted_files')?.metadata as Record<string, unknown>)
+        ?.verificationError,
+    ).toBe('git status failed before auto-commit: git status failed');
+    expect(events.filter((e) => e.type === 'step.failed')).toHaveLength(1);
+    expect(result.outcome).toBe('failed');
+  });
+
+  it('preserves the auto-commit error and reports it in retry and failure events when auto-commit fails', async () => {
+    const { git, add, steps, ctx, events } = await setupHarness({
+      expectedFiles: ['src/a.ts'],
+    });
+
+    git.statusByCwd.set(ctx.cwd, ' M src/a.ts');
+    git.changedFilesResults.set('pre-step|pre-step', []);
+    git.commit = vi.fn().mockRejectedValue(new Error('index.lock exists'));
+
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 1,
+    }).run(ctx);
+
+    expect(add).toHaveBeenCalledWith('/tmp/wt', ['src/a.ts']);
+    expect(runStep).toHaveBeenCalledTimes(2);
+    expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(1);
+    expect(
+      (
+        events.find((e) => e.type === 'step.declared_files_retry')?.metadata as Record<
+          string,
+          unknown
+        >
+      )?.verificationError,
+    ).toBe('declared-file auto-commit failed: index.lock exists');
+    expect(events.filter((e) => e.type === 'step.uncommitted_files')).toHaveLength(1);
+    expect(
+      (events.find((e) => e.type === 'step.uncommitted_files')?.metadata as Record<string, unknown>)
+        ?.verificationError,
+    ).toBe('declared-file auto-commit failed: index.lock exists');
     expect(events.filter((e) => e.type === 'step.failed')).toHaveLength(1);
     expect(result.outcome).toBe('failed');
   });
