@@ -53,6 +53,21 @@ afterEach(() => {
   dirs.length = 0;
 });
 
+const HISTORICAL_MODEL_LABELS = [
+  ['gemini-3.1-pro-low', 'Gemini 3.1 Pro (Low)'],
+  ['gemini-3.1-pro-high', 'Gemini 3.1 Pro (High)'],
+  ['gemini-3.5-flash-low', 'Gemini 3.5 Flash (Low)'],
+  ['gemini-3.5-flash-medium', 'Gemini 3.5 Flash (Medium)'],
+  ['gemini-3.5-flash-high', 'Gemini 3.5 Flash (High)'],
+  ['gemini-3.6-flash-low', 'Gemini 3.6 Flash (Low)'],
+  ['gemini-3.6-flash-medium', 'Gemini 3.6 Flash (Medium)'],
+  ['gemini-3.6-flash-high', 'Gemini 3.6 Flash (High)'],
+  ['gemini-3.7-flash-high', 'Gemini 3.7 Flash (High)'],
+  ['claude-sonnet-4.6-thinking', 'Claude Sonnet 4.6 (Thinking)'],
+  ['claude-opus-4.6-thinking', 'Claude Opus 4.6 (Thinking)'],
+  ['gpt-oss-120b-medium', 'GPT-OSS 120B (Medium)'],
+] as const;
+
 describe('AntigravityAgentAdapter', () => {
   it('returns success and runtime "antigravity" for a 0-exit child', async () => {
     const cwd = makeWorktree();
@@ -982,6 +997,26 @@ exit 0
     }
   });
 
+  it('resolves every historical model slug to its established label', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+
+      for (const [slug, label] of HISTORICAL_MODEL_LABELS) {
+        await adapter.invoke(req(cwd, { model: slug }));
+        const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+        expect(args).toContain(label);
+      }
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
   it('derives a label for a future well-formed model slug', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
@@ -999,14 +1034,19 @@ exit 0
     }
   });
 
-  it('throws ConfigError for unknown model slug', async () => {
+  it('rejects a structurally malformed model slug with an actionable error', async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
       artifactsDir: cwd,
     });
-    await expect(adapter.invoke(req(cwd, { model: 'nonexistent-model' }))).rejects.toThrow(
-      /unknown model 'nonexistent-model'/,
+    await expect(adapter.invoke(req(cwd, { model: 'nonexistentmodel' }))).rejects.toThrow(
+      "antigravity profile configured with invalid model slug 'nonexistentmodel'. " +
+        "Expected a lowercase hyphen-delimited slug such as 'gemini-3.8-flash-high'.",
+    );
+    await expect(adapter.invoke(req(cwd, { model: 'toString' }))).rejects.toThrow(
+      "antigravity profile configured with invalid model slug 'toString'. " +
+        "Expected a lowercase hyphen-delimited slug such as 'gemini-3.8-flash-high'.",
     );
   });
 
