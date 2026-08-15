@@ -18,35 +18,35 @@ import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { runExternalCli } from './external-cli-runner.js';
 
-const AGY_MODEL_SLUG_TO_LABEL: Readonly<Record<string, string>> = Object.freeze({
-  'gemini-3.1-pro-low': 'Gemini 3.1 Pro (Low)',
-  'gemini-3.1-pro-high': 'Gemini 3.1 Pro (High)',
-  'gemini-3.5-flash-low': 'Gemini 3.5 Flash (Low)',
-  'gemini-3.5-flash-medium': 'Gemini 3.5 Flash (Medium)',
-  'gemini-3.5-flash-high': 'Gemini 3.5 Flash (High)',
-  'gemini-3.6-flash-low': 'Gemini 3.6 Flash (Low)',
-  'gemini-3.6-flash-medium': 'Gemini 3.6 Flash (Medium)',
-  'gemini-3.6-flash-high': 'Gemini 3.6 Flash (High)',
-  // Only the High variant is confirmed present in the installed CLI
-  // (~/.gemini/antigravity-cli/settings.json). Low/Medium are not added
-  // speculatively — an unverified slug fails at invocation, not at config load.
-  'gemini-3.7-flash-high': 'Gemini 3.7 Flash (High)',
-  'claude-sonnet-4.6-thinking': 'Claude Sonnet 4.6 (Thinking)',
-  'claude-opus-4.6-thinking': 'Claude Opus 4.6 (Thinking)',
+const AGY_MODEL_LABEL_EXCEPTIONS: Readonly<Record<string, string>> = Object.freeze({
   'gpt-oss-120b-medium': 'GPT-OSS 120B (Medium)',
 });
 
+const AGY_MODEL_SLUG_PATTERN = /^[a-z0-9]+(?:\.[a-z0-9]+)*(?:-[a-z0-9]+(?:\.[a-z0-9]+)*)+$/;
+
+function titleCaseSlugPart(part: string): string {
+  return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
+}
+
 function resolveAgyModelLabel(slug: string | undefined): string | null {
   if (slug === undefined || slug === '' || slug === 'default') return null;
-  const label = AGY_MODEL_SLUG_TO_LABEL[slug];
-  if (label === undefined) {
+
+  const exception = Object.hasOwn(AGY_MODEL_LABEL_EXCEPTIONS, slug)
+    ? AGY_MODEL_LABEL_EXCEPTIONS[slug]
+    : undefined;
+  if (exception !== undefined) return exception;
+
+  if (!AGY_MODEL_SLUG_PATTERN.test(slug)) {
     throw new ConfigError(
-      `antigravity profile configured with unknown model '${slug}'. ` +
-        `Known slugs: ${Object.keys(AGY_MODEL_SLUG_TO_LABEL).join(', ')}. ` +
-        `Update the slug-to-label table or pick a known slug.`,
+      `antigravity profile configured with invalid model slug '${slug}'. ` +
+        `Expected a lowercase hyphen-delimited slug such as 'gemini-3.8-flash-high'.`,
     );
   }
-  return label;
+
+  const parts = slug.split('-');
+  const qualifier = parts.pop()!;
+  const base = parts.map(titleCaseSlugPart).join(' ');
+  return `${base} (${titleCaseSlugPart(qualifier)})`;
 }
 
 export interface AntigravityAdapterOptions {
