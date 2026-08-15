@@ -106,6 +106,10 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
       : git(cwd, ['diff', '--stat', base]);
   }
 
+  async add(cwd: string, files: string[]): Promise<void> {
+    await git(cwd, ['add', '--', ...files]);
+  }
+
   async addAll(cwd: string): Promise<void> {
     await git(cwd, ['add', '-A']);
   }

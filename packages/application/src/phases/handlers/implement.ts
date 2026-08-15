@@ -371,134 +371,166 @@ export class ImplementHandler implements PhaseHandler {
               );
             }
 
-            const committedSet = new Set(committedFiles.map((p) => p.replace(/\\/g, '/')));
-            const missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
+            let committedSet = new Set(committedFiles.map((p) => p.replace(/\\/g, '/')));
+            let missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
 
             if (missingFiles.length > 0) {
-              let verifiedUnaffected = false;
-              let verificationError: string | undefined;
-
-              // `missingFiles` is derived from what the step COMMITTED, so the
-              // evidence that dismisses it must come from the same reference.
-              // Validation and typecheck run against the WORKING TREE, which
-              // still holds anything the agent wrote but never committed — so
-              // they pass precisely in the case this check exists to catch, and
-              // the step gets marked "verified unaffected" while its work sits
-              // uncommitted. Refuse to even consider that dismissal while a
-              // declared file is dirty; fall through to declared_files_retry so
-              // the agent is asked to commit. See automation#869.
+              let statusProvedAllMissingDirty = false;
               let uncommittedDeclared: string[] = [];
+
               try {
                 const status = await ctx.git.status(ctx.cwd);
                 const dirty = new Set(uncommittedSourcePaths(status));
-                uncommittedDeclared = missingFiles.filter((f) => dirty.has(f));
-              } catch {
-                // If git status is unavailable we cannot prove the tree is
-                // clean, so fall through to the retry rather than dismissing.
-                uncommittedDeclared = missingFiles;
+                uncommittedDeclared = missingFiles.filter((file) => dirty.has(file));
+                statusProvedAllMissingDirty =
+                  missingFiles.length > 0 && uncommittedDeclared.length === missingFiles.length;
+              } catch (error) {
+                verificationError = `git status failed before auto-commit: ${
+                  error instanceof Error ? error.message : String(error)
+                }`;
               }
 
-              if (uncommittedDeclared.length > 0) {
-                verificationError = `declared files written but not committed: ${uncommittedDeclared.join(', ')}`;
-              } else if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
-                const validationCommands = buildTaskValidationCommands(manifest, d.index);
-                let validationsPassed = true;
+              if (statusProvedAllMissingDirty) {
+                try {
+                  await ctx.git.add(ctx.cwd, uncommittedDeclared);
+                  await ctx.git.commit(ctx.cwd, task?.title ?? d.title);
+                  postStepHead = await ctx.git.headCommitSha(ctx.cwd);
+                  committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
+                  committedSet = new Set(committedFiles.map((path) => path.replace(/\\/g, '/')));
+                  missingFiles = expectedFiles.filter((path) => !committedSet.has(path));
+                  verificationError = undefined;
+                } catch (error) {
+                  verificationError = `declared-file auto-commit failed: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`;
+                }
+              }
 
-                if (validationCommands.length > 0) {
-                  const logDir =
-                    typeof this.opts.typecheckLogDir === 'function'
-                      ? this.opts.typecheckLogDir(ctx.runUuid)
-                      : (this.opts.typecheckLogDir ?? '/tmp');
-                  const validationResult = await this.opts.validationPort.run({
-                    cwd: ctx.cwd,
-                    commands: validationCommands,
-                    timeoutSeconds: 300,
-                    logDir,
-                  });
-                  for (const cmdResult of validationResult) {
-                    if (cmdResult.outcome !== 'passed') {
-                      validationsPassed = false;
-                      verificationError =
-                        'validation failed: ' +
-                        cmdResult.command +
-                        '\n' +
-                        (cmdResult.stderr || cmdResult.stdout);
-                      break;
+              if (missingFiles.length > 0) {
+                let verifiedUnaffected = false;
+
+                // `missingFiles` is derived from what the step COMMITTED, so the
+                // evidence that dismisses it must come from the same reference.
+                // Validation and typecheck run against the WORKING TREE, which
+                // still holds anything the agent wrote but never committed — so
+                // they pass precisely in the case this check exists to catch, and
+                // the step gets marked "verified unaffected" while its work sits
+                // uncommitted. Refuse to even consider that dismissal while a
+                // declared file is dirty; fall through to declared_files_retry so
+                // the agent is asked to commit. See automation#869.
+                let uncommittedDeclared: string[] = [];
+                try {
+                  const status = await ctx.git.status(ctx.cwd);
+                  const dirty = new Set(uncommittedSourcePaths(status));
+                  uncommittedDeclared = missingFiles.filter((f) => dirty.has(f));
+                } catch {
+                  // If git status is unavailable we cannot prove the tree is
+                  // clean, so fall through to the retry rather than dismissing.
+                  uncommittedDeclared = missingFiles;
+                }
+
+                if (uncommittedDeclared.length > 0) {
+                  verificationError ??= `declared files written but not committed: ${uncommittedDeclared.join(', ')}`;
+                } else if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
+                  const validationCommands = buildTaskValidationCommands(manifest, d.index);
+                  let validationsPassed = true;
+
+                  if (validationCommands.length > 0) {
+                    const logDir =
+                      typeof this.opts.typecheckLogDir === 'function'
+                        ? this.opts.typecheckLogDir(ctx.runUuid)
+                        : (this.opts.typecheckLogDir ?? '/tmp');
+                    const validationResult = await this.opts.validationPort.run({
+                      cwd: ctx.cwd,
+                      commands: validationCommands,
+                      timeoutSeconds: 300,
+                      logDir,
+                    });
+                    for (const cmdResult of validationResult) {
+                      if (cmdResult.outcome !== 'passed') {
+                        validationsPassed = false;
+                        verificationError =
+                          'validation failed: ' +
+                          cmdResult.command +
+                          '\n' +
+                          (cmdResult.stderr || cmdResult.stdout);
+                        break;
+                      }
+                    }
+                  } else {
+                    validationsPassed = true;
+                  }
+
+                  if (validationsPassed) {
+                    const typecheckResult = await this.opts.runWorkspaceTypecheck({ cwd: ctx.cwd });
+                    if (typecheckResult.ok) {
+                      verifiedUnaffected = true;
+                    } else {
+                      verificationError = typecheckResult.error;
                     }
                   }
+                }
+
+                if (verifiedUnaffected) {
+                  emit(
+                    'step.unaffected_files_verified',
+                    'info',
+                    `step ${d.index}/${totalSteps} verified missing files as unaffected: ${missingFiles.join(', ')}`,
+                    { expectedFiles, committedFiles, missingFiles, preStepHead, postStepHead },
+                  );
+                } else if (declaredFilesRetryCount < maxDeclaredFilesRetries) {
+                  declaredFilesRetryCount += 1;
+                  priorAttemptMissingFiles = missingFiles;
+                  this.opts.steps.upsert({ ...step, status: 'running' });
+                  emit(
+                    'step.declared_files_retry',
+                    'warn',
+                    `step ${d.index}/${totalSteps} did not commit declared files; retrying attempt ${declaredFilesRetryCount}/${maxDeclaredFilesRetries}`,
+                    {
+                      index: d.index,
+                      attempt: declaredFilesRetryCount,
+                      maxRetries: maxDeclaredFilesRetries,
+                      expectedFiles,
+                      committedFiles,
+                      missingFiles,
+                      preStepHead,
+                      postStepHead,
+                      verificationError,
+                    },
+                  );
+                  continue;
                 } else {
-                  validationsPassed = true;
+                  this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+                  emit(
+                    'step.uncommitted_files',
+                    'error',
+                    `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
+                    {
+                      expectedFiles,
+                      committedFiles,
+                      missingFiles,
+                      preStepHead,
+                      postStepHead,
+                      verificationError,
+                    },
+                  );
+                  emit(
+                    'step.failed',
+                    'error',
+                    `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
+                    {
+                      index: d.index,
+                      total: totalSteps,
+                    },
+                  );
+                  return this.fail(
+                    ctx,
+                    emit,
+                    'invalid_result',
+                    `step ${d.index} (${d.title}) did not commit declared files: ${missingFiles.join(', ')}`,
+                    'Ensure the implementation commits all files declared in expected_files.',
+                  );
                 }
-
-                if (validationsPassed) {
-                  const typecheckResult = await this.opts.runWorkspaceTypecheck({ cwd: ctx.cwd });
-                  if (typecheckResult.ok) {
-                    verifiedUnaffected = true;
-                  } else {
-                    verificationError = typecheckResult.error;
-                  }
-                }
-              }
-
-              if (verifiedUnaffected) {
-                emit(
-                  'step.unaffected_files_verified',
-                  'info',
-                  `step ${d.index}/${totalSteps} verified missing files as unaffected: ${missingFiles.join(', ')}`,
-                  { expectedFiles, committedFiles, missingFiles, preStepHead, postStepHead },
-                );
-              } else if (declaredFilesRetryCount < maxDeclaredFilesRetries) {
-                declaredFilesRetryCount += 1;
-                priorAttemptMissingFiles = missingFiles;
-                this.opts.steps.upsert({ ...step, status: 'running' });
-                emit(
-                  'step.declared_files_retry',
-                  'warn',
-                  `step ${d.index}/${totalSteps} did not commit declared files; retrying attempt ${declaredFilesRetryCount}/${maxDeclaredFilesRetries}`,
-                  {
-                    index: d.index,
-                    attempt: declaredFilesRetryCount,
-                    maxRetries: maxDeclaredFilesRetries,
-                    expectedFiles,
-                    committedFiles,
-                    missingFiles,
-                    preStepHead,
-                    postStepHead,
-                    verificationError,
-                  },
-                );
-                continue;
-              } else {
-                this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-                emit(
-                  'step.uncommitted_files',
-                  'error',
-                  `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
-                  {
-                    expectedFiles,
-                    committedFiles,
-                    missingFiles,
-                    preStepHead,
-                    postStepHead,
-                    verificationError,
-                  },
-                );
-                emit(
-                  'step.failed',
-                  'error',
-                  `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
-                  {
-                    index: d.index,
-                    total: totalSteps,
-                  },
-                );
-                return this.fail(
-                  ctx,
-                  emit,
-                  'invalid_result',
-                  `step ${d.index} (${d.title}) did not commit declared files: ${missingFiles.join(', ')}`,
-                  'Ensure the implementation commits all files declared in expected_files.',
-                );
               }
             }
           }
