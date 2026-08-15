@@ -7,6 +7,7 @@ import {
   isOrchestratorArtifactPath,
   orchestratorExcludePatterns,
   uncommittedSourcePaths,
+  formatDirtyPaths,
 } from '../orchestrator-artifacts.js';
 
 describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => {
@@ -100,5 +101,28 @@ describe('uncommittedSourcePaths', () => {
       'old/path.ts',
       'packages/app.ts',
     ]);
+  });
+});
+
+describe('formatDirtyPaths', () => {
+  it('returns empty string when given empty array', () => {
+    expect(formatDirtyPaths([])).toBe('');
+  });
+
+  it('formats paths with comma-separated list when length is within default limit (10)', () => {
+    const paths = ['a.ts', 'b.ts', 'c.ts'];
+    expect(formatDirtyPaths(paths)).toBe('a.ts, b.ts, c.ts');
+  });
+
+  it('truncates paths list when length exceeds default limit of 10 and appends count', () => {
+    const paths = Array.from({ length: 15 }, (_, i) => `file-${i + 1}.ts`);
+    const expected =
+      'file-1.ts, file-2.ts, file-3.ts, file-4.ts, file-5.ts, file-6.ts, file-7.ts, file-8.ts, file-9.ts, file-10.ts and 5 more';
+    expect(formatDirtyPaths(paths)).toBe(expected);
+  });
+
+  it('supports custom limit parameter', () => {
+    const paths = ['a.ts', 'b.ts', 'c.ts', 'd.ts'];
+    expect(formatDirtyPaths(paths, 2)).toBe('a.ts, b.ts and 2 more');
   });
 });

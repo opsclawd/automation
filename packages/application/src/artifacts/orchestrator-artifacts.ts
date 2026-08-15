@@ -67,6 +67,15 @@ export function uncommittedSourcePaths(status: string): string[] {
   return [...new Set(sourcePaths)].sort();
 }
 
+export function formatDirtyPaths(paths: readonly string[], max = 10): string {
+  if (paths.length <= max) {
+    return paths.join(', ');
+  }
+  const shown = paths.slice(0, max).join(', ');
+  const remaining = paths.length - max;
+  return `${shown} and ${remaining} more`;
+}
+
 export const PROMPT_ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'issue.md',
   'issue-comments.md',

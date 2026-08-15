@@ -3,7 +3,10 @@ import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError, type Artifact } from '../../ports/artifact-store.js';
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
-import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
+import {
+  uncommittedSourcePaths,
+  formatDirtyPaths,
+} from '../../artifacts/orchestrator-artifacts.js';
 import { recordValidationHeadSha } from '../validation-headsha.js';
 import { RunId } from '@ai-sdlc/domain';
 import type { RunValidation } from '../../run-validation.js';
@@ -54,7 +57,7 @@ export class CreatePrHandler implements PhaseHandler {
 
     const dirtyPaths = uncommittedSourcePaths(rawStatus);
     if (dirtyPaths.length > 0) {
-      const msg = `PR creation blocked by uncommitted source changes: ${dirtyPaths.join(', ')}`;
+      const msg = `PR creation blocked by uncommitted source changes: ${formatDirtyPaths(dirtyPaths)}`;
       emit('create_pr.blocked', 'error', msg, { paths: dirtyPaths });
       return this._fail(
         ctx,
