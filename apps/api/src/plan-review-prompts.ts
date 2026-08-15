@@ -1,5 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { ArtifactNotFoundError, WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
+import {
+  ArtifactNotFoundError,
+  WORKSPACE_CONSTRAINTS,
+  SCRATCH_FILE_POLICY,
+} from '@ai-sdlc/application';
 import type {
   PlanReviewFinding,
   PlanReviewStepOptions,
@@ -25,6 +29,9 @@ export function buildPlanReviewFixPrompt(
   },
 ): string {
   let prompt = basePrompt;
+  if (!prompt.includes(SCRATCH_FILE_POLICY)) {
+    prompt = [prompt, '', '## SCRATCH WORKSPACE POLICY', '', SCRATCH_FILE_POLICY].join('\n');
+  }
 
   if (opts?.deterministicDiagnostic) {
     prompt = [
