@@ -949,6 +949,26 @@ exit 0
     }
   });
 
+  it('resolves every model slug referenced by a configured agent profile', async () => {
+    // The slug table is maintained by hand and drifts behind the installed CLI.
+    // A slug that is valid in Antigravity but absent here fails at invocation,
+    // after planning has already been paid for. See #888.
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd, { model: 'gemini-3.7-flash-high' }));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      expect(args).toContain('Gemini 3.7 Flash (High)');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
   it('throws ConfigError for unknown model slug', async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
