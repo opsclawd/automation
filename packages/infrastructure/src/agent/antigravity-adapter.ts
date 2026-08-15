@@ -36,17 +36,35 @@ const AGY_MODEL_SLUG_TO_LABEL: Readonly<Record<string, string>> = Object.freeze(
   'gpt-oss-120b-medium': 'GPT-OSS 120B (Medium)',
 });
 
+const GEMINI_FUTURE_SLUG_PATTERN = /^gemini-(\d+\.\d+)-(flash|pro)-(low|medium|high)$/;
+
+function capitalize(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+// Gemini slugs follow a stable "gemini-<version>-<family>-<tier>" naming scheme
+// even for versions not yet added to the table above, so an unrecognized but
+// well-formed slug can be labeled by pattern instead of failing closed.
+function deriveFutureGeminiLabel(slug: string): string | null {
+  const match = GEMINI_FUTURE_SLUG_PATTERN.exec(slug);
+  if (!match) return null;
+  const version = match[1] ?? '';
+  const family = match[2] ?? '';
+  const tier = match[3] ?? '';
+  return `Gemini ${version} ${capitalize(family)} (${capitalize(tier)})`;
+}
+
 function resolveAgyModelLabel(slug: string | undefined): string | null {
   if (slug === undefined || slug === '' || slug === 'default') return null;
   const label = AGY_MODEL_SLUG_TO_LABEL[slug];
-  if (label === undefined) {
-    throw new ConfigError(
-      `antigravity profile configured with unknown model '${slug}'. ` +
-        `Known slugs: ${Object.keys(AGY_MODEL_SLUG_TO_LABEL).join(', ')}. ` +
-        `Update the slug-to-label table or pick a known slug.`,
-    );
-  }
-  return label;
+  if (label !== undefined) return label;
+  const derived = deriveFutureGeminiLabel(slug);
+  if (derived !== null) return derived;
+  throw new ConfigError(
+    `antigravity profile configured with unknown model '${slug}'. ` +
+      `Known slugs: ${Object.keys(AGY_MODEL_SLUG_TO_LABEL).join(', ')}. ` +
+      `Update the slug-to-label table or pick a known slug.`,
+  );
 }
 
 export interface AntigravityAdapterOptions {
