@@ -64,13 +64,15 @@ task-*-complete.md
 /spec-review-task-*.result
 /fix-review-task-*.md
 /fix-review-task-*.result
-/implementation-log*.md
+/implementation-log.md
+/implementation-log-task-*.md
 /task-context-step-*.md
 /plan.md
 /design.md
 /prompt.md
 /compound.md
 /plan-fix-result.json
+/implementation-log*.md
 /issue.md
 /issue-comments.md
 /plan-review-findings.md
