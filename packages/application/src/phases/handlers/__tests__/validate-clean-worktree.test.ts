@@ -138,4 +138,29 @@ describe('ValidateHandler clean-worktree gate', () => {
     });
     expect(validation.lastInput).toBeUndefined();
   });
+
+  it('truncates the reported uncommitted paths message when more than 10 dirty files exist', async () => {
+    const { handler, ctx, git, validation, events } = fixture;
+    const files = Array.from(
+      { length: 15 },
+      (_, i) => `packages/pkg/src/file-${String(i + 1).padStart(2, '0')}.ts`,
+    );
+    const statusOutput = files.map((f) => `?? ${f}\n`).join('');
+    git.statusByCwd.set('/tmp/wt', statusOutput);
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('git_failed');
+      expect(result.failure.message).toContain('packages/pkg/src/file-01.ts');
+      expect(result.failure.message).toContain('packages/pkg/src/file-10.ts');
+      expect(result.failure.message).toContain('and 5 more');
+      expect(result.failure.message).not.toContain('packages/pkg/src/file-11.ts');
+    }
+    expect(validation.lastInput).toBeUndefined();
+    const failedEvent = events.find((e) => e.type === 'validate.failed');
+    expect(failedEvent).toBeDefined();
+    expect((failedEvent?.metadata as { paths?: string[] })?.paths).toHaveLength(15);
+  });
 });

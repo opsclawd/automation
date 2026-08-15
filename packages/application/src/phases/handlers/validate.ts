@@ -3,7 +3,10 @@ import type { Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import type { RunValidation } from '../../run-validation.js';
-import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
+import {
+  uncommittedSourcePaths,
+  formatDirtyPaths,
+} from '../../artifacts/orchestrator-artifacts.js';
 import { recordValidationHeadSha } from '../validation-headsha.js';
 
 export interface ValidateHandlerOpts {
@@ -46,7 +49,7 @@ export class ValidateHandler implements PhaseHandler {
 
     const dirtyPaths = uncommittedSourcePaths(statusOutput);
     if (dirtyPaths.length > 0) {
-      const message = `Validation blocked by uncommitted source changes: ${dirtyPaths.join(', ')}`;
+      const message = `Validation blocked by uncommitted source changes: ${formatDirtyPaths(dirtyPaths)}`;
       const failure: Failure = {
         runUuid: ctx.runUuid,
         phase: 'validate',

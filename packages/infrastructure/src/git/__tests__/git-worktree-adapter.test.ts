@@ -564,6 +564,39 @@ describe('Artifact Guarding & Cleanup', () => {
       await expect(fsAccess(artifactFile)).rejects.toThrow();
     });
 
+    it('cleanup removes untracked canonical and wildcard artifacts in subdirectories', async () => {
+      const repoPath = await makeTempRepo();
+      await mkdir(join(repoPath, 'sub', 'nested'), { recursive: true });
+      const nestedArtifact = join(repoPath, 'sub', 'nested', 'validation.result');
+      const nestedWildcard = join(repoPath, 'sub', 'nested', 'implement-step-history-4.json');
+      const nestedPatch = join(repoPath, 'sub', 'fix.patch');
+
+      await writeFile(nestedArtifact, 'nested artifact\n');
+      await writeFile(nestedWildcard, 'nested wildcard\n');
+      await writeFile(nestedPatch, 'nested patch\n');
+
+      await adapter.cleanOrchestratorArtifacts(repoPath);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(nestedArtifact)).rejects.toThrow();
+      await expect(fsAccess(nestedWildcard)).rejects.toThrow();
+      await expect(fsAccess(nestedPatch)).rejects.toThrow();
+    });
+
+    it('cleanup removes untracked artifacts in subdirectories after seedArtifactExcludes', async () => {
+      const repoPath = await makeTempRepo();
+      await adapter.seedArtifactExcludes(repoPath);
+
+      await mkdir(join(repoPath, 'packages', 'sub'), { recursive: true });
+      const nestedArtifact = join(repoPath, 'packages', 'sub', 'validation.result');
+      await writeFile(nestedArtifact, 'nested excluded artifact\n');
+
+      await adapter.cleanOrchestratorArtifacts(repoPath);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(nestedArtifact)).rejects.toThrow();
+    });
+
     it('cleanup removes committed artifacts and commits the removal when baseBranch is provided', async () => {
       const repoPath = await makeTempRepo();
       const baseBranch = 'main';
@@ -614,6 +647,120 @@ describe('Artifact Guarding & Cleanup', () => {
       // Verify it remains in git tracking
       const trackedAfter = await git(repoPath, ['ls-files', 'validation.result']);
       expect(trackedAfter).toContain('validation.result');
+    });
+
+    it('cleanup does not remove files inside ignored directories like node_modules', async () => {
+      const repoPath = await makeTempRepo();
+      await writeFile(join(repoPath, '.gitignore'), 'node_modules/\n');
+      await git(repoPath, ['add', '.gitignore']);
+      await git(repoPath, ['commit', '-m', 'add .gitignore']);
+
+      await mkdir(join(repoPath, 'node_modules', 'some-pkg'), { recursive: true });
+      const pkgFile = join(repoPath, 'node_modules', 'some-pkg', 'index.js');
+      await writeFile(pkgFile, 'module.exports = {};\n');
+
+      const artifactFile = join(repoPath, 'validation.result');
+      await writeFile(artifactFile, 'artifact content\n');
+
+      await adapter.cleanOrchestratorArtifacts(repoPath);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      // Artifact must be removed
+      await expect(fsAccess(artifactFile)).rejects.toThrow();
+      // Ignored directory content must NOT be removed
+      await expect(fsAccess(pkgFile)).resolves.not.toThrow();
+    });
+
+    it('cleanup handles untracked artifacts and patches with spaces in directory and file names', async () => {
+      const repoPath = await makeTempRepo();
+      await mkdir(join(repoPath, 'nested folder with spaces'), { recursive: true });
+      const spacedArtifact = join(repoPath, 'nested folder with spaces', 'validation.result');
+      const spacedPatch = join(repoPath, 'nested folder with spaces', 'fix with spaces.patch');
+
+      await writeFile(spacedArtifact, 'spaced artifact\n');
+      await writeFile(spacedPatch, 'spaced patch\n');
+
+      await adapter.cleanOrchestratorArtifacts(repoPath);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(spacedArtifact)).rejects.toThrow();
+      await expect(fsAccess(spacedPatch)).rejects.toThrow();
+    });
+
+    it('cleanup handles staged and committed artifacts with spaces in paths', async () => {
+      const repoPath = await makeTempRepo();
+      const baseBranch = 'main';
+      await git(repoPath, ['checkout', '-b', 'ai/space-branch']);
+
+      await mkdir(join(repoPath, 'space dir'), { recursive: true });
+      const stagedArtifact = join(repoPath, 'space dir', 'fix spaced.patch');
+      const committedArtifact = join(repoPath, 'space dir', 'implementation-log.md');
+
+      await writeFile(committedArtifact, 'committed with spaces\n');
+      await git(repoPath, ['add', 'space dir/implementation-log.md']);
+      await git(repoPath, ['commit', '-m', 'commit spaced artifact']);
+
+      await writeFile(stagedArtifact, 'staged with spaces\n');
+      await git(repoPath, ['add', 'space dir/fix spaced.patch']);
+
+      await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(stagedArtifact)).rejects.toThrow();
+      await expect(fsAccess(committedArtifact)).rejects.toThrow();
+
+      const diffAfter = await git(repoPath, ['diff', `${baseBranch}...HEAD`, '--name-only']);
+      expect(diffAfter).not.toContain('space dir/implementation-log.md');
+    });
+
+    it('cleanup removes directory artifacts matching exclude patterns without EISDIR error', async () => {
+      const dirAdapter = new GitWorktreeAdapter(['custom-artifact-dir', '.scratch-cache']);
+      const repoPath = await makeTempRepo();
+      await dirAdapter.seedArtifactExcludes(repoPath);
+
+      const rootArtifactDir = join(repoPath, 'custom-artifact-dir');
+      await mkdir(join(rootArtifactDir, 'nested'), { recursive: true });
+      await writeFile(join(rootArtifactDir, 'nested', 'file.txt'), 'content\n');
+
+      await mkdir(join(repoPath, 'sub', '.scratch-cache'), { recursive: true });
+      await writeFile(join(repoPath, 'sub', '.scratch-cache', 'item.json'), '{}\n');
+
+      await dirAdapter.cleanOrchestratorArtifacts(repoPath);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(rootArtifactDir)).rejects.toThrow();
+      await expect(fsAccess(join(repoPath, 'sub', '.scratch-cache'))).rejects.toThrow();
+    });
+
+    it('cleanup does not match wildcards across directory boundaries', async () => {
+      const wildcardAdapter = new GitWorktreeAdapter(['implement-step-history-*.json']);
+      const repoPath = await makeTempRepo();
+
+      // Create a file in a directory whose path starts with the pattern prefix
+      const nestedDir = join(repoPath, 'implement-step-history-archive');
+      await mkdir(nestedDir, { recursive: true });
+      const nestedFile = join(nestedDir, 'data.json');
+      await writeFile(nestedFile, '{"source": true}\n');
+
+      await wildcardAdapter.cleanOrchestratorArtifacts(repoPath);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      // The legitimate source file must NOT be deleted
+      await expect(fsAccess(nestedFile)).resolves.toBeUndefined();
+    });
+
+    it('escapes special regex characters including question mark', async () => {
+      const questionAdapter = new GitWorktreeAdapter(['artifact-?.md']);
+      const repoPath = await makeTempRepo();
+
+      const nonMatchingFile = join(repoPath, 'artifact-.md');
+      await writeFile(nonMatchingFile, 'content\n');
+
+      await questionAdapter.cleanOrchestratorArtifacts(repoPath);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      // If ? was not escaped, it would make '-' optional and match 'artifact-.md'
+      await expect(fsAccess(nonMatchingFile)).resolves.toBeUndefined();
     });
   });
 });

@@ -11,9 +11,23 @@ import { git, GitFailedError } from './git-runner.js';
 
 export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
   private readonly excludePatterns: readonly string[];
+  private readonly patternMatchers: readonly ((file: string, basename: string) => boolean)[];
 
   constructor(excludePatterns: readonly string[] = []) {
     this.excludePatterns = Object.freeze([...excludePatterns]);
+    this.patternMatchers = Object.freeze(
+      this.excludePatterns.map((pattern) => {
+        if (pattern.includes('*')) {
+          const regexStr =
+            '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$';
+          const regex = new RegExp(regexStr);
+          return (file: string, basename: string): boolean =>
+            regex.test(file) || regex.test(basename);
+        }
+        return (file: string, basename: string): boolean =>
+          file === pattern || basename === pattern;
+      }),
+    );
   }
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     const { repoLocalBasePath, worktreePath, branch, baseBranch } = input;
@@ -156,7 +170,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
   }
 
   async status(cwd: string): Promise<string> {
-    return git(cwd, ['status', '--porcelain']);
+    return git(cwd, ['status', '--porcelain', '-uall']);
   }
 
   async resetWorktreeIfClean(cwd: string, baseBranch: string): Promise<void> {
@@ -221,25 +235,29 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
   }
 
   async cleanOrchestratorArtifacts(cwd: string, baseBranch?: string): Promise<void> {
+    const parseZOutput = (output: string): string[] =>
+      output
+        .split('\0')
+        .map((p) => p.replace(/\\/g, '/'))
+        .map((p) => (p.endsWith('/') ? p.slice(0, -1) : p))
+        .filter(Boolean);
+
     // 1. Get list of staged files
-    const stagedOutput = await git(cwd, ['diff', '--cached', '--name-only']);
-    const stagedSet = new Set(
-      stagedOutput
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean),
-    );
+    let stagedSet = new Set<string>();
+    try {
+      const stagedOutput = await git(cwd, ['diff', '-z', '--cached', '--name-only']);
+      stagedSet = new Set(parseZOutput(stagedOutput));
+    } catch {
+      // ignore
+    }
 
     // 2. Get list of committed files on current branch relative to baseBranch
     const committedSet = new Set<string>();
     if (baseBranch) {
       try {
-        const diffOutput = await git(cwd, ['diff', `${baseBranch}...HEAD`, '--name-only']);
-        for (const line of diffOutput
-          .split('\n')
-          .map((l) => l.trim())
-          .filter(Boolean)) {
-          committedSet.add(line);
+        const diffOutput = await git(cwd, ['diff', '-z', `${baseBranch}...HEAD`, '--name-only']);
+        for (const file of parseZOutput(diffOutput)) {
+          committedSet.add(file);
         }
       } catch {
         // Base branch diff failed or base branch doesn't exist yet
@@ -249,49 +267,46 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     // Get list of tracked files once
     let trackedSet = new Set<string>();
     try {
-      const trackedOutput = await git(cwd, ['ls-files']);
-      trackedSet = new Set(
-        trackedOutput
-          .split('\n')
-          .map((line) => line.trim())
-          .filter(Boolean),
-      );
+      const trackedOutput = await git(cwd, ['ls-files', '-z']);
+      trackedSet = new Set(parseZOutput(trackedOutput));
     } catch {
       // ignore
     }
 
-    // 3. Process each canonical artifact
-    const removedCommittedArtifacts: string[] = [];
-
-    const matchPattern = (file: string, pattern: string): boolean => {
-      if (pattern.includes('*')) {
-        const regexStr =
-          '^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
-        const regex = new RegExp(regexStr);
-        return regex.test(file);
-      }
-      return file === pattern;
-    };
-
-    let physicalFiles: string[] = [];
+    // 3. Process untracked files (both unignored and ignored directories/files)
+    let untrackedFiles: string[] = [];
     try {
-      const { readdir } = await import('node:fs/promises');
-      physicalFiles = await readdir(cwd);
+      const [unignoredOutput, ignoredOutput] = await Promise.all([
+        git(cwd, ['ls-files', '-z', '--others', '--exclude-standard']),
+        git(cwd, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory']),
+      ]);
+      untrackedFiles = [...parseZOutput(unignoredOutput), ...parseZOutput(ignoredOutput)];
     } catch {
       // ignore
     }
 
-    const allCandidates = new Set([...physicalFiles, ...stagedSet, ...committedSet, ...trackedSet]);
+    const allCandidates = new Set([
+      ...untrackedFiles,
+      ...stagedSet,
+      ...committedSet,
+      ...trackedSet,
+    ]);
 
     const resolvedArtifacts = new Set<string>();
     for (const candidate of allCandidates) {
-      for (const pattern of this.excludePatterns) {
-        if (matchPattern(candidate, pattern)) {
-          resolvedArtifacts.add(candidate);
+      const cleanPath = candidate.endsWith('/') ? candidate.slice(0, -1) : candidate;
+      const basename = cleanPath.includes('/')
+        ? cleanPath.slice(cleanPath.lastIndexOf('/') + 1)
+        : cleanPath;
+      for (const matcher of this.patternMatchers) {
+        if (matcher(cleanPath, basename)) {
+          resolvedArtifacts.add(cleanPath);
           break;
         }
       }
     }
+
+    const removedCommittedArtifacts: string[] = [];
 
     for (const artifact of resolvedArtifacts) {
       const artifactPath = join(cwd, artifact);
@@ -301,11 +316,11 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
 
       if (baseBranch && committedSet.has(artifact)) {
         try {
-          await git(cwd, ['rm', '-f', '--', artifact]);
+          await git(cwd, ['rm', '-rf', '--', artifact]);
           removedCommittedArtifacts.push(artifact);
         } catch {
           // If git rm fails, ensure filesystem cleanup
-          await rm(artifactPath, { force: true });
+          await rm(artifactPath, { recursive: true, force: true });
         }
       } else if (stagedSet.has(artifact)) {
         try {
@@ -313,9 +328,9 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
         } catch {
           // ignore
         }
-        await rm(artifactPath, { force: true });
+        await rm(artifactPath, { recursive: true, force: true });
       } else if (!isTracked) {
-        await rm(artifactPath, { force: true });
+        await rm(artifactPath, { recursive: true, force: true });
       }
     }
 
