@@ -10,9 +10,10 @@ import {
   utimesSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
 import { AgentProfileName } from '@ai-sdlc/domain';
+import { loadConfig } from '@ai-sdlc/shared';
 import { AntigravityAgentAdapter, validateScratchDir } from '../antigravity-adapter.js';
 
 const dirs: string[] = [];
@@ -935,7 +936,6 @@ exit 0
       await adapter.invoke(req(cwd, { model: 'gemini-3.5-flash-low' }));
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       // fake-agy-args-logger.sh writes `$@` (space-joined) — find the indices.
-      // Use a leading space on '--print' so we don't match the '--print' inside '--print-timeout'.
       const tokens = args.split(' ');
       const timeoutIdx = tokens.indexOf('--print-timeout');
       const modelIdx = tokens.indexOf('--model');
@@ -953,6 +953,12 @@ exit 0
     // The slug table is maintained by hand and drifts behind the installed CLI.
     // A slug that is valid in Antigravity but absent here fails at invocation,
     // after planning has already been paid for. See #888.
+    const config = loadConfig(resolve(__dirname, '../../../../..'));
+    const agyProfiles = Object.entries(config.agent?.profiles ?? {}).filter(
+      ([, profile]) => profile.runtime === 'antigravity',
+    );
+    expect(agyProfiles.length).toBeGreaterThan(0);
+
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
     try {
@@ -961,9 +967,33 @@ exit 0
         artifactsDir: cwd,
         env: { AGY_LOG_DIR: logDir },
       });
-      await adapter.invoke(req(cwd, { model: 'gemini-3.7-flash-high' }));
+      for (const [profileName, profile] of agyProfiles) {
+        await adapter.invoke(
+          req(cwd, {
+            profile: AgentProfileName(profileName),
+            model: profile.model,
+          }),
+        );
+        const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+        expect(args).toContain('--print');
+      }
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('derives a label for a future well-formed model slug', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd, { model: 'gemini-3.8-flash-high' }));
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
-      expect(args).toContain('Gemini 3.7 Flash (High)');
+      expect(args).toContain('Gemini 3.8 Flash (High)');
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
