@@ -1,6 +1,7 @@
 import {
   type ArchitectPlan,
   WORKSPACE_CONSTRAINTS,
+  SCRATCH_FILE_POLICY,
   type ReviewMode,
   type ReviewFindingRecord,
   type DispositionHistoryEntry,
@@ -174,6 +175,8 @@ export function buildReviewFixFixPrompt(input: BuildFixPromptInput): string {
     '## CONTEXT',
     '',
     WORKSPACE_CONSTRAINTS,
+    '',
+    SCRATCH_FILE_POLICY,
     '',
     `Working directory: ${input.cwd}`,
     `Repository: ${input.repoId}`,

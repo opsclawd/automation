@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderPrompt } from '../prompts/render-prompt.js';
 import { TemplateError } from '../prompts/errors.js';
-import { WORKSPACE_CONSTRAINTS } from '../prompts/constants.js';
+import { WORKSPACE_CONSTRAINTS, SCRATCH_FILE_POLICY } from '../prompts/constants.js';
 import { ArtifactNotFoundError } from '../ports/artifact-store.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 
@@ -45,6 +45,15 @@ describe('renderPrompt', () => {
       artifacts: fakeArtifacts({}),
     });
     expect(out).toBe(`constraints:\n${WORKSPACE_CONSTRAINTS}`);
+  });
+
+  it('substitutes SCRATCH_FILE_POLICY automatically', async () => {
+    const out = await renderPrompt('scratch:\n{{var:SCRATCH_FILE_POLICY}}', {
+      runId: 'run-1',
+      vars: {},
+      artifacts: fakeArtifacts({}),
+    });
+    expect(out).toBe(`scratch:\n${SCRATCH_FILE_POLICY}`);
   });
 
   it('throws TemplateError on unknown var', async () => {
