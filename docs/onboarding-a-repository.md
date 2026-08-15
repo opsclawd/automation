@@ -93,7 +93,34 @@ console.log(JSON.stringify(c.sources, null, 1));
 
 The parameter is `targetRoot`, not `targetRepoRoot`. Passing the wrong name is silently accepted and reports the automation-only list, which looks plausible and is wrong. Check `c.sources` and confirm the target layer shows `present: true` before trusting the output.
 
-### 5. Gates must be non-vacuous
+### 5. The `ai:*` issue labels must exist
+
+The orchestrator sets and clears labels as a run progresses, and `create-pr`
+treats a failed label update as a phase failure. On a repository that has only
+GitHub's default labels, the run does all of its work, opens the PR, and then
+fails:
+
+```
+failed to update issue labels: gh command failed:
+gh issue edit 2 --add-label ai:pr-ready --remove-label ai:in-progress
+'ai:in-progress' not found
+```
+
+Create them before the first run. Copying from a repository already onboarded
+keeps names, colours, and descriptions consistent:
+
+```bash
+gh label list --repo <onboarded-repo> --json name,description,color \
+  -q '.[] | select(.name|startswith("ai:")) | [.name,.description,.color] | @tsv' \
+| while IFS=$'\t' read -r name desc color; do
+    gh label create "$name" --repo <new-repo> --description "$desc" --color "$color"
+  done
+```
+
+The current set is `ai:run-issue`, `ai:in-progress`, `ai:pr-ready`, `ai:blocked`,
+`ai:failed`, and `ai:needs-human-review`.
+
+### 6. Gates must be non-vacuous
 
 A validation suite that passes because there is nothing to check is worse than none: it reports green and proves nothing. Before the first run, confirm each gate would actually fail on a real violation.
 
@@ -154,6 +181,7 @@ git -C /path/to/target status --porcelain                # empty
 - [ ] Repository cloned locally; `repo register` succeeded; `repo list` shows it enabled and healthy
 - [ ] `git status --porcelain` is empty
 - [ ] `.gitignore` covers `.ai-runs/`, `.ai-worktrees/`, `.ai-tmp/`
+- [ ] The six `ai:*` labels exist in the GitHub repository
 - [ ] Lockfile committed; `pnpm install --frozen-lockfile` succeeds in a clean worktree within 120s
 - [ ] Effective validation list verified with `loadLayeredConfig` and `targetRoot`; target layer `present: true`
 - [ ] Every command in the effective list exits 0 in a clean worktree
