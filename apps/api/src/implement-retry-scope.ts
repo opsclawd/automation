@@ -65,19 +65,70 @@ export function renderMissingDeclaredFilesPrompt(files: string[] | undefined): s
   ];
 }
 
-export function renderDeclaredFilesRetryPrompt(priorAttemptMissingFiles?: string[]): string[] {
-  if (!priorAttemptMissingFiles?.length) return [];
-  return [
-    '## DECLARED FILES MISSED BY THE PREVIOUS ATTEMPT',
-    '',
-    'If the previous attempt changed these files, that uncommitted work is still in your working tree.',
-    'Inspect git status to check existing uncommitted work and modify and commit every file listed below:',
-    '',
-    ...priorAttemptMissingFiles.map((file) => `- ${file}`),
-    '',
-    '- If a listed file already contains correct changes: review and stage it; do not reimplement it.',
-    '- If a listed file is absent or incomplete: implement the required behavior.',
-    'Then run task-scoped validation, validate and commit every listed file.',
-    '',
-  ];
+export function renderDeclaredFilesRetryPrompt(
+  priorAttemptMissingFiles?: string[],
+  priorAttemptUndeclaredFiles?: string[],
+  priorAttemptModifiedReferenceFiles?: string[],
+): string[] {
+  const sections: string[] = [];
+
+  if (priorAttemptMissingFiles?.length) {
+    sections.push(
+      '## DECLARED FILES MISSED BY THE PREVIOUS ATTEMPT',
+      '',
+      'If the previous attempt changed these files, that uncommitted work is still in your working tree.',
+      'Inspect git status to check existing uncommitted work and modify and commit every file listed below:',
+      '',
+      ...priorAttemptMissingFiles.map((file) => `- ${file}`),
+      '',
+      '- If a listed file already contains correct changes: review and stage it; do not reimplement it.',
+      '- If a listed file is absent or incomplete: implement the required behavior.',
+      'Then run task-scoped validation, validate and commit every listed file.',
+      '',
+    );
+  }
+
+  const canonicalModifiedReference = canonicalizeAdditionalEditableFiles(
+    priorAttemptModifiedReferenceFiles,
+  );
+  if (canonicalModifiedReference.length > 0) {
+    sections.push(
+      '## MODIFIED READ-ONLY REFERENCE FILES — REMOVE FROM THIS TASK COMMIT',
+      '',
+      'The previous attempt modified files that are declared as read-only reference_files for this task:',
+      ...canonicalModifiedReference.map((f) => `- ${f}`),
+      '',
+      'Reference files provide read-only context for the current task and must not be modified in this task commit.',
+      'The manifest cannot be broadened, later-task work is not authorized, and you must not add these files to expected_files.',
+      "You must rewrite only the current task's commit(s) to remove modifications to these reference files.",
+      '',
+      'Safe recovery procedure:',
+      '- For a single-commit attempt: run `git reset HEAD~1 --soft`, then run `git restore --source=HEAD --staged --worktree -- <path>` for each invalid path listed above.',
+      '- If the current Step produced multiple commits, inspect `git log` and use the original current-Step baseline to rewrite only current task commits.',
+      '- Restage and commit only current expected_files. Never delete arbitrary repository state or change earlier successful Step commits.',
+      '',
+    );
+  }
+
+  const canonicalUndeclared = canonicalizeAdditionalEditableFiles(priorAttemptUndeclaredFiles);
+  if (canonicalUndeclared.length > 0) {
+    sections.push(
+      '## COMMITTED FILES OUTSIDE THIS TASK — REMOVE FROM THIS TASK COMMIT',
+      '',
+      "The previous attempt committed files that are outside this task's declared expected_files:",
+      ...canonicalUndeclared.map((f) => `- ${f}`),
+      '',
+      'These files belong to other tasks or are undeclared. You must not create or modify them in this task commit.',
+      'The manifest cannot be broadened, later-task work is not authorized, and you must not add these files to expected_files.',
+      "You must rewrite only the current task's commit(s) to remove modifications to these undeclared files.",
+      '',
+      'Safe recovery procedure:',
+      '- For a single-commit attempt: run `git reset HEAD~1 --soft`, then run `git restore --source=HEAD --staged --worktree -- <path>` for each invalid path listed above.',
+      '- If the current Step produced multiple commits, inspect `git log` and use the original current-Step baseline to rewrite only current task commits.',
+      '- Restage and commit only current expected_files. Never delete arbitrary repository state or change earlier successful Step commits.',
+      '',
+    );
+  }
+
+  return sections;
 }

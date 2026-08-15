@@ -686,9 +686,19 @@ describe('ImplementHandler', () => {
         contents: MANIFEST_JSON,
       });
       const steps = new FakeStepRepository();
+      const git = new FakeGitPort();
+      git.headByCwd.set('/tmp/wt', 'head-sha');
+      git.changedFilesResults.set('head-sha|step-1', ['src/__tests__/big.test.ts']);
+      git.changedFilesResults.set('step-1|step-2', ['tsconfig.json']);
+
+      let stepNum = 0;
       const runStep = vi
         .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
-        .mockResolvedValue({ outcome: 'success' });
+        .mockImplementation(async (sctx) => {
+          stepNum += 1;
+          git.headByCwd.set(sctx.cwd, `step-${stepNum}`);
+          return { outcome: 'success' };
+        });
       const oversizedTask: OversizedTask = {
         taskNum: 1,
         taskTitle: 'Update big test file',
@@ -699,12 +709,6 @@ describe('ImplementHandler', () => {
       const lintTaskSize = vi
         .fn<(cwd: string, manifest: unknown) => Promise<LintTaskSizeResult>>()
         .mockResolvedValue({ ok: true, oversized: [oversizedTask] });
-      const git = new FakeGitPort();
-      git.headByCwd.set('/tmp/wt', 'head-sha');
-      git.changedFilesResults.set('head-sha|head-sha', [
-        'src/__tests__/big.test.ts',
-        'tsconfig.json',
-      ]);
       const { ctx, events } = makeCtx(artifacts, git);
 
       const result = await new ImplementHandler({ steps, runStep, lintTaskSize }).run(ctx);

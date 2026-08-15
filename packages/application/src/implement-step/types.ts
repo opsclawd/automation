@@ -44,6 +44,8 @@ export interface ImplementStepOptions {
    * outer ImplementHandler attempt.
    */
   priorAttemptMissingFiles?: string[];
+  priorAttemptUndeclaredFiles?: string[];
+  priorAttemptModifiedReferenceFiles?: string[];
 }
 
 export interface TypescriptError {
@@ -404,6 +406,8 @@ export interface ImplementStepLoopInput {
    * outer ImplementHandler attempt.
    */
   priorAttemptMissingFiles?: string[];
+  priorAttemptUndeclaredFiles?: string[];
+  priorAttemptModifiedReferenceFiles?: string[];
 }
 
 export interface ImplementStepLoopResult {
