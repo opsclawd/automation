@@ -57,6 +57,12 @@ export class FakeGitPort implements GitPort {
     return `1 file changed (stat for ${cwd} ${base}..${head ?? 'HEAD'})`;
   }
 
+  addCalls: Array<{ cwd: string; files: string[] }> = [];
+
+  async add(cwd: string, files: string[]): Promise<void> {
+    this.addCalls.push({ cwd, files: [...files] });
+  }
+
   async addAll(_cwd: string): Promise<void> {
     // No-op for now, could track calls if needed
   }
