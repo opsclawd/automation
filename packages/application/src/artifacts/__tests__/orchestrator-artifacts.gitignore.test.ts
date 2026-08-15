@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,5 +92,24 @@ describe('repository .gitignore artifact reconciliation', () => {
       .filter(Boolean);
 
     expect(tracked).toEqual([]);
+  });
+
+  it('verified 102-file artifact inventory remains on disk after index cleanup', () => {
+    const rootFiles = readdirSync(repositoryRoot);
+    const quality = rootFiles.filter(
+      (f) => f.startsWith('quality-review-result') && f.endsWith('.json'),
+    );
+    const spec = rootFiles.filter((f) => f.startsWith('spec-review-result') && f.endsWith('.json'));
+    const fix = rootFiles.filter((f) => f.startsWith('fix-result') && f.endsWith('.json'));
+    const totalFiles = [...quality, ...spec, ...fix];
+
+    expect(quality.length).toBe(53);
+    expect(spec.length).toBe(48);
+    expect(fix.length).toBe(1);
+    expect(totalFiles.length).toBe(102);
+
+    for (const file of totalFiles) {
+      expect(existsSync(join(repositoryRoot, file))).toBe(true);
+    }
   });
 });
