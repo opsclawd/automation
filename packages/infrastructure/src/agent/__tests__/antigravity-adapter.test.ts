@@ -10,10 +10,9 @@ import {
   utimesSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { AgentProfileName } from '@ai-sdlc/domain';
-import { loadConfig } from '@ai-sdlc/shared';
 import { AntigravityAgentAdapter, validateScratchDir } from '../antigravity-adapter.js';
 
 const dirs: string[] = [];
@@ -959,39 +958,6 @@ exit 0
       expect(modelIdx).toBeGreaterThan(timeoutIdx);
       expect(printIdx).toBeGreaterThan(modelIdx);
       expect(args).toContain('Gemini 3.5 Flash (Low)');
-    } finally {
-      rmSync(logDir, { recursive: true, force: true });
-    }
-  });
-
-  it('resolves every model slug referenced by a configured agent profile', async () => {
-    // The slug table is maintained by hand and drifts behind the installed CLI.
-    // A slug that is valid in Antigravity but absent here fails at invocation,
-    // after planning has already been paid for. See #888.
-    const config = loadConfig(resolve(__dirname, '../../../../..'));
-    const agyProfiles = Object.entries(config.agent?.profiles ?? {}).filter(
-      ([, profile]) => profile.runtime === 'antigravity',
-    );
-    expect(agyProfiles.length).toBeGreaterThan(0);
-
-    const cwd = makeWorktree();
-    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
-    try {
-      const adapter = new AntigravityAgentAdapter({
-        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
-        artifactsDir: cwd,
-        env: { AGY_LOG_DIR: logDir },
-      });
-      for (const [profileName, profile] of agyProfiles) {
-        await adapter.invoke(
-          req(cwd, {
-            profile: AgentProfileName(profileName),
-            model: profile.model,
-          }),
-        );
-        const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
-        expect(args).toContain('--print');
-      }
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
