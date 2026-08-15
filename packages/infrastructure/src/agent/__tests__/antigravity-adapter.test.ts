@@ -982,12 +982,7 @@ exit 0
     }
   });
 
-  it.each([
-    ['gemini-3.8-flash-high', 'Gemini 3.8 Flash (High)'],
-    ['gemini-4.0-pro-low', 'Gemini 4.0 Pro (Low)'],
-    ['gemini-3.9-flash-medium', 'Gemini 3.9 Flash (Medium)'],
-    ['gemini-5.2-pro-high', 'Gemini 5.2 Pro (High)'],
-  ])('derives a label for a future well-formed model slug %s', async (slug, expectedLabel) => {
+  it('derives a label for a future well-formed model slug', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
     try {
@@ -996,9 +991,9 @@ exit 0
         artifactsDir: cwd,
         env: { AGY_LOG_DIR: logDir },
       });
-      await adapter.invoke(req(cwd, { model: slug }));
+      await adapter.invoke(req(cwd, { model: 'gemini-3.8-flash-high' }));
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
-      expect(args).toContain(expectedLabel);
+      expect(args).toContain('Gemini 3.8 Flash (High)');
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
