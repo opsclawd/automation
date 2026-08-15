@@ -101,6 +101,8 @@ pnpm --filter @ai-sdlc/api dev repo refresh --id <repository-id>
 
 Disabling a Repository blocks new admission while already admitted work drains. A degraded, unreachable, or otherwise unavailable Repository is skipped without preventing healthy repositories from running. `repo refresh` re-resolves Git/GitHub metadata and health after an operator repairs a path or remote.
 
+Registration succeeds well before a repository is ready to run. A target must also present a clean working tree, a committed lockfile, and scripts satisfying every inherited validation command — note that `validation.commands` concatenate across config layers rather than replacing, so a target can add commands but never remove them. See [Onboarding a Repository](onboarding-a-repository.md) for the readiness checklist and pre-flight procedure.
+
 ## Start a run
 
 The TypeScript `RunExecutor` is the default:

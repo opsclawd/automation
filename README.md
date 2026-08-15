@@ -150,7 +150,7 @@ pnpm --filter @ai-sdlc/api dev run \
   --issue 123
 ```
 
-See the [operator quickstart](docs/quickstart.md) for repository management, worker modes, configuration, logs, resume/cancel/execute commands, API/dashboard workflows, and recovery.
+See the [operator quickstart](docs/quickstart.md) for repository management, worker modes, configuration, logs, resume/cancel/execute commands, API/dashboard workflows, and recovery. When bringing a new repository online for the first time, work through [Onboarding a Repository](docs/onboarding-a-repository.md) — registration alone does not make a repository ready to run.
 
 ## Configuration
 
