@@ -131,6 +131,12 @@ const phasesSchema = z.object({
      * cannot be disabled by configuration (#723).
      */
     deltaScopedReReview: z.boolean().default(true),
+    /**
+     * Exact repository-relative paths that may be committed even when absent from
+     * the current task's expected_files/files surface. Matching and path
+     * normalization are owned by ImplementHandler; no implicit exemptions apply.
+     */
+    exemptUndeclaredFiles: z.array(z.string()).default([]),
   }),
   fixValidate: z
     .object({
