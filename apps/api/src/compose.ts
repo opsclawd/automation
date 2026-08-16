@@ -406,6 +406,8 @@ export function buildImplementPrompt(
   typecheckErrors?: TypescriptError[] | string,
   additionalEditableFiles?: string[],
   priorAttemptMissingFiles?: string[],
+  priorAttemptUndeclaredFiles?: string[],
+  priorAttemptModifiedReferenceFiles?: string[],
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
@@ -454,7 +456,11 @@ export function buildImplementPrompt(
     '',
     ...renderImplementRetryScopePrompt(additionalEditableFiles),
     '',
-    ...renderDeclaredFilesRetryPrompt(priorAttemptMissingFiles),
+    ...renderDeclaredFilesRetryPrompt(
+      priorAttemptMissingFiles,
+      priorAttemptUndeclaredFiles,
+      priorAttemptModifiedReferenceFiles,
+    ),
     '',
     ...(structuredErrors !== undefined && structuredErrors.length > 0
       ? renderStructuredTypecheckErrors(structuredErrors)
@@ -652,6 +658,10 @@ export interface Container {
     ctx: import('@ai-sdlc/application').PhaseHandlerContext;
     manifest: TaskManifest;
     planMd: string;
+    missingFiles?: string[];
+    priorAttemptMissingFiles?: string[];
+    priorAttemptUndeclaredFiles?: string[];
+    priorAttemptModifiedReferenceFiles?: string[];
   }) => Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }>;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
@@ -3529,6 +3539,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           opts?.typecheckErrors,
           opts?.additionalEditableFiles,
           opts?.priorAttemptMissingFiles,
+          opts?.priorAttemptUndeclaredFiles,
+          opts?.priorAttemptModifiedReferenceFiles,
         );
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -5457,6 +5469,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         planMd: string;
         missingFiles?: string[];
         priorAttemptMissingFiles?: string[];
+        priorAttemptUndeclaredFiles?: string[];
+        priorAttemptModifiedReferenceFiles?: string[];
       }): Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }> => {
         if (!implementStepLoop) throw new Error('implementStepLoop not initialized');
         const result = await implementStepLoop.execute({
@@ -5476,6 +5490,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           },
           ...(sctx.priorAttemptMissingFiles?.length
             ? { priorAttemptMissingFiles: sctx.priorAttemptMissingFiles }
+            : {}),
+          ...(sctx.priorAttemptUndeclaredFiles?.length
+            ? { priorAttemptUndeclaredFiles: sctx.priorAttemptUndeclaredFiles }
+            : {}),
+          ...(sctx.priorAttemptModifiedReferenceFiles?.length
+            ? { priorAttemptModifiedReferenceFiles: sctx.priorAttemptModifiedReferenceFiles }
             : {}),
         });
         return { outcome: result.outcome };
@@ -5592,6 +5612,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             typecheckLogDir: (runUuid: string) => join(runsDir, runUuid, 'validate'),
             runWorkspaceTypecheck,
             maxDeclaredFilesRetries: config.phases.implement.maxDeclaredFilesRetries,
+            exemptUndeclaredFiles: config.phases.implement.exemptUndeclaredFiles,
           }),
         );
       }

@@ -542,6 +542,27 @@ export class ImplementStepLoop {
     };
 
     // --- PRE-LOOP: IMPLEMENT ---
+    const hasPriorAttemptFeedback =
+      (input.priorAttemptMissingFiles !== undefined && input.priorAttemptMissingFiles.length > 0) ||
+      (input.priorAttemptUndeclaredFiles !== undefined &&
+        input.priorAttemptUndeclaredFiles.length > 0) ||
+      (input.priorAttemptModifiedReferenceFiles !== undefined &&
+        input.priorAttemptModifiedReferenceFiles.length > 0);
+
+    const initialImplementOpts: ImplementStepOptions | undefined = hasPriorAttemptFeedback
+      ? {
+          ...(input.priorAttemptMissingFiles?.length
+            ? { priorAttemptMissingFiles: input.priorAttemptMissingFiles }
+            : {}),
+          ...(input.priorAttemptUndeclaredFiles?.length
+            ? { priorAttemptUndeclaredFiles: input.priorAttemptUndeclaredFiles }
+            : {}),
+          ...(input.priorAttemptModifiedReferenceFiles?.length
+            ? { priorAttemptModifiedReferenceFiles: input.priorAttemptModifiedReferenceFiles }
+            : {}),
+        }
+      : undefined;
+
     const implementResult = await this.runImplementWithFallback(
       input,
       {
@@ -552,9 +573,7 @@ export class ImplementStepLoop {
           invocation_type: 'initial',
         },
       },
-      input.priorAttemptMissingFiles?.length
-        ? { priorAttemptMissingFiles: input.priorAttemptMissingFiles }
-        : undefined,
+      initialImplementOpts,
     );
     if (implementResult.agentOutcome !== 'success') {
       this.emit(input, 'loop.iteration.started', 'info', 'implementation step started', {

@@ -44,6 +44,47 @@ function declaredTaskFiles(task: unknown): string[] {
   return [...new Set([...requiredExpectedFiles, ...requiredLegacyFiles])];
 }
 
+function referenceTaskFiles(task: unknown): string[] {
+  if (!task || typeof task !== 'object') return [];
+  const referenceFiles = (task as Record<string, unknown>).reference_files;
+  if (!Array.isArray(referenceFiles)) return [];
+  return [...new Set(referenceFiles.map(normalizeTaskPath).filter(Boolean))];
+}
+
+function normalizedPathSet(paths: readonly string[] | undefined): Set<string> {
+  return new Set((paths ?? []).map(normalizeTaskPath).filter(Boolean));
+}
+
+function hasDeclaredSurface(task: unknown, manifestVersion?: number): boolean {
+  if (!task || typeof task !== 'object') return false;
+  const record = task as Record<string, unknown>;
+  const expectedFiles = Array.isArray(record.expected_files) ? record.expected_files : undefined;
+  const referenceFiles = Array.isArray(record.reference_files) ? record.reference_files : undefined;
+  const files = Array.isArray(record.files) ? record.files : undefined;
+  if (manifestVersion === 2) {
+    return expectedFiles !== undefined || referenceFiles !== undefined || files !== undefined;
+  }
+  return (
+    (expectedFiles !== undefined && expectedFiles.length > 0) ||
+    (files !== undefined && files.length > 0)
+  );
+}
+
+function classifyUndeclaredFiles(
+  committedFiles: readonly string[],
+  writableFiles: ReadonlySet<string>,
+  referenceFiles: ReadonlySet<string>,
+  exemptFiles: ReadonlySet<string>,
+): { modifiedReferenceFiles: string[]; undeclaredFiles: string[] } {
+  const undeclared = [...new Set(committedFiles.map(normalizeTaskPath).filter(Boolean))]
+    .filter((file) => !writableFiles.has(file) && !exemptFiles.has(file))
+    .sort();
+  return {
+    modifiedReferenceFiles: undeclared.filter((file) => referenceFiles.has(file)),
+    undeclaredFiles: undeclared.filter((file) => !referenceFiles.has(file)),
+  };
+}
+
 export interface StepRunContext {
   stepIndex: number;
   stepTitle: string;
@@ -57,6 +98,8 @@ export interface StepRunContext {
    * outer ImplementHandler attempt.
    */
   priorAttemptMissingFiles?: string[];
+  priorAttemptUndeclaredFiles?: string[];
+  priorAttemptModifiedReferenceFiles?: string[];
 }
 
 export interface StepRunResult {
@@ -72,6 +115,7 @@ export interface ImplementHandlerOpts {
   runWorkspaceTypecheck?: RunWorkspaceTypecheckPort;
   typecheckLogDir?: string | ((runUuid: string) => string);
   maxDeclaredFilesRetries?: number;
+  exemptUndeclaredFiles?: string[];
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -222,9 +266,10 @@ export class ImplementHandler implements PhaseHandler {
 
       const task = manifest?.tasks.find((t) => t.n === d.index);
       const declaredFiles = declaredTaskFiles(task);
+      const shouldCaptureBaseline = hasDeclaredSurface(task, manifest?.version);
 
       let preStepHead = existingStep?.initialPreStepHead;
-      if (declaredFiles.length > 0 && preStepHead === undefined) {
+      if (shouldCaptureBaseline && preStepHead === undefined) {
         try {
           if (!ctx.git?.headCommitSha) {
             throw new Error('ctx.git.headCommitSha is not available');
@@ -296,6 +341,8 @@ export class ImplementHandler implements PhaseHandler {
       const maxDeclaredFilesRetries = this.opts.maxDeclaredFilesRetries ?? 1;
       let declaredFilesRetryCount = 0;
       let priorAttemptMissingFiles: string[] | undefined;
+      let priorAttemptUndeclaredFiles: string[] | undefined;
+      let priorAttemptModifiedReferenceFiles: string[] | undefined;
       let result: StepRunResult;
 
       while (true) {
@@ -308,6 +355,10 @@ export class ImplementHandler implements PhaseHandler {
             manifest: manifest!,
             planMd,
             ...(priorAttemptMissingFiles !== undefined ? { priorAttemptMissingFiles } : {}),
+            ...(priorAttemptUndeclaredFiles !== undefined ? { priorAttemptUndeclaredFiles } : {}),
+            ...(priorAttemptModifiedReferenceFiles !== undefined
+              ? { priorAttemptModifiedReferenceFiles }
+              : {}),
           });
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
@@ -325,8 +376,13 @@ export class ImplementHandler implements PhaseHandler {
         }
 
         if (result.outcome === 'success') {
-          const expectedFiles = declaredTaskFiles(task);
-          if (expectedFiles.length > 0) {
+          if (shouldCaptureBaseline) {
+            const expectedFiles = declaredFiles;
+            const referenceFiles = referenceTaskFiles(task);
+            const writableSet = normalizedPathSet(expectedFiles);
+            const referenceSet = normalizedPathSet(referenceFiles);
+            const exemptSet = normalizedPathSet(this.opts.exemptUndeclaredFiles);
+
             let postStepHead: string | undefined;
             let committedFiles: string[] = [];
             let verificationError: string | undefined;
@@ -371,8 +427,9 @@ export class ImplementHandler implements PhaseHandler {
               );
             }
 
-            let committedSet = new Set(committedFiles.map((p) => p.replace(/\\/g, '/')));
-            let missingFiles = expectedFiles.filter((p) => !committedSet.has(p));
+            let committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);
+            let committedSet = new Set(committedNormalized);
+            let missingFiles = expectedFiles.filter((p) => !committedSet.has(normalizeTaskPath(p)));
 
             if (missingFiles.length > 0) {
               let statusProvedAllMissingDirty = false;
@@ -380,8 +437,12 @@ export class ImplementHandler implements PhaseHandler {
 
               try {
                 const status = await ctx.git.status(ctx.cwd);
-                const dirty = new Set(uncommittedSourcePaths(status));
-                uncommittedDeclared = missingFiles.filter((file) => dirty.has(file));
+                const dirty = new Set(
+                  uncommittedSourcePaths(status).map(normalizeTaskPath).filter(Boolean),
+                );
+                uncommittedDeclared = missingFiles.filter((file) =>
+                  dirty.has(normalizeTaskPath(file)),
+                );
                 statusProvedAllMissingDirty =
                   missingFiles.length > 0 && uncommittedDeclared.length === missingFiles.length;
               } catch (error) {
@@ -396,8 +457,11 @@ export class ImplementHandler implements PhaseHandler {
                   await ctx.git.commit(ctx.cwd, task?.title ?? d.title);
                   postStepHead = await ctx.git.headCommitSha(ctx.cwd);
                   committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
-                  committedSet = new Set(committedFiles.map((path) => path.replace(/\\/g, '/')));
-                  missingFiles = expectedFiles.filter((path) => !committedSet.has(path));
+                  committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);
+                  committedSet = new Set(committedNormalized);
+                  missingFiles = expectedFiles.filter(
+                    (path) => !committedSet.has(normalizeTaskPath(path)),
+                  );
                   verificationError = undefined;
                 } catch (error) {
                   verificationError = `declared-file auto-commit failed: ${
@@ -405,102 +469,120 @@ export class ImplementHandler implements PhaseHandler {
                   }`;
                 }
               }
+            }
 
-              if (missingFiles.length > 0) {
-                let verifiedUnaffected = false;
+            let { modifiedReferenceFiles, undeclaredFiles } = classifyUndeclaredFiles(
+              committedFiles,
+              writableSet,
+              referenceSet,
+              exemptSet,
+            );
 
-                // `missingFiles` is derived from what the step COMMITTED, so the
-                // evidence that dismisses it must come from the same reference.
-                // Validation and typecheck run against the WORKING TREE, which
-                // still holds anything the agent wrote but never committed — so
-                // they pass precisely in the case this check exists to catch, and
-                // the step gets marked "verified unaffected" while its work sits
-                // uncommitted. Refuse to even consider that dismissal while a
-                // declared file is dirty; fall through to declared_files_retry so
-                // the agent is asked to commit. See automation#869.
-                let uncommittedDeclared: string[] = [];
-                try {
-                  const status = await ctx.git.status(ctx.cwd);
-                  const dirty = new Set(uncommittedSourcePaths(status));
-                  uncommittedDeclared = missingFiles.filter((f) => dirty.has(f));
-                } catch {
-                  // If git status is unavailable we cannot prove the tree is
-                  // clean, so fall through to the retry rather than dismissing.
-                  uncommittedDeclared = missingFiles;
-                }
+            let verifiedUnaffected = false;
+            if (missingFiles.length > 0) {
+              let uncommittedDeclared: string[] = [];
+              try {
+                const status = await ctx.git.status(ctx.cwd);
+                const dirty = new Set(
+                  uncommittedSourcePaths(status).map(normalizeTaskPath).filter(Boolean),
+                );
+                uncommittedDeclared = missingFiles.filter((f) => dirty.has(normalizeTaskPath(f)));
+              } catch {
+                uncommittedDeclared = missingFiles;
+              }
 
-                if (uncommittedDeclared.length > 0) {
-                  verificationError ??= `declared files written but not committed: ${uncommittedDeclared.join(', ')}`;
-                } else if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
-                  const validationCommands = buildTaskValidationCommands(manifest, d.index);
-                  let validationsPassed = true;
+              if (uncommittedDeclared.length > 0) {
+                verificationError ??= `declared files written but not committed: ${uncommittedDeclared.join(', ')}`;
+              } else if (this.opts.validationPort && this.opts.runWorkspaceTypecheck) {
+                const validationCommands = buildTaskValidationCommands(manifest, d.index);
+                let validationsPassed = true;
 
-                  if (validationCommands.length > 0) {
-                    const logDir =
-                      typeof this.opts.typecheckLogDir === 'function'
-                        ? this.opts.typecheckLogDir(ctx.runUuid)
-                        : (this.opts.typecheckLogDir ?? '/tmp');
-                    const validationResult = await this.opts.validationPort.run({
-                      cwd: ctx.cwd,
-                      commands: validationCommands,
-                      timeoutSeconds: 300,
-                      logDir,
-                    });
-                    for (const cmdResult of validationResult) {
-                      if (cmdResult.outcome !== 'passed') {
-                        validationsPassed = false;
-                        verificationError =
-                          'validation failed: ' +
-                          cmdResult.command +
-                          '\n' +
-                          (cmdResult.stderr || cmdResult.stdout);
-                        break;
-                      }
-                    }
-                  } else {
-                    validationsPassed = true;
-                  }
-
-                  if (validationsPassed) {
-                    const typecheckResult = await this.opts.runWorkspaceTypecheck({ cwd: ctx.cwd });
-                    if (typecheckResult.ok) {
-                      verifiedUnaffected = true;
-                    } else {
-                      verificationError = typecheckResult.error;
+                if (validationCommands.length > 0) {
+                  const logDir =
+                    typeof this.opts.typecheckLogDir === 'function'
+                      ? this.opts.typecheckLogDir(ctx.runUuid)
+                      : (this.opts.typecheckLogDir ?? '/tmp');
+                  const validationResult = await this.opts.validationPort.run({
+                    cwd: ctx.cwd,
+                    commands: validationCommands,
+                    timeoutSeconds: 300,
+                    logDir,
+                  });
+                  for (const cmdResult of validationResult) {
+                    if (cmdResult.outcome !== 'passed') {
+                      validationsPassed = false;
+                      verificationError =
+                        'validation failed: ' +
+                        cmdResult.command +
+                        '\n' +
+                        (cmdResult.stderr || cmdResult.stdout);
+                      break;
                     }
                   }
-                }
-
-                if (verifiedUnaffected) {
-                  emit(
-                    'step.unaffected_files_verified',
-                    'info',
-                    `step ${d.index}/${totalSteps} verified missing files as unaffected: ${missingFiles.join(', ')}`,
-                    { expectedFiles, committedFiles, missingFiles, preStepHead, postStepHead },
-                  );
-                } else if (declaredFilesRetryCount < maxDeclaredFilesRetries) {
-                  declaredFilesRetryCount += 1;
-                  priorAttemptMissingFiles = missingFiles;
-                  this.opts.steps.upsert({ ...step, status: 'running' });
-                  emit(
-                    'step.declared_files_retry',
-                    'warn',
-                    `step ${d.index}/${totalSteps} did not commit declared files; retrying attempt ${declaredFilesRetryCount}/${maxDeclaredFilesRetries}`,
-                    {
-                      index: d.index,
-                      attempt: declaredFilesRetryCount,
-                      maxRetries: maxDeclaredFilesRetries,
-                      expectedFiles,
-                      committedFiles,
-                      missingFiles,
-                      preStepHead,
-                      postStepHead,
-                      verificationError,
-                    },
-                  );
-                  continue;
                 } else {
-                  this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+                  validationsPassed = true;
+                }
+
+                if (validationsPassed) {
+                  const typecheckResult = await this.opts.runWorkspaceTypecheck({ cwd: ctx.cwd });
+                  if (typecheckResult.ok) {
+                    verifiedUnaffected = true;
+                  } else {
+                    verificationError = typecheckResult.error;
+                  }
+                }
+              }
+
+              if (verifiedUnaffected) {
+                emit(
+                  'step.unaffected_files_verified',
+                  'info',
+                  `step ${d.index}/${totalSteps} verified missing files as unaffected: ${missingFiles.join(', ')}`,
+                  { expectedFiles, committedFiles, missingFiles, preStepHead, postStepHead },
+                );
+              }
+            }
+
+            const hasMissingViolation = missingFiles.length > 0 && !verifiedUnaffected;
+            const hasUndeclaredViolation =
+              modifiedReferenceFiles.length > 0 || undeclaredFiles.length > 0;
+            const hasBoundaryViolation = hasMissingViolation || hasUndeclaredViolation;
+
+            if (hasBoundaryViolation) {
+              if (declaredFilesRetryCount < maxDeclaredFilesRetries) {
+                declaredFilesRetryCount += 1;
+                priorAttemptMissingFiles = hasMissingViolation ? missingFiles : undefined;
+                priorAttemptModifiedReferenceFiles =
+                  modifiedReferenceFiles.length > 0 ? modifiedReferenceFiles : undefined;
+                priorAttemptUndeclaredFiles =
+                  undeclaredFiles.length > 0 ? undeclaredFiles : undefined;
+
+                this.opts.steps.upsert({ ...step, status: 'running' });
+                emit(
+                  'step.declared_files_retry',
+                  'warn',
+                  `step ${d.index}/${totalSteps} violated task boundaries; retrying attempt ${declaredFilesRetryCount}/${maxDeclaredFilesRetries}`,
+                  {
+                    index: d.index,
+                    attempt: declaredFilesRetryCount,
+                    maxRetries: maxDeclaredFilesRetries,
+                    taskTitle: task?.title ?? d.title,
+                    expectedFiles,
+                    referenceFiles,
+                    exemptFiles: this.opts.exemptUndeclaredFiles ?? [],
+                    committedFiles,
+                    ...(hasMissingViolation ? { missingFiles } : {}),
+                    modifiedReferenceFiles,
+                    undeclaredFiles,
+                    preStepHead,
+                    postStepHead,
+                    verificationError,
+                  },
+                );
+                continue;
+              } else {
+                this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+                if (hasMissingViolation) {
                   emit(
                     'step.uncommitted_files',
                     'error',
@@ -514,23 +596,35 @@ export class ImplementHandler implements PhaseHandler {
                       verificationError,
                     },
                   );
-                  emit(
-                    'step.failed',
-                    'error',
-                    `step ${d.index}/${totalSteps} did not commit declared files: ${missingFiles.join(', ')}`,
-                    {
-                      index: d.index,
-                      total: totalSteps,
-                    },
-                  );
-                  return this.fail(
-                    ctx,
-                    emit,
-                    'invalid_result',
-                    `step ${d.index} (${d.title}) did not commit declared files: ${missingFiles.join(', ')}`,
-                    'Ensure the implementation commits all files declared in expected_files.',
+                }
+
+                const violationParts: string[] = [];
+                if (hasMissingViolation) {
+                  violationParts.push(`did not commit declared files: ${missingFiles.join(', ')}`);
+                }
+                if (modifiedReferenceFiles.length > 0) {
+                  violationParts.push(
+                    `modified read-only reference files: ${modifiedReferenceFiles.join(', ')}`,
                   );
                 }
+                if (undeclaredFiles.length > 0) {
+                  violationParts.push(`committed undeclared files: ${undeclaredFiles.join(', ')}`);
+                }
+
+                const failureMessage = `step ${d.index} (${d.title}) ${violationParts.join('; ')}`;
+                emit('step.failed', 'error', failureMessage, {
+                  index: d.index,
+                  total: totalSteps,
+                });
+                return this.fail(
+                  ctx,
+                  emit,
+                  'invalid_result',
+                  failureMessage,
+                  hasMissingViolation && !hasUndeclaredViolation
+                    ? 'Ensure the implementation commits all files declared in expected_files.'
+                    : 'Ensure the implementation commits all declared expected_files and does not modify reference or undeclared files.',
+                );
               }
             }
           }
