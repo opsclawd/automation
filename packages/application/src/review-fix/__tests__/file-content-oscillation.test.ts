@@ -119,7 +119,7 @@ function makeHarness(options: HarnessOptions) {
 
   const fixCalls: Array<{ ctx: StepContext; opts: FixStepOptions }> = [];
   const progression = options.progression ?? 'a-b-a';
-  const fixShas = progression === 'a-b-a' ? ['sha-b', 'sha-a2'] : ['sha-c', 'sha-d'];
+  const fixShas = progression === 'a-b-a' ? ['sha-b', 'sha-a2'] : ['sha-b', 'sha-c'];
 
   const runFix = async (ctx: StepContext, opts: FixStepOptions): Promise<FixStepResult> => {
     const fixIndex = fixCalls.length;
@@ -188,6 +188,10 @@ describe('ReviewFixLoop single-file content oscillation', () => {
     expect(result.humanReviewReason).toContain('vitest.integration.config.ts');
     expect(result.humanReviewReason).toContain("include: ['src/postgres/**']");
     expect(result.humanReviewReason).toContain('include: []');
+    expect(result.humanReviewReason).toContain('sha-a');
+    expect(result.humanReviewReason).toContain('sha-b');
+    expect(result.humanReviewReason).toMatch(/1/);
+    expect(result.humanReviewReason).toMatch(/2/);
 
     const oscillationEvent = events.find((e) => e.type === 'review_fix.file_oscillation_detected');
     expect(oscillationEvent).toBeDefined();
@@ -198,6 +202,8 @@ describe('ReviewFixLoop single-file content oscillation', () => {
         contestedContent: expect.stringContaining('include: []'),
         repeatedSha: expect.stringContaining('sha-a'),
         contestedSha: expect.stringContaining('sha-b'),
+        repeatedIteration: expect.any(Number),
+        contestedIteration: expect.any(Number),
       }),
     );
   });
