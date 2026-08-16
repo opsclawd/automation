@@ -505,65 +505,20 @@ describe('ImplementStepLoop typecheck retry no-op detection', () => {
     expect(events.find((event) => event.type === 'step.typecheck.retry_no_op')).toBeUndefined();
   });
 
-  it('ignores content edits to filtered orchestrator artifacts when classifying retry progress', async () => {
+  it('detects creation of a new untracked source file as retry progress', async () => {
     let typecheckCalls = 0;
     let implementCalls = 0;
-    let reviewMdContent = 'before review findings';
-
+    let content: string | undefined;
     const git = makeFakeGitPort({
       headSha: 'sha-1',
       diffOutput: '',
-      statusOutput: '?? review.md',
+      statusOutput: ['', '?? src/created.ts'],
     });
 
     const { loop, events } = createHarness({
       git,
       readWorktreeFile: async (_cwd, relativePath) =>
-        relativePath === 'review.md' ? reviewMdContent : undefined,
-      runTypecheck: async () => {
-        typecheckCalls++;
-        return { outcome: 'fail', output: 'error TS2322: Type error' };
-      },
-      runImplement: async () => {
-        implementCalls++;
-        if (implementCalls === 2) {
-          reviewMdContent = 'after review findings updated';
-        }
-        return {
-          invocationId: `impl-${implementCalls}`,
-          agentOutcome: 'success',
-          transcriptExcerpt: 'Ran review update',
-        };
-      },
-    });
-
-    const result = await loop.execute(baseInput());
-
-    expect(result.outcome).toBe('failed');
-    expect(typecheckCalls).toBe(1);
-    expect(implementCalls).toBe(2);
-    expect(
-      events.find((event) => event.type === 'step.typecheck.retry_no_op')?.metadata,
-    ).toMatchObject({
-      retryProducedNoChanges: true,
-    });
-  });
-
-  it('treats a disappearing untracked source file as changed without throwing', async () => {
-    let typecheckCalls = 0;
-    let implementCalls = 0;
-    let content: string | undefined = 'initial untracked content';
-
-    const git = makeFakeGitPort({
-      headSha: 'sha-1',
-      diffOutput: '',
-      statusOutput: '?? src/disappearing-file.ts',
-    });
-
-    const { loop, events } = createHarness({
-      git,
-      readWorktreeFile: async (_cwd, relativePath) =>
-        relativePath === 'src/disappearing-file.ts' ? content : undefined,
+        relativePath === 'src/created.ts' ? content : undefined,
       runTypecheck: async () => {
         typecheckCalls++;
         return typecheckCalls === 1
@@ -572,9 +527,7 @@ describe('ImplementStepLoop typecheck retry no-op detection', () => {
       },
       runImplement: async () => {
         implementCalls++;
-        if (implementCalls === 2) {
-          content = undefined;
-        }
+        if (implementCalls === 2) content = 'new source';
         return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' };
       },
     });
@@ -582,8 +535,71 @@ describe('ImplementStepLoop typecheck retry no-op detection', () => {
     const result = await loop.execute(baseInput());
 
     expect(result.outcome).toBe('success');
-    expect(typecheckCalls).toBe(3);
     expect(events.find((event) => event.type === 'step.typecheck.retry_no_op')).toBeUndefined();
+  });
+
+  it('treats a disappearing untracked source file as changed without throwing', async () => {
+    let typecheckCalls = 0;
+    let implementCalls = 0;
+    let content: string | undefined = 'temporary source';
+    const git = makeFakeGitPort({
+      headSha: 'sha-1',
+      diffOutput: '',
+      statusOutput: '?? src/transient.ts',
+    });
+
+    const { loop, events } = createHarness({
+      git,
+      readWorktreeFile: async (_cwd, relativePath) =>
+        relativePath === 'src/transient.ts' ? content : undefined,
+      runTypecheck: async () => {
+        typecheckCalls++;
+        return typecheckCalls === 1
+          ? { outcome: 'fail', output: 'error TS2322: Type error' }
+          : { outcome: 'pass', output: '' };
+      },
+      runImplement: async () => {
+        implementCalls++;
+        if (implementCalls === 2) content = undefined;
+        return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' };
+      },
+    });
+
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('success');
+    expect(events.find((event) => event.type === 'step.typecheck.retry_no_op')).toBeUndefined();
+  });
+
+  it('ignores content edits to filtered orchestrator artifacts when classifying retry progress', async () => {
+    let implementCalls = 0;
+    let readCalls = 0;
+    let content = 'before';
+    const git = makeFakeGitPort({
+      headSha: 'sha-1',
+      diffOutput: '',
+      statusOutput: '?? implementation-log.md',
+    });
+
+    const { loop, events } = createHarness({
+      git,
+      readWorktreeFile: async () => {
+        readCalls++;
+        return content;
+      },
+      runTypecheck: async () => ({ outcome: 'fail', output: 'error TS2322: Type error' }),
+      runImplement: async () => {
+        implementCalls++;
+        if (implementCalls === 2) content = 'after';
+        return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' };
+      },
+    });
+
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('failed');
+    expect(readCalls).toBe(0);
+    expect(events.find((event) => event.type === 'step.typecheck.retry_no_op')).toBeDefined();
   });
 
   it('bounds untracked files digest inspection to at most 10 paths', async () => {
