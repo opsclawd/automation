@@ -36,7 +36,7 @@ export interface GitPort {
   diffStat(cwd: string, base: string, head?: string): Promise<string>;
   add(cwd: string, files: string[]): Promise<void>;
   addAll(cwd: string): Promise<void>;
-  commit(cwd: string, message: string): Promise<string>;
+  commit(cwd: string, message: string, files?: readonly string[]): Promise<string>;
   amendCommitMessage(cwd: string, message: string): Promise<string>;
   push(input: PushInput): Promise<void>;
   remoteRef(input: { cwd: string; remote: string; ref: string }): Promise<string | undefined>;
