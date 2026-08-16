@@ -51,6 +51,17 @@ import {
   formatScopeWarning,
   buildFindingCommitMessage,
 } from './review-fix-scope.js';
+import {
+  recordResolvedFindings,
+  detectFindingRecurrence,
+  type ResolvedFindingFingerprint,
+} from './finding-recurrence-guard.js';
+import {
+  inspectFixCommitForOscillation,
+  formatFileOscillationReason,
+  type FileStateHistory,
+  type FileOscillationMatch,
+} from './file-oscillation-guard.js';
 
 async function computeNewState(
   prevState: ReviewDimensionState | undefined,
@@ -198,6 +209,9 @@ export class ReviewFixLoop {
     > = [];
     const unfoundedPingPongHistory: FindingHistoryEntry[] = [];
     let headRevalidated = true;
+    const resolvedFindingFingerprints = new Map<string, ResolvedFindingFingerprint>();
+    let currentFixChangedFiles: string[] = [];
+    const fileStateHistory: FileStateHistory = new Map();
 
     const opts = { ...(this.deps.options ?? {}), ...(input.options ?? {}) };
     const endOnReview = opts.endOnReview ?? true;
@@ -421,8 +435,33 @@ export class ReviewFixLoop {
                 findings: lastOffendingFindings,
                 ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
               });
+              currentFixChangedFiles = scopeResult.changedFiles;
               if (scopeResult.pendingScopeWarning) {
                 pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+              }
+
+              const oscillation = await this.checkFileOscillation({
+                ctx,
+                loopInput: input,
+                headBeforeFix: fix.headBeforeFix,
+                headAfterFix: scopeResult.headAfterFix,
+                fixChangedFiles: currentFixChangedFiles,
+                history: fileStateHistory,
+              });
+              if (oscillation.detected) {
+                thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+                deps.loops.update(thisLoop);
+                this.emitIterationCompleted(input, iterationIndex, 'failed');
+                await this.appendHistoryEntry(ctx, {}, fix, undefined, 'failed', input);
+                await this.runCleanArtifacts(ctx);
+                return {
+                  loop: thisLoop,
+                  phaseOutcome: 'failed',
+                  loopStatus: 'failed',
+                  needsHumanReview: true,
+                  humanReviewReason: oscillation.humanReviewReason,
+                  residualFindingsCount: lastOffendingFindings.length,
+                };
               }
             }
             if (verification.kind === 'uncommitted_changes') {
@@ -459,8 +498,33 @@ export class ReviewFixLoop {
                     findings: lastOffendingFindings,
                     ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
                   });
+                  currentFixChangedFiles = scopeResult.changedFiles;
                   if (scopeResult.pendingScopeWarning) {
                     pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+                  }
+
+                  const oscillation = await this.checkFileOscillation({
+                    ctx,
+                    loopInput: input,
+                    headBeforeFix: fix.headBeforeFix ?? 'HEAD',
+                    headAfterFix: scopeResult.headAfterFix,
+                    fixChangedFiles: currentFixChangedFiles,
+                    history: fileStateHistory,
+                  });
+                  if (oscillation.detected) {
+                    thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+                    deps.loops.update(thisLoop);
+                    this.emitIterationCompleted(input, iterationIndex, 'failed');
+                    await this.appendHistoryEntry(ctx, {}, fix, undefined, 'failed', input);
+                    await this.runCleanArtifacts(ctx);
+                    return {
+                      loop: thisLoop,
+                      phaseOutcome: 'failed',
+                      loopStatus: 'failed',
+                      needsHumanReview: true,
+                      humanReviewReason: oscillation.humanReviewReason,
+                      residualFindingsCount: lastOffendingFindings.length,
+                    };
                   }
                   autoCommitted = true;
                   lastIterationHadFixCommit = true;
@@ -468,6 +532,14 @@ export class ReviewFixLoop {
                   consecutiveFixFailures = 0;
                   consecutiveFixFailuresForCap = 0;
                   totalFixAttempts += 1;
+
+                  await recordResolvedFindings({
+                    resolvedMap: resolvedFindingFingerprints,
+                    findings: lastOffendingFindings,
+                    fixChangedFiles: currentFixChangedFiles,
+                    iterationIndex,
+                    cwd: ctx.cwd,
+                  });
 
                   thisLoop = completeIteration(thisLoop, {
                     outcome: 'fixed',
@@ -575,6 +647,15 @@ export class ReviewFixLoop {
         }
 
         const iterationOutcome = !lastPostFixGateFailed && reval?.passed ? 'fixed' : 'unresolved';
+        if (iterationOutcome === 'fixed') {
+          await recordResolvedFindings({
+            resolvedMap: resolvedFindingFingerprints,
+            findings: lastOffendingFindings,
+            fixChangedFiles: currentFixChangedFiles,
+            iterationIndex,
+            cwd: ctx.cwd,
+          });
+        }
         thisLoop = completeIteration(thisLoop, {
           outcome: iterationOutcome,
           fixInvocationId: fix.invocationId,
@@ -669,6 +750,40 @@ export class ReviewFixLoop {
       }
       pendingScopeReviewContext = undefined;
 
+      let branchCreatedFiles: string[] = [];
+      if (deps.git && input.baselineCommitSha) {
+        try {
+          const raw = await deps.git.createdFiles(input.cwd, input.baselineCommitSha, 'HEAD');
+          branchCreatedFiles = Array.from(
+            new Set(raw.map((f) => f.replace(/\\/g, '/').trim()).filter(Boolean)),
+          ).sort();
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const failedLoop: Loop = {
+            ...thisLoop,
+            status: 'failed',
+            completedAt: deps.now(),
+          };
+          deps.loops.update(failedLoop);
+          this.emit(
+            input,
+            'loop.created_files_check_failed',
+            'error',
+            `branch-created files check failed against base ${input.baselineCommitSha}: ${errorMsg}`,
+            {
+              baselineCommitSha: input.baselineCommitSha,
+              error: errorMsg,
+            },
+          );
+          return {
+            loop: failedLoop,
+            phaseOutcome: 'failed',
+            loopStatus: 'failed',
+            needsHumanReview: true,
+          };
+        }
+      }
+
       const reviewMode: ReviewMode =
         iterationIndex === 1 ? 'integration_full' : 'intermediate_delta';
       const reviewOptions = {
@@ -684,6 +799,7 @@ export class ReviewFixLoop {
               dispositionHistory: integrationState?.dispositionHistory ?? [],
             }
           : {}),
+        ...(branchCreatedFiles.length > 0 ? { createdFiles: branchCreatedFiles } : {}),
       };
       ctx.metadata = {
         iteration: iterationIndex,
@@ -744,6 +860,42 @@ export class ReviewFixLoop {
         await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
         await this.runCleanArtifacts(ctx);
         break;
+      }
+
+      const rawFindings = review.offendingFindings ?? [];
+      const recurrence = await detectFindingRecurrence({
+        resolvedFindings: resolvedFindingFingerprints,
+        rawFindings,
+        currentIteration: iterationIndex,
+      });
+
+      if (recurrence) {
+        const humanReviewReason = `review finding "${recurrence.resolved.summary}" recurred at iteration ${iterationIndex} after being resolved in iteration ${recurrence.resolved.resolvedInIteration}; human adjudication required`;
+        this.emit(input, 'loop.exhausted.finding_recurrence', 'warn', humanReviewReason, {
+          iterationIndex,
+          fingerprint: recurrence.resolved.fingerprint,
+          summary: recurrence.resolved.summary,
+          resolvedInIteration: recurrence.resolved.resolvedInIteration,
+          recurringInIteration: iterationIndex,
+          fixChangedFiles: recurrence.resolved.fixChangedFiles,
+          files: recurrence.recurringFinding.files ?? [],
+          findingFiles: recurrence.recurringFinding.files ?? [],
+        });
+
+        thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(thisLoop);
+        this.emitIterationCompleted(input, iterationIndex, 'failed');
+        await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
+        await this.runCleanArtifacts(ctx);
+
+        return {
+          loop: thisLoop,
+          phaseOutcome: 'failed',
+          loopStatus: 'failed',
+          needsHumanReview: true,
+          humanReviewReason,
+          residualFindingsCount: rawFindings.length,
+        };
       }
 
       if (review.verdict === 'pass') {
@@ -1138,8 +1290,33 @@ export class ReviewFixLoop {
               findings: review.offendingFindings ?? [],
               ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
             });
+            currentFixChangedFiles = scopeResult.changedFiles;
             if (scopeResult.pendingScopeWarning) {
               pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+            }
+
+            const oscillation = await this.checkFileOscillation({
+              ctx,
+              loopInput: input,
+              headBeforeFix: fix.headBeforeFix,
+              headAfterFix: scopeResult.headAfterFix,
+              fixChangedFiles: currentFixChangedFiles,
+              history: fileStateHistory,
+            });
+            if (oscillation.detected) {
+              thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+              deps.loops.update(thisLoop);
+              this.emitIterationCompleted(input, iterationIndex, 'failed');
+              await this.appendHistoryEntry(ctx, review, fix, undefined, 'failed', input);
+              await this.runCleanArtifacts(ctx);
+              return {
+                loop: thisLoop,
+                phaseOutcome: 'failed',
+                loopStatus: 'failed',
+                needsHumanReview: true,
+                humanReviewReason: oscillation.humanReviewReason,
+                residualFindingsCount: lastOffendingFindings.length,
+              };
             }
           }
           if (verification.kind === 'uncommitted_changes') {
@@ -1208,8 +1385,33 @@ export class ReviewFixLoop {
                   findings: review.offendingFindings ?? [],
                   ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
                 });
+                currentFixChangedFiles = scopeResult.changedFiles;
                 if (scopeResult.pendingScopeWarning) {
                   pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+                }
+
+                const oscillation = await this.checkFileOscillation({
+                  ctx,
+                  loopInput: input,
+                  headBeforeFix: fix.headBeforeFix ?? 'HEAD',
+                  headAfterFix: scopeResult.headAfterFix,
+                  fixChangedFiles: currentFixChangedFiles,
+                  history: fileStateHistory,
+                });
+                if (oscillation.detected) {
+                  thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+                  deps.loops.update(thisLoop);
+                  this.emitIterationCompleted(input, iterationIndex, 'failed');
+                  await this.appendHistoryEntry(ctx, review, fix, undefined, 'failed', input);
+                  await this.runCleanArtifacts(ctx);
+                  return {
+                    loop: thisLoop,
+                    phaseOutcome: 'failed',
+                    loopStatus: 'failed',
+                    needsHumanReview: true,
+                    humanReviewReason: oscillation.humanReviewReason,
+                    residualFindingsCount: lastOffendingFindings.length,
+                  };
                 }
                 this.emit(
                   input,
@@ -1228,6 +1430,14 @@ export class ReviewFixLoop {
                 if (review.reviewedCommitSha) {
                   lastReviewedCommitSha = review.reviewedCommitSha;
                 }
+
+                await recordResolvedFindings({
+                  resolvedMap: resolvedFindingFingerprints,
+                  findings: review.offendingFindings ?? [],
+                  fixChangedFiles: currentFixChangedFiles,
+                  iterationIndex,
+                  cwd: ctx.cwd,
+                });
 
                 thisLoop = completeIteration(thisLoop, {
                   outcome: 'fixed',
@@ -1509,14 +1719,24 @@ export class ReviewFixLoop {
       }
 
       // Default path: complete the iteration as fixed or unresolved.
+      const iterationOutcome = reval.passed ? 'fixed' : 'unresolved';
+      if (iterationOutcome === 'fixed') {
+        await recordResolvedFindings({
+          resolvedMap: resolvedFindingFingerprints,
+          findings: review.offendingFindings ?? [],
+          fixChangedFiles: currentFixChangedFiles,
+          iterationIndex,
+          cwd: ctx.cwd,
+        });
+      }
       thisLoop = completeIteration(thisLoop, {
-        outcome: reval.passed ? 'fixed' : 'unresolved',
+        outcome: iterationOutcome,
         fixInvocationId: fix.invocationId,
         revalidationId: reval.validationRunId,
         now: deps.now(),
       });
       deps.loops.update(thisLoop);
-      this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'fixed' : 'unresolved');
+      this.emitIterationCompleted(input, iterationIndex, iterationOutcome);
 
       await this.appendHistoryEntry(
         ctx,
@@ -2065,13 +2285,14 @@ export class ReviewFixLoop {
     headAfterFix: string;
     findings: Array<{ summary: string; severity?: string; files?: string[] }>;
     reasons?: Record<string, string>;
-  }): Promise<{ headAfterFix: string; pendingScopeWarning?: string }> {
+  }): Promise<{ headAfterFix: string; changedFiles: string[]; pendingScopeWarning?: string }> {
     if (!this.deps.git) {
-      return { headAfterFix: inputData.headAfterFix };
+      return { headAfterFix: inputData.headAfterFix, changedFiles: [] };
     }
 
     let headAfterFix = inputData.headAfterFix;
     let pendingWarning: string | undefined;
+    let normalizedChangedFiles: string[] = [];
 
     try {
       const changedFiles = await this.deps.git.changedFiles(
@@ -2087,6 +2308,8 @@ export class ReviewFixLoop {
         ...(inputData.reasons ? { reasons: inputData.reasons } : {}),
         cwd: inputData.ctx.cwd,
       });
+
+      normalizedChangedFiles = assessment.changedFiles;
 
       if (assessment.outOfScopeFiles.length > 0) {
         this.emit(
@@ -2120,9 +2343,12 @@ export class ReviewFixLoop {
 
     if (typeof this.deps.git.amendCommitMessage === 'function') {
       try {
-        const changedFilesForMsg = await this.deps.git
-          .changedFiles(inputData.ctx.cwd, inputData.headBeforeFix, headAfterFix)
-          .catch(() => []);
+        const changedFilesForMsg =
+          normalizedChangedFiles.length > 0
+            ? normalizedChangedFiles
+            : await this.deps.git
+                .changedFiles(inputData.ctx.cwd, inputData.headBeforeFix, headAfterFix)
+                .catch(() => []);
         const message = buildFindingCommitMessage(inputData.findings, changedFilesForMsg);
         const replacementSha = await this.deps.git.amendCommitMessage(inputData.ctx.cwd, message);
         if (replacementSha) {
@@ -2155,7 +2381,82 @@ export class ReviewFixLoop {
 
     return {
       headAfterFix,
+      changedFiles: normalizedChangedFiles,
       ...(pendingWarning ? { pendingScopeWarning: pendingWarning } : {}),
+    };
+  }
+
+  private async checkFileOscillation(inputData: {
+    ctx: StepContext;
+    loopInput: ReviewFixLoopInput;
+    headBeforeFix: string;
+    headAfterFix: string;
+    fixChangedFiles: string[];
+    history: FileStateHistory;
+  }): Promise<
+    | {
+        detected: true;
+        humanReviewReason: string;
+        match: FileOscillationMatch;
+      }
+    | { detected: false }
+  > {
+    if (!this.deps.git || !inputData.headBeforeFix || inputData.fixChangedFiles.length === 0) {
+      return { detected: false };
+    }
+
+    const checkResult = await inspectFixCommitForOscillation({
+      git: this.deps.git,
+      cwd: inputData.ctx.cwd,
+      headBeforeFix: inputData.headBeforeFix,
+      headAfterFix: inputData.headAfterFix,
+      iterationIndex: inputData.ctx.iterationIndex,
+      fixChangedFiles: inputData.fixChangedFiles,
+      history: inputData.history,
+    });
+
+    if (checkResult.kind === 'no_oscillation') {
+      for (const skip of checkResult.skipped) {
+        this.emit(
+          inputData.loopInput,
+          'review_fix.file_oscillation_check_skipped',
+          'info',
+          `file oscillation check skipped for ${skip.path} at ${skip.ref}: ${skip.error}`,
+          {
+            path: skip.path,
+            ref: skip.ref,
+            error: skip.error,
+          },
+        );
+      }
+      return { detected: false };
+    }
+
+    const match = checkResult.match;
+    const humanReviewReason = formatFileOscillationReason(match, inputData.ctx.iterationIndex);
+
+    this.emit(
+      inputData.loopInput,
+      'review_fix.file_oscillation_detected',
+      'warn',
+      humanReviewReason,
+      {
+        path: match.path,
+        repeatedHash: match.repeatedHash,
+        repeatedSha: match.repeatedSha,
+        repeatedIteration: match.repeatedIteration,
+        repeatedContent: match.repeatedContent,
+        contestedHash: match.contestedHash,
+        contestedSha: match.contestedSha,
+        contestedIteration: match.contestedIteration,
+        contestedContent: match.contestedContent,
+      },
+    );
+
+    return {
+      detected: true,
+      humanReviewReason,
+      match,
     };
   }
 }

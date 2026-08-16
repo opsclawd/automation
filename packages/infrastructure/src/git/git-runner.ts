@@ -22,28 +22,40 @@ export class GitFailedError extends Error {
   }
 }
 
+export interface GitRunOptions {
+  preserveOutput?: boolean;
+}
+
 /**
  * Run a git command and return its trimmed stdout.
  *
- * The returned stdout is always trimmed of leading/trailing whitespace.
+ * The returned stdout is always trimmed of leading/trailing whitespace unless
+ * `options.preserveOutput` is true.
  * If the command fails, throws `GitFailedError` with stderr attached.
  *
  * @param cwd - Working directory for the git command.
  * @param args - Arguments passed to `git`.
  * @param timeoutMs - Timeout in milliseconds (default 30_000).
+ * @param input - Optional stdin input string.
+ * @param options - Execution options including output preservation.
  */
 export async function git(
   cwd: string,
   args: string[],
   timeoutMs?: number,
   input?: string,
+  options?: GitRunOptions,
 ): Promise<string> {
   try {
     const { stdout } = await execa('git', args, {
       cwd,
       timeout: timeoutMs ?? 30_000,
       ...(input === undefined ? {} : { input }),
+      ...(options?.preserveOutput ? { stripFinalNewline: false } : {}),
     });
+    if (options?.preserveOutput) {
+      return stdout;
+    }
     // trimEnd, not trim: `git status --porcelain` encodes status in a fixed
     // 3-character prefix (`XY<space>PATH`), and an unstaged modification leads
     // with a space. Trimming the front strips that space from the first line

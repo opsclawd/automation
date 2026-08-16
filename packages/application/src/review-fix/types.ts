@@ -248,6 +248,7 @@ export interface ReviewStepOptions {
   unresolvedRecords?: ReviewFindingRecord[];
   dispositionHistory?: DispositionHistoryEntry[];
   artifactRecoveryRetry?: boolean;
+  createdFiles?: string[];
 }
 
 export interface ReviewFixLoopInput {

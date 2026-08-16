@@ -62,3 +62,32 @@ describe('FakeGitPort.commit()', () => {
     expect(commits[0]?.files).toEqual(['src/a.ts']);
   });
 });
+
+describe('FakeGitPort.createdFiles()', () => {
+  it('records createdFiles calls and returns configured paths', async () => {
+    const fakeGit = new FakeGitPort();
+    fakeGit.createdFilesResults.set('base|head', ['src/a.ts', 'src/b.ts']);
+
+    const files = await fakeGit.createdFiles('/test', 'base', 'head');
+    expect(files).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(fakeGit.createdFilesCalls).toEqual([{ cwd: '/test', base: 'base', head: 'head' }]);
+
+    const defaultFiles = await fakeGit.createdFiles('/test', 'base');
+    expect(defaultFiles).toEqual([]);
+    expect(fakeGit.createdFilesCalls).toHaveLength(2);
+  });
+});
+
+describe('FakeGitPort.fileContent()', () => {
+  it('records fileContent calls and returns configured historical text', async () => {
+    const fakeGit = new FakeGitPort();
+    fakeGit.fileContentResults.set('main:src/a.ts', 'const a = 1;\n');
+
+    const content = await fakeGit.fileContent('/test', 'main', 'src/a.ts');
+    expect(content).toBe('const a = 1;\n');
+    expect(fakeGit.fileContentCalls).toEqual([{ cwd: '/test', ref: 'main', path: 'src/a.ts' }]);
+
+    const defaultContent = await fakeGit.fileContent('/test', 'HEAD', 'src/b.ts');
+    expect(defaultContent).toBe('fake content for HEAD:src/b.ts');
+  });
+});

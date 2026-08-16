@@ -2556,6 +2556,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           opts_ && 'dispositionHistory' in opts_ ? opts_.dispositionHistory : undefined;
         const artifactRecoveryRetry =
           opts_ && 'artifactRecoveryRetry' in opts_ ? Boolean(opts_.artifactRecoveryRetry) : false;
+        const createdFiles: string[] | undefined =
+          opts_ && 'createdFiles' in opts_ ? opts_.createdFiles : undefined;
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -2571,6 +2573,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mode,
           unresolvedRecords,
           dispositionHistory,
+          ...(createdFiles ? { createdFiles } : {}),
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {

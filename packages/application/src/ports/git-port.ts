@@ -61,6 +61,8 @@ export interface GitPort {
    */
   resetWorktreeIfClean(cwd: string, baseBranch: string): Promise<void>;
   changedFiles(cwd: string, base: string, head?: string): Promise<string[]>;
+  createdFiles(cwd: string, base: string, head?: string): Promise<string[]>;
+  fileContent(cwd: string, ref: string, path: string): Promise<string>;
 }
 
 export interface ArtifactGuardPort {
