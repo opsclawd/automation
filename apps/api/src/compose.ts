@@ -663,7 +663,9 @@ export interface Container {
     priorAttemptMissingFiles?: string[];
     priorAttemptUndeclaredFiles?: string[];
     priorAttemptModifiedReferenceFiles?: string[];
-  }) => Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }>;
+    initialPreStepHead?: string;
+    exemptUndeclaredFiles?: string[];
+  }) => Promise<{ outcome: 'success' | 'failed' | 'needs_human_review'; failureMessage?: string }>;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
     pollIntervalMs: number;
@@ -4747,6 +4749,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             passed: vr.passed,
             ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
             ...(failedCommand?.outcome ? { outcome: failedCommand.outcome } : {}),
+            ...(failingCommands.length > 0
+              ? { failedCommands: failingCommands.map((command) => command.command) }
+              : {}),
             failureDetail,
           };
         },
@@ -5478,7 +5483,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         priorAttemptMissingFiles?: string[];
         priorAttemptUndeclaredFiles?: string[];
         priorAttemptModifiedReferenceFiles?: string[];
-      }): Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }> => {
+        initialPreStepHead?: string;
+        exemptUndeclaredFiles?: string[];
+      }): Promise<{
+        outcome: 'success' | 'failed' | 'needs_human_review';
+        failureMessage?: string;
+      }> => {
         if (!implementStepLoop) throw new Error('implementStepLoop not initialized');
         const result = await implementStepLoop.execute({
           runId: RunId(sctx.ctx.runUuid),
@@ -5495,6 +5505,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             holisticThresholdIteration: config.phases.implement.holisticThresholdIteration,
             holisticThresholdFindings: config.phases.implement.holisticThresholdFindings,
           },
+          ...(sctx.initialPreStepHead !== undefined
+            ? { initialPreStepHead: sctx.initialPreStepHead }
+            : {}),
+          ...(sctx.exemptUndeclaredFiles !== undefined
+            ? { exemptUndeclaredFiles: sctx.exemptUndeclaredFiles }
+            : {}),
           ...(sctx.priorAttemptMissingFiles?.length
             ? { priorAttemptMissingFiles: sctx.priorAttemptMissingFiles }
             : {}),
@@ -5505,7 +5521,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? { priorAttemptModifiedReferenceFiles: sctx.priorAttemptModifiedReferenceFiles }
             : {}),
         });
-        return { outcome: result.outcome };
+        return {
+          outcome: result.outcome,
+          ...(result.failureMessage !== undefined ? { failureMessage: result.failureMessage } : {}),
+        };
       };
 
       // Wire remaining phase handlers that require agent dependencies

@@ -12,6 +12,15 @@ import type { RunWorkspaceTypecheckPort } from '../../ports/run-workspace-typech
 import { buildTaskValidationCommands } from '../../task-validation-commands.js';
 import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
 
+import {
+  normalizeTaskPath,
+  declaredTaskFiles,
+  referenceTaskFiles,
+  normalizedPathSet,
+  hasDeclaredSurface,
+  classifyUndeclaredFiles,
+} from '../../task-file-boundaries.js';
+
 export interface OversizedTask {
   taskNum: number;
   taskTitle: string;
@@ -23,66 +32,6 @@ export interface OversizedTask {
 export interface LintTaskSizeResult {
   ok: boolean;
   oversized: OversizedTask[];
-}
-
-function normalizeTaskPath(path: unknown): string {
-  if (typeof path !== 'string') return '';
-  return path
-    .trim()
-    .replace(/\\/g, '/')
-    .replace(/^(\.\/|\/)+/, '');
-}
-
-function declaredTaskFiles(task: unknown): string[] {
-  if (!task || typeof task !== 'object') return [];
-  const record = task as Record<string, unknown>;
-  const expectedFiles = Array.isArray(record.expected_files) ? record.expected_files : [];
-  const files = Array.isArray(record.files) ? record.files : [];
-
-  const requiredExpectedFiles = expectedFiles.map(normalizeTaskPath).filter(Boolean);
-  const requiredLegacyFiles = files.map(normalizeTaskPath).filter(Boolean);
-  return [...new Set([...requiredExpectedFiles, ...requiredLegacyFiles])];
-}
-
-function referenceTaskFiles(task: unknown): string[] {
-  if (!task || typeof task !== 'object') return [];
-  const referenceFiles = (task as Record<string, unknown>).reference_files;
-  if (!Array.isArray(referenceFiles)) return [];
-  return [...new Set(referenceFiles.map(normalizeTaskPath).filter(Boolean))];
-}
-
-function normalizedPathSet(paths: readonly string[] | undefined): Set<string> {
-  return new Set((paths ?? []).map(normalizeTaskPath).filter(Boolean));
-}
-
-function hasDeclaredSurface(task: unknown, manifestVersion?: number): boolean {
-  if (!task || typeof task !== 'object') return false;
-  const record = task as Record<string, unknown>;
-  const expectedFiles = Array.isArray(record.expected_files) ? record.expected_files : undefined;
-  const referenceFiles = Array.isArray(record.reference_files) ? record.reference_files : undefined;
-  const files = Array.isArray(record.files) ? record.files : undefined;
-  if (manifestVersion === 2) {
-    return expectedFiles !== undefined || referenceFiles !== undefined || files !== undefined;
-  }
-  return (
-    (expectedFiles !== undefined && expectedFiles.length > 0) ||
-    (files !== undefined && files.length > 0)
-  );
-}
-
-function classifyUndeclaredFiles(
-  committedFiles: readonly string[],
-  writableFiles: ReadonlySet<string>,
-  referenceFiles: ReadonlySet<string>,
-  exemptFiles: ReadonlySet<string>,
-): { modifiedReferenceFiles: string[]; undeclaredFiles: string[] } {
-  const undeclared = [...new Set(committedFiles.map(normalizeTaskPath).filter(Boolean))]
-    .filter((file) => !writableFiles.has(file) && !exemptFiles.has(file))
-    .sort();
-  return {
-    modifiedReferenceFiles: undeclared.filter((file) => referenceFiles.has(file)),
-    undeclaredFiles: undeclared.filter((file) => !referenceFiles.has(file)),
-  };
 }
 
 export interface StepRunContext {
@@ -100,10 +49,13 @@ export interface StepRunContext {
   priorAttemptMissingFiles?: string[];
   priorAttemptUndeclaredFiles?: string[];
   priorAttemptModifiedReferenceFiles?: string[];
+  initialPreStepHead?: string;
+  exemptUndeclaredFiles?: string[];
 }
 
 export interface StepRunResult {
   outcome: 'success' | 'failed' | 'needs_human_review';
+  failureMessage?: string;
 }
 
 export interface ImplementHandlerOpts {
@@ -354,6 +306,10 @@ export class ImplementHandler implements PhaseHandler {
             ctx,
             manifest: manifest!,
             planMd,
+            ...(preStepHead !== undefined ? { initialPreStepHead: preStepHead } : {}),
+            ...(this.opts.exemptUndeclaredFiles !== undefined
+              ? { exemptUndeclaredFiles: this.opts.exemptUndeclaredFiles }
+              : {}),
             ...(priorAttemptMissingFiles !== undefined ? { priorAttemptMissingFiles } : {}),
             ...(priorAttemptUndeclaredFiles !== undefined ? { priorAttemptUndeclaredFiles } : {}),
             ...(priorAttemptModifiedReferenceFiles !== undefined
@@ -653,6 +609,19 @@ export class ImplementHandler implements PhaseHandler {
           );
         } else {
           this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+          if (result.failureMessage) {
+            emit('step.failed', 'error', result.failureMessage, {
+              index: d.index,
+              total: totalSteps,
+            });
+            return this.fail(
+              ctx,
+              emit,
+              'invalid_result',
+              result.failureMessage,
+              'Separate the regression proof from its implementation task and resume from the failed step.',
+            );
+          }
           emit('step.failed', 'error', `step ${d.index}/${totalSteps} failed`, {
             index: d.index,
             total: totalSteps,
