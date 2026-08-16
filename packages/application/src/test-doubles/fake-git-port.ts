@@ -23,6 +23,10 @@ export class FakeGitPort implements GitPort {
   resetWorktreeIfCleanShouldThrow = new Set<string>();
   changedFilesResults = new Map<string, string[]>();
   changedFilesCalls: Array<{ cwd: string; base: string; head?: string }> = [];
+  createdFilesResults = new Map<string, string[]>();
+  createdFilesCalls: Array<{ cwd: string; base: string; head?: string }> = [];
+  fileContentResults = new Map<string, string>();
+  fileContentCalls: Array<{ cwd: string; ref: string; path: string }> = [];
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);
@@ -154,5 +158,19 @@ export class FakeGitPort implements GitPort {
   async changedFiles(cwd: string, base: string, head?: string): Promise<string[]> {
     this.changedFilesCalls.push({ cwd, base, ...(head ? { head } : {}) });
     return [...(this.changedFilesResults.get(`${base}|${head ?? 'HEAD'}`) ?? [])];
+  }
+
+  async createdFiles(cwd: string, base: string, head?: string): Promise<string[]> {
+    this.createdFilesCalls.push({ cwd, base, ...(head ? { head } : {}) });
+    return [...(this.createdFilesResults.get(`${base}|${head ?? 'HEAD'}`) ?? [])];
+  }
+
+  async fileContent(cwd: string, ref: string, path: string): Promise<string> {
+    this.fileContentCalls.push({ cwd, ref, path });
+    return (
+      this.fileContentResults.get(`${ref}:${path}`) ??
+      this.fileContentResults.get(`${ref}|${path}`) ??
+      `fake content for ${ref}:${path}`
+    );
   }
 }
