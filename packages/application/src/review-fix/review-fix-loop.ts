@@ -56,6 +56,12 @@ import {
   detectFindingRecurrence,
   type ResolvedFindingFingerprint,
 } from './finding-recurrence-guard.js';
+import {
+  inspectFixCommitForOscillation,
+  formatFileOscillationReason,
+  type FileStateHistory,
+  type FileOscillationMatch,
+} from './file-oscillation-guard.js';
 
 async function computeNewState(
   prevState: ReviewDimensionState | undefined,
@@ -239,6 +245,7 @@ export class ReviewFixLoop {
     let headRevalidated = true;
     const resolvedFindingFingerprints = new Map<string, ResolvedFindingFingerprint>();
     let currentFixChangedFiles: string[] = [];
+    const fileStateHistory: FileStateHistory = new Map();
 
     const opts = { ...(this.deps.options ?? {}), ...(input.options ?? {}) };
     const endOnReview = opts.endOnReview ?? true;
@@ -466,6 +473,30 @@ export class ReviewFixLoop {
               if (scopeResult.pendingScopeWarning) {
                 pendingScopeReviewContext = scopeResult.pendingScopeWarning;
               }
+
+              const oscillation = await this.checkFileOscillation({
+                ctx,
+                loopInput: input,
+                headBeforeFix: fix.headBeforeFix,
+                headAfterFix: scopeResult.headAfterFix,
+                fixChangedFiles: currentFixChangedFiles,
+                history: fileStateHistory,
+              });
+              if (oscillation.detected) {
+                thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+                deps.loops.update(thisLoop);
+                this.emitIterationCompleted(input, iterationIndex, 'failed');
+                await this.appendHistoryEntry(ctx, {}, fix, undefined, 'failed', input);
+                await this.runCleanArtifacts(ctx);
+                return {
+                  loop: thisLoop,
+                  phaseOutcome: 'failed',
+                  loopStatus: 'failed',
+                  needsHumanReview: true,
+                  humanReviewReason: oscillation.humanReviewReason,
+                  residualFindingsCount: lastOffendingFindings.length,
+                };
+              }
             }
             if (verification.kind === 'uncommitted_changes') {
               this.emit(
@@ -504,6 +535,30 @@ export class ReviewFixLoop {
                   currentFixChangedFiles = scopeResult.changedFiles;
                   if (scopeResult.pendingScopeWarning) {
                     pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+                  }
+
+                  const oscillation = await this.checkFileOscillation({
+                    ctx,
+                    loopInput: input,
+                    headBeforeFix: fix.headBeforeFix ?? 'HEAD',
+                    headAfterFix: scopeResult.headAfterFix,
+                    fixChangedFiles: currentFixChangedFiles,
+                    history: fileStateHistory,
+                  });
+                  if (oscillation.detected) {
+                    thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+                    deps.loops.update(thisLoop);
+                    this.emitIterationCompleted(input, iterationIndex, 'failed');
+                    await this.appendHistoryEntry(ctx, {}, fix, undefined, 'failed', input);
+                    await this.runCleanArtifacts(ctx);
+                    return {
+                      loop: thisLoop,
+                      phaseOutcome: 'failed',
+                      loopStatus: 'failed',
+                      needsHumanReview: true,
+                      humanReviewReason: oscillation.humanReviewReason,
+                      residualFindingsCount: lastOffendingFindings.length,
+                    };
                   }
                   autoCommitted = true;
                   lastIterationHadFixCommit = true;
@@ -1239,6 +1294,30 @@ export class ReviewFixLoop {
             if (scopeResult.pendingScopeWarning) {
               pendingScopeReviewContext = scopeResult.pendingScopeWarning;
             }
+
+            const oscillation = await this.checkFileOscillation({
+              ctx,
+              loopInput: input,
+              headBeforeFix: fix.headBeforeFix,
+              headAfterFix: scopeResult.headAfterFix,
+              fixChangedFiles: currentFixChangedFiles,
+              history: fileStateHistory,
+            });
+            if (oscillation.detected) {
+              thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+              deps.loops.update(thisLoop);
+              this.emitIterationCompleted(input, iterationIndex, 'failed');
+              await this.appendHistoryEntry(ctx, review, fix, undefined, 'failed', input);
+              await this.runCleanArtifacts(ctx);
+              return {
+                loop: thisLoop,
+                phaseOutcome: 'failed',
+                loopStatus: 'failed',
+                needsHumanReview: true,
+                humanReviewReason: oscillation.humanReviewReason,
+                residualFindingsCount: lastOffendingFindings.length,
+              };
+            }
           }
           if (verification.kind === 'uncommitted_changes') {
             this.emit(
@@ -1309,6 +1388,30 @@ export class ReviewFixLoop {
                 currentFixChangedFiles = scopeResult.changedFiles;
                 if (scopeResult.pendingScopeWarning) {
                   pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+                }
+
+                const oscillation = await this.checkFileOscillation({
+                  ctx,
+                  loopInput: input,
+                  headBeforeFix: fix.headBeforeFix ?? 'HEAD',
+                  headAfterFix: scopeResult.headAfterFix,
+                  fixChangedFiles: currentFixChangedFiles,
+                  history: fileStateHistory,
+                });
+                if (oscillation.detected) {
+                  thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+                  deps.loops.update(thisLoop);
+                  this.emitIterationCompleted(input, iterationIndex, 'failed');
+                  await this.appendHistoryEntry(ctx, review, fix, undefined, 'failed', input);
+                  await this.runCleanArtifacts(ctx);
+                  return {
+                    loop: thisLoop,
+                    phaseOutcome: 'failed',
+                    loopStatus: 'failed',
+                    needsHumanReview: true,
+                    humanReviewReason: oscillation.humanReviewReason,
+                    residualFindingsCount: lastOffendingFindings.length,
+                  };
                 }
                 this.emit(
                   input,
@@ -2280,6 +2383,80 @@ export class ReviewFixLoop {
       headAfterFix,
       changedFiles: normalizedChangedFiles,
       ...(pendingWarning ? { pendingScopeWarning: pendingWarning } : {}),
+    };
+  }
+
+  private async checkFileOscillation(inputData: {
+    ctx: StepContext;
+    loopInput: ReviewFixLoopInput;
+    headBeforeFix: string;
+    headAfterFix: string;
+    fixChangedFiles: string[];
+    history: FileStateHistory;
+  }): Promise<
+    | {
+        detected: true;
+        humanReviewReason: string;
+        match: FileOscillationMatch;
+      }
+    | { detected: false }
+  > {
+    if (!this.deps.git || !inputData.headBeforeFix || inputData.fixChangedFiles.length === 0) {
+      return { detected: false };
+    }
+
+    const checkResult = await inspectFixCommitForOscillation({
+      git: this.deps.git,
+      cwd: inputData.ctx.cwd,
+      headBeforeFix: inputData.headBeforeFix,
+      headAfterFix: inputData.headAfterFix,
+      iterationIndex: inputData.ctx.iterationIndex,
+      fixChangedFiles: inputData.fixChangedFiles,
+      history: inputData.history,
+    });
+
+    if (checkResult.kind === 'no_oscillation') {
+      for (const skip of checkResult.skipped) {
+        this.emit(
+          inputData.loopInput,
+          'review_fix.file_oscillation_check_skipped',
+          'info',
+          `file oscillation check skipped for ${skip.path} at ${skip.ref}: ${skip.error}`,
+          {
+            path: skip.path,
+            ref: skip.ref,
+            error: skip.error,
+          },
+        );
+      }
+      return { detected: false };
+    }
+
+    const match = checkResult.match;
+    const humanReviewReason = formatFileOscillationReason(match, inputData.ctx.iterationIndex);
+
+    this.emit(
+      inputData.loopInput,
+      'review_fix.file_oscillation_detected',
+      'warn',
+      humanReviewReason,
+      {
+        path: match.path,
+        repeatedHash: match.repeatedHash,
+        repeatedSha: match.repeatedSha,
+        repeatedIteration: match.repeatedIteration,
+        repeatedContent: match.repeatedContent,
+        contestedHash: match.contestedHash,
+        contestedSha: match.contestedSha,
+        contestedIteration: match.contestedIteration,
+        contestedContent: match.contestedContent,
+      },
+    );
+
+    return {
+      detected: true,
+      humanReviewReason,
+      match,
     };
   }
 }
