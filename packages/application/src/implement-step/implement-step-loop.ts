@@ -598,7 +598,9 @@ export class ImplementStepLoop {
       (input.priorAttemptUndeclaredFiles !== undefined &&
         input.priorAttemptUndeclaredFiles.length > 0) ||
       (input.priorAttemptModifiedReferenceFiles !== undefined &&
-        input.priorAttemptModifiedReferenceFiles.length > 0);
+        input.priorAttemptModifiedReferenceFiles.length > 0) ||
+      (input.priorAttemptRepairedProtectedFiles !== undefined &&
+        input.priorAttemptRepairedProtectedFiles.length > 0);
 
     const initialImplementOpts: ImplementStepOptions | undefined = hasPriorAttemptFeedback
       ? {
@@ -610,6 +612,9 @@ export class ImplementStepLoop {
             : {}),
           ...(input.priorAttemptModifiedReferenceFiles?.length
             ? { priorAttemptModifiedReferenceFiles: input.priorAttemptModifiedReferenceFiles }
+            : {}),
+          ...(input.priorAttemptRepairedProtectedFiles?.length
+            ? { priorAttemptRepairedProtectedFiles: input.priorAttemptRepairedProtectedFiles }
             : {}),
         }
       : undefined;

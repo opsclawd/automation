@@ -29,4 +29,32 @@ describe('renderDeclaredFilesRetryPrompt recovery guidance', () => {
     expect(renderDeclaredFilesRetryPrompt()).toEqual([]);
     expect(renderDeclaredFilesRetryPrompt([])).toEqual([]);
   });
+
+  it('renders a dedicated section for repaired protected files forbidding git reset', () => {
+    const prompt = renderDeclaredFilesRetryPrompt(undefined, undefined, undefined, [
+      '.gitignore',
+      '.github/workflows/ci.yml',
+    ]).join('\n');
+
+    expect(prompt).toContain('## REPAIRED PROTECTED FILES — DO NOT MODIFY OR REVERT');
+    expect(prompt).toContain('- .gitignore');
+    expect(prompt).toContain('- .github/workflows/ci.yml');
+    expect(prompt).toContain('reverted');
+    expect(prompt).toContain('DO NOT');
+    expect(prompt).toContain('git reset');
+    // Crucially, must NOT include the standard recovery git reset guidance
+    expect(prompt).not.toContain('git reset HEAD~1 --soft');
+  });
+
+  it('renders both repaired protected guidance and residual undeclared reset guidance when both exist', () => {
+    const prompt = renderDeclaredFilesRetryPrompt(undefined, ['src/unrelated.ts'], undefined, [
+      '.gitignore',
+    ]).join('\n');
+
+    expect(prompt).toContain('## REPAIRED PROTECTED FILES — DO NOT MODIFY OR REVERT');
+    expect(prompt).toContain('- .gitignore');
+    expect(prompt).toContain('## COMMITTED FILES OUTSIDE THIS TASK — REMOVE FROM THIS TASK COMMIT');
+    expect(prompt).toContain('- src/unrelated.ts');
+    expect(prompt).toContain('git reset HEAD~1 --soft');
+  });
 });

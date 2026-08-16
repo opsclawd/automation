@@ -47,6 +47,7 @@ export interface ImplementStepOptions {
   priorAttemptMissingFiles?: string[];
   priorAttemptUndeclaredFiles?: string[];
   priorAttemptModifiedReferenceFiles?: string[];
+  priorAttemptRepairedProtectedFiles?: string[];
 }
 
 export interface TypescriptError {
@@ -414,6 +415,7 @@ export interface ImplementStepLoopInput {
   priorAttemptMissingFiles?: string[];
   priorAttemptUndeclaredFiles?: string[];
   priorAttemptModifiedReferenceFiles?: string[];
+  priorAttemptRepairedProtectedFiles?: string[];
   initialPreStepHead?: string;
   exemptUndeclaredFiles?: string[];
 }
