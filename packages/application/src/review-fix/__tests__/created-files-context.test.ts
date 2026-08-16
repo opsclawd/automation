@@ -178,4 +178,91 @@ describe('ReviewFixLoop created-files context', () => {
     expect(result.needsHumanReview).toBe(true);
     expect(events.some((event) => event.type === 'loop.created_files_check_failed')).toBe(true);
   });
+
+  it('evaluates createdFiles against current HEAD on each review iteration after fixes create new files', async () => {
+    const { bus } = collectEvents();
+    const git = new FakeGitPort() as GitWithCreatedFiles;
+    git.headByCwd.set('/wt', 'head-sha-1');
+
+    const createdFilesCalls: Array<{ cwd: string; base: string; head?: string }> = [];
+    let createdIteration = 0;
+    git.createdFiles = async (cwd: string, base: string, head?: string) => {
+      createdFilesCalls.push({ cwd, base, head });
+      createdIteration++;
+      if (createdIteration === 1) {
+        return ['src/existing-created.ts'];
+      }
+      return ['src/existing-created.ts', 'src/fix-created.ts'];
+    };
+
+    const reviewCalls: Array<{ ctx: StepContext; opts?: OptionsWithCreatedFiles }> = [];
+    let reviewCount = 0;
+    const runReview = async (
+      ctx: StepContext,
+      opts?: ReviewStepOptions,
+    ): Promise<ReviewStepResult> => {
+      reviewCalls.push({ ctx, opts: opts as OptionsWithCreatedFiles });
+      reviewCount++;
+      if (reviewCount === 1) {
+        return {
+          invocationId: 'rev-1',
+          agentOutcome: 'success',
+          verdict: 'fail',
+          offendingFindings: [
+            {
+              severity: 'high',
+              summary: 'Missing helper function',
+              files: ['src/existing-created.ts'],
+            },
+          ],
+        };
+      }
+      return {
+        invocationId: 'rev-2',
+        agentOutcome: 'success',
+        verdict: 'pass',
+      };
+    };
+
+    const fixCalls: Array<{ ctx: StepContext; opts: FixStepOptions }> = [];
+    const runFix = async (ctx: StepContext, opts: FixStepOptions): Promise<FixStepResult> => {
+      fixCalls.push({ ctx, opts });
+      git.headByCwd.set('/wt', 'head-sha-2');
+      return {
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'head-sha-1',
+      };
+    };
+
+    const loops = new FakeLoopRepository();
+    const deps: ReviewFixLoopDeps = {
+      runPostFixGate: async () => ({ outcome: 'pass', output: '' }),
+      runReview,
+      runFix,
+      runRevalidation: async () => ({ validationRunId: 'val-1', passed: true }),
+      loops,
+      events: bus,
+      now: () => new Date('2026-01-01T00:00:00Z'),
+      idFactory: () => 'loop-1',
+      cleanArtifacts: async () => {},
+      git,
+    };
+
+    const loop = new ReviewFixLoop(deps);
+    const result = await loop.execute(baseInput());
+
+    expect(createdFilesCalls).toHaveLength(2);
+    expect(createdFilesCalls[0]).toEqual({ cwd: '/wt', base: 'base-sha-123', head: 'HEAD' });
+    expect(createdFilesCalls[1]).toEqual({ cwd: '/wt', base: 'base-sha-123', head: 'HEAD' });
+    expect(reviewCalls).toHaveLength(2);
+    expect(reviewCalls[0].opts?.createdFiles).toEqual(['src/existing-created.ts']);
+    expect(reviewCalls[1].opts?.createdFiles).toEqual([
+      'src/existing-created.ts',
+      'src/fix-created.ts',
+    ]);
+    expect(result.phaseOutcome).toBe('passed');
+    expect(result.loopStatus).toBe('converged');
+  });
 });
