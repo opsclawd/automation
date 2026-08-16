@@ -36,6 +36,13 @@ import type {
 import type { ReviewAttempt, ReviewDimensionState, ReviewSnapshot } from '../review-state/types.js';
 import { verifyFixCommit, type FixCommitVerification } from '../fix-commit-verifier.js';
 import type { RevalidationResult } from '../review-fix/types.js';
+import { buildTaskValidationCommands } from '../task-validation-commands.js';
+import {
+  declaredTaskFiles,
+  referenceTaskFiles,
+  normalizedPathSet,
+  classifyUndeclaredFiles,
+} from '../task-file-boundaries.js';
 
 function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -840,6 +847,85 @@ export class ImplementStepLoop {
         outcome: 'failed',
       });
       return { outcome: 'failed', loop };
+    }
+
+    const taskValidationCommands = input.manifest?.tasks
+      ? buildTaskValidationCommands(input.manifest, input.stepIndex)
+      : [];
+    const invertedCommands = taskValidationCommands.filter(
+      (cmd): cmd is string => typeof cmd === 'string' && cmd.trimStart().startsWith('!'),
+    );
+
+    if (
+      invertedCommands.length > 0 &&
+      input.initialPreStepHead !== undefined &&
+      deps.git !== undefined &&
+      deps.runRevalidation !== undefined
+    ) {
+      const currentHead = await deps.git.headCommitSha(input.cwd);
+      const committedFiles = await deps.git.changedFiles(
+        input.cwd,
+        input.initialPreStepHead,
+        currentHead,
+      );
+      const task = input.manifest?.tasks?.find((t) => t.n === input.stepIndex);
+      const expectedFiles = declaredTaskFiles(task);
+      const referenceFiles = referenceTaskFiles(task);
+      const writableSet = normalizedPathSet(expectedFiles);
+      const referenceSet = normalizedPathSet(referenceFiles);
+      const exemptSet = normalizedPathSet(input.exemptUndeclaredFiles);
+
+      const { modifiedReferenceFiles, undeclaredFiles } = classifyUndeclaredFiles(
+        committedFiles,
+        writableSet,
+        referenceSet,
+        exemptSet,
+      );
+      const outOfScopeFiles = [...modifiedReferenceFiles, ...undeclaredFiles];
+
+      if (outOfScopeFiles.length > 0) {
+        const revalidation = await deps.runRevalidation(baseCtx);
+        const failedInvertedCommands = (revalidation.failedCommands ?? []).filter((cmd) =>
+          invertedCommands.includes(cmd),
+        );
+
+        if (failedInvertedCommands.length > 0) {
+          const failureMessage =
+            `RED-first violation: Task ${input.stepIndex} (${input.stepTitle}) requires ` +
+            `inverted validation command(s) ${failedInvertedCommands.map((command) => JSON.stringify(command)).join(', ')} ` +
+            `to pass, but the commit included out-of-scope files: ${outOfScopeFiles.join(', ')}. ` +
+            'Separate the regression proof from its implementation.';
+
+          this.emit(input, 'step.red_first_violation', 'error', failureMessage, {
+            index: input.stepIndex,
+            taskTitle: input.stepTitle,
+            failedInvertedCommands,
+            modifiedReferenceFiles,
+            undeclaredFiles,
+            preStepHead: input.initialPreStepHead,
+            postStepHead: currentHead,
+          });
+
+          const iterationIndex = loop.iterations.length + 1;
+          this.emit(input, 'loop.iteration.started', 'info', 'RED-first scope violation', {
+            index: iterationIndex,
+          });
+          loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'loop.iteration.completed',
+            'info',
+            'step failed RED-first scope violation guard',
+            {
+              index: iterationIndex,
+              outcome: 'failed',
+            },
+          );
+          return { outcome: 'failed', loop, failureMessage };
+        }
+      }
     }
 
     // Enter review-fix loop

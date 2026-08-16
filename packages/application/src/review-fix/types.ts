@@ -84,6 +84,7 @@ export interface RevalidationResult {
   category?: string; // 'build' | 'lint' | 'typecheck' | 'test' | 'other'
   failureDetail?: string | undefined;
   outcome?: ValidationCommandOutcome;
+  failedCommands?: string[];
 }
 
 export interface ArchitectPlanTask {

@@ -414,9 +414,12 @@ export interface ImplementStepLoopInput {
   priorAttemptMissingFiles?: string[];
   priorAttemptUndeclaredFiles?: string[];
   priorAttemptModifiedReferenceFiles?: string[];
+  initialPreStepHead?: string;
+  exemptUndeclaredFiles?: string[];
 }
 
 export interface ImplementStepLoopResult {
   loop: Loop;
   outcome: 'success' | 'failed' | 'needs_human_review';
+  failureMessage?: string;
 }
