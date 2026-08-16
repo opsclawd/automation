@@ -4847,6 +4847,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         },
         validatePlanTaskList,
         signatureAnalyzer: planReviewSignatureAnalyzer,
+        forbiddenArtifactPaths: config.validation.forbiddenArtifactPaths,
       });
 
       const computeSnapshot = async (
