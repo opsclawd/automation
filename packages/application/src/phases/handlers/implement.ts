@@ -10,7 +10,7 @@ import type { TaskManifest, TaskManifestEntry } from '../plan-tasks.js';
 import type { ValidationPort } from '../../ports/validation-port.js';
 import type { RunWorkspaceTypecheckPort } from '../../ports/run-workspace-typecheck-port.js';
 import { buildTaskValidationCommands } from '../../task-validation-commands.js';
-import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
+import { uncommittedSourcePaths, unquoteGitPath } from '../../artifacts/orchestrator-artifacts.js';
 
 import {
   normalizeTaskPath,
@@ -20,6 +20,24 @@ import {
   hasDeclaredSurface,
   classifyUndeclaredFiles,
 } from '../../task-file-boundaries.js';
+
+function undeclaredUntrackedRootFiles(
+  status: string,
+  writableFiles: ReadonlySet<string>,
+  referenceFiles: ReadonlySet<string>,
+  exemptFiles: ReadonlySet<string>,
+): string[] {
+  const paths = status
+    .split('\n')
+    .filter((line) => line.startsWith('?? '))
+    .map((line) => normalizeTaskPath(unquoteGitPath(line.slice(3))))
+    .filter((path) => path.length > 0 && !path.includes('/'))
+    .filter(
+      (path) => !writableFiles.has(path) && !referenceFiles.has(path) && !exemptFiles.has(path),
+    );
+
+  return [...new Set(paths)].sort();
+}
 
 export interface OversizedTask {
   taskNum: number;
@@ -332,13 +350,43 @@ export class ImplementHandler implements PhaseHandler {
         }
 
         if (result.outcome === 'success') {
-          if (shouldCaptureBaseline) {
-            const expectedFiles = declaredFiles;
-            const referenceFiles = referenceTaskFiles(task);
-            const writableSet = normalizedPathSet(expectedFiles);
-            const referenceSet = normalizedPathSet(referenceFiles);
-            const exemptSet = normalizedPathSet(this.opts.exemptUndeclaredFiles);
+          const expectedFiles = declaredFiles;
+          const referenceFiles = referenceTaskFiles(task);
+          const writableSet = normalizedPathSet(expectedFiles);
+          const referenceSet = normalizedPathSet(referenceFiles);
+          const exemptSet = normalizedPathSet(this.opts.exemptUndeclaredFiles);
+          let statusPromise: Promise<string> | undefined;
+          const readStatus = (): Promise<string> => {
+            statusPromise ??= ctx.git.status(ctx.cwd);
+            return statusPromise;
+          };
 
+          try {
+            const scratchFiles = undeclaredUntrackedRootFiles(
+              await readStatus(),
+              writableSet,
+              referenceSet,
+              exemptSet,
+            );
+            if (scratchFiles.length > 0) {
+              emit(
+                'step.scratch_files_left',
+                'warn',
+                `step ${d.index}/${totalSteps} left undeclared root files: ${scratchFiles.join(', ')}`,
+                {
+                  index: d.index,
+                  total: totalSteps,
+                  taskTitle: task?.title ?? d.title,
+                  files: scratchFiles,
+                },
+              );
+            }
+          } catch {
+            // Reporting is best-effort. Existing declared-file checks below still
+            // decide whether an unavailable status snapshot must fail closed.
+          }
+
+          if (shouldCaptureBaseline) {
             let postStepHead: string | undefined;
             let committedFiles: string[] = [];
             let verificationError: string | undefined;
@@ -392,7 +440,7 @@ export class ImplementHandler implements PhaseHandler {
               let uncommittedDeclared: string[] = [];
 
               try {
-                const status = await ctx.git.status(ctx.cwd);
+                const status = await readStatus();
                 const dirty = new Set(
                   uncommittedSourcePaths(status).map(normalizeTaskPath).filter(Boolean),
                 );
@@ -438,7 +486,7 @@ export class ImplementHandler implements PhaseHandler {
             if (missingFiles.length > 0) {
               let uncommittedDeclared: string[] = [];
               try {
-                const status = await ctx.git.status(ctx.cwd);
+                const status = await readStatus();
                 const dirty = new Set(
                   uncommittedSourcePaths(status).map(normalizeTaskPath).filter(Boolean),
                 );
