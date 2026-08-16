@@ -352,4 +352,124 @@ describe('revertProtectedFiles', () => {
     expect(readFileSync(join(repoDir, '.github', 'workflows', 'b.yml'), 'utf8')).toBe('name: B\n');
     expect(readFileSync(join(repoDir, '.gitignore'), 'utf8')).toBe('/dist\n');
   });
+
+  it('removes newly added files inside an existing baseline protected directory', async () => {
+    const { repoDir, execGit } = initRepo();
+
+    mkdirSync(join(repoDir, '.github', 'workflows'), { recursive: true });
+    writeFileSync(join(repoDir, '.github', 'workflows', 'ci.yml'), 'name: CI baseline\n');
+    mkdirSync(join(repoDir, 'src'), { recursive: true });
+    writeFileSync(join(repoDir, 'src', 'index.ts'), 'export const a = 1;\n');
+
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'chore: baseline commit']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    // Step modifies ci.yml and adds an undeclared workflow file inside .github/workflows
+    writeFileSync(join(repoDir, '.github', 'workflows', 'ci.yml'), 'name: CI modified\n');
+    writeFileSync(join(repoDir, '.github', 'workflows', 'malicious.yml'), 'name: Malicious\n');
+    writeFileSync(join(repoDir, 'src', 'index.ts'), 'export const a = 2;\n');
+
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'feat: add malicious workflow and modify ci']);
+
+    const result = await revertProtectedFiles({
+      cwd: repoDir,
+      baseline: baselineSha,
+      protectedFiles: ['.github/workflows'],
+    });
+
+    expect(result.revertedProtectedFiles).toEqual(['.github/workflows']);
+    expect(existsSync(join(repoDir, '.github', 'workflows', 'malicious.yml'))).toBe(false);
+    expect(readFileSync(join(repoDir, '.github', 'workflows', 'ci.yml'), 'utf8')).toBe(
+      'name: CI baseline\n',
+    );
+    expect(readFileSync(join(repoDir, 'src', 'index.ts'), 'utf8')).toBe('export const a = 2;\n');
+
+    const trackedFiles = execGit(['ls-files', '-z']).split('\0').filter(Boolean);
+    expect(trackedFiles).not.toContain('.github/workflows/malicious.yml');
+    expect(trackedFiles).toContain('.github/workflows/ci.yml');
+    expect(trackedFiles).toContain('src/index.ts');
+
+    const diffFiles = execGit(['diff', '--name-only', '-z', `${baselineSha}..HEAD`])
+      .split('\0')
+      .filter(Boolean);
+    expect(diffFiles).toEqual(['src/index.ts']);
+    expect(execGit(['status', '--porcelain'])).toBe('');
+  });
+
+  it('detects newly added files when git rename detection would classify them as renames', async () => {
+    const { repoDir, execGit } = initRepo();
+
+    const identicalContent = 'export const commonContent = "1234567890abcdef";\n';
+    writeFileSync(join(repoDir, '.gitignore'), '/renamed-artifact.txt\n');
+    writeFileSync(join(repoDir, 'deleted-file.txt'), identicalContent);
+    mkdirSync(join(repoDir, 'src'), { recursive: true });
+    writeFileSync(join(repoDir, 'src', 'index.ts'), 'export const base = 1;\n');
+
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'chore: baseline commit']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    // Step removes deleted-file.txt, un-ignores renamed-artifact.txt, creates renamed-artifact.txt with identical content
+    writeFileSync(join(repoDir, '.gitignore'), '# mutated\n');
+    execGit(['rm', 'deleted-file.txt']);
+    writeFileSync(join(repoDir, 'renamed-artifact.txt'), identicalContent);
+    writeFileSync(join(repoDir, 'src', 'index.ts'), 'export const base = 2;\n');
+
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'feat: delete and add identical file']);
+
+    const result = await revertProtectedFiles({
+      cwd: repoDir,
+      baseline: baselineSha,
+      protectedFiles: ['.gitignore'],
+    });
+
+    expect(result.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(result.removedNewlyIgnoredFiles).toEqual(['renamed-artifact.txt']);
+
+    const trackedFiles = execGit(['ls-files', '-z']).split('\0').filter(Boolean);
+    expect(trackedFiles).not.toContain('renamed-artifact.txt');
+    expect(trackedFiles).not.toContain('deleted-file.txt');
+    expect(trackedFiles).toContain('src/index.ts');
+    expect(existsSync(join(repoDir, 'renamed-artifact.txt'))).toBe(true);
+    expect(readFileSync(join(repoDir, 'renamed-artifact.txt'), 'utf8')).toBe(identicalContent);
+    expect(execGit(['status', '--porcelain'])).toBe('');
+  });
+
+  it('preserves exact paths without mangling filenames with whitespace', async () => {
+    const { repoDir, execGit } = initRepo();
+
+    writeFileSync(join(repoDir, '.gitignore'), '/*.log\n');
+    mkdirSync(join(repoDir, 'src'), { recursive: true });
+    writeFileSync(join(repoDir, 'src', 'index.ts'), 'export const a = 1;\n');
+
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'chore: baseline commit']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    // Step un-ignores, creates a file with spaces around name, modifies src
+    writeFileSync(join(repoDir, '.gitignore'), '# mutated\n');
+    const spacedFilename = ' test space .log';
+    writeFileSync(join(repoDir, spacedFilename), 'log data\n');
+    writeFileSync(join(repoDir, 'src', 'index.ts'), 'export const a = 2;\n');
+
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'feat: add spaced file']);
+
+    const result = await revertProtectedFiles({
+      cwd: repoDir,
+      baseline: baselineSha,
+      protectedFiles: ['.gitignore'],
+    });
+
+    expect(result.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(result.removedNewlyIgnoredFiles).toEqual([spacedFilename]);
+
+    const trackedFiles = execGit(['ls-files', '-z']).split('\0').filter(Boolean);
+    expect(trackedFiles).not.toContain(spacedFilename);
+    expect(existsSync(join(repoDir, spacedFilename))).toBe(true);
+    expect(execGit(['status', '--porcelain'])).toBe('');
+  });
 });

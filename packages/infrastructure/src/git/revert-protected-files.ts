@@ -17,9 +17,7 @@ export async function revertProtectedFiles(
 ): Promise<RevertProtectedFilesResult> {
   const { cwd, baseline } = input;
 
-  const protectedPaths = Array.from(
-    new Set(input.protectedFiles.map((p) => p.trim().replace(/\\/g, '/')).filter(Boolean)),
-  ).sort();
+  const protectedPaths = Array.from(new Set(input.protectedFiles.filter(Boolean))).sort();
 
   if (protectedPaths.length === 0) {
     const currentSha = await git(cwd, ['rev-parse', 'HEAD']);
@@ -33,17 +31,13 @@ export async function revertProtectedFiles(
   // 1. Capture files added in baseline..HEAD before mutating state
   const addedOutput = await git(cwd, [
     'diff',
+    '--no-renames',
     '--diff-filter=A',
     '--name-only',
     '-z',
     `${baseline}..HEAD`,
   ]);
-  const stepAddedFiles = new Set(
-    addedOutput
-      .split('\0')
-      .map((p) => p.trim().replace(/\\/g, '/'))
-      .filter(Boolean),
-  );
+  const stepAddedFiles = new Set(addedOutput.split('\0').filter(Boolean));
 
   // 2. Separate protected paths into baseline-existing vs baseline-absent
   const existingBaselinePaths: string[] = [];
@@ -51,7 +45,7 @@ export async function revertProtectedFiles(
 
   for (const path of protectedPaths) {
     const lsTreeOutput = await git(cwd, ['ls-tree', '-z', baseline, '--', path]);
-    if (lsTreeOutput.trim().length > 0) {
+    if (lsTreeOutput.length > 0) {
       existingBaselinePaths.push(path);
     } else {
       absentBaselinePaths.push(path);
@@ -60,13 +54,14 @@ export async function revertProtectedFiles(
 
   // 3. Restore baseline blobs for existing protected paths
   if (existingBaselinePaths.length > 0) {
+    await git(cwd, ['rm', '-rf', '--ignore-unmatch', '--', ...existingBaselinePaths]);
     await git(cwd, ['checkout', baseline, '--', ...existingBaselinePaths]);
   }
 
   // 4. Remove Step-created protected files that did not exist at baseline
   for (const path of absentBaselinePaths) {
     try {
-      await git(cwd, ['rm', '-rf', '--', path]);
+      await git(cwd, ['rm', '-rf', '--ignore-unmatch', '--', path]);
     } catch {
       // Ignore if git rm fails (e.g. not tracked)
     }
@@ -75,10 +70,7 @@ export async function revertProtectedFiles(
 
   // 5. Query tracked ignored paths and untrack only those added in this Step
   const lsFilesIgnoredOutput = await git(cwd, ['ls-files', '-i', '-c', '--exclude-standard', '-z']);
-  const trackedIgnoredPaths = lsFilesIgnoredOutput
-    .split('\0')
-    .map((p) => p.trim().replace(/\\/g, '/'))
-    .filter(Boolean);
+  const trackedIgnoredPaths = lsFilesIgnoredOutput.split('\0').filter(Boolean);
 
   const newlyIgnoredToUntrack = Array.from(
     new Set(trackedIgnoredPaths.filter((p) => stepAddedFiles.has(p))),
