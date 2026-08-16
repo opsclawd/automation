@@ -454,7 +454,7 @@ export class ImplementHandler implements PhaseHandler {
               if (statusProvedAllMissingDirty) {
                 try {
                   await ctx.git.add(ctx.cwd, uncommittedDeclared);
-                  await ctx.git.commit(ctx.cwd, task?.title ?? d.title);
+                  await ctx.git.commit(ctx.cwd, task?.title ?? d.title, uncommittedDeclared);
                   postStepHead = await ctx.git.headCommitSha(ctx.cwd);
                   committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
                   committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);

@@ -5,7 +5,12 @@ export class FakeGitPort implements GitPort {
   currentBranchByCwd = new Map<string, string>();
   headByCwd = new Map<string, string>();
   worktrees: string[] = [];
-  commits: Array<{ cwd: string; message: string; sha: string }> = [];
+  commits: Array<{
+    cwd: string;
+    message: string;
+    sha: string;
+    files?: readonly string[];
+  }> = [];
   pushes: PushInput[] = [];
   remoteRefs = new Map<string, string>();
   ancestorResults = new Map<string, boolean>();
@@ -69,9 +74,14 @@ export class FakeGitPort implements GitPort {
 
   private shaCounter = 0;
 
-  async commit(cwd: string, message: string): Promise<string> {
+  async commit(cwd: string, message: string, files?: readonly string[]): Promise<string> {
     const sha = `fake-sha-${++this.shaCounter}`;
-    this.commits.push({ cwd, message, sha });
+    this.commits.push({
+      cwd,
+      message,
+      sha,
+      ...(files !== undefined ? { files: [...files] } : {}),
+    });
     this.headByCwd.set(cwd, sha);
     return sha;
   }
