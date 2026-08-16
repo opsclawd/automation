@@ -15,6 +15,7 @@ import type {
 } from '../types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
 import type { GitPort } from '../../ports/git-port.js';
+import type { ReadWorktreeFilePort } from '../../ports.js';
 
 function makeFakeGitPort(opts: {
   headSha?: string | string[];
@@ -114,6 +115,7 @@ function baseInput() {
 
 function createHarness(
   overrides: Partial<ImplementStepLoopDeps> & {
+    readWorktreeFile?: ReadWorktreeFilePort;
     eventsList?: Array<{
       type: string;
       level: string;
@@ -468,5 +470,40 @@ describe('ImplementStepLoop typecheck retry no-op detection', () => {
     expect(noOpEvent).toBeDefined();
     expect(noOpEvent?.metadata.invocationId).toBe('impl-retry-final');
     expect((noOpEvent?.metadata.transcriptExcerpt as string).length).toBe(2000);
+  });
+
+  it('detects an edit to an already-untracked source file as retry progress', async () => {
+    let typecheckCalls = 0;
+    let implementCalls = 0;
+    let content = 'before correction';
+
+    const git = makeFakeGitPort({
+      headSha: 'sha-1',
+      diffOutput: '',
+      statusOutput: '?? src/new-file.ts',
+    });
+
+    const { loop, events } = createHarness({
+      git,
+      readWorktreeFile: async (_cwd, relativePath) =>
+        relativePath === 'src/new-file.ts' ? content : undefined,
+      runTypecheck: async () => {
+        typecheckCalls++;
+        return typecheckCalls === 1
+          ? { outcome: 'fail', output: 'error TS2322: Type error' }
+          : { outcome: 'pass', output: '' };
+      },
+      runImplement: async () => {
+        implementCalls++;
+        if (implementCalls === 2) content = 'after correction';
+        return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' };
+      },
+    });
+
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('success');
+    expect(typecheckCalls).toBe(3);
+    expect(events.find((event) => event.type === 'step.typecheck.retry_no_op')).toBeUndefined();
   });
 });
