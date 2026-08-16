@@ -162,6 +162,40 @@ export class ReviewFixLoop {
     });
     deps.loops.insert(loop);
 
+    let branchCreatedFiles: string[] = [];
+    if (deps.git && input.baselineCommitSha) {
+      try {
+        const raw = await deps.git.createdFiles(input.cwd, input.baselineCommitSha, 'HEAD');
+        branchCreatedFiles = Array.from(
+          new Set(raw.map((f) => f.replace(/\\/g, '/').trim()).filter(Boolean)),
+        ).sort();
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const failedLoop: Loop = {
+          ...loop,
+          status: 'failed',
+          completedAt: deps.now(),
+        };
+        deps.loops.update(failedLoop);
+        this.emit(
+          input,
+          'loop.created_files_check_failed',
+          'error',
+          `branch-created files check failed against base ${input.baselineCommitSha}: ${errorMsg}`,
+          {
+            baselineCommitSha: input.baselineCommitSha,
+            error: errorMsg,
+          },
+        );
+        return {
+          loop: failedLoop,
+          phaseOutcome: 'failed',
+          loopStatus: 'failed',
+          needsHumanReview: true,
+        };
+      }
+    }
+
     const baseline = await captureNetRevertBaseline({
       ...(deps.git ? { git: deps.git } : {}),
       cwd: input.cwd,
@@ -684,6 +718,7 @@ export class ReviewFixLoop {
               dispositionHistory: integrationState?.dispositionHistory ?? [],
             }
           : {}),
+        ...(branchCreatedFiles.length > 0 ? { createdFiles: branchCreatedFiles } : {}),
       };
       ctx.metadata = {
         iteration: iterationIndex,

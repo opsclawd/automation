@@ -25,6 +25,7 @@ export interface BuildReviewPromptInput {
   unresolvedRecords?: ReviewFindingRecord[] | undefined;
   dispositionHistory?: DispositionHistoryEntry[] | undefined;
   deterministicDiagnostics?: string | undefined;
+  createdFiles?: string[] | undefined;
 }
 
 export interface BuildFixPromptInput {
@@ -64,6 +65,11 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
     '- evidence: what you observed in the diff',
     '- failure mode: why this is a problem',
     '- required fix: specific action to resolve the issue',
+    '',
+    'For files created on this branch (or showing `new file mode` in the diff):',
+    '- Continue to report every substantive defect you observe in them.',
+    '- A required remedy for one of these paths may only modify or delete it.',
+    '- Never ask to revert, restore, or return it to a previous/original state.',
     '',
     'Categorize findings:',
     '- critical: security, data loss, production-breaking',
@@ -130,6 +136,19 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
     }
   }
 
+  if (input.createdFiles && input.createdFiles.length > 0) {
+    sections.push(
+      '## BRANCH-CREATED FILES',
+      ...input.createdFiles.map((file) => `- ${file}`),
+      '',
+      "These files have no version at the run's base commit.",
+      'Continue to report every substantive defect you observe in them.',
+      'A required remedy for one of these paths may only modify or delete it.',
+      'Never ask to revert, restore, or return it to a previous/original state.',
+      '',
+    );
+  }
+
   if (input.historyContext) {
     sections.push(input.historyContext);
   }
@@ -162,6 +181,7 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
     '- Do NOT ask questions.',
     '- Do NOT switch branches. All work must stay on the current branch.',
     '- Do NOT write any other files. No scratch files, no `git diff > file`, no temporary files.',
+    '- For newly created files (showing `new file mode` in the diff), require remedies to modify or delete the file; never ask to revert, restore, or return it to a previous/original state.',
     '- Write code-review.md first, then result.json.',
   );
 
