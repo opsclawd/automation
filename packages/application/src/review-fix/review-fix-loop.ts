@@ -51,6 +51,11 @@ import {
   formatScopeWarning,
   buildFindingCommitMessage,
 } from './review-fix-scope.js';
+import {
+  recordResolvedFindings,
+  detectFindingRecurrence,
+  type ResolvedFindingFingerprint,
+} from './finding-recurrence-guard.js';
 
 async function computeNewState(
   prevState: ReviewDimensionState | undefined,
@@ -232,6 +237,8 @@ export class ReviewFixLoop {
     > = [];
     const unfoundedPingPongHistory: FindingHistoryEntry[] = [];
     let headRevalidated = true;
+    const resolvedFindingFingerprints = new Map<string, ResolvedFindingFingerprint>();
+    let currentFixChangedFiles: string[] = [];
 
     const opts = { ...(this.deps.options ?? {}), ...(input.options ?? {}) };
     const endOnReview = opts.endOnReview ?? true;
@@ -455,6 +462,7 @@ export class ReviewFixLoop {
                 findings: lastOffendingFindings,
                 ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
               });
+              currentFixChangedFiles = scopeResult.changedFiles;
               if (scopeResult.pendingScopeWarning) {
                 pendingScopeReviewContext = scopeResult.pendingScopeWarning;
               }
@@ -493,6 +501,7 @@ export class ReviewFixLoop {
                     findings: lastOffendingFindings,
                     ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
                   });
+                  currentFixChangedFiles = scopeResult.changedFiles;
                   if (scopeResult.pendingScopeWarning) {
                     pendingScopeReviewContext = scopeResult.pendingScopeWarning;
                   }
@@ -502,6 +511,14 @@ export class ReviewFixLoop {
                   consecutiveFixFailures = 0;
                   consecutiveFixFailuresForCap = 0;
                   totalFixAttempts += 1;
+
+                  await recordResolvedFindings({
+                    resolvedMap: resolvedFindingFingerprints,
+                    findings: lastOffendingFindings,
+                    fixChangedFiles: currentFixChangedFiles,
+                    iterationIndex,
+                    cwd: ctx.cwd,
+                  });
 
                   thisLoop = completeIteration(thisLoop, {
                     outcome: 'fixed',
@@ -609,6 +626,15 @@ export class ReviewFixLoop {
         }
 
         const iterationOutcome = !lastPostFixGateFailed && reval?.passed ? 'fixed' : 'unresolved';
+        if (iterationOutcome === 'fixed') {
+          await recordResolvedFindings({
+            resolvedMap: resolvedFindingFingerprints,
+            findings: lastOffendingFindings,
+            fixChangedFiles: currentFixChangedFiles,
+            iterationIndex,
+            cwd: ctx.cwd,
+          });
+        }
         thisLoop = completeIteration(thisLoop, {
           outcome: iterationOutcome,
           fixInvocationId: fix.invocationId,
@@ -779,6 +805,42 @@ export class ReviewFixLoop {
         await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
         await this.runCleanArtifacts(ctx);
         break;
+      }
+
+      const rawFindings = review.offendingFindings ?? [];
+      const recurrence = await detectFindingRecurrence({
+        resolvedFindings: resolvedFindingFingerprints,
+        rawFindings,
+        currentIteration: iterationIndex,
+      });
+
+      if (recurrence) {
+        const humanReviewReason = `review finding "${recurrence.resolved.summary}" recurred at iteration ${iterationIndex} after being resolved in iteration ${recurrence.resolved.resolvedInIteration}; human adjudication required`;
+        this.emit(input, 'loop.exhausted.finding_recurrence', 'warn', humanReviewReason, {
+          iterationIndex,
+          fingerprint: recurrence.resolved.fingerprint,
+          summary: recurrence.resolved.summary,
+          resolvedInIteration: recurrence.resolved.resolvedInIteration,
+          recurringInIteration: iterationIndex,
+          fixChangedFiles: recurrence.resolved.fixChangedFiles,
+          files: recurrence.recurringFinding.files ?? [],
+          findingFiles: recurrence.recurringFinding.files ?? [],
+        });
+
+        thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(thisLoop);
+        this.emitIterationCompleted(input, iterationIndex, 'failed');
+        await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
+        await this.runCleanArtifacts(ctx);
+
+        return {
+          loop: thisLoop,
+          phaseOutcome: 'failed',
+          loopStatus: 'failed',
+          needsHumanReview: true,
+          humanReviewReason,
+          residualFindingsCount: rawFindings.length,
+        };
       }
 
       if (review.verdict === 'pass') {
@@ -1173,6 +1235,7 @@ export class ReviewFixLoop {
               findings: review.offendingFindings ?? [],
               ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
             });
+            currentFixChangedFiles = scopeResult.changedFiles;
             if (scopeResult.pendingScopeWarning) {
               pendingScopeReviewContext = scopeResult.pendingScopeWarning;
             }
@@ -1243,6 +1306,7 @@ export class ReviewFixLoop {
                   findings: review.offendingFindings ?? [],
                   ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
                 });
+                currentFixChangedFiles = scopeResult.changedFiles;
                 if (scopeResult.pendingScopeWarning) {
                   pendingScopeReviewContext = scopeResult.pendingScopeWarning;
                 }
@@ -1263,6 +1327,14 @@ export class ReviewFixLoop {
                 if (review.reviewedCommitSha) {
                   lastReviewedCommitSha = review.reviewedCommitSha;
                 }
+
+                await recordResolvedFindings({
+                  resolvedMap: resolvedFindingFingerprints,
+                  findings: review.offendingFindings ?? [],
+                  fixChangedFiles: currentFixChangedFiles,
+                  iterationIndex,
+                  cwd: ctx.cwd,
+                });
 
                 thisLoop = completeIteration(thisLoop, {
                   outcome: 'fixed',
@@ -1544,14 +1616,24 @@ export class ReviewFixLoop {
       }
 
       // Default path: complete the iteration as fixed or unresolved.
+      const iterationOutcome = reval.passed ? 'fixed' : 'unresolved';
+      if (iterationOutcome === 'fixed') {
+        await recordResolvedFindings({
+          resolvedMap: resolvedFindingFingerprints,
+          findings: review.offendingFindings ?? [],
+          fixChangedFiles: currentFixChangedFiles,
+          iterationIndex,
+          cwd: ctx.cwd,
+        });
+      }
       thisLoop = completeIteration(thisLoop, {
-        outcome: reval.passed ? 'fixed' : 'unresolved',
+        outcome: iterationOutcome,
         fixInvocationId: fix.invocationId,
         revalidationId: reval.validationRunId,
         now: deps.now(),
       });
       deps.loops.update(thisLoop);
-      this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'fixed' : 'unresolved');
+      this.emitIterationCompleted(input, iterationIndex, iterationOutcome);
 
       await this.appendHistoryEntry(
         ctx,
@@ -2100,13 +2182,14 @@ export class ReviewFixLoop {
     headAfterFix: string;
     findings: Array<{ summary: string; severity?: string; files?: string[] }>;
     reasons?: Record<string, string>;
-  }): Promise<{ headAfterFix: string; pendingScopeWarning?: string }> {
+  }): Promise<{ headAfterFix: string; changedFiles: string[]; pendingScopeWarning?: string }> {
     if (!this.deps.git) {
-      return { headAfterFix: inputData.headAfterFix };
+      return { headAfterFix: inputData.headAfterFix, changedFiles: [] };
     }
 
     let headAfterFix = inputData.headAfterFix;
     let pendingWarning: string | undefined;
+    let normalizedChangedFiles: string[] = [];
 
     try {
       const changedFiles = await this.deps.git.changedFiles(
@@ -2122,6 +2205,8 @@ export class ReviewFixLoop {
         ...(inputData.reasons ? { reasons: inputData.reasons } : {}),
         cwd: inputData.ctx.cwd,
       });
+
+      normalizedChangedFiles = assessment.changedFiles;
 
       if (assessment.outOfScopeFiles.length > 0) {
         this.emit(
@@ -2155,9 +2240,12 @@ export class ReviewFixLoop {
 
     if (typeof this.deps.git.amendCommitMessage === 'function') {
       try {
-        const changedFilesForMsg = await this.deps.git
-          .changedFiles(inputData.ctx.cwd, inputData.headBeforeFix, headAfterFix)
-          .catch(() => []);
+        const changedFilesForMsg =
+          normalizedChangedFiles.length > 0
+            ? normalizedChangedFiles
+            : await this.deps.git
+                .changedFiles(inputData.ctx.cwd, inputData.headBeforeFix, headAfterFix)
+                .catch(() => []);
         const message = buildFindingCommitMessage(inputData.findings, changedFilesForMsg);
         const replacementSha = await this.deps.git.amendCommitMessage(inputData.ctx.cwd, message);
         if (replacementSha) {
@@ -2190,6 +2278,7 @@ export class ReviewFixLoop {
 
     return {
       headAfterFix,
+      changedFiles: normalizedChangedFiles,
       ...(pendingWarning ? { pendingScopeWarning: pendingWarning } : {}),
     };
   }
