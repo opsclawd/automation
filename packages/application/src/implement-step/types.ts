@@ -6,6 +6,7 @@ import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { FixStepOptions, RevalidationResult } from '../review-fix/types.js';
 import type { GitPort } from '../ports/git-port.js';
 import type { ReviewStateRepositoryPort } from '../ports/review-state-repository-port.js';
+import type { ReadWorktreeFilePort } from '../ports.js';
 
 export interface StepLoopContext {
   loopId: string;
@@ -350,6 +351,11 @@ export interface ImplementStepLoopDeps {
    * optional so test doubles can omit it.
    */
   git?: GitPort;
+  /**
+   * Reads bounded untracked source files for retry no-op snapshots. Optional
+   * so programmatic callers without filesystem access retain fail-open retries.
+   */
+  readWorktreeFile?: ReadWorktreeFilePort;
   /**
    * Stall detection horizon: number of recent fingerprints compared against
    * the current one when deciding whether to escalate. Larger values catch

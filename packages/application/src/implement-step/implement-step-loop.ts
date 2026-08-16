@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   createLoop,
   startIteration,
@@ -7,6 +8,8 @@ import {
   AgentProfileName,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
+import type { ReadWorktreeFilePort } from '../ports.js';
+import { uncommittedSourcePaths, unquoteGitPath } from '../artifacts/orchestrator-artifacts.js';
 import type {
   ImplementStepLoopDeps,
   ImplementStepLoopInput,
@@ -127,11 +130,51 @@ interface GitStateSnapshot {
   head: string;
   diff: string;
   status: string;
+  untrackedDigest: string;
+}
+
+const MAX_UNTRACKED_DIGEST_PATHS = 10;
+
+async function captureUntrackedDigest(
+  cwd: string,
+  status: string,
+  readWorktreeFile: ReadWorktreeFilePort | undefined,
+): Promise<string> {
+  if (!readWorktreeFile) return '';
+
+  const untrackedPaths = new Set(
+    status
+      .split('\n')
+      .filter((line) => line.startsWith('?? '))
+      .map((line) => unquoteGitPath(line.slice(3)).replace(/\\/g, '/')),
+  );
+  const targetPaths = uncommittedSourcePaths(status)
+    .filter((path) => untrackedPaths.has(path))
+    .slice(0, MAX_UNTRACKED_DIGEST_PATHS);
+  const entries = await Promise.all(
+    targetPaths.map(async (path) => {
+      try {
+        const content = await readWorktreeFile(cwd, path);
+        return {
+          path,
+          digest:
+            content === undefined
+              ? 'missing'
+              : createHash('sha256').update(content, 'utf8').digest('hex'),
+        };
+      } catch {
+        return { path, digest: 'missing' };
+      }
+    }),
+  );
+
+  return JSON.stringify(entries);
 }
 
 async function captureGitState(
   git: ImplementStepLoopDeps['git'],
   cwd: string,
+  readWorktreeFile: ReadWorktreeFilePort | undefined,
 ): Promise<GitStateSnapshot | undefined> {
   if (!git) return undefined;
   try {
@@ -140,7 +183,8 @@ async function captureGitState(
       git.diff(cwd, 'HEAD'),
       git.status(cwd),
     ]);
-    return { head, diff, status };
+    const untrackedDigest = await captureUntrackedDigest(cwd, status, readWorktreeFile);
+    return { head, diff, status, untrackedDigest };
   } catch {
     return undefined;
   }
@@ -698,7 +742,7 @@ export class ImplementStepLoop {
         },
       );
 
-      const gitStateBefore = await captureGitState(deps.git, baseCtx.cwd);
+      const gitStateBefore = await captureGitState(deps.git, baseCtx.cwd, deps.readWorktreeFile);
 
       const retryImplementResult = await this.runImplementWithFallback(
         input,
@@ -732,13 +776,14 @@ export class ImplementStepLoop {
         return { outcome: 'failed', loop };
       }
 
-      const gitStateAfter = await captureGitState(deps.git, baseCtx.cwd);
+      const gitStateAfter = await captureGitState(deps.git, baseCtx.cwd, deps.readWorktreeFile);
       const retryProducedNoChangesThisAttempt =
         gitStateBefore !== undefined &&
         gitStateAfter !== undefined &&
         gitStateBefore.head === gitStateAfter.head &&
         gitStateBefore.diff === gitStateAfter.diff &&
-        gitStateBefore.status === gitStateAfter.status;
+        gitStateBefore.status === gitStateAfter.status &&
+        gitStateBefore.untrackedDigest === gitStateAfter.untrackedDigest;
 
       if (retryProducedNoChangesThisAttempt) {
         retryProducedNoChanges = true;

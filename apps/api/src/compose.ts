@@ -126,6 +126,7 @@ import {
   type ReviewStepOptions,
   type PhaseHandlerContext,
   type PhaseHandlerContextFactory,
+  type ReadWorktreeFilePort,
   type ImplementStepLoopDeps,
   type ImplementStepLoop as ImplementStepLoopType,
   type StepLoopContext,
@@ -3248,6 +3249,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         return arbiterResult;
       };
 
+      const readWorktreeFile: ReadWorktreeFilePort = async (cwd, relativePath) => {
+        try {
+          return await fsReadFile(join(cwd, relativePath), 'utf-8');
+        } catch {
+          return undefined;
+        }
+      };
+
       // Non-optional local so the ReviewFixHandler closure below can reference it
       // without a guard (the outer `let` stays `| undefined` for other consumers).
       const reviewFixLoopInstance = new ReviewFixLoop({
@@ -3262,13 +3271,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         loopHistory,
         findingEvidenceInspector: createFindingEvidenceInspector(),
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
-        readWorktreeFile: async (cwd: string, relativePath: string) => {
-          try {
-            return await fsReadFile(join(cwd, relativePath), 'utf-8');
-          } catch {
-            return undefined;
-          }
-        },
+        readWorktreeFile,
         reviewStateRepository,
         runArbiter: runWholePrArbiter,
         options: {
@@ -4774,6 +4777,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         },
         git: gitAdapter,
+        readWorktreeFile,
         cleanArtifacts: async (ctx) => {
           if (typeof gitAdapter.cleanOrchestratorArtifacts === 'function') {
             await gitAdapter.cleanOrchestratorArtifacts(
