@@ -44,3 +44,21 @@ describe('FakeGitPort.amendCommitMessage()', () => {
     expect(fakeGit.commits[1]?.message).toBe('second message');
   });
 });
+
+describe('FakeGitPort.commit()', () => {
+  it('records a defensive copy of the optional commit pathspec', async () => {
+    const fakeGit = new FakeGitPort();
+    const files = ['src/a.ts'];
+    const commitWithPathspec = fakeGit.commit.bind(fakeGit) as (
+      cwd: string,
+      message: string,
+      files?: readonly string[],
+    ) => Promise<string>;
+
+    await commitWithPathspec('/test', 'scoped commit', files);
+    files.push('src/b.ts');
+
+    const commits = fakeGit.commits as Array<{ files?: readonly string[] }>;
+    expect(commits[0]?.files).toEqual(['src/a.ts']);
+  });
+});

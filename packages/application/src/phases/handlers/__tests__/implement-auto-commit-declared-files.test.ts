@@ -128,6 +128,7 @@ describe('ImplementHandler Auto-Commit Declared Files State Machine', () => {
         cwd: '/tmp/wt',
         message: taskTitle,
         sha: 'fake-sha-1',
+        files: ['src/b.ts'],
       },
     ]);
     expect(runStep).toHaveBeenCalledTimes(1);
@@ -160,6 +161,7 @@ describe('ImplementHandler Auto-Commit Declared Files State Machine', () => {
         cwd: '/tmp/wt',
         message: taskTitle,
         sha: 'fake-sha-1',
+        files: ['docs/adr/0001.md'],
       },
     ]);
     expect(runStep).toHaveBeenCalledTimes(1);
