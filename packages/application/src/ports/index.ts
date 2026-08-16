@@ -132,3 +132,8 @@ export type {
   PrReviewContextSnapshot,
   PrReviewContextSourcePort,
 } from './pr-review-context-source-port.js';
+export type {
+  RevertProtectedFilesInput,
+  RevertProtectedFilesResult,
+  RevertProtectedFilesPort,
+} from './protected-file-reverter-port.js';

@@ -69,6 +69,7 @@ export function renderDeclaredFilesRetryPrompt(
   priorAttemptMissingFiles?: string[],
   priorAttemptUndeclaredFiles?: string[],
   priorAttemptModifiedReferenceFiles?: string[],
+  priorAttemptRepairedProtectedFiles?: string[],
 ): string[] {
   const sections: string[] = [];
 
@@ -84,6 +85,23 @@ export function renderDeclaredFilesRetryPrompt(
       '- If a listed file already contains correct changes: review and stage it; do not reimplement it.',
       '- If a listed file is absent or incomplete: implement the required behavior.',
       'Then run task-scoped validation, validate and commit every listed file.',
+      '',
+    );
+  }
+
+  const canonicalRepairedProtected = canonicalizeAdditionalEditableFiles(
+    priorAttemptRepairedProtectedFiles,
+  );
+  if (canonicalRepairedProtected.length > 0) {
+    sections.push(
+      '## REPAIRED PROTECTED FILES — DO NOT MODIFY OR REVERT',
+      '',
+      'The orchestrator detected undeclared changes to protected files in the previous attempt:',
+      ...canonicalRepairedProtected.map((f) => `- ${f}`),
+      '',
+      'These protected files have been reverted to the baseline and the commit was automatically amended.',
+      'DO NOT run `git reset` or attempt to re-apply modifications to protected files.',
+      'Continue implementing only the declared files for this task.',
       '',
     );
   }

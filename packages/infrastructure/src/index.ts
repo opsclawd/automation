@@ -40,6 +40,7 @@ export {
 } from './git/pr-review-context-source.js';
 export { createFixDiffInspector } from './git/fix-diff-inspector.js';
 export { createFindingEvidenceInspector } from './git/finding-evidence-inspector.js';
+export { revertProtectedFiles } from './git/revert-protected-files.js';
 export * from './artifacts/filesystem-artifact-store.js';
 export * from './artifacts/file-tailer.js';
 export { createSignatureReferenceAnalyzer } from './typescript/signature-reference-analyzer.js';

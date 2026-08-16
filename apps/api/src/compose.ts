@@ -54,6 +54,7 @@ import {
   killProcess,
   ReviewStateRepository,
   createPrReviewContextSource,
+  revertProtectedFiles,
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
@@ -409,6 +410,7 @@ export function buildImplementPrompt(
   priorAttemptMissingFiles?: string[],
   priorAttemptUndeclaredFiles?: string[],
   priorAttemptModifiedReferenceFiles?: string[],
+  priorAttemptRepairedProtectedFiles?: string[],
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
@@ -461,6 +463,7 @@ export function buildImplementPrompt(
       priorAttemptMissingFiles,
       priorAttemptUndeclaredFiles,
       priorAttemptModifiedReferenceFiles,
+      priorAttemptRepairedProtectedFiles,
     ),
     '',
     ...(structuredErrors !== undefined && structuredErrors.length > 0
@@ -663,6 +666,7 @@ export interface Container {
     priorAttemptMissingFiles?: string[];
     priorAttemptUndeclaredFiles?: string[];
     priorAttemptModifiedReferenceFiles?: string[];
+    priorAttemptRepairedProtectedFiles?: string[];
     initialPreStepHead?: string;
     exemptUndeclaredFiles?: string[];
   }) => Promise<{ outcome: 'success' | 'failed' | 'needs_human_review'; failureMessage?: string }>;
@@ -3549,6 +3553,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           opts?.priorAttemptMissingFiles,
           opts?.priorAttemptUndeclaredFiles,
           opts?.priorAttemptModifiedReferenceFiles,
+          opts?.priorAttemptRepairedProtectedFiles,
         );
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -5483,6 +5488,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         priorAttemptMissingFiles?: string[];
         priorAttemptUndeclaredFiles?: string[];
         priorAttemptModifiedReferenceFiles?: string[];
+        priorAttemptRepairedProtectedFiles?: string[];
         initialPreStepHead?: string;
         exemptUndeclaredFiles?: string[];
       }): Promise<{
@@ -5519,6 +5525,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             : {}),
           ...(sctx.priorAttemptModifiedReferenceFiles?.length
             ? { priorAttemptModifiedReferenceFiles: sctx.priorAttemptModifiedReferenceFiles }
+            : {}),
+          ...(sctx.priorAttemptRepairedProtectedFiles?.length
+            ? { priorAttemptRepairedProtectedFiles: sctx.priorAttemptRepairedProtectedFiles }
             : {}),
         });
         return {
@@ -5639,6 +5648,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             runWorkspaceTypecheck,
             maxDeclaredFilesRetries: config.phases.implement.maxDeclaredFilesRetries,
             exemptUndeclaredFiles: config.phases.implement.exemptUndeclaredFiles,
+            revertProtectedFiles,
           }),
         );
       }
