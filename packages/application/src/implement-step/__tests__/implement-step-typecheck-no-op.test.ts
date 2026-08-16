@@ -15,7 +15,6 @@ import type {
 } from '../types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
 import type { GitPort } from '../../ports/git-port.js';
-import type { ReadWorktreeFilePort } from '../../ports.js';
 
 function makeFakeGitPort(opts: {
   headSha?: string | string[];
@@ -115,7 +114,6 @@ function baseInput() {
 
 function createHarness(
   overrides: Partial<ImplementStepLoopDeps> & {
-    readWorktreeFile?: ReadWorktreeFilePort;
     eventsList?: Array<{
       type: string;
       level: string;
@@ -504,6 +502,180 @@ describe('ImplementStepLoop typecheck retry no-op detection', () => {
 
     expect(result.outcome).toBe('success');
     expect(typecheckCalls).toBe(3);
+    expect(events.find((event) => event.type === 'step.typecheck.retry_no_op')).toBeUndefined();
+  });
+
+  it('ignores content edits to filtered orchestrator artifacts when classifying retry progress', async () => {
+    let typecheckCalls = 0;
+    let implementCalls = 0;
+    let reviewMdContent = 'before review findings';
+
+    const git = makeFakeGitPort({
+      headSha: 'sha-1',
+      diffOutput: '',
+      statusOutput: '?? review.md',
+    });
+
+    const { loop, events } = createHarness({
+      git,
+      readWorktreeFile: async (_cwd, relativePath) =>
+        relativePath === 'review.md' ? reviewMdContent : undefined,
+      runTypecheck: async () => {
+        typecheckCalls++;
+        return { outcome: 'fail', output: 'error TS2322: Type error' };
+      },
+      runImplement: async () => {
+        implementCalls++;
+        if (implementCalls === 2) {
+          reviewMdContent = 'after review findings updated';
+        }
+        return {
+          invocationId: `impl-${implementCalls}`,
+          agentOutcome: 'success',
+          transcriptExcerpt: 'Ran review update',
+        };
+      },
+    });
+
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('failed');
+    expect(typecheckCalls).toBe(1);
+    expect(implementCalls).toBe(2);
+    expect(
+      events.find((event) => event.type === 'step.typecheck.retry_no_op')?.metadata,
+    ).toMatchObject({
+      retryProducedNoChanges: true,
+    });
+  });
+
+  it('treats a disappearing untracked source file as changed without throwing', async () => {
+    let typecheckCalls = 0;
+    let implementCalls = 0;
+    let content: string | undefined = 'initial untracked content';
+
+    const git = makeFakeGitPort({
+      headSha: 'sha-1',
+      diffOutput: '',
+      statusOutput: '?? src/disappearing-file.ts',
+    });
+
+    const { loop, events } = createHarness({
+      git,
+      readWorktreeFile: async (_cwd, relativePath) =>
+        relativePath === 'src/disappearing-file.ts' ? content : undefined,
+      runTypecheck: async () => {
+        typecheckCalls++;
+        return typecheckCalls === 1
+          ? { outcome: 'fail', output: 'error TS2322: Type error' }
+          : { outcome: 'pass', output: '' };
+      },
+      runImplement: async () => {
+        implementCalls++;
+        if (implementCalls === 2) {
+          content = undefined;
+        }
+        return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' };
+      },
+    });
+
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('success');
+    expect(typecheckCalls).toBe(3);
+    expect(events.find((event) => event.type === 'step.typecheck.retry_no_op')).toBeUndefined();
+  });
+
+  it('bounds untracked files digest inspection to at most 10 paths', async () => {
+    const readPaths: string[] = [];
+    const files = Array.from(
+      { length: 15 },
+      (_, i) => `src/file-${String(i + 1).padStart(2, '0')}.ts`,
+    );
+    const statusOutput = files.map((f) => `?? ${f}`).join('\n');
+
+    let typecheckCalls = 0;
+    let implementCalls = 0;
+    let content = 'initial content';
+    const git = makeFakeGitPort({
+      headSha: 'sha-1',
+      diffOutput: '',
+      statusOutput,
+    });
+
+    const { loop } = createHarness({
+      git,
+      readWorktreeFile: async (_cwd, relativePath) => {
+        readPaths.push(relativePath);
+        return relativePath === files[0] ? content : 'static content';
+      },
+      runTypecheck: async () => {
+        typecheckCalls++;
+        return typecheckCalls === 1
+          ? { outcome: 'fail', output: 'error TS2322: Type error' }
+          : { outcome: 'pass', output: '' };
+      },
+      runImplement: async () => {
+        implementCalls++;
+        if (implementCalls === 2) {
+          content = 'updated content';
+        }
+        return {
+          invocationId: `impl-${implementCalls}`,
+          agentOutcome: 'success',
+        };
+      },
+    });
+
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('success');
+    expect(typecheckCalls).toBe(3);
+    // Unique paths inspected should be bounded by MAX_UNTRACKED_DIGEST_PATHS (10)
+    const uniqueReadPaths = [...new Set(readPaths)];
+    expect(uniqueReadPaths.length).toBe(10);
+    expect(uniqueReadPaths).toEqual(files.slice(0, 10));
+  });
+
+  it('correctly unquotes quoted untracked paths with spaces', async () => {
+    let typecheckCalls = 0;
+    let implementCalls = 0;
+    let content = 'initial space content';
+    const readPaths: string[] = [];
+
+    const git = makeFakeGitPort({
+      headSha: 'sha-1',
+      diffOutput: '',
+      statusOutput: '?? "src/file with spaces.ts"',
+    });
+
+    const { loop, events } = createHarness({
+      git,
+      readWorktreeFile: async (_cwd, relativePath) => {
+        readPaths.push(relativePath);
+        return relativePath === 'src/file with spaces.ts' ? content : undefined;
+      },
+      runTypecheck: async () => {
+        typecheckCalls++;
+        return typecheckCalls === 1
+          ? { outcome: 'fail', output: 'error TS2322: Type error' }
+          : { outcome: 'pass', output: '' };
+      },
+      runImplement: async () => {
+        implementCalls++;
+        if (implementCalls === 2) {
+          content = 'modified space content';
+        }
+        return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' };
+      },
+    });
+
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('success');
+    expect(typecheckCalls).toBe(3);
+    expect(readPaths).toContain('src/file with spaces.ts');
+    expect(readPaths).not.toContain('"src/file with spaces.ts"');
     expect(events.find((event) => event.type === 'step.typecheck.retry_no_op')).toBeUndefined();
   });
 });

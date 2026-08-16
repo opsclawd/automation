@@ -53,6 +53,40 @@ function patternToRegExp(pattern: string): RegExp {
   return new RegExp(regexString);
 }
 
+export function unquoteGitPath(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+    return trimmed
+      .slice(1, -1)
+      .replace(/\\([0-7]{1,3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)))
+      .replace(/\\(.)/g, (_, char) => {
+        switch (char) {
+          case 'a':
+            return '\x07';
+          case 'b':
+            return '\b';
+          case 'f':
+            return '\f';
+          case 'n':
+            return '\n';
+          case 'r':
+            return '\r';
+          case 't':
+            return '\t';
+          case 'v':
+            return '\v';
+          case '\\':
+            return '\\';
+          case '"':
+            return '"';
+          default:
+            return char;
+        }
+      });
+  }
+  return trimmed;
+}
+
 export function uncommittedSourcePaths(status: string): string[] {
   const patterns = orchestratorExcludePatterns();
   const compiledRegexes = patterns.map(patternToRegExp);
@@ -60,6 +94,7 @@ export function uncommittedSourcePaths(status: string): string[] {
     .split('\n')
     .filter(Boolean)
     .flatMap((line) => (line.length > 3 ? line.slice(3).split(' -> ') : []))
+    .map((path) => unquoteGitPath(path))
     .map((path) => path.replace(/\\/g, '/'))
     .filter((path) => path.length > 0)
     .filter((path) => !compiledRegexes.some((regex) => regex.test(path)));

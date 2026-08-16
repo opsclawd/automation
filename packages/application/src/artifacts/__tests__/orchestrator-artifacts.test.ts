@@ -7,6 +7,7 @@ import {
   isOrchestratorArtifactPath,
   orchestratorExcludePatterns,
   uncommittedSourcePaths,
+  unquoteGitPath,
   formatDirtyPaths,
 } from '../orchestrator-artifacts.js';
 
@@ -101,6 +102,46 @@ describe('uncommittedSourcePaths', () => {
       'old/path.ts',
       'packages/app.ts',
     ]);
+  });
+
+  it('unquotes quoted git porcelain paths with spaces, escaped quotes, and escapes', () => {
+    const status = [
+      '?? "src/file with spaces.ts"',
+      '?? "src/file\\"with\\"quotes.ts"',
+      '?? "src/tab\\tfile.ts"',
+      ' M "src/plan.md"',
+      '?? "plan.md"',
+    ].join('\n');
+    expect(uncommittedSourcePaths(status)).toEqual([
+      'src/file with spaces.ts',
+      'src/file"with"quotes.ts',
+      'src/plan.md',
+      'src/tab\tfile.ts',
+    ]);
+  });
+});
+
+describe('unquoteGitPath', () => {
+  it('returns unquoted string unchanged', () => {
+    expect(unquoteGitPath('src/file.ts')).toBe('src/file.ts');
+  });
+
+  it('unquotes double-quoted paths', () => {
+    expect(unquoteGitPath('"src/file with spaces.ts"')).toBe('src/file with spaces.ts');
+  });
+
+  it('handles escaped quotes and backslashes', () => {
+    expect(unquoteGitPath('"src/foo\\"bar\\\\baz.ts"')).toBe('src/foo"bar\\baz.ts');
+  });
+
+  it('handles standard C-escapes', () => {
+    expect(unquoteGitPath('"src/line\\nbreak.ts"')).toBe('src/line\nbreak.ts');
+    expect(unquoteGitPath('"src/tab\\tfile.ts"')).toBe('src/tab\tfile.ts');
+    expect(unquoteGitPath('"src/bell\\a.ts"')).toBe('src/bell\x07.ts');
+  });
+
+  it('handles octal escapes', () => {
+    expect(unquoteGitPath('"src/\\040file.ts"')).toBe('src/ file.ts');
   });
 });
 
