@@ -67,4 +67,66 @@ describe('quality-review fabricated verdict extraction', () => {
       ],
     });
   });
+
+  it('maps fabricated verdict to fail when allowFabricated is omitted', async () => {
+    const artifacts = new FakeArtifactStore();
+    const payload = {
+      result: 'fabricated',
+      findings: [
+        {
+          severity: 'P0',
+          summary: 'The claimed hardware telemetry has no physical execution provenance',
+          file: 'certification/transition-soak/result.json',
+        },
+      ],
+    };
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify(payload),
+    });
+    const agent = new FakeAgentPort();
+    const outcome = await readReviewVerdict(
+      makeQualityReviewInvocation('result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+
+    expect(outcome).toEqual({
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [
+        {
+          severity: 'P0',
+          summary: 'The claimed hardware telemetry has no physical execution provenance',
+          file: 'certification/transition-soak/result.json',
+        },
+      ],
+    });
+  });
+
+  it('maps fabricated verdict to fail with synthetic critical finding when findings are empty', async () => {
+    const artifacts = new FakeArtifactStore();
+    const payload = {
+      result: 'fabricated',
+      findings: [],
+    };
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify(payload),
+    });
+    const agent = new FakeAgentPort();
+    const outcome = await readReviewVerdict(
+      makeQualityReviewInvocation('result.json'),
+      { artifacts, agent },
+      { allowFabricated: false },
+    );
+
+    expect(outcome).toEqual({
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'critical', summary: 'Fabricated evidence detected' }],
+    });
+  });
 });

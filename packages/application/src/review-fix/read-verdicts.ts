@@ -105,12 +105,22 @@ export async function readReviewVerdict(
   };
 
   if (result.result === 'fabricated') {
+    if (opts?.allowFabricated) {
+      return {
+        ok: true,
+        verdict: 'fabricated',
+        ...(result.findings && result.findings.length > 0
+          ? { offendingFindings: result.findings }
+          : {}),
+      };
+    }
     return {
       ok: true,
-      verdict: 'fabricated',
-      ...(result.findings && result.findings.length > 0
-        ? { offendingFindings: result.findings }
-        : {}),
+      verdict: 'fail',
+      offendingFindings:
+        result.findings && result.findings.length > 0
+          ? result.findings
+          : [{ severity: 'critical', summary: 'Fabricated evidence detected' }],
     };
   }
 
