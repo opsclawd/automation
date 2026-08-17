@@ -89,6 +89,90 @@ describe('ValidateHandler', () => {
     expect(result.outcome).toBe('passed');
   });
 
+  describe('uncommitted source changes message enrichment', () => {
+    it('names the step when validation is blocked by files reported by a step in scratch-files.json', async () => {
+      const { runValidation } = deps('passed');
+      const { ctx, artifacts } = makeCtx();
+
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'implement',
+        relativePath: 'scratch-files.json',
+        contents: JSON.stringify({
+          steps: [
+            {
+              stepIndex: 3,
+              totalSteps: 3,
+              stepTitle: 'AST exploration',
+              files: ['test-ast.cjs', 'test-ast.js'],
+            },
+          ],
+        }),
+      });
+
+      ctx.git.statusByCwd.set('/tmp/wt', '?? test-ast.cjs\n?? test-ast.js');
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.message).toBe(
+          'Validation blocked by uncommitted source changes (reported by step 3): test-ast.cjs, test-ast.js',
+        );
+      }
+    });
+
+    it('formats per-file step attributions when dirty files come from multiple or partial steps', async () => {
+      const { runValidation } = deps('passed');
+      const { ctx, artifacts } = makeCtx();
+
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'implement',
+        relativePath: 'scratch-files.json',
+        contents: JSON.stringify({
+          steps: [
+            {
+              stepIndex: 1,
+              totalSteps: 3,
+              stepTitle: 'step 1 title',
+              files: ['probe.js'],
+            },
+            {
+              stepIndex: 3,
+              totalSteps: 3,
+              stepTitle: 'step 3 title',
+              files: ['test-ast.js'],
+            },
+          ],
+        }),
+      });
+
+      ctx.git.statusByCwd.set('/tmp/wt', '?? probe.js\n?? test-ast.js\n?? unknown.ts');
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.message).toBe(
+          'Validation blocked by uncommitted source changes: probe.js (reported by step 1), test-ast.js (reported by step 3), unknown.ts',
+        );
+      }
+    });
+  });
+
   describe('failure paths', () => {
     it('returns deferred when a command fails and fix-validate is enabled', async () => {
       const { runValidation } = deps('failed');

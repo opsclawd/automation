@@ -1,3 +1,5 @@
+import { existsSync, unlinkSync } from 'node:fs';
+import path from 'node:path';
 import { PhaseName } from '@ai-sdlc/domain';
 import type { FailureKind } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
@@ -70,10 +72,63 @@ function undeclaredUntrackedRootFiles(
     .map((line) => normalizeTaskPath(unquoteGitPath(line.slice(3))))
     .filter((path) => path.length > 0 && !path.includes('/'))
     .filter(
-      (path) => !writableFiles.has(path) && !referenceFiles.has(path) && !exemptFiles.has(path),
+      (path) =>
+        !writableFiles.has(path) &&
+        !referenceFiles.has(path) &&
+        !exemptFiles.has(path) &&
+        !isProtectedFilePath(path),
     );
 
   return [...new Set(paths)].sort();
+}
+
+export interface ScratchFileStepRecord {
+  stepIndex: number;
+  totalSteps: number;
+  stepTitle: string;
+  files: string[];
+}
+
+export interface ScratchFilesReport {
+  steps: ScratchFileStepRecord[];
+}
+
+async function recordScratchFilesReport(
+  ctx: PhaseHandlerContext,
+  stepIndex: number,
+  totalSteps: number,
+  stepTitle: string,
+  files: string[],
+): Promise<void> {
+  let report: ScratchFilesReport = { steps: [] };
+  try {
+    const existing = await ctx.artifacts.read(ctx.runUuid, 'scratch-files.json');
+    const parsed = JSON.parse(existing) as ScratchFilesReport;
+    if (parsed && Array.isArray(parsed.steps)) {
+      report = parsed;
+    }
+  } catch {
+    // Artifact may not exist yet
+  }
+
+  const existingIdx = report.steps.findIndex((s) => s.stepIndex === stepIndex);
+  const newRecord: ScratchFileStepRecord = { stepIndex, totalSteps, stepTitle, files };
+  if (existingIdx >= 0) {
+    report.steps[existingIdx] = newRecord;
+  } else {
+    report.steps.push(newRecord);
+  }
+
+  try {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'implement',
+      relativePath: 'scratch-files.json',
+      contents: JSON.stringify(report, null, 2),
+    });
+  } catch {
+    // Writing report is best-effort
+  }
 }
 
 export interface OversizedTask {
@@ -422,6 +477,31 @@ export class ImplementHandler implements PhaseHandler {
                   taskTitle: task?.title ?? d.title,
                   files: scratchFiles,
                 },
+              );
+
+              for (const file of scratchFiles) {
+                try {
+                  const targetPath = path.resolve(ctx.cwd, file);
+                  if (
+                    targetPath.startsWith(ctx.cwd) &&
+                    !file.includes('/') &&
+                    !isProtectedFilePath(file) &&
+                    existsSync(targetPath)
+                  ) {
+                    unlinkSync(targetPath);
+                  }
+                } catch {
+                  // File deletion is best-effort
+                }
+              }
+              statusPromise = undefined;
+
+              await recordScratchFilesReport(
+                ctx,
+                d.index,
+                totalSteps,
+                task?.title ?? d.title,
+                scratchFiles,
               );
             }
           } catch {

@@ -7,7 +7,43 @@ import {
   uncommittedSourcePaths,
   formatDirtyPaths,
 } from '../../artifacts/orchestrator-artifacts.js';
+import { normalizeTaskPath } from '../../task-file-boundaries.js';
 import { recordValidationHeadSha } from '../validation-headsha.js';
+
+export function formatValidationBlockedMessage(
+  dirtyPaths: readonly string[],
+  report?: { steps?: Array<{ stepIndex: number; totalSteps?: number; files: string[] }> },
+): string {
+  if (!report?.steps || report.steps.length === 0) {
+    return `Validation blocked by uncommitted source changes: ${formatDirtyPaths(dirtyPaths)}`;
+  }
+
+  const pathToStepIndex = new Map<string, number>();
+  for (const stepRecord of report.steps) {
+    for (const file of stepRecord.files) {
+      const norm = normalizeTaskPath(file);
+      pathToStepIndex.set(norm, stepRecord.stepIndex);
+    }
+  }
+
+  const stepAttributions = dirtyPaths.map((p) => pathToStepIndex.get(normalizeTaskPath(p)));
+  const uniqueSteps = [...new Set(stepAttributions.filter((s): s is number => s !== undefined))];
+
+  if (uniqueSteps.length === 1 && stepAttributions.every((s) => s === uniqueSteps[0])) {
+    const stepNum = uniqueSteps[0];
+    return `Validation blocked by uncommitted source changes (reported by step ${stepNum}): ${formatDirtyPaths(dirtyPaths)}`;
+  }
+
+  if (uniqueSteps.length > 0) {
+    const formattedWithSteps = dirtyPaths.map((p) => {
+      const stepNum = pathToStepIndex.get(normalizeTaskPath(p));
+      return stepNum !== undefined ? `${p} (reported by step ${stepNum})` : p;
+    });
+    return `Validation blocked by uncommitted source changes: ${formatDirtyPaths(formattedWithSteps)}`;
+  }
+
+  return `Validation blocked by uncommitted source changes: ${formatDirtyPaths(dirtyPaths)}`;
+}
 
 export interface ValidateHandlerOpts {
   runValidation: RunValidation;
@@ -49,7 +85,15 @@ export class ValidateHandler implements PhaseHandler {
 
     const dirtyPaths = uncommittedSourcePaths(statusOutput);
     if (dirtyPaths.length > 0) {
-      const message = `Validation blocked by uncommitted source changes: ${formatDirtyPaths(dirtyPaths)}`;
+      let scratchReport: { steps?: Array<{ stepIndex: number; totalSteps?: number; files: string[] }> } | undefined;
+      try {
+        const scratchJson = await ctx.artifacts.read(ctx.runUuid, 'scratch-files.json');
+        scratchReport = JSON.parse(scratchJson);
+      } catch {
+        // Artifact may not exist
+      }
+
+      const message = formatValidationBlockedMessage(dirtyPaths, scratchReport);
       const failure: Failure = {
         runUuid: ctx.runUuid,
         phase: 'validate',
