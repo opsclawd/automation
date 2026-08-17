@@ -278,7 +278,7 @@ export async function checkTaskValidationCommandsSatisfiability(
   manifest: TaskManifest,
   options: CheckTaskValidationCommandsOptions,
 ): Promise<string | null> {
-  const { worktreeRoot, readWorktreeFile } = options;
+  const { worktreeRoot: _worktreeRoot, readWorktreeFile } = options;
   const diagnostics: string[] = [];
 
   const configFiles = [
