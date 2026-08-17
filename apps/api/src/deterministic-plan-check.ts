@@ -7,7 +7,11 @@ import {
   renderSignatureBlastRadiusDiagnostic,
   type SignatureBlastRadiusFailure,
 } from '@ai-sdlc/application';
-import { parseTaskManifest, validatePlanTaskList } from '@ai-sdlc/application';
+import {
+  parseTaskManifest,
+  validatePlanTaskList,
+  checkTaskValidationCommandsSatisfiability,
+} from '@ai-sdlc/application';
 
 export interface DeterministicPlanCheckResult {
   diagnostic: string | null;
@@ -140,10 +144,17 @@ export function createDeterministicPlanCheck(options: CreateDeterministicPlanChe
     }
 
     const blastRadiusDiagnostic = renderSignatureBlastRadiusDiagnostic(blastRadiusFailures);
+
+    const validationCommandDiagnostic = await checkTaskValidationCommandsSatisfiability(
+      manifest,
+      { worktreeRoot: ctx.cwd },
+    );
+
     const diagnostic = joinDiagnostics(
       structuralDiagnostic,
       forbiddenArtifactDiagnostic,
       blastRadiusDiagnostic,
+      validationCommandDiagnostic,
     );
 
     return { diagnostic, signatureBlastRadiusFailures: blastRadiusFailures };

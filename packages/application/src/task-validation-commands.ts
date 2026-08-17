@@ -106,6 +106,286 @@ function makeLiteralVitestCommandStrict(command: ValidationCommand): ValidationC
     : makeLiteralVitestStringStrict(command);
 }
 
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+export interface CheckTaskValidationCommandsOptions {
+  worktreeRoot: string;
+  readWorktreeFile?: (path: string) => Promise<string | null>;
+}
+
+export function globToRegex(glob: string): RegExp {
+  const norm = glob.replace(/\\/g, '/').trim();
+  let regexStr = '';
+  let i = 0;
+  while (i < norm.length) {
+    if (norm.slice(i, i + 3) === '**/') {
+      regexStr += '(?:.*/)?';
+      i += 3;
+    } else if (norm.slice(i, i + 2) === '**') {
+      regexStr += '.*';
+      i += 2;
+    } else if (norm[i] === '*') {
+      regexStr += '[^/]*';
+      i++;
+    } else if (norm[i] === '?') {
+      regexStr += '[^/]';
+      i++;
+    } else if (norm[i] === '{') {
+      const endIdx = norm.indexOf('}', i);
+      if (endIdx !== -1) {
+        const options = norm.slice(i + 1, endIdx).split(',').map((opt) => opt.trim());
+        const optionRegexes = options.map((opt) => globToRegex(opt).source.slice(1, -1));
+        regexStr += `(?:${optionRegexes.join('|')})`;
+        i = endIdx + 1;
+      } else {
+        regexStr += '\\{';
+        i++;
+      }
+    } else if (norm[i] === '[') {
+      const endIdx = norm.indexOf(']', i);
+      if (endIdx !== -1) {
+        regexStr += norm.slice(i, endIdx + 1);
+        i = endIdx + 1;
+      } else {
+        regexStr += '\\[';
+        i++;
+      }
+    } else if ('./+^$()|\\'.includes(norm[i]!)) {
+      regexStr += '\\' + norm[i];
+      i++;
+    } else {
+      regexStr += norm[i];
+      i++;
+    }
+  }
+  return new RegExp(`^${regexStr}$`, 'i');
+}
+
+export function parseRunnerConfigExclusions(configContent: string): {
+  include: string[];
+  exclude: string[];
+} {
+  const extractArrayStrings = (block: string): string[] => {
+    const results: string[] = [];
+    const strRegex = /["']([^"']+)["']/g;
+    let match;
+    while ((match = strRegex.exec(block)) !== null) {
+      if (match[1]) results.push(match[1]);
+    }
+    return results;
+  };
+
+  const excludePatterns: string[] = [];
+  const includePatterns: string[] = [];
+
+  const excludeRegex = /(?:exclude|testPathIgnorePatterns)\s*:\s*\[([\s\S]*?)\]/g;
+  let match;
+  while ((match = excludeRegex.exec(configContent)) !== null) {
+    if (match[1]) {
+      excludePatterns.push(...extractArrayStrings(match[1]));
+    }
+  }
+
+  const includeRegex = /(?:include|testMatch)\s*:\s*\[([\s\S]*?)\]/g;
+  while ((match = includeRegex.exec(configContent)) !== null) {
+    if (match[1]) {
+      includePatterns.push(...extractArrayStrings(match[1]));
+    }
+  }
+
+  return { include: includePatterns, exclude: excludePatterns };
+}
+
+function parseCommandArgv(command: ValidationCommand): string[] {
+  if (Array.isArray(command)) {
+    return command.map((arg) => String(arg).trim()).filter((arg) => arg.length > 0);
+  }
+  const str = String(command).trim();
+  const tokens: string[] = [];
+  const regex = /(?:"([^"]*)"|'([^']*)'|([^\s]+))/g;
+  let match;
+  while ((match = regex.exec(str)) !== null) {
+    const token = match[1] ?? match[2] ?? match[3] ?? '';
+    if (token.length > 0) {
+      tokens.push(token);
+    }
+  }
+  return tokens;
+}
+
+function extractTargetTestFilePath(argv: string[]): string | null {
+  for (const arg of argv) {
+    if (arg.startsWith('-')) continue;
+    if (
+      LITERAL_TEST_FILE.test(arg) ||
+      /\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(arg) ||
+      /\.integration\.test\.[cm]?[jt]sx?$/i.test(arg)
+    ) {
+      return arg.replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '');
+    }
+  }
+  return null;
+}
+
+export type TestRunnerKind = 'vitest' | 'jest' | 'playwright' | 'pytest';
+
+function detectTestRunnerKind(argv: string[]): TestRunnerKind | null {
+  const cmdStr = argv.join(' ').toLowerCase();
+  if (cmdStr.includes('vitest')) return 'vitest';
+  if (cmdStr.includes('jest')) return 'jest';
+  if (cmdStr.includes('playwright')) return 'playwright';
+  if (cmdStr.includes('pytest')) return 'pytest';
+  return null;
+}
+
+function getRunnerConfigFiles(runner: TestRunnerKind): string[] {
+  switch (runner) {
+    case 'vitest':
+      return [
+        'vitest.config.ts',
+        'vitest.config.js',
+        'vitest.config.mts',
+        'vitest.config.mjs',
+        'vite.config.ts',
+        'vite.config.js',
+      ];
+    case 'jest':
+      return [
+        'jest.config.js',
+        'jest.config.ts',
+        'jest.config.json',
+        'jest.config.cjs',
+        'jest.config.mjs',
+      ];
+    case 'playwright':
+      return ['playwright.config.ts', 'playwright.config.js'];
+    case 'pytest':
+      return ['pytest.ini', 'pyproject.toml', 'setup.cfg'];
+    default:
+      return [];
+  }
+}
+
+function hasCustomConfigFlag(argv: string[]): boolean {
+  return argv.some(
+    (arg, i) =>
+      arg === '-c' ||
+      arg === '--config' ||
+      arg.startsWith('--config=') ||
+      (i > 0 && (argv[i - 1] === '-c' || argv[i - 1] === '--config')),
+  );
+}
+
+export async function checkTaskValidationCommandsSatisfiability(
+  manifest: TaskManifest,
+  options: CheckTaskValidationCommandsOptions,
+): Promise<string | null> {
+  const { worktreeRoot, readWorktreeFile } = options;
+  const diagnostics: string[] = [];
+
+  const configFiles = [
+    'vitest.config.ts',
+    'vitest.config.js',
+    'vitest.config.mts',
+    'vitest.config.mjs',
+    'vite.config.ts',
+    'vite.config.js',
+    'jest.config.js',
+    'jest.config.ts',
+    'jest.config.json',
+    'jest.config.cjs',
+    'jest.config.mjs',
+    'playwright.config.ts',
+    'playwright.config.js',
+    'pytest.ini',
+    'pyproject.toml',
+    'setup.cfg',
+  ];
+
+  const configContents = new Map<string, string>();
+  for (const configFile of configFiles) {
+    if (readWorktreeFile) {
+      try {
+        const content = await readWorktreeFile(configFile);
+        if (content) configContents.set(configFile, content);
+      } catch {
+        // ignore
+      }
+    } else {
+      const fullPath = join(worktreeRoot, configFile);
+      if (existsSync(fullPath)) {
+        try {
+          configContents.set(configFile, readFileSync(fullPath, 'utf-8'));
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  for (const task of manifest.tasks) {
+    const rawCommands = buildTaskValidationCommands(manifest, task.n);
+    for (const rawCmd of rawCommands) {
+      const argv = parseCommandArgv(rawCmd);
+      if (argv.length === 0) continue;
+
+      const runnerKind = detectTestRunnerKind(argv);
+      if (!runnerKind) continue;
+
+      const targetPath = extractTargetTestFilePath(argv);
+      if (!targetPath) continue;
+
+      const cmdDisplay = Array.isArray(rawCmd) ? JSON.stringify(rawCmd) : `"${rawCmd}"`;
+      const relevantConfigFiles = getRunnerConfigFiles(runnerKind);
+
+      // Static config check
+      if (!hasCustomConfigFlag(argv) && configContents.size > 0) {
+        for (const configFile of relevantConfigFiles) {
+          const content = configContents.get(configFile);
+          if (!content) continue;
+
+          const { include, exclude } = parseRunnerConfigExclusions(content);
+
+          let isExcluded = false;
+          let matchedExcludePattern: string | undefined;
+
+          if (exclude.length > 0) {
+            for (const excl of exclude) {
+              const regex = globToRegex(excl);
+              if (regex.test(targetPath)) {
+                isExcluded = true;
+                matchedExcludePattern = excl;
+                break;
+              }
+            }
+          }
+
+          if (isExcluded && matchedExcludePattern) {
+            diagnostics.push(
+              `Task ${task.n}: validation_command ${cmdDisplay} is unsatisfiable by construction: the test runner cannot select the named target "${targetPath}" (target path "${targetPath}" is excluded by the runner's configuration (${configFile} excludes "${matchedExcludePattern}")).`,
+            );
+            break;
+          }
+
+          if (include.length > 0) {
+            const matchesInclude = include.some((inc) => globToRegex(inc).test(targetPath));
+            if (!matchesInclude) {
+              diagnostics.push(
+                `Task ${task.n}: validation_command ${cmdDisplay} is unsatisfiable by construction: the test runner cannot select the named target "${targetPath}" (target path "${targetPath}" does not match included test patterns in ${configFile}).`,
+              );
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (diagnostics.length === 0) return null;
+  return diagnostics.join('\n\n');
+}
+
 export function buildTaskValidationCommands(
   manifest: TaskManifest,
   taskNumber: number,
