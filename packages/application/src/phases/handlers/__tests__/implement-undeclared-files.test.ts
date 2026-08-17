@@ -115,11 +115,11 @@ describe('ImplementHandler undeclared files regression proof', () => {
     expect(events.filter((event) => event.type === 'step.completed')).toHaveLength(1);
   });
 
-  it('classifies a committed reference file separately from unrelated files', async () => {
+  it('escalates a manifest fault immediately without consuming retry budget', async () => {
     const artifacts = new FakeArtifactStore();
     const git = new FakeGitPort();
     const steps = new FakeStepRepository();
-    const { ctx, events } = makeCtx(artifacts, git);
+    const { ctx } = makeCtx(artifacts, git);
 
     await writePlanAndManifest(artifacts, {
       version: 2,
@@ -127,7 +127,7 @@ describe('ImplementHandler undeclared files regression proof', () => {
       tasks: [
         {
           n: 1,
-          title: 'Task 1: reference vs unrelated',
+          title: 'manifest fault test',
           expected_files: ['src/task.ts'],
           reference_files: ['src/ref-b.ts', 'src/ref-a.ts'],
         },
@@ -141,12 +141,9 @@ describe('ImplementHandler undeclared files regression proof', () => {
       'src/unrelated-z.ts',
       'src/unrelated-a.ts',
     ]);
-    git.changedFilesResults.set('pre-step|attempt-2', ['src/task.ts']);
 
-    const contexts: StepRunContext[] = [];
-    const runStep = vi.fn(async (sctx: StepRunContext): Promise<StepRunResult> => {
-      contexts.push(sctx);
-      git.headByCwd.set(ctx.cwd, `attempt-${contexts.length}`);
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
       return { outcome: 'success' };
     });
 
@@ -156,21 +153,15 @@ describe('ImplementHandler undeclared files regression proof', () => {
       maxDeclaredFilesRetries: 1,
     }).run(ctx);
 
-    expect(result.outcome).toBe('passed');
-    expect(runStep).toHaveBeenCalledTimes(2);
-    expect(contexts[0]?.priorAttemptModifiedReferenceFiles).toBeUndefined();
-    expect(contexts[0]?.priorAttemptUndeclaredFiles).toBeUndefined();
-    expect(contexts[1]?.priorAttemptModifiedReferenceFiles).toEqual(['src/ref-b.ts']);
-    expect(contexts[1]?.priorAttemptUndeclaredFiles).toEqual([
-      'src/unrelated-a.ts',
-      'src/unrelated-z.ts',
-    ]);
+    expect(result.outcome).toBe('needs_human_review');
+    expect(runStep).toHaveBeenCalledTimes(1);
 
-    const retryEvents = events.filter((e) => e.type === 'step.declared_files_retry');
-    expect(retryEvents).toHaveLength(1);
-    const retryMetadata = (retryEvents[0] as { metadata?: Record<string, unknown> }).metadata;
-    expect(retryMetadata?.modifiedReferenceFiles).toEqual(['src/ref-b.ts']);
-    expect(retryMetadata?.undeclaredFiles).toEqual(['src/unrelated-a.ts', 'src/unrelated-z.ts']);
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain(
+        'step 1 (Task 1: manifest fault test) modified reference_files src/ref-b.ts. This is a manifest fault: expected_files must include these files.',
+      );
+    }
   });
 
   it('reports unrelated committed files with the task identity', async () => {
@@ -479,17 +470,12 @@ describe('ImplementHandler undeclared files regression proof', () => {
           n: 1,
           title: 'Task 1: mixed violations',
           expected_files: ['src/expected.ts', 'src/missing.ts'],
-          reference_files: ['src/ref.ts'],
         },
       ],
     });
 
     git.headByCwd.set(ctx.cwd, 'pre-step');
-    git.changedFilesResults.set('pre-step|attempt-1', [
-      'src/expected.ts',
-      'src/ref.ts',
-      'src/extra.ts',
-    ]);
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/expected.ts', 'src/extra.ts']);
     git.changedFilesResults.set('pre-step|attempt-2', ['src/expected.ts', 'src/missing.ts']);
 
     const contexts: StepRunContext[] = [];
@@ -509,7 +495,6 @@ describe('ImplementHandler undeclared files regression proof', () => {
     expect(runStep).toHaveBeenCalledTimes(2);
     expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(1);
     expect(contexts[1]?.priorAttemptMissingFiles).toEqual(['src/missing.ts']);
-    expect(contexts[1]?.priorAttemptModifiedReferenceFiles).toEqual(['src/ref.ts']);
     expect(contexts[1]?.priorAttemptUndeclaredFiles).toEqual(['src/extra.ts']);
   });
 
@@ -527,17 +512,12 @@ describe('ImplementHandler undeclared files regression proof', () => {
           n: 1,
           title: 'exhaustive failure',
           expected_files: ['src/expected.ts', 'src/missing.ts'],
-          reference_files: ['src/ref.ts'],
         },
       ],
     });
 
     git.headByCwd.set(ctx.cwd, 'pre-step');
-    git.changedFilesResults.set('pre-step|attempt-1', [
-      'src/expected.ts',
-      'src/ref.ts',
-      'src/extra.ts',
-    ]);
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/expected.ts', 'src/extra.ts']);
 
     const runStep = vi.fn(async (): Promise<StepRunResult> => {
       git.headByCwd.set(ctx.cwd, 'attempt-1');
@@ -555,8 +535,6 @@ describe('ImplementHandler undeclared files regression proof', () => {
       expect(result.failure.kind).toBe('invalid_result');
       expect(result.failure.message).toContain('step 1 (Task 1: exhaustive failure)');
       expect(result.failure.message).toContain('src/missing.ts');
-      expect(result.failure.message).toContain('modified read-only reference files');
-      expect(result.failure.message).toContain('src/ref.ts');
       expect(result.failure.message).toContain('committed undeclared files');
       expect(result.failure.message).toContain('src/extra.ts');
     }
