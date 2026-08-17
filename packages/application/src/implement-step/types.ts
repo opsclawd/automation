@@ -1,4 +1,4 @@
-import type { RunId, PhaseName, AgentProfileName, Loop } from '@ai-sdlc/domain';
+import type { RunId, PhaseName, AgentProfileName, Loop, FailureKind } from '@ai-sdlc/domain';
 import type { TaskManifest } from '../results/schemas/task-manifest.js';
 import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
@@ -425,4 +425,6 @@ export interface ImplementStepLoopResult {
   loop: Loop;
   outcome: 'success' | 'failed' | 'needs_human_review';
   failureMessage?: string;
+  failureKind?: FailureKind;
+  modifiedReferenceFiles?: string[];
 }

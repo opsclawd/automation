@@ -543,4 +543,119 @@ describe('ImplementHandler protected-file policy', () => {
       '.gitignore was modified without declaration, un-ignoring 3 artifacts; the protected change and artifacts were reverted',
     );
   });
+
+  it('escalates to needs_human_review when a protected file is declared as reference_files with configured repair', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'modify reference .gitignore',
+          expected_files: ['src/task.ts'],
+          reference_files: ['.gitignore'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/task.ts', '.gitignore']);
+    git.changedFilesResults.set('pre-step|amended-1', ['src/task.ts']);
+
+    const revertProtectedFiles = vi.fn(
+      async (input: RevertProtectedFilesInput): Promise<RevertProtectedFilesResult> => {
+        git.headByCwd.set(input.cwd, 'amended-1');
+        return {
+          revertedProtectedFiles: ['.gitignore'],
+          removedNewlyIgnoredFiles: [],
+          amendedHeadSha: 'amended-1',
+        };
+      },
+    );
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 2,
+      revertProtectedFiles,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    expect(runStep).toHaveBeenCalledTimes(1);
+    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
+    expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toBe(
+        'step 1 (Task 1: modify reference .gitignore) modified reference_files .gitignore. This is a manifest fault: expected_files must include these files.',
+      );
+      expect(result.failure.artifacts).toEqual(['task-manifest.json']);
+    }
+
+    const stepEvents = events.filter((e) => e.type === 'step.needs_human_review');
+    expect(stepEvents).toHaveLength(1);
+    expect(stepEvents[0]?.metadata).toMatchObject({
+      index: 1,
+      total: 1,
+      taskTitle: 'modify reference .gitignore',
+      modifiedReferenceFiles: ['.gitignore'],
+    });
+
+    const phaseEvents = events.filter((e) => e.type === 'implement.needs_human_review');
+    expect(phaseEvents).toHaveLength(1);
+  });
+
+  it('escalates to needs_human_review when a protected file is declared as reference_files without configured repair', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'modify reference .gitignore no repair adapter',
+          expected_files: ['src/task.ts'],
+          reference_files: ['.gitignore'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/task.ts', '.gitignore']);
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 2,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    expect(runStep).toHaveBeenCalledTimes(1);
+    expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toBe(
+        'step 1 (Task 1: modify reference .gitignore no repair adapter) modified reference_files .gitignore. This is a manifest fault: expected_files must include these files.',
+      );
+    }
+  });
 });

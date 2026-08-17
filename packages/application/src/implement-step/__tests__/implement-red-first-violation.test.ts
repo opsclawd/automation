@@ -189,7 +189,7 @@ function createHarness(options: HarnessOptions = {}) {
 }
 
 describe('ImplementStepLoop RED-first scope violation regression proof', () => {
-  it('fails before review when a failed inverted command accompanies out-of-scope commits', async () => {
+  it('escalates to needs_human_review when a failed inverted command accompanies modified reference files', async () => {
     // changed files intentionally include one expected file, one modified
     // reference, one undeclared file, one duplicate spelling, and one exemption
     // so the assertion locks normalized/sorted boundary semantics.
@@ -212,6 +212,52 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
 
     const result = await harness.loop.execute(harness.input);
 
+    expect(result.outcome).toBe('needs_human_review');
+    expect(result.loop.status).toBe('failed');
+    expect(result.loop.iterations).toHaveLength(1);
+    expect(result.loop.iterations[0].outcome).toBe('failed');
+    expect(result.loop.iterations[0].reviewInvocationId).toBe('');
+    expect(result.failureKind).toBe('needs_human_review');
+    expect(result.modifiedReferenceFiles).toEqual(['src/read-only.ts']);
+
+    const failureMessage = (result as unknown as { failureMessage?: string }).failureMessage;
+    expect(failureMessage).toBeDefined();
+    expect(failureMessage).toContain(
+      'step 1 (Add the RED-first regression proof) modified reference_files src/read-only.ts. This is a manifest fault: expected_files must include these files.',
+    );
+
+    const redEvent = harness.events.find((e) => e.type === 'step.red_first_violation');
+    expect(redEvent).toBeDefined();
+    expect(redEvent?.metadata).toMatchObject({
+      modifiedReferenceFiles: ['src/read-only.ts'],
+      undeclaredFiles: ['src/future-fix.ts'],
+      failedInvertedCommands: ['! pnpm test -- src/proof.test.ts'],
+    });
+
+    expect(harness.runSpecReview).not.toHaveBeenCalled();
+    expect(harness.runQualityReview).not.toHaveBeenCalled();
+    expect(harness.runFix).not.toHaveBeenCalled();
+  });
+
+  it('fails before review when a failed inverted command accompanies purely undeclared commits', async () => {
+    const revalidationPayload = {
+      validationRunId: 'validation-1',
+      passed: false,
+      failedCommands: ['! pnpm test -- src/proof.test.ts'],
+    } as unknown as RevalidationResult;
+
+    const harness = createHarness({
+      changedFiles: [
+        'src/proof.test.ts',
+        './src/future-fix.ts',
+        'src\\future-fix.ts',
+        'generated/allowed.ts',
+      ],
+      revalidationResult: revalidationPayload,
+    });
+
+    const result = await harness.loop.execute(harness.input);
+
     expect(result.outcome).toBe('failed');
     expect(result.loop.status).toBe('failed');
     expect(result.loop.iterations).toHaveLength(1);
@@ -223,16 +269,14 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     expect(failureMessage).toContain('Task 1');
     expect(failureMessage).toContain('Add the RED-first regression proof');
     expect(failureMessage).toContain('! pnpm test -- src/proof.test.ts');
-    expect(failureMessage).toContain('src/read-only.ts');
     expect(failureMessage).toContain('src/future-fix.ts');
-    expect(failureMessage?.split('src/read-only.ts')).toHaveLength(2);
-    expect(failureMessage?.split('src/future-fix.ts')).toHaveLength(2);
+    expect(failureMessage).not.toContain('src/read-only.ts');
     expect(failureMessage).not.toContain('generated/allowed.ts');
 
     const redEvent = harness.events.find((e) => e.type === 'step.red_first_violation');
     expect(redEvent).toBeDefined();
     expect(redEvent?.metadata).toMatchObject({
-      modifiedReferenceFiles: ['src/read-only.ts'],
+      modifiedReferenceFiles: [],
       undeclaredFiles: ['src/future-fix.ts'],
       failedInvertedCommands: ['! pnpm test -- src/proof.test.ts'],
     });
@@ -314,7 +358,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     expect(harness.events.some((e) => e.type === 'step.red_first_violation')).toBe(false);
   });
 
-  it('propagates the RED-first violation through the implement phase failure', async () => {
+  it('propagates the purely undeclared RED-first violation through the implement phase failure', async () => {
     const artifacts = new FakeArtifactStore();
     const manifestJson = JSON.stringify(baseManifest);
     await artifacts.write({
@@ -357,10 +401,10 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     };
 
     const redMessage =
-      'Task 1 (Add the RED-first regression proof) failed inverted command "! pnpm test -- src/proof.test.ts" while modifying read-only reference files: src/read-only.ts and undeclared files: src/future-fix.ts';
+      'RED-first violation: Task 1 (Add the RED-first regression proof) requires inverted validation command(s) "! pnpm test -- src/proof.test.ts" to pass, but the commit included out-of-scope files: src/future-fix.ts. Separate the regression proof from its implementation.';
 
-    const stepResult = {
-      outcome: 'failed' as const,
+    const stepResult: StepRunResult = {
+      outcome: 'failed',
       failureMessage: redMessage,
     };
 
@@ -379,6 +423,83 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     const failedEvent = events.find((e) => e.type === 'implement.failed');
     expect(failedEvent).toBeDefined();
     expect(failedEvent?.message).toBe(redMessage);
+  });
+
+  it('propagates the reference-file RED-first violation through implement phase as needs_human_review', async () => {
+    const artifacts = new FakeArtifactStore();
+    const manifestJson = JSON.stringify(baseManifest);
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: manifestJson,
+    });
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: '# Plan\n\n## Task 1: Add the RED-first regression proof\n',
+    });
+
+    const steps = new FakeStepRepository();
+    const events: OrchestratorEvent[] = [];
+    const git = new FakeGitPort();
+    git.headByCwd.set('/wt', 'pre-step-sha');
+
+    const ctx: PhaseHandlerContext = {
+      runId: 'run-1',
+      runUuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      repoFullName: 'acme/widgets',
+      issueNumber: 42,
+      cwd: '/wt',
+      artifacts,
+      github: {} as PhaseHandlerContext['github'],
+      git,
+      agent: {} as PhaseHandlerContext['agent'],
+      events: {
+        publish: (_u: string, e: OrchestratorEvent) => {
+          events.push(e);
+        },
+        subscribe: () => () => {},
+      },
+      now: () => new Date('2026-06-16T00:00:00Z'),
+      idFactory: (() => {
+        let n = 0;
+        return () => `id-${++n}`;
+      })(),
+    };
+
+    const manifestFaultMessage =
+      'step 1 (Add the RED-first regression proof) modified reference_files src/read-only.ts. This is a manifest fault: expected_files must include these files.';
+
+    const stepResult: StepRunResult = {
+      outcome: 'needs_human_review',
+      failureMessage: manifestFaultMessage,
+      failureKind: 'needs_human_review',
+      modifiedReferenceFiles: ['src/read-only.ts'],
+    };
+
+    const runStep = vi
+      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+      .mockResolvedValue(stepResult);
+
+    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toBe(manifestFaultMessage);
+      expect(result.failure.artifacts).toEqual(['task-manifest.json']);
+      expect(result.failure.suggestedAction).toContain('Update task-manifest.json');
+    }
+
+    const stepNeedsReviewEvent = events.find((e) => e.type === 'step.needs_human_review');
+    expect(stepNeedsReviewEvent).toBeDefined();
+    expect(stepNeedsReviewEvent?.metadata).toMatchObject({
+      modifiedReferenceFiles: ['src/read-only.ts'],
+    });
+
+    const phaseNeedsReviewEvent = events.find((e) => e.type === 'implement.needs_human_review');
+    expect(phaseNeedsReviewEvent).toBeDefined();
+    expect(phaseNeedsReviewEvent?.message).toBe(manifestFaultMessage);
   });
 
   it('allows a RED-first proof to carry inherited formatter-only edits from a completed task', async () => {
@@ -473,7 +594,8 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
 
     const result = await harness.loop.execute(harness.input);
 
-    expect(result.outcome).toBe('failed');
+    expect(result.outcome).toBe('needs_human_review');
+    expect(result.failureKind).toBe('needs_human_review');
     expect(
       harness.events.find((event) => event.type === 'step.red_first_violation')?.metadata,
     ).toMatchObject({ modifiedReferenceFiles: ['src/earlier.ts'] });

@@ -113,6 +113,8 @@ export interface StepRunContext {
 export interface StepRunResult {
   outcome: 'success' | 'failed' | 'needs_human_review';
   failureMessage?: string;
+  failureKind?: FailureKind;
+  modifiedReferenceFiles?: string[];
 }
 
 export interface ImplementHandlerOpts {
@@ -516,6 +518,14 @@ export class ImplementHandler implements PhaseHandler {
               }
             }
 
+            const initialClassification = classifyUndeclaredFiles(
+              committedFiles,
+              writableSet,
+              referenceSet,
+              exemptSet,
+            );
+            const preservedModifiedReferenceFiles = initialClassification.modifiedReferenceFiles;
+
             const undeclaredProtectedPaths = [
               ...new Set(
                 committedFiles
@@ -529,7 +539,45 @@ export class ImplementHandler implements PhaseHandler {
               | undefined;
 
             if (undeclaredProtectedPaths.length > 0) {
-              if (!this.opts.revertProtectedFiles) {
+              if (this.opts.revertProtectedFiles) {
+                let repairResult: RevertProtectedFilesResult;
+                try {
+                  repairResult = await this.opts.revertProtectedFiles({
+                    cwd: ctx.cwd,
+                    baseline: preStepHead!,
+                    protectedFiles: undeclaredProtectedPaths,
+                  });
+                  statusPromise = undefined;
+                  postStepHead = await ctx.git.headCommitSha(ctx.cwd);
+                  committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
+                  committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);
+                  committedSet = new Set(committedNormalized);
+                  missingFiles = expectedFiles.filter(
+                    (path) => !committedSet.has(normalizeTaskPath(path)),
+                  );
+                  repairedProtectedRecord = {
+                    revertedProtectedFiles: repairResult.revertedProtectedFiles,
+                    removedNewlyIgnoredFilesCount: repairResult.removedNewlyIgnoredFiles.length,
+                  };
+                } catch (error) {
+                  if (preservedModifiedReferenceFiles.length === 0) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+                    emit(
+                      'step.failed',
+                      'error',
+                      `step ${d.index}/${totalSteps} protected file repair failed: ${message}`,
+                      { index: d.index, total: totalSteps },
+                    );
+                    return this.fail(
+                      ctx,
+                      emit,
+                      'command_failed',
+                      `step ${d.index} (${d.title}) protected file repair failed: ${message}`,
+                    );
+                  }
+                }
+              } else if (preservedModifiedReferenceFiles.length === 0) {
                 const repairError = 'revertProtectedFiles port is not configured';
                 this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
                 emit(
@@ -545,51 +593,15 @@ export class ImplementHandler implements PhaseHandler {
                   `step ${d.index} (${d.title}) protected file repair failed: ${repairError}`,
                 );
               }
-
-              let repairResult: RevertProtectedFilesResult;
-              try {
-                repairResult = await this.opts.revertProtectedFiles({
-                  cwd: ctx.cwd,
-                  baseline: preStepHead!,
-                  protectedFiles: undeclaredProtectedPaths,
-                });
-              } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-                emit(
-                  'step.failed',
-                  'error',
-                  `step ${d.index}/${totalSteps} protected file repair failed: ${message}`,
-                  { index: d.index, total: totalSteps },
-                );
-                return this.fail(
-                  ctx,
-                  emit,
-                  'command_failed',
-                  `step ${d.index} (${d.title}) protected file repair failed: ${message}`,
-                );
-              }
-
-              statusPromise = undefined;
-              postStepHead = await ctx.git.headCommitSha(ctx.cwd);
-              committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
-              committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);
-              committedSet = new Set(committedNormalized);
-              missingFiles = expectedFiles.filter(
-                (path) => !committedSet.has(normalizeTaskPath(path)),
-              );
-              repairedProtectedRecord = {
-                revertedProtectedFiles: repairResult.revertedProtectedFiles,
-                removedNewlyIgnoredFilesCount: repairResult.removedNewlyIgnoredFiles.length,
-              };
             }
 
-            let { modifiedReferenceFiles, undeclaredFiles } = classifyUndeclaredFiles(
+            let { undeclaredFiles } = classifyUndeclaredFiles(
               committedFiles,
               writableSet,
               referenceSet,
               exemptSet,
             );
+            let modifiedReferenceFiles = preservedModifiedReferenceFiles;
 
             const inheritedFormattingDebtFiles = await findInheritedFormattingDebtFiles({
               cwd: ctx.cwd,
@@ -622,6 +634,36 @@ export class ImplementHandler implements PhaseHandler {
                   postStepHead,
                   files: inheritedFormattingDebtFiles,
                 },
+              );
+            }
+
+            const hasManifestFault = modifiedReferenceFiles.length > 0;
+            if (hasManifestFault) {
+              const failureMessage = `step ${d.index} (${d.title}) modified reference_files ${modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
+              this.opts.steps.upsert({
+                ...step,
+                status: 'needs_human_review',
+                completedAt: ctx.now(),
+              });
+              emit(
+                'step.needs_human_review',
+                'warn',
+                `step ${d.index}/${totalSteps} needs human review: modified reference files (${modifiedReferenceFiles.join(', ')})`,
+                {
+                  index: d.index,
+                  total: totalSteps,
+                  taskTitle: task?.title ?? d.title,
+                  modifiedReferenceFiles,
+                  preStepHead,
+                  postStepHead,
+                },
+              );
+              return this.needsHumanReview(
+                ctx,
+                emit,
+                'needs_human_review',
+                failureMessage,
+                `Update task-manifest.json to add ${modifiedReferenceFiles.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`,
               );
             }
 
@@ -688,17 +730,6 @@ export class ImplementHandler implements PhaseHandler {
                   { expectedFiles, committedFiles, missingFiles, preStepHead, postStepHead },
                 );
               }
-            }
-
-            const hasManifestFault = modifiedReferenceFiles.length > 0;
-            if (hasManifestFault) {
-              const failureMessage = `step ${d.index} (${d.title}) modified reference_files ${modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
-              this.opts.steps.upsert({
-                ...step,
-                status: 'needs_human_review',
-                completedAt: ctx.now(),
-              });
-              return this.needsHumanReview(ctx, emit, 'needs_human_review', failureMessage);
             }
 
             const hasMissingViolation = missingFiles.length > 0 && !verifiedUnaffected;
@@ -806,17 +837,27 @@ export class ImplementHandler implements PhaseHandler {
           emit(
             'step.needs_human_review',
             'warn',
-            `step ${d.index}/${totalSteps} needs human review`,
+            result.failureMessage ?? `step ${d.index}/${totalSteps} needs human review`,
             {
               index: d.index,
               total: totalSteps,
+              taskTitle: task?.title ?? d.title,
+              ...(result.modifiedReferenceFiles !== undefined
+                ? { modifiedReferenceFiles: result.modifiedReferenceFiles }
+                : {}),
+              ...(preStepHead !== undefined ? { preStepHead } : {}),
             },
           );
+          const suggestedAction =
+            result.modifiedReferenceFiles && result.modifiedReferenceFiles.length > 0
+              ? `Update task-manifest.json to add ${result.modifiedReferenceFiles.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`
+              : undefined;
           return this.needsHumanReview(
             ctx,
             emit,
-            'agent_incomplete',
-            `step ${d.index} (${d.title}) needs human review`,
+            result.failureKind ?? 'agent_incomplete',
+            result.failureMessage ?? `step ${d.index} (${d.title}) needs human review`,
+            suggestedAction,
           );
         } else {
           this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
@@ -899,6 +940,7 @@ export class ImplementHandler implements PhaseHandler {
     emit: EventEmitter,
     kind: FailureKind,
     message: string,
+    suggestedAction?: string,
   ): PhaseResult {
     emit('implement.needs_human_review', 'warn', message);
     return {
@@ -909,8 +951,8 @@ export class ImplementHandler implements PhaseHandler {
         kind,
         message,
         canRetry: true,
-        suggestedAction: 'Review the step that needs attention and resume.',
-        artifacts: [],
+        suggestedAction: suggestedAction ?? 'Review the step that needs attention and resume.',
+        artifacts: ['task-manifest.json'],
         detectedAt: ctx.now(),
       },
     };

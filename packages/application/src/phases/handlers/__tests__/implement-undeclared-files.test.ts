@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { RunId, PhaseName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { ImplementHandler } from '../implement.js';
 import type { StepRunContext, StepRunResult } from '../implement.js';
@@ -119,7 +120,7 @@ describe('ImplementHandler undeclared files regression proof', () => {
     const artifacts = new FakeArtifactStore();
     const git = new FakeGitPort();
     const steps = new FakeStepRepository();
-    const { ctx } = makeCtx(artifacts, git);
+    const { ctx, events } = makeCtx(artifacts, git);
 
     await writePlanAndManifest(artifacts, {
       version: 2,
@@ -158,10 +159,149 @@ describe('ImplementHandler undeclared files regression proof', () => {
 
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.kind).toBe('needs_human_review');
-      expect(result.failure.message).toContain(
+      expect(result.failure.message).toBe(
         'step 1 (Task 1: manifest fault test) modified reference_files src/ref-b.ts. This is a manifest fault: expected_files must include these files.',
       );
+      expect(result.failure.artifacts).toEqual(['task-manifest.json']);
+      expect(result.failure.suggestedAction).toContain(
+        'Update task-manifest.json to add src/ref-b.ts to task 1 expected_files',
+      );
     }
+
+    const stepEvents = events.filter((e) => e.type === 'step.needs_human_review');
+    expect(stepEvents).toHaveLength(1);
+    expect(stepEvents[0]?.metadata).toMatchObject({
+      index: 1,
+      total: 1,
+      taskTitle: 'manifest fault test',
+      modifiedReferenceFiles: ['src/ref-b.ts'],
+      preStepHead: 'pre-step',
+      postStepHead: 'attempt-1',
+    });
+
+    const phaseEvents = events.filter((e) => e.type === 'implement.needs_human_review');
+    expect(phaseEvents).toHaveLength(1);
+
+    const retryEvents = events.filter((e) => e.type === 'step.declared_files_retry');
+    expect(retryEvents).toHaveLength(0);
+
+    const stepRecord = steps.findByIndex(RunId(ctx.runUuid), PhaseName('implement'), 1);
+    expect(stepRecord?.status).toBe('needs_human_review');
+  });
+
+  it('evaluates manifest fault before missing-file validation/typecheck when validation adapter rejects', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'mixed reference plus missing',
+          expected_files: ['src/expected.ts', 'src/missing.ts'],
+          reference_files: ['src/ref.ts'],
+          validation_commands: ['pnpm test'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/expected.ts', 'src/ref.ts']);
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
+      return { outcome: 'success' };
+    });
+
+    const validationPort = {
+      run: vi.fn(async () => {
+        throw new Error('Validation adapter should not have been called');
+      }),
+    };
+
+    const runWorkspaceTypecheck = vi.fn(async () => {
+      throw new Error('Typecheck adapter should not have been called');
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 1,
+      validationPort: validationPort as unknown as FakeValidationPort,
+      runWorkspaceTypecheck,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    expect(runStep).toHaveBeenCalledTimes(1);
+    expect(validationPort.run).not.toHaveBeenCalled();
+    expect(runWorkspaceTypecheck).not.toHaveBeenCalled();
+    expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain(
+        'step 1 (Task 1: mixed reference plus missing) modified reference_files src/ref.ts. This is a manifest fault: expected_files must include these files.',
+      );
+    }
+  });
+
+  it('supports manifest-correction recovery flow by updating task-manifest.json and resuming', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: recovery flow test',
+          expected_files: ['src/task.ts'],
+          reference_files: ['src/ref.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/task.ts', 'src/ref.ts']);
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
+      return { outcome: 'success' };
+    });
+
+    const handler = new ImplementHandler({ steps, runStep, maxDeclaredFilesRetries: 1 });
+    const initialResult = await handler.run(ctx);
+
+    expect(initialResult.outcome).toBe('needs_human_review');
+    expect(runStep).toHaveBeenCalledTimes(1);
+
+    // Operator corrects task-manifest.json in artifact store
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task 1: recovery flow test',
+            expected_files: ['src/task.ts', 'src/ref.ts'],
+          },
+        ],
+      }),
+    });
+
+    // Resume the run
+    const resumedResult = await handler.run(ctx);
+    expect(resumedResult.outcome).toBe('passed');
+    expect(runStep).toHaveBeenCalledTimes(2);
   });
 
   it('reports unrelated committed files with the task identity', async () => {
