@@ -9,7 +9,7 @@ export const qualityReviewFindingSchema = z.object({
 });
 
 export const qualityReviewResultSchema = z.object({
-  result: z.enum(['pass', 'fail']),
+  result: z.enum(['pass', 'fail', 'fabricated']),
   findings: z.array(qualityReviewFindingSchema).optional().default([]),
 });
 export type QualityReviewResult = z.infer<typeof qualityReviewResultSchema>;

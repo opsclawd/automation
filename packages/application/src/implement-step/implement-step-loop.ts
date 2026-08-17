@@ -1372,6 +1372,48 @@ export class ImplementStepLoop {
         }
       } while (qualityReviewAttempts < MAX_QUALITY_REVIEW_ATTEMPTS);
 
+      this.emit(
+        input,
+        'step.quality-review.attempts',
+        'info',
+        `quality-review completed after ${qualityReviewAttempts} attempt(s)`,
+        {
+          index: iterationIndex,
+          attempts: qualityReviewAttempts,
+          invocationIds: qualityReviewAttemptInvocationIds,
+        },
+      );
+
+      if (qualityReview.agentOutcome === 'success' && qualityReview.verdict === 'fabricated') {
+        const failureMessage =
+          `Step ${input.stepIndex} (${input.stepTitle}) failed because quality review ` +
+          'determined that the implementation fabricated evidence of external physical execution.';
+
+        this.emit(input, 'step.quality-review.fabricated', 'error', failureMessage, {
+          index: input.stepIndex,
+          iterationIndex,
+          invocationId: qualityReview.invocationId,
+          findings: qualityReview.findings ?? [],
+        });
+        loop = updateOpenIteration(loop, {
+          qualityReviewInvocationId: qualityReview.invocationId,
+        });
+        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            qualityReview,
+            undefined,
+            undefined,
+            'failed',
+          ),
+        );
+        this.emitIterationCompleted(input, iterationIndex, 'failed');
+        return { outcome: 'failed', loop, failureMessage };
+      }
+
       // --- UPDATE QUALITY DIMENSION STATE (#723) ---
       if (shouldReviewQuality) {
         if (qualityReview.verdict === 'pass') {
@@ -1412,18 +1454,6 @@ export class ImplementStepLoop {
           );
         }
       }
-
-      this.emit(
-        input,
-        'step.quality-review.attempts',
-        'info',
-        `quality-review completed after ${qualityReviewAttempts} attempt(s)`,
-        {
-          index: iterationIndex,
-          attempts: qualityReviewAttempts,
-          invocationIds: qualityReviewAttemptInvocationIds,
-        },
-      );
 
       loop = updateOpenIteration(loop, { qualityReviewInvocationId: qualityReview.invocationId });
       deps.loops.update(loop);

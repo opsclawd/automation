@@ -99,7 +99,7 @@ export interface SpecReviewResult {
 export interface QualityReviewResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
-  verdict?: 'pass' | 'fail';
+  verdict?: 'pass' | 'fail' | 'fabricated';
   findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
   snapshot?: ReviewSnapshot;
   mode?: ReviewMode;
@@ -137,7 +137,7 @@ export interface ImplementStepHistoryEntry {
     detail?: string;
   };
   qualityReview: {
-    verdict?: 'pass' | 'fail';
+    verdict?: 'pass' | 'fail' | 'fabricated';
     invocationId?: string;
     findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
     classification?: string;

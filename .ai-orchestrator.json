@@ -8,7 +8,8 @@
       "pnpm test:bash",
       "pnpm boundaries"
     ],
-    "timeout": 300
+    "timeout": 300,
+    "forbiddenArtifactPaths": ["certification/"]
   },
   "phases": {
     "skip": [],

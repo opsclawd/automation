@@ -46,7 +46,7 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
   'quality-review': {
     schema: qualityReviewResultSchema,
     schemaContractText:
-      '{\n  "result": "pass" | "fail",\n  "findings": Array<{\n    "severity": "P0" | "P1" | "P2" | "P3",\n    "summary": string,\n    "file"?: string,\n    "suggested_fix"?: string\n  }>\n}',
+      '{\n  "result": "pass" | "fail" | "fabricated",\n  "findings": Array<{\n    "severity": "P0" | "P1" | "P2" | "P3",\n    "summary": string,\n    "file"?: string,\n    "suggested_fix"?: string\n  }>\n}',
   },
   // Retained as loop-internal routing schemas for agent invocation dispatch
   // within the review-fix phase (see design decision in design-decisions-report.md).

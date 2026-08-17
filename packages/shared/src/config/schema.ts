@@ -10,6 +10,7 @@ import { z } from 'zod';
 const validationSchema = z.object({
   commands: z.array(z.string().min(1)).min(1),
   timeout: z.number().int().positive(),
+  forbiddenArtifactPaths: z.array(z.string().trim().min(1)).optional(),
 });
 
 const phasesSchema = z.object({
