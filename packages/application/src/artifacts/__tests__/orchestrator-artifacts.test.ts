@@ -31,6 +31,7 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
       'compound.md',
       'validation.result',
       'result.json',
+      'scratch-files.json',
       'fix-validate-done.marker',
       'plan-review-passed.marker',
       'pr-summary.md',
