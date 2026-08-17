@@ -20,6 +20,7 @@ import {
   hasDeclaredSurface,
   classifyUndeclaredFiles,
 } from '../../task-file-boundaries.js';
+import { findInheritedFormattingDebtFiles } from '../../inherited-formatting-debt.js';
 import type {
   RevertProtectedFilesPort,
   RevertProtectedFilesResult,
@@ -106,6 +107,7 @@ export interface StepRunContext {
   priorAttemptRepairedProtectedFiles?: string[];
   initialPreStepHead?: string;
   exemptUndeclaredFiles?: string[];
+  completedStepIndexes?: number[];
 }
 
 export interface StepRunResult {
@@ -363,6 +365,7 @@ export class ImplementHandler implements PhaseHandler {
             ctx,
             manifest: manifest!,
             planMd,
+            completedStepIndexes: [...doneIdx].sort((a, b) => a - b),
             ...(preStepHead !== undefined ? { initialPreStepHead: preStepHead } : {}),
             ...(this.opts.exemptUndeclaredFiles !== undefined
               ? { exemptUndeclaredFiles: this.opts.exemptUndeclaredFiles }
@@ -592,6 +595,40 @@ export class ImplementHandler implements PhaseHandler {
               exemptSet,
             );
 
+            const inheritedFormattingDebtFiles = await findInheritedFormattingDebtFiles({
+              cwd: ctx.cwd,
+              manifest,
+              currentTaskNumber: d.index,
+              completedTaskNumbers: doneIdx,
+              candidateFiles: [...new Set([...modifiedReferenceFiles, ...undeclaredFiles])].filter(
+                (path) => !isProtectedFilePath(path),
+              ),
+              preStepHead: preStepHead!,
+              postStepHead: postStepHead!,
+              git: ctx.git,
+            });
+
+            const inheritedSet = new Set(inheritedFormattingDebtFiles);
+            modifiedReferenceFiles = modifiedReferenceFiles.filter(
+              (path) => !inheritedSet.has(path),
+            );
+            undeclaredFiles = undeclaredFiles.filter((path) => !inheritedSet.has(path));
+
+            if (inheritedFormattingDebtFiles.length > 0) {
+              emit(
+                'step.inherited_formatting_debt',
+                'info',
+                `step ${d.index}/${totalSteps} exempted inherited formatting debt: ${inheritedFormattingDebtFiles.join(', ')}`,
+                {
+                  index: d.index,
+                  total: totalSteps,
+                  preStepHead,
+                  postStepHead,
+                  files: inheritedFormattingDebtFiles,
+                },
+              );
+            }
+
             let verifiedUnaffected = false;
             if (missingFiles.length > 0) {
               let uncommittedDeclared: string[] = [];
@@ -760,6 +797,7 @@ export class ImplementHandler implements PhaseHandler {
           }
 
           this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
+          doneIdx.add(d.index);
           emit('step.completed', 'info', `step ${d.index}/${totalSteps} done`, {
             index: d.index,
             total: totalSteps,

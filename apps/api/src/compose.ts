@@ -669,6 +669,7 @@ export interface Container {
     priorAttemptRepairedProtectedFiles?: string[];
     initialPreStepHead?: string;
     exemptUndeclaredFiles?: string[];
+    completedStepIndexes?: number[];
   }) => Promise<{ outcome: 'success' | 'failed' | 'needs_human_review'; failureMessage?: string }>;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
@@ -5494,6 +5495,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         priorAttemptRepairedProtectedFiles?: string[];
         initialPreStepHead?: string;
         exemptUndeclaredFiles?: string[];
+        completedStepIndexes?: number[];
       }): Promise<{
         outcome: 'success' | 'failed' | 'needs_human_review';
         failureMessage?: string;
@@ -5519,6 +5521,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             : {}),
           ...(sctx.exemptUndeclaredFiles !== undefined
             ? { exemptUndeclaredFiles: sctx.exemptUndeclaredFiles }
+            : {}),
+          ...(sctx.completedStepIndexes !== undefined
+            ? { completedStepIndexes: sctx.completedStepIndexes }
             : {}),
           ...(sctx.priorAttemptMissingFiles?.length
             ? { priorAttemptMissingFiles: sctx.priorAttemptMissingFiles }

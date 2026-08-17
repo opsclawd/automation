@@ -418,6 +418,7 @@ export interface ImplementStepLoopInput {
   priorAttemptRepairedProtectedFiles?: string[];
   initialPreStepHead?: string;
   exemptUndeclaredFiles?: string[];
+  completedStepIndexes?: number[];
 }
 
 export interface ImplementStepLoopResult {

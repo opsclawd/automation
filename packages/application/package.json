@@ -48,6 +48,7 @@
   "dependencies": {
     "@ai-sdlc/domain": "workspace:*",
     "@ai-sdlc/shared": "workspace:*",
+    "typescript": "^5.6.3",
     "zod": "^3.23.8"
   }
 }
