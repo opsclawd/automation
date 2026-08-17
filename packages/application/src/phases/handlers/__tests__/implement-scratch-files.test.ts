@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { ImplementHandler } from '../implement.js';
+import { ValidateHandler } from '../validate.js';
 import type { StepRunResult } from '../implement.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
 import { FakeStepRepository } from '../../../test-doubles/fake-step-repository.js';
+import { FakeValidationPort } from '../../../test-doubles/fake-validation-port.js';
+import { FakeValidationRunRepository } from '../../../test-doubles/fake-validation-run-repository.js';
+import { RunValidation } from '../../../run-validation.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 
 const RUN_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -167,5 +174,120 @@ describe('ImplementHandler scratch-file reporting', () => {
     );
     expect(harness.events.filter((event) => event.type === 'step.completed')).toHaveLength(1);
     expect(harness.events.filter((event) => event.type === 'step.failed')).toHaveLength(0);
+  });
+
+  it('removes undeclared untracked root files from disk and records scratch-files.json artifact', async () => {
+    const tmpCwd = mkdtempSync(join(tmpdir(), 'scratch-test-'));
+    try {
+      const rootScratch = join(tmpCwd, 'test-ast.js');
+      const nestedDir = join(tmpCwd, 'nested');
+      mkdirSync(nestedDir, { recursive: true });
+      const nestedScratch = join(nestedDir, 'deep-scratch.js');
+      const protectedFile = join(tmpCwd, '.gitignore');
+
+      writeFileSync(rootScratch, '// scratch file');
+      writeFileSync(nestedScratch, '// nested file');
+      writeFileSync(protectedFile, '# gitignore');
+
+      const harness = await makeHarness(
+        { expected_files: ['src/declared.ts'] },
+        '?? test-ast.js\n?? nested/deep-scratch.js\n?? .gitignore',
+      );
+      harness.ctx.cwd = tmpCwd;
+      harness.git.headByCwd.set(tmpCwd, 'pre-step');
+      harness.git.statusByCwd.set(
+        tmpCwd,
+        '?? test-ast.js\n?? nested/deep-scratch.js\n?? .gitignore',
+      );
+      harness.git.changedFilesResults.set('pre-step|post-step', ['src/declared.ts']);
+
+      const result = await new ImplementHandler({
+        steps: harness.steps,
+        runStep: harness.runStep,
+      }).run(harness.ctx);
+
+      expect(result).toEqual({ outcome: 'passed' });
+
+      expect(existsSync(rootScratch)).toBe(false);
+      expect(existsSync(nestedScratch)).toBe(true);
+      expect(existsSync(protectedFile)).toBe(true);
+
+      const artifactContent = await harness.artifacts.read(RUN_UUID, 'scratch-files.json');
+      const parsed = JSON.parse(artifactContent);
+      expect(parsed).toEqual({
+        steps: [
+          {
+            stepIndex: 1,
+            totalSteps: 1,
+            stepTitle: 'detect scratch files',
+            files: ['test-ast.js'],
+          },
+        ],
+      });
+    } finally {
+      rmSync(tmpCwd, { recursive: true, force: true });
+    }
+  });
+
+  it('regression test (#922): step writes test-ast.js to root, step completes and cleans root, run reaches validate successfully', async () => {
+    const tmpCwd = mkdtempSync(join(tmpdir(), 'repro-922-'));
+    try {
+      const rootAstJs = join(tmpCwd, 'test-ast.js');
+      const rootAstCjs = join(tmpCwd, 'test-ast.cjs');
+      writeFileSync(rootAstJs, 'const ts = require("typescript");');
+      writeFileSync(rootAstCjs, 'const ts = require("typescript");');
+
+      const harness = await makeHarness(
+        { expected_files: ['src/declared.ts'] },
+        '?? test-ast.js\n?? test-ast.cjs',
+      );
+      harness.ctx.cwd = tmpCwd;
+      harness.git.headByCwd.set(tmpCwd, 'pre-step');
+      harness.git.statusByCwd.set(tmpCwd, '?? test-ast.js\n?? test-ast.cjs');
+      harness.git.changedFilesResults.set('pre-step|post-step', ['src/declared.ts']);
+
+      const implementResult = await new ImplementHandler({
+        steps: harness.steps,
+        runStep: harness.runStep,
+      }).run(harness.ctx);
+
+      expect(implementResult).toEqual({ outcome: 'passed' });
+      expect(existsSync(rootAstJs)).toBe(false);
+      expect(existsSync(rootAstCjs)).toBe(false);
+
+      harness.git.statusByCwd.set(tmpCwd, '');
+
+      const validationPort = new FakeValidationPort();
+      validationPort.result = [
+        {
+          command: 'pnpm test',
+          exitCode: 0,
+          durationMs: 100,
+          stdout: 'ok',
+          stderr: '',
+          stdoutPath: 'out',
+          stderrPath: 'err',
+          outcome: 'passed',
+        },
+      ];
+      const runValidation = new RunValidation({
+        validation: validationPort,
+        validationRunRepository: new FakeValidationRunRepository(),
+        idFactory: () => 'vr-922',
+        now: () => new Date('2026-08-16T18:00:00.000Z'),
+      });
+
+      const validateResult = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm test'],
+        timeoutSeconds: 60,
+        logDir: tmpCwd,
+        fixValidateEnabled: false,
+      }).run(harness.ctx);
+
+      expect(validateResult).toEqual({ outcome: 'passed' });
+    } finally {
+      rmSync(tmpCwd, { recursive: true, force: true });
+    }
   });
 });

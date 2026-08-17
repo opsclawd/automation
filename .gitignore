@@ -46,6 +46,7 @@ cache/
 .openclaw.db
 /orchestrator.sqlite
 /result.json
+/scratch-files.json
 task-*-complete.md
 
 # Stray agent/orchestrator scratch that has leaked into commits before

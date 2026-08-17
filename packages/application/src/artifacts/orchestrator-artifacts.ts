@@ -14,6 +14,7 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'compound.md',
   'validation.result',
   'result.json',
+  'scratch-files.json',
   'fix-validate-done.marker',
   'plan-review-passed.marker',
   'pr-summary.md',

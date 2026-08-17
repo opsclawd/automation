@@ -29,6 +29,7 @@ module.exports = {
           '^packages/application/src/prompts/load-prompt-template\\.ts$',
           '^packages/application/src/results/failure-classification\\.ts$',
           '^packages/application/src/phases/handlers/run-single-shot-agent-phase\\.ts$',
+          '^packages/application/src/phases/handlers/implement\\.ts$',
           '(^|/)__tests__/',
         ],
       },
