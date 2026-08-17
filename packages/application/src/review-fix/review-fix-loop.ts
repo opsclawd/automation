@@ -185,6 +185,11 @@ export class ReviewFixLoop {
       ...(input.baselineCommitSha ? { baselineCommitSha: input.baselineCommitSha } : {}),
     });
 
+    const manifestResult = await this.loadManifest(input, {
+      cwd: input.cwd,
+      runId: input.runId,
+    });
+
     let consecutiveFixFailures = 0;
     // Trackers for the optional runaway-protection caps (#667). Kept
     // separate from `consecutiveFixFailures` so we don't entangle
@@ -435,6 +440,7 @@ export class ReviewFixLoop {
                 input,
                 fix.headBeforeFix,
                 verification.headAfterFix,
+                manifestResult,
               );
               if (!boundaryCheck.ok) {
                 const failure = await this.handleBoundaryFailure(
@@ -449,13 +455,10 @@ export class ReviewFixLoop {
                   return failure.result;
                 }
                 thisLoop = failure.loop;
-                const syntheticFinding = {
-                  severity: 'P0',
-                  summary: boundaryCheck.message,
-                  ...(boundaryCheck.files ? { files: boundaryCheck.files } : {}),
-                };
-                lastOffendingFindings = [syntheticFinding];
-                preEvaluatedGateResult = { outcome: 'fail', output: boundaryCheck.message };
+                const gateOutput = gateResult?.output
+                  ? `${gateResult.output}\n\n${boundaryCheck.message}`
+                  : boundaryCheck.message;
+                preEvaluatedGateResult = { outcome: 'fail', output: gateOutput };
                 consecutiveFixFailures = 0;
                 consecutiveFixFailuresForCap = 0;
                 lastIterationHadFixCommit = false;
@@ -534,6 +537,7 @@ export class ReviewFixLoop {
                     input,
                     fix.headBeforeFix ?? 'HEAD',
                     committedSha,
+                    manifestResult,
                   );
                   if (!boundaryCheck.ok) {
                     const failure = await this.handleBoundaryFailure(
@@ -548,13 +552,10 @@ export class ReviewFixLoop {
                       return failure.result;
                     }
                     thisLoop = failure.loop;
-                    const syntheticFinding = {
-                      severity: 'P0',
-                      summary: boundaryCheck.message,
-                      ...(boundaryCheck.files ? { files: boundaryCheck.files } : {}),
-                    };
-                    lastOffendingFindings = [syntheticFinding];
-                    preEvaluatedGateResult = { outcome: 'fail', output: boundaryCheck.message };
+                    const gateOutput = gateResult?.output
+                      ? `${gateResult.output}\n\n${boundaryCheck.message}`
+                      : boundaryCheck.message;
+                    preEvaluatedGateResult = { outcome: 'fail', output: gateOutput };
                     consecutiveFixFailures = 0;
                     consecutiveFixFailuresForCap = 0;
                     lastIterationHadFixCommit = false;
@@ -1362,6 +1363,7 @@ export class ReviewFixLoop {
               input,
               fix.headBeforeFix,
               verification.headAfterFix,
+              manifestResult,
             );
             if (!boundaryCheck.ok) {
               const failure = await this.handleBoundaryFailure(
@@ -1376,12 +1378,6 @@ export class ReviewFixLoop {
                 return failure.result;
               }
               thisLoop = failure.loop;
-              const syntheticFinding = {
-                severity: 'P0',
-                summary: boundaryCheck.message,
-                ...(boundaryCheck.files ? { files: boundaryCheck.files } : {}),
-              };
-              lastOffendingFindings = [syntheticFinding];
               pendingDeterministicDiagnostic = boundaryCheck.message;
               consecutiveFixFailures = 0;
               consecutiveFixFailuresForCap = 0;
@@ -1489,6 +1485,7 @@ export class ReviewFixLoop {
                   input,
                   fix.headBeforeFix ?? 'HEAD',
                   committedSha,
+                  manifestResult,
                 );
                 if (!boundaryCheck.ok) {
                   const failure = await this.handleBoundaryFailure(
@@ -1503,12 +1500,6 @@ export class ReviewFixLoop {
                     return failure.result;
                   }
                   thisLoop = failure.loop;
-                  const syntheticFinding = {
-                    severity: 'P0',
-                    summary: boundaryCheck.message,
-                    ...(boundaryCheck.files ? { files: boundaryCheck.files } : {}),
-                  };
-                  lastOffendingFindings = [syntheticFinding];
                   pendingDeterministicDiagnostic = boundaryCheck.message;
                   consecutiveFixFailures = 0;
                   consecutiveFixFailuresForCap = 0;
@@ -2601,7 +2592,7 @@ export class ReviewFixLoop {
 
   private async loadManifest(
     input: ReviewFixLoopInput,
-    ctx: StepContext,
+    ctx: { cwd: string; runId: unknown },
   ): Promise<ManifestLoadResult> {
     if (input.manifest) {
       if (typeof input.manifest === 'object' && input.manifest !== null) {
@@ -2673,6 +2664,7 @@ export class ReviewFixLoop {
     loopInput: ReviewFixLoopInput,
     headBeforeFix: string,
     headAfterFix: string,
+    manifestResult: ManifestLoadResult,
   ): Promise<
     { ok: true; changedFiles: string[] } | { ok: false; message: string; files?: string[] }
   > {
@@ -2680,7 +2672,6 @@ export class ReviewFixLoop {
       return { ok: true, changedFiles: [] };
     }
 
-    const manifestResult = await this.loadManifest(loopInput, ctx);
     if (manifestResult.status === 'missing') {
       return { ok: true, changedFiles: [] };
     }

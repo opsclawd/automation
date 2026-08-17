@@ -124,42 +124,56 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       .mockResolvedValueOnce({
         invocationId: 'rev-2',
         agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [
+          { severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] },
+        ],
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'rev-3',
+        agentOutcome: 'success',
         verdict: 'pass',
         offendingFindings: [],
       });
 
     // Iteration 1 fixer touches undeclared file -> violation
-    git.headByCwd.set('/tmp/wt', 'head-1');
     git.changedFilesResults.set('head-0|head-1', ['src/undeclared.ts']);
 
     // Iteration 2 fixer touches declared file -> success
     git.changedFilesResults.set('head-0|head-2', ['src/declared.ts']);
 
     vi.mocked(baseDeps.runFix)
-      .mockResolvedValueOnce({
-        invocationId: 'fix-1',
-        agentOutcome: 'success',
-        verdict: 'done_with_fixes',
-        headBeforeFix: 'head-0',
-        summary: 'attempt 1 with undeclared file',
+      .mockImplementationOnce(async () => {
+        git.headByCwd.set('/tmp/wt', 'head-1');
+        return {
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'head-0',
+          summary: 'attempt 1 with undeclared file',
+        };
       })
-      .mockResolvedValueOnce({
-        invocationId: 'fix-2',
-        agentOutcome: 'success',
-        verdict: 'done_with_fixes',
-        headBeforeFix: 'head-0',
-        summary: 'attempt 2 with declared file',
+      .mockImplementationOnce(async () => {
+        git.headByCwd.set('/tmp/wt', 'head-2');
+        return {
+          invocationId: 'fix-2',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'head-0',
+          summary: 'attempt 2 with declared file',
+        };
       });
 
     const loop = new ReviewFixLoop(baseDeps);
     const result = await loop.execute({
       ...baseInput,
-      maxIterations: 2,
+      maxIterations: 3,
     });
 
     expect(result.phaseOutcome).toBe('passed');
     expect(result.loop.iterations[0]?.outcome).toBe('unresolved');
-    expect(result.loop.iterations[1]?.outcome).toBe('resolved');
+    expect(result.loop.iterations[1]?.outcome).toBe('fixed');
+    expect(result.loop.iterations[2]?.outcome).toBe('resolved');
     expect(events.filter((e) => e.type === 'task_boundary.violated')).toHaveLength(1);
   });
 
@@ -463,10 +477,13 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     expect(fixCalls).toHaveLength(3);
     expect(fixCalls[1]?.attemptKind).toBe('deterministic');
     expect(fixCalls[1]?.deterministicDiagnostic).toBe('typecheck failed');
+    expect(fixCalls[1]?.allowedFiles).toEqual(['src/declared.ts']);
     expect(fixCalls[2]?.attemptKind).toBe('deterministic');
+    expect(fixCalls[2]?.deterministicDiagnostic).toContain('typecheck failed');
     expect(fixCalls[2]?.deterministicDiagnostic).toContain(
       'review-fix modified undeclared files: src/undeclared.ts',
     );
+    expect(fixCalls[2]?.allowedFiles).toEqual(['src/declared.ts']);
   });
 
   it('treats malformed manifest in artifactStore as synthetic check failure', async () => {
@@ -717,5 +734,70 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
 
     const escalationEvents = events.filter((e) => e.type === 'phase.fallback.escalated');
     expect(escalationEvents).toHaveLength(0);
+  });
+
+  it('rejects fix commit when worktree task-manifest.json is rewritten by fixer to include undeclared file', async () => {
+    let worktreeManifestContent = JSON.stringify({
+      version: 2,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+    });
+
+    const depsWithWorktreeFile: ReviewFixLoopDeps = {
+      ...baseDeps,
+      artifactStore: undefined,
+      readWorktreeFile: vi.fn().mockImplementation(async (_cwd, file) => {
+        if (file === 'task-manifest.json') return worktreeManifestContent;
+        return undefined;
+      }),
+    };
+
+    const inputWithoutManifest: ReviewFixLoopInput = {
+      ...baseInput,
+      maxIterations: 1,
+      manifest: undefined,
+    };
+
+    vi.mocked(depsWithWorktreeFile.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/undeclared.ts']);
+
+    vi.mocked(depsWithWorktreeFile.runFix).mockImplementationOnce(async () => {
+      // Fixer attempts to rewrite task-manifest.json to whitelist undeclared file
+      worktreeManifestContent = JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          { n: 1, title: 'Task 1', expected_files: ['src/declared.ts', 'src/undeclared.ts'] },
+        ],
+      });
+      return {
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'head-0',
+        summary: 'attempted fix with rewritten manifest',
+      };
+    });
+
+    const loop = new ReviewFixLoop(depsWithWorktreeFile);
+    const result = await loop.execute(inputWithoutManifest);
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.message).toContain(
+      'review-fix modified undeclared files: src/undeclared.ts',
+    );
+    expect(depsWithWorktreeFile.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
   });
 });
