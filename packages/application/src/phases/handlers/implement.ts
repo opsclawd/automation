@@ -352,7 +352,6 @@ export class ImplementHandler implements PhaseHandler {
       let declaredFilesRetryCount = 0;
       let priorAttemptMissingFiles: string[] | undefined;
       let priorAttemptUndeclaredFiles: string[] | undefined;
-      let priorAttemptModifiedReferenceFiles: string[] | undefined;
       let priorAttemptRepairedProtectedFiles: string[] | undefined;
       let result: StepRunResult;
 
@@ -372,9 +371,6 @@ export class ImplementHandler implements PhaseHandler {
               : {}),
             ...(priorAttemptMissingFiles !== undefined ? { priorAttemptMissingFiles } : {}),
             ...(priorAttemptUndeclaredFiles !== undefined ? { priorAttemptUndeclaredFiles } : {}),
-            ...(priorAttemptModifiedReferenceFiles !== undefined
-              ? { priorAttemptModifiedReferenceFiles }
-              : {}),
             ...(priorAttemptRepairedProtectedFiles !== undefined
               ? { priorAttemptRepairedProtectedFiles }
               : {}),
@@ -694,9 +690,19 @@ export class ImplementHandler implements PhaseHandler {
               }
             }
 
+            const hasManifestFault = modifiedReferenceFiles.length > 0;
+            if (hasManifestFault) {
+              const failureMessage = `step ${d.index} (${d.title}) modified reference_files ${modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
+              this.opts.steps.upsert({
+                ...step,
+                status: 'needs_human_review',
+                completedAt: ctx.now(),
+              });
+              return this.needsHumanReview(ctx, emit, 'needs_human_review', failureMessage);
+            }
+
             const hasMissingViolation = missingFiles.length > 0 && !verifiedUnaffected;
-            const hasUndeclaredViolation =
-              modifiedReferenceFiles.length > 0 || undeclaredFiles.length > 0;
+            const hasUndeclaredViolation = undeclaredFiles.length > 0;
             const hasProtectedViolation = repairedProtectedRecord !== undefined;
             const hasBoundaryViolation =
               hasMissingViolation || hasUndeclaredViolation || hasProtectedViolation;
@@ -705,8 +711,6 @@ export class ImplementHandler implements PhaseHandler {
               if (declaredFilesRetryCount < maxDeclaredFilesRetries) {
                 declaredFilesRetryCount += 1;
                 priorAttemptMissingFiles = hasMissingViolation ? missingFiles : undefined;
-                priorAttemptModifiedReferenceFiles =
-                  modifiedReferenceFiles.length > 0 ? modifiedReferenceFiles : undefined;
                 priorAttemptUndeclaredFiles =
                   undeclaredFiles.length > 0 ? undeclaredFiles : undefined;
                 priorAttemptRepairedProtectedFiles =
@@ -768,11 +772,6 @@ export class ImplementHandler implements PhaseHandler {
                 }
                 if (hasMissingViolation) {
                   violationParts.push(`did not commit declared files: ${missingFiles.join(', ')}`);
-                }
-                if (modifiedReferenceFiles.length > 0) {
-                  violationParts.push(
-                    `modified read-only reference files: ${modifiedReferenceFiles.join(', ')}`,
-                  );
                 }
                 if (undeclaredFiles.length > 0) {
                   violationParts.push(`committed undeclared files: ${undeclaredFiles.join(', ')}`);
