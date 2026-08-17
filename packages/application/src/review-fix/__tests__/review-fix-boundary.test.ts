@@ -239,4 +239,402 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     expect(boundaryEvents).toHaveLength(0);
     expect(baseDeps.rollbackFix).not.toHaveBeenCalled();
   });
+
+  it('carries boundary violation failure detail into next runFix call through deterministicDiagnostic', async () => {
+    vi.mocked(baseDeps.runReview)
+      .mockResolvedValueOnce({
+        invocationId: 'rev-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [
+          { severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] },
+        ],
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'rev-2',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [
+          { severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] },
+        ],
+      });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/undeclared.ts']);
+
+    const fixCalls: import('../types.js').FixStepOptions[] = [];
+    vi.mocked(baseDeps.runFix)
+      .mockImplementationOnce(async (_ctx, opts) => {
+        fixCalls.push(opts);
+        return {
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'head-0',
+          summary: 'attempt 1 with undeclared file',
+        };
+      })
+      .mockImplementationOnce(async (_ctx, opts) => {
+        fixCalls.push(opts);
+        git.headByCwd.set('/tmp/wt', 'head-2');
+        git.changedFilesResults.set('head-0|head-2', ['src/declared.ts']);
+        return {
+          invocationId: 'fix-2',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'head-0',
+          summary: 'attempt 2 with declared file',
+        };
+      });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    await loop.execute({ ...baseInput, maxIterations: 2 });
+
+    expect(fixCalls).toHaveLength(2);
+    expect(fixCalls[0]?.deterministicDiagnostic).toBeUndefined();
+    expect(fixCalls[1]?.deterministicDiagnostic).toContain(
+      'review-fix modified undeclared files: src/undeclared.ts',
+    );
+  });
+
+  it('enforces task boundaries in auto-commit fallback path when undeclared files are committed', async () => {
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-0');
+    git.statusByCwd.set('/tmp/wt', 'M src/undeclared.ts');
+    git.changedFilesResults.set('head-0|fake-sha-1', ['src/undeclared.ts']);
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'left dirty undeclared file',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({ ...baseInput, maxIterations: 1 });
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.message).toContain(
+      'review-fix modified undeclared files: src/undeclared.ts',
+    );
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+    expect(result.loop.iterations[0]?.outcome).toBe('unresolved');
+  });
+
+  it('enforces task boundaries in deterministic gate fix path when undeclared files are committed', async () => {
+    vi.mocked(baseDeps.runPostFixGate)
+      .mockResolvedValueOnce({ outcome: 'fail', output: 'typecheck failed' })
+      .mockResolvedValueOnce({ outcome: 'pass', output: '' });
+
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [
+        { severity: 'P1', summary: 'initial review finding', files: ['src/declared.ts'] },
+      ],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/declared.ts']);
+
+    // Fix 1 commits declared file, advances head to head-1
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'fixed review finding',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    // Execute iteration 1 (produces fix-1 commit)
+    // Then iteration 2 starts with failing post-fix gate
+    git.changedFilesResults.set('head-1|head-2', ['src/undeclared.ts']);
+    vi.mocked(baseDeps.runFix).mockImplementationOnce(async () => {
+      git.headByCwd.set('/tmp/wt', 'head-2');
+      return {
+        invocationId: 'fix-2',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'head-1',
+        summary: 'fixed gate by touching undeclared file',
+      };
+    });
+
+    const result = await loop.execute({ ...baseInput, maxIterations: 2 });
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.message).toContain(
+      'review-fix modified undeclared files: src/undeclared.ts',
+    );
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 2 }),
+      'head-1',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+  });
+
+  it('treats malformed manifest in artifactStore as synthetic check failure', async () => {
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: '{ broken json ::: ',
+    });
+
+    const inputWithoutManifest = {
+      ...baseInput,
+      maxIterations: 1,
+      manifest: undefined,
+    };
+
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/declared.ts']);
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'attempted fix',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute(inputWithoutManifest);
+
+    expect(result.phaseOutcome).toBe('failed');
+    expect(baseDeps.rollbackFix).toHaveBeenCalled();
+
+    const checkFailedEvents = events.filter((e) => e.type === 'task_boundary.check_failed');
+    expect(checkFailedEvents).toHaveLength(1);
+    expect(checkFailedEvents[0]?.metadata).toMatchObject({
+      reason: 'malformed_manifest',
+    });
+  });
+
+  it('treats git errors during boundary check as synthetic failure, rolls back, and marks iteration unresolved', async () => {
+    git.changedFiles = vi.fn().mockRejectedValue(new Error('git error: corrupt pack file'));
+
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'attempted fix',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({ ...baseInput, maxIterations: 1 });
+
+    expect(result.phaseOutcome).toBe('failed');
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    const errorEvents = events.filter((e) => e.type === 'task_boundary.check_failed');
+    expect(errorEvents).toHaveLength(1);
+    expect(errorEvents[0]?.message).toContain('git error: corrupt pack file');
+  });
+
+  it('loads manifest from artifactStore when input.manifest is undefined', async () => {
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+      }),
+    });
+
+    const inputWithoutManifest = {
+      ...baseInput,
+      maxIterations: 1,
+      manifest: undefined,
+    };
+
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/undeclared.ts']);
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'attempted fix with undeclared file',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute(inputWithoutManifest);
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.message).toContain(
+      'review-fix modified undeclared files: src/undeclared.ts',
+    );
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+  });
+
+  it('loads manifest from readWorktreeFile when input.manifest and artifactStore are undefined', async () => {
+    const inputWithoutManifest = {
+      ...baseInput,
+      maxIterations: 1,
+      manifest: undefined,
+    };
+
+    const depsWithWorktreeFile: ReviewFixLoopDeps = {
+      ...baseDeps,
+      artifactStore: undefined,
+      readWorktreeFile: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          version: 2,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        }),
+      ),
+    };
+
+    vi.mocked(depsWithWorktreeFile.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/undeclared.ts']);
+
+    vi.mocked(depsWithWorktreeFile.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'attempted fix with undeclared file',
+    });
+
+    const loop = new ReviewFixLoop(depsWithWorktreeFile);
+    const result = await loop.execute(inputWithoutManifest);
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(depsWithWorktreeFile.readWorktreeFile).toHaveBeenCalledWith(
+      '/tmp/wt',
+      'task-manifest.json',
+    );
+    expect(depsWithWorktreeFile.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+  });
+
+  it('resets consecutiveFixFailures on boundary violation to prevent premature fallback escalation', async () => {
+    const fixCalls: import('../types.js').FixStepOptions[] = [];
+    vi.mocked(baseDeps.runReview)
+      .mockResolvedValueOnce({
+        invocationId: 'rev-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [{ severity: 'P1', summary: 'bug 1', files: ['src/declared.ts'] }],
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'rev-2',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [{ severity: 'P1', summary: 'bug 2', files: ['src/declared.ts'] }],
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'rev-3',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [{ severity: 'P1', summary: 'bug 3', files: ['src/declared.ts'] }],
+      });
+
+    vi.mocked(baseDeps.runFix)
+      .mockImplementationOnce(async (_ctx, opts) => {
+        fixCalls.push(opts);
+        return {
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'cannot_fix',
+          headBeforeFix: 'head-0',
+        };
+      })
+      .mockImplementationOnce(async (_ctx, opts) => {
+        fixCalls.push(opts);
+        git.headByCwd.set('/tmp/wt', 'head-1');
+        git.changedFilesResults.set('head-0|head-1', ['src/undeclared.ts']);
+        return {
+          invocationId: 'fix-2',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'head-0',
+        };
+      })
+      .mockImplementationOnce(async (_ctx, opts) => {
+        fixCalls.push(opts);
+        git.headByCwd.set('/tmp/wt', 'head-0');
+        return {
+          invocationId: 'fix-3',
+          agentOutcome: 'success',
+          verdict: 'cannot_fix',
+          headBeforeFix: 'head-0',
+        };
+      });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    await loop.execute({
+      ...baseInput,
+      fixFallbackProfile: AgentProfileName('pi-qwen-local'),
+      maxIterations: 3,
+    });
+
+    expect(fixCalls).toHaveLength(3);
+    expect(fixCalls[0]?.useFallback).toBe(false);
+    expect(fixCalls[1]?.useFallback).toBe(false);
+    expect(fixCalls[2]?.useFallback).toBe(false);
+
+    const escalationEvents = events.filter((e) => e.type === 'phase.fallback.escalated');
+    expect(escalationEvents).toHaveLength(0);
+  });
 });

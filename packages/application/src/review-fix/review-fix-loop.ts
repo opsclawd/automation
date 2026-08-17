@@ -19,6 +19,12 @@ import {
 import { extractEvidence } from './extract-evidence.js';
 import { appendRebuttalToCodeReview } from './append-rebuttal.js';
 import { verifyFixCommit } from '../fix-commit-verifier.js';
+import { checkTaskBoundaries } from '../task-file-boundaries.js';
+
+type ManifestLoadResult =
+  | { status: 'found'; manifest: unknown }
+  | { status: 'missing'; message: string }
+  | { status: 'malformed'; message: string; error: string };
 import {
   captureNetRevertBaseline,
   checkForNetReverts,
@@ -204,6 +210,7 @@ export class ReviewFixLoop {
     let lastFixVerdict: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix' | undefined;
     let pendingReconciliationContext: string | undefined;
     let pendingScopeReviewContext: string | undefined;
+    let pendingDeterministicDiagnostic: string | undefined;
     const findingArrayHistory: Array<
       Array<{ severity: string; summary: string; files?: string[] }>
     > = [];
@@ -423,6 +430,38 @@ export class ReviewFixLoop {
               expectedHead: fix.headBeforeFix,
             });
             if (verification.kind === 'advanced') {
+              const boundaryCheck = await this.checkTaskBoundary(
+                ctx,
+                input,
+                fix.headBeforeFix,
+                verification.headAfterFix,
+              );
+              if (!boundaryCheck.ok) {
+                const failure = await this.handleBoundaryFailure(
+                  ctx,
+                  input,
+                  {},
+                  fix,
+                  boundaryCheck,
+                  thisLoop,
+                );
+                if (!failure.handled) {
+                  return failure.result;
+                }
+                thisLoop = failure.loop;
+                const syntheticFinding = {
+                  severity: 'P0',
+                  summary: boundaryCheck.message,
+                  ...(boundaryCheck.files ? { files: boundaryCheck.files } : {}),
+                };
+                lastOffendingFindings = [syntheticFinding];
+                pendingDeterministicDiagnostic = boundaryCheck.message;
+                consecutiveFixFailures = 0;
+                consecutiveFixFailuresForCap = 0;
+                lastIterationHadFixCommit = false;
+                continue;
+              }
+
               lastFixHeadRange = {
                 before: fix.headBeforeFix,
                 after: verification.headAfterFix,
@@ -490,6 +529,38 @@ export class ReviewFixLoop {
                   committedSha = await this.deps.git!.commit(ctx.cwd, message);
                 } catch {}
                 if (committedSha) {
+                  const boundaryCheck = await this.checkTaskBoundary(
+                    ctx,
+                    input,
+                    fix.headBeforeFix ?? 'HEAD',
+                    committedSha,
+                  );
+                  if (!boundaryCheck.ok) {
+                    const failure = await this.handleBoundaryFailure(
+                      ctx,
+                      input,
+                      {},
+                      fix,
+                      boundaryCheck,
+                      thisLoop,
+                    );
+                    if (!failure.handled) {
+                      return failure.result;
+                    }
+                    thisLoop = failure.loop;
+                    const syntheticFinding = {
+                      severity: 'P0',
+                      summary: boundaryCheck.message,
+                      ...(boundaryCheck.files ? { files: boundaryCheck.files } : {}),
+                    };
+                    lastOffendingFindings = [syntheticFinding];
+                    pendingDeterministicDiagnostic = boundaryCheck.message;
+                    consecutiveFixFailures = 0;
+                    consecutiveFixFailuresForCap = 0;
+                    lastIterationHadFixCommit = false;
+                    continue;
+                  }
+
                   const scopeResult = await this.finalizeScopeAndCommitMessage({
                     ctx,
                     loopInput: input,
@@ -1166,9 +1237,13 @@ export class ReviewFixLoop {
         ...(pendingReconciliationContext
           ? { reconciliationContext: pendingReconciliationContext }
           : {}),
+        ...(pendingDeterministicDiagnostic
+          ? { deterministicDiagnostic: pendingDeterministicDiagnostic }
+          : {}),
         ...(allowedFiles.length > 0 ? { allowedFiles } : {}),
       });
       pendingReconciliationContext = undefined;
+      pendingDeterministicDiagnostic = undefined;
       lastFixInvocationId = fix.invocationId;
       lastFixVerdict = fix.verdict;
 
@@ -1282,6 +1357,38 @@ export class ReviewFixLoop {
             expectedHead: fix.headBeforeFix,
           });
           if (verification.kind === 'advanced') {
+            const boundaryCheck = await this.checkTaskBoundary(
+              ctx,
+              input,
+              fix.headBeforeFix,
+              verification.headAfterFix,
+            );
+            if (!boundaryCheck.ok) {
+              const failure = await this.handleBoundaryFailure(
+                ctx,
+                input,
+                review,
+                fix,
+                boundaryCheck,
+                thisLoop,
+              );
+              if (!failure.handled) {
+                return failure.result;
+              }
+              thisLoop = failure.loop;
+              const syntheticFinding = {
+                severity: 'P0',
+                summary: boundaryCheck.message,
+                ...(boundaryCheck.files ? { files: boundaryCheck.files } : {}),
+              };
+              lastOffendingFindings = [syntheticFinding];
+              pendingDeterministicDiagnostic = boundaryCheck.message;
+              consecutiveFixFailures = 0;
+              consecutiveFixFailuresForCap = 0;
+              lastIterationHadFixCommit = false;
+              continue;
+            }
+
             const scopeResult = await this.finalizeScopeAndCommitMessage({
               ctx,
               loopInput: input,
@@ -1377,6 +1484,38 @@ export class ReviewFixLoop {
               }
 
               if (committedSha) {
+                const boundaryCheck = await this.checkTaskBoundary(
+                  ctx,
+                  input,
+                  fix.headBeforeFix ?? 'HEAD',
+                  committedSha,
+                );
+                if (!boundaryCheck.ok) {
+                  const failure = await this.handleBoundaryFailure(
+                    ctx,
+                    input,
+                    review,
+                    fix,
+                    boundaryCheck,
+                    thisLoop,
+                  );
+                  if (!failure.handled) {
+                    return failure.result;
+                  }
+                  thisLoop = failure.loop;
+                  const syntheticFinding = {
+                    severity: 'P0',
+                    summary: boundaryCheck.message,
+                    ...(boundaryCheck.files ? { files: boundaryCheck.files } : {}),
+                  };
+                  lastOffendingFindings = [syntheticFinding];
+                  pendingDeterministicDiagnostic = boundaryCheck.message;
+                  consecutiveFixFailures = 0;
+                  consecutiveFixFailuresForCap = 0;
+                  lastIterationHadFixCommit = false;
+                  continue;
+                }
+
                 const scopeResult = await this.finalizeScopeAndCommitMessage({
                   ctx,
                   loopInput: input,
@@ -2458,5 +2597,197 @@ export class ReviewFixLoop {
       humanReviewReason,
       match,
     };
+  }
+
+  private async loadManifest(
+    input: ReviewFixLoopInput,
+    ctx: StepContext,
+  ): Promise<ManifestLoadResult> {
+    if (input.manifest) {
+      if (typeof input.manifest === 'object' && input.manifest !== null) {
+        return { status: 'found', manifest: input.manifest };
+      }
+      return {
+        status: 'malformed',
+        message: 'input manifest is invalid',
+        error: 'input manifest is not an object',
+      };
+    }
+    if (this.deps.artifactStore) {
+      try {
+        const raw = await this.deps.artifactStore.read(String(input.runId), 'task-manifest.json');
+        try {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed === 'object' && parsed !== null) {
+            return { status: 'found', manifest: parsed };
+          }
+          return {
+            status: 'malformed',
+            message: 'task-manifest.json in artifact store is not an object',
+            error: 'parsed to non-object',
+          };
+        } catch (parseErr) {
+          const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
+          return {
+            status: 'malformed',
+            message: `malformed task-manifest.json in artifact store: ${errStr}`,
+            error: errStr,
+          };
+        }
+      } catch {
+        // not found in artifact store, try readWorktreeFile
+      }
+    }
+    if (this.deps.readWorktreeFile) {
+      try {
+        const raw = await this.deps.readWorktreeFile(ctx.cwd, 'task-manifest.json');
+        if (raw !== undefined && raw !== null && raw !== '') {
+          try {
+            const parsed = JSON.parse(raw);
+            if (typeof parsed === 'object' && parsed !== null) {
+              return { status: 'found', manifest: parsed };
+            }
+            return {
+              status: 'malformed',
+              message: 'task-manifest.json in worktree is not an object',
+              error: 'parsed to non-object',
+            };
+          } catch (parseErr) {
+            const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
+            return {
+              status: 'malformed',
+              message: `malformed task-manifest.json in worktree: ${errStr}`,
+              error: errStr,
+            };
+          }
+        }
+      } catch {
+        // not found in worktree
+      }
+    }
+    return { status: 'missing', message: 'task-manifest.json not found' };
+  }
+
+  private async checkTaskBoundary(
+    ctx: StepContext,
+    loopInput: ReviewFixLoopInput,
+    headBeforeFix: string,
+    headAfterFix: string,
+  ): Promise<
+    { ok: true; changedFiles: string[] } | { ok: false; message: string; files?: string[] }
+  > {
+    if (!this.deps.git || typeof this.deps.git.changedFiles !== 'function') {
+      return { ok: true, changedFiles: [] };
+    }
+
+    const manifestResult = await this.loadManifest(loopInput, ctx);
+    if (manifestResult.status === 'missing') {
+      return { ok: true, changedFiles: [] };
+    }
+    if (manifestResult.status === 'malformed') {
+      const errorMsg = manifestResult.message;
+      this.emit(
+        loopInput,
+        'task_boundary.check_failed',
+        'warn',
+        `task boundary check failed: ${errorMsg}`,
+        {
+          iterationIndex: ctx.iterationIndex,
+          reason: 'malformed_manifest',
+          error: manifestResult.error,
+        },
+      );
+      return { ok: false, message: `task boundary check failed: ${errorMsg}` };
+    }
+
+    let committedFiles: string[];
+    try {
+      committedFiles = await this.deps.git.changedFiles(ctx.cwd, headBeforeFix, headAfterFix);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.emit(
+        loopInput,
+        'task_boundary.check_failed',
+        'warn',
+        `task boundary check failed: ${errorMsg}`,
+        { iterationIndex: ctx.iterationIndex, reason: 'check_error', error: errorMsg },
+      );
+      return { ok: false, message: `task boundary check failed: ${errorMsg}` };
+    }
+
+    const classification = checkTaskBoundaries(committedFiles, manifestResult.manifest);
+    const violatingFiles = [
+      ...classification.modifiedReferenceFiles,
+      ...classification.undeclaredFiles,
+    ];
+    if (violatingFiles.length > 0) {
+      const message = `${loopInput.phaseId} modified undeclared files: ${violatingFiles.join(', ')}`;
+      this.emit(loopInput, 'task_boundary.violated', 'warn', message, {
+        phase: loopInput.phaseId,
+        files: violatingFiles,
+        modifiedReferenceFiles: classification.modifiedReferenceFiles,
+        undeclaredFiles: classification.undeclaredFiles,
+        iterationIndex: ctx.iterationIndex,
+      });
+      return { ok: false, message, files: violatingFiles };
+    }
+
+    return { ok: true, changedFiles: committedFiles };
+  }
+
+  private async handleBoundaryFailure(
+    ctx: StepContext,
+    input: ReviewFixLoopInput,
+    review: Partial<ReviewStepResult>,
+    fix: FixStepResult,
+    boundaryCheck: { ok: false; message: string; files?: string[] },
+    thisLoop: Loop,
+  ): Promise<{ handled: true; loop: Loop } | { handled: false; result: ReviewFixLoopResult }> {
+    let rollbackOk = true;
+    if (this.deps.rollbackFix && fix.headBeforeFix) {
+      rollbackOk = await this.deps.rollbackFix(ctx, fix.headBeforeFix);
+    }
+    if (!rollbackOk) {
+      this.emit(
+        input,
+        'loop.rollback.failed',
+        'error',
+        `rollback failed on iteration ${ctx.iterationIndex}, breaking loop`,
+        { index: ctx.iterationIndex },
+      );
+      const failedLoop = completeIteration(thisLoop, { outcome: 'failed', now: this.deps.now() });
+      this.deps.loops.update(failedLoop);
+      this.emitIterationCompleted(input, ctx.iterationIndex, 'failed');
+      await this.appendHistoryEntry(ctx, review, fix, undefined, 'failed', input);
+      await this.runCleanArtifacts(ctx);
+      return {
+        handled: false,
+        result: {
+          loop: failedLoop,
+          phaseOutcome: 'failed',
+          loopStatus: 'failed',
+          needsHumanReview: true,
+        },
+      };
+    }
+
+    const updatedLoop = completeIteration(thisLoop, {
+      outcome: 'unresolved',
+      fixInvocationId: fix.invocationId,
+      now: this.deps.now(),
+    });
+    this.deps.loops.update(updatedLoop);
+    this.emitIterationCompleted(input, ctx.iterationIndex, 'unresolved');
+    await this.appendHistoryEntry(
+      ctx,
+      review,
+      { ...fix, detail: boundaryCheck.message },
+      undefined,
+      'unresolved',
+      input,
+    );
+    await this.runCleanArtifacts(ctx);
+
+    return { handled: true, loop: updatedLoop };
   }
 }
