@@ -670,7 +670,7 @@ export interface Container {
     initialPreStepHead?: string;
     exemptUndeclaredFiles?: string[];
     completedStepIndexes?: number[];
-  }) => Promise<{ outcome: 'success' | 'failed' | 'needs_human_review'; failureMessage?: string }>;
+  }) => Promise<import('@ai-sdlc/application').StepRunResult>;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
     pollIntervalMs: number;
@@ -5541,6 +5541,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         return {
           outcome: result.outcome,
           ...(result.failureMessage !== undefined ? { failureMessage: result.failureMessage } : {}),
+          ...(result.failureKind !== undefined ? { failureKind: result.failureKind } : {}),
+          ...(result.modifiedReferenceFiles !== undefined
+            ? { modifiedReferenceFiles: result.modifiedReferenceFiles }
+            : {}),
         };
       };
 

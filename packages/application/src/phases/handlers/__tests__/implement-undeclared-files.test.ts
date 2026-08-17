@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { RunId, PhaseName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { ImplementHandler } from '../implement.js';
 import type { StepRunContext, StepRunResult } from '../implement.js';
@@ -115,7 +116,7 @@ describe('ImplementHandler undeclared files regression proof', () => {
     expect(events.filter((event) => event.type === 'step.completed')).toHaveLength(1);
   });
 
-  it('classifies a committed reference file separately from unrelated files', async () => {
+  it('escalates a manifest fault immediately without consuming retry budget', async () => {
     const artifacts = new FakeArtifactStore();
     const git = new FakeGitPort();
     const steps = new FakeStepRepository();
@@ -127,7 +128,7 @@ describe('ImplementHandler undeclared files regression proof', () => {
       tasks: [
         {
           n: 1,
-          title: 'Task 1: reference vs unrelated',
+          title: 'manifest fault test',
           expected_files: ['src/task.ts'],
           reference_files: ['src/ref-b.ts', 'src/ref-a.ts'],
         },
@@ -141,12 +142,9 @@ describe('ImplementHandler undeclared files regression proof', () => {
       'src/unrelated-z.ts',
       'src/unrelated-a.ts',
     ]);
-    git.changedFilesResults.set('pre-step|attempt-2', ['src/task.ts']);
 
-    const contexts: StepRunContext[] = [];
-    const runStep = vi.fn(async (sctx: StepRunContext): Promise<StepRunResult> => {
-      contexts.push(sctx);
-      git.headByCwd.set(ctx.cwd, `attempt-${contexts.length}`);
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
       return { outcome: 'success' };
     });
 
@@ -156,21 +154,154 @@ describe('ImplementHandler undeclared files regression proof', () => {
       maxDeclaredFilesRetries: 1,
     }).run(ctx);
 
-    expect(result.outcome).toBe('passed');
-    expect(runStep).toHaveBeenCalledTimes(2);
-    expect(contexts[0]?.priorAttemptModifiedReferenceFiles).toBeUndefined();
-    expect(contexts[0]?.priorAttemptUndeclaredFiles).toBeUndefined();
-    expect(contexts[1]?.priorAttemptModifiedReferenceFiles).toEqual(['src/ref-b.ts']);
-    expect(contexts[1]?.priorAttemptUndeclaredFiles).toEqual([
-      'src/unrelated-a.ts',
-      'src/unrelated-z.ts',
-    ]);
+    expect(result.outcome).toBe('needs_human_review');
+    expect(runStep).toHaveBeenCalledTimes(1);
+
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toBe(
+        'step 1 (Task 1: manifest fault test) modified reference_files src/ref-b.ts. This is a manifest fault: expected_files must include these files.',
+      );
+      expect(result.failure.artifacts).toEqual(['task-manifest.json']);
+      expect(result.failure.suggestedAction).toContain(
+        'Update task-manifest.json to add src/ref-b.ts to task 1 expected_files',
+      );
+    }
+
+    const stepEvents = events.filter((e) => e.type === 'step.needs_human_review');
+    expect(stepEvents).toHaveLength(1);
+    expect(stepEvents[0]?.metadata).toMatchObject({
+      index: 1,
+      total: 1,
+      taskTitle: 'manifest fault test',
+      modifiedReferenceFiles: ['src/ref-b.ts'],
+      preStepHead: 'pre-step',
+      postStepHead: 'attempt-1',
+    });
+
+    const phaseEvents = events.filter((e) => e.type === 'implement.needs_human_review');
+    expect(phaseEvents).toHaveLength(1);
 
     const retryEvents = events.filter((e) => e.type === 'step.declared_files_retry');
-    expect(retryEvents).toHaveLength(1);
-    const retryMetadata = (retryEvents[0] as { metadata?: Record<string, unknown> }).metadata;
-    expect(retryMetadata?.modifiedReferenceFiles).toEqual(['src/ref-b.ts']);
-    expect(retryMetadata?.undeclaredFiles).toEqual(['src/unrelated-a.ts', 'src/unrelated-z.ts']);
+    expect(retryEvents).toHaveLength(0);
+
+    const stepRecord = steps.findByIndex(RunId(ctx.runUuid), PhaseName('implement'), 1);
+    expect(stepRecord?.status).toBe('needs_human_review');
+  });
+
+  it('evaluates manifest fault before missing-file validation/typecheck when validation adapter rejects', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'mixed reference plus missing',
+          expected_files: ['src/expected.ts', 'src/missing.ts'],
+          reference_files: ['src/ref.ts'],
+          validation_commands: ['pnpm test'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/expected.ts', 'src/ref.ts']);
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
+      return { outcome: 'success' };
+    });
+
+    const validationPort = {
+      run: vi.fn(async () => {
+        throw new Error('Validation adapter should not have been called');
+      }),
+    };
+
+    const runWorkspaceTypecheck = vi.fn(async () => {
+      throw new Error('Typecheck adapter should not have been called');
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 1,
+      validationPort: validationPort as unknown as FakeValidationPort,
+      runWorkspaceTypecheck,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    expect(runStep).toHaveBeenCalledTimes(1);
+    expect(validationPort.run).not.toHaveBeenCalled();
+    expect(runWorkspaceTypecheck).not.toHaveBeenCalled();
+    expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain(
+        'step 1 (Task 1: mixed reference plus missing) modified reference_files src/ref.ts. This is a manifest fault: expected_files must include these files.',
+      );
+    }
+  });
+
+  it('supports manifest-correction recovery flow by updating task-manifest.json and resuming', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: recovery flow test',
+          expected_files: ['src/task.ts'],
+          reference_files: ['src/ref.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/task.ts', 'src/ref.ts']);
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
+      return { outcome: 'success' };
+    });
+
+    const handler = new ImplementHandler({ steps, runStep, maxDeclaredFilesRetries: 1 });
+    const initialResult = await handler.run(ctx);
+
+    expect(initialResult.outcome).toBe('needs_human_review');
+    expect(runStep).toHaveBeenCalledTimes(1);
+
+    // Operator corrects task-manifest.json in artifact store
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task 1: recovery flow test',
+            expected_files: ['src/task.ts', 'src/ref.ts'],
+          },
+        ],
+      }),
+    });
+
+    // Resume the run
+    const resumedResult = await handler.run(ctx);
+    expect(resumedResult.outcome).toBe('passed');
+    expect(runStep).toHaveBeenCalledTimes(2);
   });
 
   it('reports unrelated committed files with the task identity', async () => {
@@ -479,17 +610,12 @@ describe('ImplementHandler undeclared files regression proof', () => {
           n: 1,
           title: 'Task 1: mixed violations',
           expected_files: ['src/expected.ts', 'src/missing.ts'],
-          reference_files: ['src/ref.ts'],
         },
       ],
     });
 
     git.headByCwd.set(ctx.cwd, 'pre-step');
-    git.changedFilesResults.set('pre-step|attempt-1', [
-      'src/expected.ts',
-      'src/ref.ts',
-      'src/extra.ts',
-    ]);
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/expected.ts', 'src/extra.ts']);
     git.changedFilesResults.set('pre-step|attempt-2', ['src/expected.ts', 'src/missing.ts']);
 
     const contexts: StepRunContext[] = [];
@@ -509,7 +635,6 @@ describe('ImplementHandler undeclared files regression proof', () => {
     expect(runStep).toHaveBeenCalledTimes(2);
     expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(1);
     expect(contexts[1]?.priorAttemptMissingFiles).toEqual(['src/missing.ts']);
-    expect(contexts[1]?.priorAttemptModifiedReferenceFiles).toEqual(['src/ref.ts']);
     expect(contexts[1]?.priorAttemptUndeclaredFiles).toEqual(['src/extra.ts']);
   });
 
@@ -527,17 +652,12 @@ describe('ImplementHandler undeclared files regression proof', () => {
           n: 1,
           title: 'exhaustive failure',
           expected_files: ['src/expected.ts', 'src/missing.ts'],
-          reference_files: ['src/ref.ts'],
         },
       ],
     });
 
     git.headByCwd.set(ctx.cwd, 'pre-step');
-    git.changedFilesResults.set('pre-step|attempt-1', [
-      'src/expected.ts',
-      'src/ref.ts',
-      'src/extra.ts',
-    ]);
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/expected.ts', 'src/extra.ts']);
 
     const runStep = vi.fn(async (): Promise<StepRunResult> => {
       git.headByCwd.set(ctx.cwd, 'attempt-1');
@@ -555,8 +675,6 @@ describe('ImplementHandler undeclared files regression proof', () => {
       expect(result.failure.kind).toBe('invalid_result');
       expect(result.failure.message).toContain('step 1 (Task 1: exhaustive failure)');
       expect(result.failure.message).toContain('src/missing.ts');
-      expect(result.failure.message).toContain('modified read-only reference files');
-      expect(result.failure.message).toContain('src/ref.ts');
       expect(result.failure.message).toContain('committed undeclared files');
       expect(result.failure.message).toContain('src/extra.ts');
     }
@@ -564,5 +682,109 @@ describe('ImplementHandler undeclared files regression proof', () => {
     expect(events.filter((e) => e.type === 'step.uncommitted_files')).toHaveLength(1);
     expect(events.filter((e) => e.type === 'step.failed')).toHaveLength(1);
     expect(events.filter((e) => e.type === 'step.completed')).toHaveLength(0);
+  });
+
+  it('propagates the purely undeclared RED-first violation through the implement phase failure', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Add the RED-first regression proof',
+          expected_files: ['src/proof.test.ts'],
+          reference_files: ['src/read-only.ts'],
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step-sha');
+
+    const redMessage =
+      'RED-first violation: Task 1 (Add the RED-first regression proof) requires inverted validation command(s) "! pnpm test -- src/proof.test.ts" to pass, but the commit included out-of-scope files: src/future-fix.ts. Separate the regression proof from its implementation.';
+
+    const stepResult: StepRunResult = {
+      outcome: 'failed',
+      failureMessage: redMessage,
+    };
+
+    const runStep = vi
+      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+      .mockResolvedValue(stepResult);
+
+    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('invalid_result');
+      expect(result.failure.message).toBe(redMessage);
+    }
+
+    const failedEvent = events.find((e) => e.type === 'implement.failed');
+    expect(failedEvent).toBeDefined();
+    expect(failedEvent?.message).toBe(redMessage);
+  });
+
+  it('propagates the reference-file RED-first violation through implement phase as needs_human_review', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Add the RED-first regression proof',
+          expected_files: ['src/proof.test.ts'],
+          reference_files: ['src/read-only.ts'],
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step-sha');
+
+    const manifestFaultMessage =
+      'step 1 (Add the RED-first regression proof) modified reference_files src/read-only.ts. This is a manifest fault: expected_files must include these files.';
+
+    const stepResult: StepRunResult = {
+      outcome: 'needs_human_review',
+      failureMessage: manifestFaultMessage,
+      failureKind: 'needs_human_review',
+      modifiedReferenceFiles: ['src/read-only.ts'],
+    };
+
+    const runStep = vi
+      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+      .mockResolvedValue(stepResult);
+
+    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toBe(manifestFaultMessage);
+      expect(result.failure.artifacts).toEqual(['task-manifest.json']);
+      expect(result.failure.suggestedAction).toContain('Update task-manifest.json');
+    }
+
+    const stepNeedsReviewEvent = events.find((e) => e.type === 'step.needs_human_review');
+    expect(stepNeedsReviewEvent).toBeDefined();
+    expect(stepNeedsReviewEvent?.metadata).toMatchObject({
+      modifiedReferenceFiles: ['src/read-only.ts'],
+    });
+
+    const phaseNeedsReviewEvent = events.find((e) => e.type === 'implement.needs_human_review');
+    expect(phaseNeedsReviewEvent).toBeDefined();
+    expect(phaseNeedsReviewEvent?.message).toBe(manifestFaultMessage);
   });
 });

@@ -201,6 +201,7 @@ describe('ImplementHandler', () => {
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.kind).toBe('agent_incomplete');
       expect(result.failure.message).toContain('needs human review');
+      expect(result.failure.artifacts).toEqual([]);
     }
 
     const step = steps.findByIndex(

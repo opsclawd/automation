@@ -926,6 +926,46 @@ export class ImplementStepLoop {
         );
 
         if (failedInvertedCommands.length > 0) {
+          if (modifiedReferenceFiles.length > 0) {
+            const failureMessage = `step ${input.stepIndex} (${input.stepTitle}) modified reference_files ${modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
+
+            this.emit(input, 'step.red_first_violation', 'error', failureMessage, {
+              index: input.stepIndex,
+              taskTitle: input.stepTitle,
+              failedInvertedCommands,
+              modifiedReferenceFiles,
+              undeclaredFiles,
+              preStepHead: input.initialPreStepHead,
+              postStepHead: currentHead,
+              ...(inheritedFormattingDebtFiles.length > 0 ? { inheritedFormattingDebtFiles } : {}),
+            });
+
+            const iterationIndex = loop.iterations.length + 1;
+            this.emit(input, 'loop.iteration.started', 'info', 'manifest fault', {
+              index: iterationIndex,
+            });
+            loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+            loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+            deps.loops.update(loop);
+            this.emit(
+              input,
+              'loop.iteration.completed',
+              'info',
+              'step escalated for manifest fault',
+              {
+                index: iterationIndex,
+                outcome: 'failed',
+              },
+            );
+            return {
+              outcome: 'needs_human_review',
+              loop,
+              failureMessage,
+              failureKind: 'needs_human_review',
+              modifiedReferenceFiles,
+            };
+          }
+
           const failureMessage =
             `RED-first violation: Task ${input.stepIndex} (${input.stepTitle}) requires ` +
             `inverted validation command(s) ${failedInvertedCommands.map((command) => JSON.stringify(command)).join(', ')} ` +
