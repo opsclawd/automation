@@ -293,7 +293,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
   });
 
-  it('passes when no commits were created during compound phase', async () => {
+  it('passes when no commits were created and no uncommitted source files exist', async () => {
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       phaseId: 'plan_write',
@@ -324,5 +324,254 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
 
     expect(result.outcome).toBe('passed');
     expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
+  });
+
+  it('fails phase and emits violation when compound agent leaves uncommitted undeclared files', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+      }),
+    });
+
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      // Uncommitted untracked or modified file
+      git.statusByCwd.set(ctx.cwd, '?? src/undeclared-uncommitted.ts');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('validation_failed');
+      expect(result.failure.message).toContain(
+        'compound phase modified undeclared files: src/undeclared-uncommitted.ts',
+      );
+    }
+    expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
+  });
+
+  it('fails phase and emits violation when compound agent leaves uncommitted reference files', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task 1',
+            expected_files: ['src/declared.ts'],
+            reference_files: ['docs/ref.md'],
+          },
+        ],
+      }),
+    });
+
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      git.statusByCwd.set(ctx.cwd, ' M docs/ref.md');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('validation_failed');
+      expect(result.failure.message).toContain(
+        'compound phase modified undeclared files: docs/ref.md',
+      );
+    }
+    expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
+  });
+
+  it('fails phase when combining committed declared files with uncommitted undeclared files', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+      }),
+    });
+
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      git.headByCwd.set(ctx.cwd, 'sha-after');
+      git.statusByCwd.set(ctx.cwd, '?? src/sneak.ts');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    git.changedFilesResults.set('sha-before|sha-after', ['src/declared.ts']);
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('validation_failed');
+      expect(result.failure.message).toContain(
+        'compound phase modified undeclared files: src/sneak.ts',
+      );
+    }
+    expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
+  });
+
+  it('passes when compound agent leaves uncommitted changes only to declared files', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+      }),
+    });
+
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      git.statusByCwd.set(ctx.cwd, ' M src/declared.ts');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
+  });
+
+  it('passes when compound agent only creates orchestrator artifacts in worktree', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+      }),
+    });
+
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      git.statusByCwd.set(ctx.cwd, '?? compound.md\n?? result.json');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
+  });
+
+  it('fails phase with git_failed when git.status throws', async () => {
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    git.status = vi.fn().mockRejectedValue(new Error('git status failed'));
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('git_failed');
+      expect(result.failure.message).toContain(
+        'Failed to check git status in compound phase: git status failed',
+      );
+    }
+    expect(eventsOf(ctx, 'compound.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
   });
 });

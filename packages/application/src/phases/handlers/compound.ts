@@ -3,6 +3,7 @@ import type { PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import { SingleShotAgentHandler } from './single-shot-agent-handler.js';
 import { checkTaskBoundaries } from '../../task-file-boundaries.js';
+import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
 
 export class CompoundHandler extends SingleShotAgentHandler {
   constructor() {
@@ -22,8 +23,8 @@ export class CompoundHandler extends SingleShotAgentHandler {
     }
 
     const headAfter = await ctx.git.headCommitSha(ctx.cwd).catch(() => undefined);
+    let committedFiles: string[] = [];
     if (headBefore && headAfter && headBefore !== headAfter) {
-      let committedFiles: string[] = [];
       try {
         committedFiles = await ctx.git.changedFiles(ctx.cwd, headBefore, headAfter);
       } catch (err) {
@@ -43,7 +44,32 @@ export class CompoundHandler extends SingleShotAgentHandler {
           },
         };
       }
+    }
 
+    let uncommittedFiles: string[] = [];
+    try {
+      const statusOutput = await ctx.git.status(ctx.cwd);
+      uncommittedFiles = uncommittedSourcePaths(statusOutput);
+    } catch (err) {
+      const message = `Failed to check git status in compound phase: ${err instanceof Error ? err.message : String(err)}`;
+      emit('compound.failed', 'error', message);
+      return {
+        outcome: 'failed',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: 'compound',
+          kind: 'git_failed',
+          message,
+          canRetry: false,
+          suggestedAction: 'Check git repository status.',
+          artifacts: [],
+          detectedAt: ctx.now(),
+        },
+      };
+    }
+
+    const changedFiles = [...new Set([...committedFiles, ...uncommittedFiles])];
+    if (changedFiles.length > 0) {
       let manifest: unknown;
       try {
         const manifestRaw = await ctx.artifacts.read(ctx.runUuid, 'task-manifest.json');
@@ -53,7 +79,7 @@ export class CompoundHandler extends SingleShotAgentHandler {
       }
 
       if (manifest) {
-        const classification = checkTaskBoundaries(committedFiles, manifest);
+        const classification = checkTaskBoundaries(changedFiles, manifest);
         const violatingFiles = [
           ...classification.modifiedReferenceFiles,
           ...classification.undeclaredFiles,
