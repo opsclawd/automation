@@ -195,5 +195,50 @@ describe('run actions API client', () => {
         'failed to resume run action: 409',
       );
     });
+
+    it('handles resume for runs in needs_human_review state', async () => {
+      const needsReviewRun = {
+        ...mockRun,
+        status: 'needs_human_review',
+        currentPhase: 'implement',
+      };
+      const resumeSuccess: RunActionSuccessDto = {
+        run: needsReviewRun,
+        action: 'resume',
+        targetPhase: 'implement',
+        requiresConfirmation: false,
+      };
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(resumeSuccess),
+      });
+
+      const res = await resumeRunAction('repo-123', 'uuid-123', {
+        fromPhase: 'implement',
+        confirm: true,
+      });
+      expect(res).toEqual(resumeSuccess);
+    });
+
+    it('handles retry for runs in needs_human_review state', async () => {
+      const needsReviewRun = {
+        ...mockRun,
+        status: 'needs_human_review',
+        currentPhase: 'implement',
+      };
+      const retrySuccess: RunActionSuccessDto = {
+        run: needsReviewRun,
+        action: 'retry',
+        targetPhase: 'implement',
+        requiresConfirmation: false,
+      };
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(retrySuccess),
+      });
+
+      const res = await retryRunAction('repo-123', 'uuid-123', true);
+      expect(res).toEqual(retrySuccess);
+    });
   });
 });

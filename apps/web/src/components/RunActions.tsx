@@ -39,7 +39,8 @@ export function RunActions({ repositoryId, run }: RunActionsProps) {
 
   const showCancel =
     run.status !== 'passed' && run.status !== 'failed' && run.status !== 'cancelled';
-  const showResumeRetry = run.status === 'failed' || run.status === 'blocked';
+  const showResumeRetry =
+    run.status === 'failed' || run.status === 'blocked' || run.status === 'needs_human_review';
 
   if (!showCancel && !showResumeRetry) {
     return null;
