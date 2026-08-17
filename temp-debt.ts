@@ -73,14 +73,15 @@ function unwrap(node: ts.Node): ts.Node {
   return current;
 }
 
-function getLeafValue(node: ts.Node, sourceFile: ts.SourceFile): string | undefined {
-  if (ts.isNumericLiteral(node) || ts.isBigIntLiteral(node)) {
-    return node.getText(sourceFile);
+function getLeafValue(node: ts.Node, sourceFile?: ts.SourceFile): string | undefined {
+  if (ts.isNumericLiteral(node)) {
+    return sourceFile ? node.getText(sourceFile) : node.text;
   }
   if (
     ts.isIdentifier(node) ||
     ts.isPrivateIdentifier(node) ||
     ts.isStringLiteral(node) ||
+    ts.isBigIntLiteral(node) ||
     ts.isRegularExpressionLiteral(node) ||
     ts.isNoSubstitutionTemplateLiteral(node) ||
     ts.isTemplateHead(node) ||
@@ -295,3 +296,4 @@ export async function findInheritedFormattingDebtFiles(
 
   return [...new Set(exemptFiles)].sort();
 }
+export { toCanonicalNode };

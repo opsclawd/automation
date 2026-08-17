@@ -190,6 +190,26 @@ describe('inherited formatting debt', () => {
           after: 'const str = "world"; const num = 43; const reg = /bar/g; const tmpl = `b ${1}`;',
         },
         {
+          file: 'src/numeric-base.ts',
+          before: 'const num = 1;',
+          after: 'const num = 0x1;',
+        },
+        {
+          file: 'src/numeric-format.ts',
+          before: 'const num = 1;',
+          after: 'const num = 1.0;',
+        },
+        {
+          file: 'src/numeric-separator.ts',
+          before: 'const num = 1000;',
+          after: 'const num = 1_000;',
+        },
+        {
+          file: 'src/bigint-base.ts',
+          before: 'const big = 10n;',
+          after: 'const big = 0xAn;',
+        },
+        {
           file: 'src/operators.ts',
           before: 'const positive = +x; const equals = a === b;',
           after: 'const positive = !x; const equals = a !== b;',
@@ -284,6 +304,8 @@ describe('inherited formatting debt', () => {
       expect(isFormattingOnlyChange('data.json', '{"value":1}', '{"value":1,"value":1}')).toBe(
         false,
       );
+      expect(isFormattingOnlyChange('data.json', '{"value":1}', '{"value":1.0}')).toBe(false);
+      expect(isFormattingOnlyChange('data.json', '{"value":100}', '{"value":1e2}')).toBe(false);
     });
 
     it('fails closed for unsupported extensions parser diagnostics missing blobs and read errors', () => {
