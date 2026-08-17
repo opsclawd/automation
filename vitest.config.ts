@@ -1,9 +1,6 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  esbuild: {
-    jsx: 'automatic',
-  },
   test: {
     pool: 'forks',
     include: ['packages/**/*.test.ts', 'apps/**/*.test.ts'],
@@ -22,9 +19,6 @@ export default defineConfig({
   },
   resolve: {
     conditions: ['development'],
-    alias: {
-      '@': new URL('./apps/web/src', import.meta.url).pathname,
-    },
   },
   ssr: {
     resolve: {
