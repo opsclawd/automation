@@ -65,11 +65,27 @@ export type VerdictOutcome<V> =
       violationCode: ExtractResultFailure['violationCode'];
     };
 
+export interface ReadReviewVerdictOptions {
+  blockOnSeverity?: string;
+  cwd?: string;
+  transcriptEvidence?: string;
+}
+
+export function readReviewVerdict(
+  invocation: AgentInvocation,
+  ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
+  opts: ReadReviewVerdictOptions & { allowFabricated: true },
+): Promise<VerdictOutcome<'pass' | 'fail' | 'fabricated'>>;
+export function readReviewVerdict(
+  invocation: AgentInvocation,
+  ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
+  opts?: ReadReviewVerdictOptions & { allowFabricated?: false },
+): Promise<VerdictOutcome<'pass' | 'fail'>>;
 export async function readReviewVerdict(
   invocation: AgentInvocation,
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
-  opts?: { blockOnSeverity?: string; cwd?: string; transcriptEvidence?: string },
-): Promise<VerdictOutcome<'pass' | 'fail'>> {
+  opts?: ReadReviewVerdictOptions & { allowFabricated?: boolean },
+): Promise<VerdictOutcome<'pass' | 'fail' | 'fabricated'>> {
   const r = await extractResult({
     invocation,
     ports,
@@ -84,7 +100,19 @@ export async function readReviewVerdict(
       violationCode: r.violationCode,
     };
   }
-  const result = r.result as WholePrReviewResult;
+  const result = r.result as Omit<WholePrReviewResult, 'result'> & {
+    result: 'pass' | 'fail' | 'fabricated';
+  };
+
+  if (result.result === 'fabricated') {
+    return {
+      ok: true,
+      verdict: 'fabricated',
+      ...(result.findings && result.findings.length > 0
+        ? { offendingFindings: result.findings }
+        : {}),
+    };
+  }
 
   if (opts?.blockOnSeverity && result.findings.length > 0) {
     const { blocked, offendingFindings } = severityGate(result.findings, opts.blockOnSeverity);
