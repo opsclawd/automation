@@ -46,6 +46,9 @@ interface HarnessOptions {
   initialPreStepHead?: string;
   exemptUndeclaredFiles?: string[];
   headSha?: string;
+  stepIndex?: number;
+  stepTitle?: string;
+  completedStepIndexes?: number[];
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -158,13 +161,16 @@ function createHarness(options: HarnessOptions = {}) {
     phaseId: PhaseName('implement'),
     repoId: 'acme/widgets',
     cwd: '/wt',
-    stepIndex: 1,
-    stepTitle: 'Add the RED-first regression proof',
+    stepIndex: options.stepIndex ?? 1,
+    stepTitle: options.stepTitle ?? 'Add the RED-first regression proof',
     maxIterations: 3,
     manifest: options.manifest ?? baseManifest,
     planMd: '# Plan\n\n## Task 1: Add the RED-first regression proof\n',
     initialPreStepHead: options.initialPreStepHead ?? 'before-step',
     exemptUndeclaredFiles: options.exemptUndeclaredFiles ?? ['generated/allowed.ts'],
+    ...(options.completedStepIndexes !== undefined
+      ? { completedStepIndexes: options.completedStepIndexes }
+      : {}),
   };
 
   return {
@@ -373,5 +379,151 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     const failedEvent = events.find((e) => e.type === 'implement.failed');
     expect(failedEvent).toBeDefined();
     expect(failedEvent?.message).toBe(redMessage);
+  });
+
+  it('allows a RED-first proof to carry inherited formatter-only edits from a completed task', async () => {
+    const twoTaskManifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Write task 1',
+          expected_files: ['src/earlier.ts'],
+        },
+        {
+          n: 2,
+          title: 'Add the RED-first regression proof',
+          expected_files: ['src/proof.test.ts'],
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    };
+
+    const revalidationPayload = {
+      validationRunId: 'validation-1',
+      passed: false,
+      failedCommands: ['! pnpm test -- src/proof.test.ts'],
+    } as unknown as RevalidationResult;
+
+    const harness = createHarness({
+      manifest: twoTaskManifest,
+      stepIndex: 2,
+      stepTitle: 'Add the RED-first regression proof',
+      completedStepIndexes: [1],
+      changedFiles: ['src/proof.test.ts', 'src/earlier.ts'],
+      revalidationResult: revalidationPayload,
+    });
+
+    harness.git.fileContentResults.set('before-step:src/earlier.ts', 'export const value={a:1}\n');
+    harness.git.fileContentResults.set(
+      'after-implement:src/earlier.ts',
+      'export const value = { a: 1 };\n',
+    );
+
+    const result = await harness.loop.execute(harness.input);
+
+    // failed inverted validation is expected for RED; formatting debt alone is not scope overreach
+    expect(result.outcome).toBe('success');
+    expect(harness.runSpecReview).toHaveBeenCalled();
+    expect(harness.runQualityReview).toHaveBeenCalled();
+    expect(harness.events.some((event) => event.type === 'step.red_first_violation')).toBe(false);
+  });
+
+  it("still rejects a RED-first proof that semantically changes a completed task's file", async () => {
+    const twoTaskManifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Write task 1',
+          expected_files: ['src/earlier.ts'],
+        },
+        {
+          n: 2,
+          title: 'Add the RED-first regression proof',
+          expected_files: ['src/proof.test.ts'],
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    };
+
+    const revalidationPayload = {
+      validationRunId: 'validation-1',
+      passed: false,
+      failedCommands: ['! pnpm test -- src/proof.test.ts'],
+    } as unknown as RevalidationResult;
+
+    const harness = createHarness({
+      manifest: twoTaskManifest,
+      stepIndex: 2,
+      stepTitle: 'Add the RED-first regression proof',
+      completedStepIndexes: [1],
+      changedFiles: ['src/proof.test.ts', 'src/earlier.ts'],
+      revalidationResult: revalidationPayload,
+    });
+
+    harness.git.fileContentResults.set('before-step:src/earlier.ts', 'export const value = 1;\n');
+    harness.git.fileContentResults.set(
+      'after-implement:src/earlier.ts',
+      'export const value = 2;\n',
+    );
+
+    const result = await harness.loop.execute(harness.input);
+
+    expect(result.outcome).toBe('failed');
+    expect(
+      harness.events.find((event) => event.type === 'step.red_first_violation')?.metadata,
+    ).toMatchObject({ undeclaredFiles: ['src/earlier.ts'] });
+  });
+
+  it('keeps reference files in RED-first scope violations even when an earlier completed task also declares them', async () => {
+    const twoTaskManifestWithRef: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Write task 1',
+          expected_files: ['src/earlier.ts'],
+        },
+        {
+          n: 2,
+          title: 'Add the RED-first regression proof',
+          expected_files: ['src/proof.test.ts'],
+          reference_files: ['src/earlier.ts'],
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    };
+
+    const revalidationPayload = {
+      validationRunId: 'validation-1',
+      passed: false,
+      failedCommands: ['! pnpm test -- src/proof.test.ts'],
+    } as unknown as RevalidationResult;
+
+    const harness = createHarness({
+      manifest: twoTaskManifestWithRef,
+      stepIndex: 2,
+      stepTitle: 'Add the RED-first regression proof',
+      completedStepIndexes: [1],
+      changedFiles: ['src/proof.test.ts', 'src/earlier.ts'],
+      revalidationResult: revalidationPayload,
+    });
+
+    harness.git.fileContentResults.set('before-step:src/earlier.ts', 'export const value={a:1}\n');
+    harness.git.fileContentResults.set(
+      'after-implement:src/earlier.ts',
+      'export const value = { a: 1 };\n',
+    );
+
+    const result = await harness.loop.execute(harness.input);
+
+    expect(result.outcome).toBe('failed');
+    expect(
+      harness.events.find((event) => event.type === 'step.red_first_violation')?.metadata,
+    ).toMatchObject({ modifiedReferenceFiles: ['src/earlier.ts'] });
   });
 });

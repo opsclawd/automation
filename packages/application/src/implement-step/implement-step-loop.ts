@@ -42,7 +42,14 @@ import {
   referenceTaskFiles,
   normalizedPathSet,
   classifyUndeclaredFiles,
+  normalizeTaskPath,
 } from '../task-file-boundaries.js';
+import { findInheritedFormattingDebtFiles } from '../inherited-formatting-debt.js';
+
+function isProtectedFilePath(path: string): boolean {
+  const norm = normalizeTaskPath(path);
+  return norm === '.gitignore' || norm === '.ai-orchestrator.json' || norm.startsWith('.github/');
+}
 
 function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -880,12 +887,33 @@ export class ImplementStepLoop {
       const referenceSet = normalizedPathSet(referenceFiles);
       const exemptSet = normalizedPathSet(input.exemptUndeclaredFiles);
 
-      const { modifiedReferenceFiles, undeclaredFiles } = classifyUndeclaredFiles(
+      let { modifiedReferenceFiles, undeclaredFiles } = classifyUndeclaredFiles(
         committedFiles,
         writableSet,
         referenceSet,
         exemptSet,
       );
+
+      const completedTaskNumbers = new Set(input.completedStepIndexes ?? []);
+      const inheritedFormattingDebtFiles =
+        input.manifest && input.initialPreStepHead
+          ? await findInheritedFormattingDebtFiles({
+              cwd: input.cwd,
+              manifest: input.manifest,
+              currentTaskNumber: input.stepIndex,
+              completedTaskNumbers,
+              candidateFiles: undeclaredFiles.filter((path) => !isProtectedFilePath(path)),
+              preStepHead: input.initialPreStepHead,
+              postStepHead: currentHead,
+              git: deps.git,
+            })
+          : [];
+
+      if (inheritedFormattingDebtFiles.length > 0) {
+        const inheritedSet = new Set(inheritedFormattingDebtFiles);
+        undeclaredFiles = undeclaredFiles.filter((path) => !inheritedSet.has(path));
+      }
+
       const outOfScopeFiles = [...modifiedReferenceFiles, ...undeclaredFiles];
 
       if (outOfScopeFiles.length > 0) {
@@ -909,6 +937,7 @@ export class ImplementStepLoop {
             undeclaredFiles,
             preStepHead: input.initialPreStepHead,
             postStepHead: currentHead,
+            ...(inheritedFormattingDebtFiles.length > 0 ? { inheritedFormattingDebtFiles } : {}),
           });
 
           const iterationIndex = loop.iterations.length + 1;
