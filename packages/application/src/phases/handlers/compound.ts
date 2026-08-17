@@ -15,17 +15,56 @@ export class CompoundHandler extends SingleShotAgentHandler {
 
   override async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
-    const headBefore =
-      ctx.startCommitSha ?? (await ctx.git.headCommitSha(ctx.cwd).catch(() => undefined));
+
+    let headBefore: string;
+    try {
+      headBefore = await ctx.git.headCommitSha(ctx.cwd);
+    } catch (err) {
+      const message = `Failed to read baseline HEAD commit SHA in ${String(this.phase)} phase: ${err instanceof Error ? err.message : String(err)}`;
+      emit(`${String(this.phase)}.failed`, 'error', message);
+      return {
+        outcome: 'failed',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'git_failed',
+          message,
+          canRetry: false,
+          suggestedAction: 'Check git repository status.',
+          artifacts: [],
+          detectedAt: ctx.now(),
+        },
+      };
+    }
 
     const result = await super.run(ctx);
     if (result.outcome !== 'passed') {
       return result;
     }
 
-    const headAfter = await ctx.git.headCommitSha(ctx.cwd).catch(() => undefined);
+    let headAfter: string;
+    try {
+      headAfter = await ctx.git.headCommitSha(ctx.cwd);
+    } catch (err) {
+      const message = `Failed to read post-run HEAD commit SHA in ${String(this.phase)} phase: ${err instanceof Error ? err.message : String(err)}`;
+      emit(`${String(this.phase)}.failed`, 'error', message);
+      return {
+        outcome: 'failed',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'git_failed',
+          message,
+          canRetry: false,
+          suggestedAction: 'Check git repository status.',
+          artifacts: [],
+          detectedAt: ctx.now(),
+        },
+      };
+    }
+
     let committedFiles: string[] = [];
-    if (headBefore && headAfter && headBefore !== headAfter) {
+    if (headBefore !== headAfter) {
       try {
         committedFiles = await ctx.git.changedFiles(ctx.cwd, headBefore, headAfter);
       } catch (err) {
@@ -77,38 +116,49 @@ export class CompoundHandler extends SingleShotAgentHandler {
         manifest = JSON.parse(manifestRaw);
       } catch (err) {
         const message = `Could not read or parse task-manifest.json for boundary enforcement: ${err instanceof Error ? err.message : String(err)}`;
-        emit(`${String(this.phase)}.manifest_read_failed`, 'warn', message);
+        emit(`${String(this.phase)}.failed`, 'error', message);
+        return {
+          outcome: 'failed',
+          failure: {
+            runUuid: ctx.runUuid,
+            phase: this.phase,
+            kind: 'validation_failed',
+            message,
+            canRetry: false,
+            suggestedAction: 'Ensure task-manifest.json exists and is valid JSON.',
+            artifacts: ['task-manifest.json'],
+            detectedAt: ctx.now(),
+          },
+        };
       }
 
-      if (manifest) {
-        const classification = checkTaskBoundaries(changedFiles, manifest);
-        const violatingFiles = [
-          ...classification.modifiedReferenceFiles,
-          ...classification.undeclaredFiles,
-        ];
-        if (violatingFiles.length > 0) {
-          const message = `${String(this.phase)} phase modified undeclared files: ${violatingFiles.join(', ')}`;
-          emit(`${String(this.phase)}.boundary_violation`, 'error', message, {
+      const classification = checkTaskBoundaries(changedFiles, manifest);
+      const violatingFiles = [
+        ...classification.modifiedReferenceFiles,
+        ...classification.undeclaredFiles,
+      ];
+      if (violatingFiles.length > 0) {
+        const message = `${String(this.phase)} phase modified undeclared files: ${violatingFiles.join(', ')}`;
+        emit(`${String(this.phase)}.boundary_violation`, 'error', message, {
+          phase: this.phase,
+          files: violatingFiles,
+          modifiedReferenceFiles: classification.modifiedReferenceFiles,
+          undeclaredFiles: classification.undeclaredFiles,
+        });
+        emit(`${String(this.phase)}.failed`, 'error', message);
+        return {
+          outcome: 'failed',
+          failure: {
+            runUuid: ctx.runUuid,
             phase: this.phase,
-            files: violatingFiles,
-            modifiedReferenceFiles: classification.modifiedReferenceFiles,
-            undeclaredFiles: classification.undeclaredFiles,
-          });
-          emit(`${String(this.phase)}.failed`, 'error', message);
-          return {
-            outcome: 'failed',
-            failure: {
-              runUuid: ctx.runUuid,
-              phase: this.phase,
-              kind: 'validation_failed',
-              message,
-              canRetry: false,
-              suggestedAction: `Ensure ${String(this.phase)} phase does not modify undeclared repository files.`,
-              artifacts: ['task-manifest.json'],
-              detectedAt: ctx.now(),
-            },
-          };
-        }
+            kind: 'validation_failed',
+            message,
+            canRetry: false,
+            suggestedAction: `Ensure ${String(this.phase)} phase does not modify undeclared repository files.`,
+            artifacts: ['task-manifest.json'],
+            detectedAt: ctx.now(),
+          },
+        };
       }
     }
 

@@ -267,7 +267,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
   });
 
-  it('passes and emits warning event when manifest is missing or invalid JSON', async () => {
+  it('fails phase with validation_failed when manifest is missing and files were changed', async () => {
     const git = ctx.git as FakeGitPort;
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('pi-qwen-local', () => {
@@ -291,11 +291,72 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     const handler = new CompoundHandler();
     const result = await handler.run(ctx);
 
-    expect(result.outcome).toBe('passed');
-    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
-    const warnEvents = eventsOf(ctx, 'compound.manifest_read_failed');
-    expect(warnEvents).toHaveLength(1);
-    expect(warnEvents[0]?.level).toBe('warn');
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('validation_failed');
+      expect(result.failure.message).toContain(
+        'Could not read or parse task-manifest.json for boundary enforcement',
+      );
+    }
+    expect(eventsOf(ctx, 'compound.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
+  });
+
+  it('fails phase with git_failed when git.headCommitSha fails before run', async () => {
+    const git = ctx.git as FakeGitPort;
+    git.headCommitSha = vi.fn().mockRejectedValue(new Error('git rev-parse HEAD failed'));
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('git_failed');
+      expect(result.failure.message).toContain(
+        'Failed to read baseline HEAD commit SHA in compound phase: git rev-parse HEAD failed',
+      );
+    }
+    expect(eventsOf(ctx, 'compound.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
+  });
+
+  it('fails phase with git_failed when git.headCommitSha fails after run', async () => {
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    let callCount = 0;
+    git.headCommitSha = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount > 1) {
+        throw new Error('git rev-parse HEAD failed after run');
+      }
+      return 'sha-before';
+    });
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('git_failed');
+      expect(result.failure.message).toContain(
+        'Failed to read post-run HEAD commit SHA in compound phase: git rev-parse HEAD failed after run',
+      );
+    }
+    expect(eventsOf(ctx, 'compound.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
   });
 
   it('passes when no commits were created and no uncommitted source files exist', async () => {
@@ -310,6 +371,28 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       }),
     });
 
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
+  });
+
+  it('passes when manifest is missing but no files were modified', async () => {
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('pi-qwen-local', successResult());
 
@@ -580,8 +663,8 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
   });
 
-  it('evaluates net diff from ctx.startCommitSha across phase resumption', async () => {
-    // Simulate resume scenario: startCommitSha was sha-initial, but HEAD before run() was sha-interim
+  it('evaluates diff against headCommitSha at phase start, ignoring ctx.startCommitSha', async () => {
+    // startCommitSha represents start of orchestrator run (sha-initial), but HEAD before compound run() is sha-interim
     ctx.startCommitSha = 'sha-initial';
     const git = ctx.git as FakeGitPort;
     git.headByCwd.set(ctx.cwd, 'sha-interim');
@@ -614,25 +697,23 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: '# Learnings\n',
     });
 
-    // Diff between sha-initial and sha-after includes undeclared file committed before resume
-    git.changedFilesResults.set('sha-initial|sha-after', ['src/undeclared.ts']);
-    // Diff between sha-interim and sha-after only has declared file
+    // If diffed against sha-initial, it would have earlier phase files that would falsely fail
+    git.changedFilesResults.set('sha-initial|sha-after', [
+      'src/earlier-phase-file.ts',
+      'src/declared.ts',
+    ]);
+    // Diff against sha-interim (compound phase start) only has declared file
     git.changedFilesResults.set('sha-interim|sha-after', ['src/declared.ts']);
 
     const handler = new CompoundHandler();
     const result = await handler.run(ctx);
 
-    expect(result.outcome).toBe('failed');
-    if (result.outcome === 'failed') {
-      expect(result.failure.message).toContain(
-        'compound phase modified undeclared files: src/undeclared.ts',
-      );
-    }
-    expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
-    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
+    expect(result.outcome).toBe('passed');
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(0);
   });
 
-  it('emits warning event when manifest JSON is invalid syntax', async () => {
+  it('fails phase with validation_failed when manifest JSON is invalid syntax and files were changed', async () => {
     const git = ctx.git as FakeGitPort;
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('pi-qwen-local', () => {
@@ -661,11 +742,15 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     const handler = new CompoundHandler();
     const result = await handler.run(ctx);
 
-    expect(result.outcome).toBe('passed');
-    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
-    const warnEvents = eventsOf(ctx, 'compound.manifest_read_failed');
-    expect(warnEvents).toHaveLength(1);
-    expect(warnEvents[0]?.level).toBe('warn');
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('validation_failed');
+      expect(result.failure.message).toContain(
+        'Could not read or parse task-manifest.json for boundary enforcement',
+      );
+    }
+    expect(eventsOf(ctx, 'compound.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
   });
 
   it('uses dynamic this.phase in failure and boundary violation events', async () => {
@@ -673,7 +758,12 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       override readonly phase = PhaseName('custom-phase');
     }
 
-    vi.spyOn(SingleShotAgentHandler.prototype, 'run').mockResolvedValue({ outcome: 'passed' });
+    const git = ctx.git as FakeGitPort;
+
+    vi.spyOn(SingleShotAgentHandler.prototype, 'run').mockImplementation(async () => {
+      git.headByCwd.set(ctx.cwd, 'sha-after');
+      return { outcome: 'passed' };
+    });
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
@@ -685,9 +775,6 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
         tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
       }),
     });
-
-    const git = ctx.git as FakeGitPort;
-    git.headByCwd.set(ctx.cwd, 'sha-after');
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
