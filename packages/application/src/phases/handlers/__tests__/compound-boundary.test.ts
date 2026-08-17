@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
+import { PhaseName } from '@ai-sdlc/domain';
 import { CompoundHandler } from '../compound.js';
+import { SingleShotAgentHandler } from '../single-shot-agent-handler.js';
 import { FakeAgentPort } from '../../../test-doubles/fake-agent-port.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
@@ -64,7 +66,7 @@ function makeCtx(): PhaseHandlerContext & { _events: OrchestratorEvent[] } {
     },
     now,
     promptsRoot: '/tmp/prompts',
-    startCommitSha: 'abc123',
+    startCommitSha: 'sha-before',
     expectedBranch: 'main',
     baseBranch: 'main',
     resolveProfile: () => 'pi-qwen-local',
@@ -265,7 +267,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
   });
 
-  it('passes when manifest is missing or invalid JSON', async () => {
+  it('passes and emits warning event when manifest is missing or invalid JSON', async () => {
     const git = ctx.git as FakeGitPort;
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('pi-qwen-local', () => {
@@ -291,6 +293,9 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
 
     expect(result.outcome).toBe('passed');
     expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
+    const warnEvents = eventsOf(ctx, 'compound.manifest_read_failed');
+    expect(warnEvents).toHaveLength(1);
+    expect(warnEvents[0]?.level).toBe('warn');
   });
 
   it('passes when no commits were created and no uncommitted source files exist', async () => {
@@ -573,5 +578,141 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     }
     expect(eventsOf(ctx, 'compound.failed')).toHaveLength(1);
     expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
+  });
+
+  it('evaluates net diff from ctx.startCommitSha across phase resumption', async () => {
+    // Simulate resume scenario: startCommitSha was sha-initial, but HEAD before run() was sha-interim
+    ctx.startCommitSha = 'sha-initial';
+    const git = ctx.git as FakeGitPort;
+    git.headByCwd.set(ctx.cwd, 'sha-interim');
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+      }),
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      git.headByCwd.set(ctx.cwd, 'sha-after');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    // Diff between sha-initial and sha-after includes undeclared file committed before resume
+    git.changedFilesResults.set('sha-initial|sha-after', ['src/undeclared.ts']);
+    // Diff between sha-interim and sha-after only has declared file
+    git.changedFilesResults.set('sha-interim|sha-after', ['src/declared.ts']);
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.message).toContain(
+        'compound phase modified undeclared files: src/undeclared.ts',
+      );
+    }
+    expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
+  });
+
+  it('emits warning event when manifest JSON is invalid syntax', async () => {
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      git.headByCwd.set(ctx.cwd, 'sha-after');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'task-manifest.json',
+      contents: '{ not valid json',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    git.changedFilesResults.set('sha-before|sha-after', ['src/anything.ts']);
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
+    const warnEvents = eventsOf(ctx, 'compound.manifest_read_failed');
+    expect(warnEvents).toHaveLength(1);
+    expect(warnEvents[0]?.level).toBe('warn');
+  });
+
+  it('uses dynamic this.phase in failure and boundary violation events', async () => {
+    class CustomCompoundHandler extends CompoundHandler {
+      override readonly phase = PhaseName('custom-phase');
+    }
+
+    vi.spyOn(SingleShotAgentHandler.prototype, 'run').mockResolvedValue({ outcome: 'passed' });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+      }),
+    });
+
+    const git = ctx.git as FakeGitPort;
+    git.headByCwd.set(ctx.cwd, 'sha-after');
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    git.changedFilesResults.set('sha-before|sha-after', ['src/undeclared.ts']);
+
+    const handler = new CustomCompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.phase).toBe('custom-phase');
+      expect(result.failure.message).toContain(
+        'custom-phase phase modified undeclared files: src/undeclared.ts',
+      );
+    }
+    expect(eventsOf(ctx, 'custom-phase.boundary_violation')).toHaveLength(1);
+    expect(eventsOf(ctx, 'custom-phase.failed')).toHaveLength(1);
   });
 });

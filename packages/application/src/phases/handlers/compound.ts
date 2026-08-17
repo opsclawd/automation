@@ -15,7 +15,8 @@ export class CompoundHandler extends SingleShotAgentHandler {
 
   override async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
-    const headBefore = await ctx.git.headCommitSha(ctx.cwd).catch(() => undefined);
+    const headBefore =
+      ctx.startCommitSha ?? (await ctx.git.headCommitSha(ctx.cwd).catch(() => undefined));
 
     const result = await super.run(ctx);
     if (result.outcome !== 'passed') {
@@ -28,13 +29,13 @@ export class CompoundHandler extends SingleShotAgentHandler {
       try {
         committedFiles = await ctx.git.changedFiles(ctx.cwd, headBefore, headAfter);
       } catch (err) {
-        const message = `Failed to check changed files in compound phase: ${err instanceof Error ? err.message : String(err)}`;
-        emit('compound.failed', 'error', message);
+        const message = `Failed to check changed files in ${String(this.phase)} phase: ${err instanceof Error ? err.message : String(err)}`;
+        emit(`${String(this.phase)}.failed`, 'error', message);
         return {
           outcome: 'failed',
           failure: {
             runUuid: ctx.runUuid,
-            phase: 'compound',
+            phase: this.phase,
             kind: 'git_failed',
             message,
             canRetry: false,
@@ -51,13 +52,13 @@ export class CompoundHandler extends SingleShotAgentHandler {
       const statusOutput = await ctx.git.status(ctx.cwd);
       uncommittedFiles = uncommittedSourcePaths(statusOutput);
     } catch (err) {
-      const message = `Failed to check git status in compound phase: ${err instanceof Error ? err.message : String(err)}`;
-      emit('compound.failed', 'error', message);
+      const message = `Failed to check git status in ${String(this.phase)} phase: ${err instanceof Error ? err.message : String(err)}`;
+      emit(`${String(this.phase)}.failed`, 'error', message);
       return {
         outcome: 'failed',
         failure: {
           runUuid: ctx.runUuid,
-          phase: 'compound',
+          phase: this.phase,
           kind: 'git_failed',
           message,
           canRetry: false,
@@ -74,8 +75,9 @@ export class CompoundHandler extends SingleShotAgentHandler {
       try {
         const manifestRaw = await ctx.artifacts.read(ctx.runUuid, 'task-manifest.json');
         manifest = JSON.parse(manifestRaw);
-      } catch {
-        // manifest not available or not valid JSON — skip boundary enforcement
+      } catch (err) {
+        const message = `Could not read or parse task-manifest.json for boundary enforcement: ${err instanceof Error ? err.message : String(err)}`;
+        emit(`${String(this.phase)}.manifest_read_failed`, 'warn', message);
       }
 
       if (manifest) {
@@ -85,23 +87,23 @@ export class CompoundHandler extends SingleShotAgentHandler {
           ...classification.undeclaredFiles,
         ];
         if (violatingFiles.length > 0) {
-          const message = `compound phase modified undeclared files: ${violatingFiles.join(', ')}`;
-          emit('compound.boundary_violation', 'error', message, {
-            phase: 'compound',
+          const message = `${String(this.phase)} phase modified undeclared files: ${violatingFiles.join(', ')}`;
+          emit(`${String(this.phase)}.boundary_violation`, 'error', message, {
+            phase: this.phase,
             files: violatingFiles,
             modifiedReferenceFiles: classification.modifiedReferenceFiles,
             undeclaredFiles: classification.undeclaredFiles,
           });
-          emit('compound.failed', 'error', message);
+          emit(`${String(this.phase)}.failed`, 'error', message);
           return {
             outcome: 'failed',
             failure: {
               runUuid: ctx.runUuid,
-              phase: 'compound',
+              phase: this.phase,
               kind: 'validation_failed',
               message,
               canRetry: false,
-              suggestedAction: 'Ensure compound phase does not modify undeclared repository files.',
+              suggestedAction: `Ensure ${String(this.phase)} phase does not modify undeclared repository files.`,
               artifacts: ['task-manifest.json'],
               detectedAt: ctx.now(),
             },
