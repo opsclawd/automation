@@ -7,6 +7,8 @@ import {
   type AgentProfileName,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
+import type { RevalidationResult } from '../review-fix/types.js';
+import { checkTaskBoundaries } from '../task-file-boundaries.js';
 import type {
   ValidateFixLoopDeps,
   ValidateFixLoopInput,
@@ -74,6 +76,102 @@ export class ValidateFixLoop {
         break;
       }
 
+      let boundaryViolation: { files: string[]; message: string } | undefined;
+      if (deps.git && fix.headBeforeFix) {
+        try {
+          const currentHead = await deps.git.headCommitSha(ctx.cwd);
+          if (currentHead !== fix.headBeforeFix) {
+            const committedFiles = await deps.git.changedFiles(
+              ctx.cwd,
+              fix.headBeforeFix,
+              currentHead,
+            );
+            const manifest = await this.loadManifest(input, ctx);
+            if (manifest) {
+              const classification = checkTaskBoundaries(committedFiles, manifest);
+              const violatingFiles = [
+                ...classification.modifiedReferenceFiles,
+                ...classification.undeclaredFiles,
+              ];
+              if (violatingFiles.length > 0) {
+                const message = `${input.phaseId} modified undeclared files: ${violatingFiles.join(', ')}`;
+                this.emit(input, 'task_boundary.violated', 'warn', message, {
+                  phase: input.phaseId,
+                  files: violatingFiles,
+                  modifiedReferenceFiles: classification.modifiedReferenceFiles,
+                  undeclaredFiles: classification.undeclaredFiles,
+                  iterationIndex,
+                });
+                boundaryViolation = { files: violatingFiles, message };
+              }
+            }
+          }
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          this.emit(
+            input,
+            'task_boundary.check_failed',
+            'warn',
+            `task boundary check failed: ${errorMsg}`,
+            { iterationIndex, error: errorMsg },
+          );
+        }
+      }
+
+      // If boundary violation occurred, surface as synthetic revalidation failure and rollback
+      if (boundaryViolation) {
+        const reval: RevalidationResult = {
+          validationRunId: deps.idFactory(),
+          passed: false,
+          category: 'boundary',
+          failureDetail: boundaryViolation.message,
+        };
+
+        if (!fix.headBeforeFix && deps.rollbackFix) {
+          this.emit(
+            input,
+            'loop.rollback.unavailable',
+            'error',
+            `revalidation failed on iteration ${iterationIndex} but headBeforeFix not set — cannot roll back`,
+            { index: iterationIndex },
+          );
+        }
+
+        if (fix.headBeforeFix && deps.rollbackFix) {
+          const rollbackOk = await deps.rollbackFix(ctx, fix.headBeforeFix);
+          if (!rollbackOk) {
+            this.emit(
+              input,
+              'loop.rollback.failed',
+              'error',
+              `rollback failed on iteration ${iterationIndex}, breaking loop`,
+              { index: iterationIndex },
+            );
+            loop = completeIteration(loop, {
+              outcome: 'failed',
+              fixInvocationId: fix.invocationId,
+              now: deps.now(),
+            });
+            deps.loops.update(loop);
+            this.emitIterationCompleted(input, iterationIndex, 'failed');
+            break;
+          }
+        }
+
+        const couldRollback = Boolean(fix.headBeforeFix && deps.rollbackFix);
+        loop = completeIteration(loop, {
+          outcome: 'revalidation_failed',
+          fixInvocationId: fix.invocationId,
+          revalidationId: reval.validationRunId,
+          now: deps.now(),
+        });
+        deps.loops.update(loop);
+        this.emitIterationCompleted(input, iterationIndex, 'revalidation_failed');
+
+        if (!couldRollback) break;
+        continue;
+      }
+
       if (fix.verdict === 'no_fixes_needed') {
         const reval = await deps.runRevalidation(ctx);
         if (reval.passed) {
@@ -128,7 +226,6 @@ export class ValidateFixLoop {
       }
       consecutiveFixFailures = 0;
 
-      // revalidate
       const reval = await deps.runRevalidation(ctx);
 
       if (!reval.passed && !fix.headBeforeFix && deps.rollbackFix) {
@@ -242,5 +339,29 @@ export class ValidateFixLoop {
       triggerReason,
       triggerOwner: 'use_case',
     });
+  }
+
+  private async loadManifest(
+    input: ValidateFixLoopInput,
+    ctx: ValidateFixStepContext,
+  ): Promise<unknown | undefined> {
+    if (input.manifest) return input.manifest;
+    if (this.deps.artifactStore) {
+      try {
+        const raw = await this.deps.artifactStore.read(input.runId as string, 'task-manifest.json');
+        return JSON.parse(raw);
+      } catch {
+        // not found
+      }
+    }
+    if (this.deps.readWorktreeFile) {
+      try {
+        const raw = await this.deps.readWorktreeFile(ctx.cwd, 'task-manifest.json');
+        if (raw) return JSON.parse(raw);
+      } catch {
+        // not found
+      }
+    }
+    return undefined;
   }
 }

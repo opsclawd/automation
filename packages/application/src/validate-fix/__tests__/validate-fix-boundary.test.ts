@@ -36,7 +36,10 @@ describe('ValidateFixLoop task boundary enforcement (regression)', () => {
       },
       now: () => new Date('2026-06-16T00:00:00Z'),
       idFactory: () => 'loop-1',
-      rollbackFix: vi.fn().mockResolvedValue(true),
+      rollbackFix: vi.fn().mockImplementation(async (_ctx, targetSha) => {
+        git.headByCwd.set('/tmp/wt', targetSha);
+        return true;
+      }),
       git,
       artifactStore: artifacts,
     };
@@ -118,5 +121,94 @@ describe('ValidateFixLoop task boundary enforcement (regression)', () => {
     expect(result.phaseOutcome).toBe('passed');
     const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
     expect(boundaryEvents).toHaveLength(0);
+  });
+
+  it('enforces task boundaries and rolls back when fix verdict is no_fixes_needed but undeclared files are committed', async () => {
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/undeclared.ts']);
+
+    vi.mocked(baseDeps.runFix)
+      .mockResolvedValueOnce({
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'no_fixes_needed',
+        headBeforeFix: 'head-0',
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'fix-2',
+        agentOutcome: 'success',
+        verdict: 'no_fixes_needed',
+        headBeforeFix: 'head-0',
+      });
+
+    // On iteration 2, head does not change
+    git.changedFilesResults.set('head-0|head-0', []);
+
+    const loop = new ValidateFixLoop(baseDeps);
+    const _result = await loop.execute(baseInput);
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+  });
+
+  it('enforces task boundaries and rolls back when fix verdict is cannot_fix but undeclared files are committed', async () => {
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/undeclared.ts']);
+
+    vi.mocked(baseDeps.runFix)
+      .mockResolvedValueOnce({
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'cannot_fix',
+        headBeforeFix: 'head-0',
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'fix-2',
+        agentOutcome: 'success',
+        verdict: 'cannot_fix',
+        headBeforeFix: 'head-0',
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'fix-3',
+        agentOutcome: 'success',
+        verdict: 'cannot_fix',
+        headBeforeFix: 'head-0',
+      });
+
+    const loop = new ValidateFixLoop(baseDeps);
+    const _result = await loop.execute(baseInput);
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+  });
+
+  it('emits task_boundary.check_failed warning event when git operations throw during boundary check', async () => {
+    git.headCommitSha = vi.fn().mockRejectedValue(new Error('git error: corrupt pack file'));
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'fixed',
+      headBeforeFix: 'head-0',
+    });
+
+    const loop = new ValidateFixLoop(baseDeps);
+    const _result = await loop.execute(baseInput);
+
+    const errorEvents = events.filter((e) => e.type === 'task_boundary.check_failed');
+    expect(errorEvents).toHaveLength(1);
+    expect(errorEvents[0]?.level).toBe('warn');
+    expect(errorEvents[0]?.message).toContain('git error: corrupt pack file');
+    expect((errorEvents[0]?.metadata as { error?: string } | undefined)?.error).toBe(
+      'git error: corrupt pack file',
+    );
   });
 });
