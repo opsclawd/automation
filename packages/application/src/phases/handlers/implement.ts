@@ -600,13 +600,18 @@ export class ImplementHandler implements PhaseHandler {
               manifest,
               currentTaskNumber: d.index,
               completedTaskNumbers: doneIdx,
-              candidateFiles: undeclaredFiles.filter((path) => !isProtectedFilePath(path)),
+              candidateFiles: [...new Set([...modifiedReferenceFiles, ...undeclaredFiles])].filter(
+                (path) => !isProtectedFilePath(path),
+              ),
               preStepHead: preStepHead!,
               postStepHead: postStepHead!,
               git: ctx.git,
             });
 
             const inheritedSet = new Set(inheritedFormattingDebtFiles);
+            modifiedReferenceFiles = modifiedReferenceFiles.filter(
+              (path) => !inheritedSet.has(path),
+            );
             undeclaredFiles = undeclaredFiles.filter((path) => !inheritedSet.has(path));
 
             if (inheritedFormattingDebtFiles.length > 0) {

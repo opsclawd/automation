@@ -21,6 +21,8 @@ type CanonicalNode = {
   isTypeOnly?: boolean;
   isExportEquals?: boolean;
   isTypeOf?: boolean;
+  hasEscape?: boolean;
+  semanticComments?: string[];
   children: CanonicalNode[];
 };
 
@@ -43,6 +45,8 @@ function getScriptKind(ext: string): ts.ScriptKind | undefined {
       return ts.ScriptKind.JS;
     case '.jsx':
       return ts.ScriptKind.JSX;
+    case '.json':
+      return ts.ScriptKind.JSON;
     default:
       return undefined;
   }
@@ -52,6 +56,13 @@ function unwrap(node: ts.Node): ts.Node {
   let current = node;
   while (true) {
     if (ts.isParenthesizedExpression(current)) {
+      if (
+        current.parent &&
+        ts.isExpressionStatement(current.parent) &&
+        (ts.isStringLiteral(current.expression) || ts.isParenthesizedExpression(current.expression))
+      ) {
+        break;
+      }
       current = current.expression;
     } else if (ts.isParenthesizedTypeNode(current)) {
       current = current.type;
@@ -62,12 +73,14 @@ function unwrap(node: ts.Node): ts.Node {
   return current;
 }
 
-function getLeafValue(node: ts.Node): string | undefined {
+function getLeafValue(node: ts.Node, sourceFile?: ts.SourceFile): string | undefined {
+  if (ts.isNumericLiteral(node)) {
+    return sourceFile ? node.getText(sourceFile) : node.text;
+  }
   if (
     ts.isIdentifier(node) ||
     ts.isPrivateIdentifier(node) ||
     ts.isStringLiteral(node) ||
-    ts.isNumericLiteral(node) ||
     ts.isBigIntLiteral(node) ||
     ts.isRegularExpressionLiteral(node) ||
     ts.isNoSubstitutionTemplateLiteral(node) ||
@@ -81,19 +94,68 @@ function getLeafValue(node: ts.Node): string | undefined {
   if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
     return String(node.operator);
   }
+  if (ts.isTypeOperatorNode(node)) {
+    return String(node.operator);
+  }
+  if (ts.isHeritageClause(node)) {
+    return String(node.token);
+  }
+  if ('token' in node && typeof (node as { token?: unknown }).token === 'number') {
+    return String((node as { token: number }).token);
+  }
   return undefined;
 }
 
-function toCanonicalNode(rawNode: ts.Node): CanonicalNode {
+function hasDirectiveEscape(node: ts.Node, sourceFile: ts.SourceFile): boolean {
+  if (ts.isStringLiteral(node)) {
+    try {
+      const raw = node.getText(sourceFile);
+      if (
+        (raw.startsWith('"') && raw.endsWith('"')) ||
+        (raw.startsWith("'") && raw.endsWith("'"))
+      ) {
+        return raw.slice(1, -1) !== node.text;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function getSemanticComments(node: ts.Node, sourceFile: ts.SourceFile): string[] {
+  const text = sourceFile.text;
+  const comments: string[] = [];
+
+  if (node.kind === ts.SyntaxKind.SourceFile && text.startsWith('#!')) {
+    const lineEnd = text.indexOf('\n');
+    const hashbang = (lineEnd === -1 ? text : text.slice(0, lineEnd)).trim();
+    comments.push(hashbang);
+  }
+
+  const ranges = ts.getLeadingCommentRanges(text, node.getFullStart());
+  if (ranges) {
+    for (const range of ranges) {
+      const comment = text.slice(range.pos, range.end).trim();
+      if (comment.includes('@ts-') || comment.startsWith('#!')) {
+        comments.push(comment);
+      }
+    }
+  }
+
+  return comments;
+}
+
+function toCanonicalNode(rawNode: ts.Node, sourceFile: ts.SourceFile): CanonicalNode {
   const node = unwrap(rawNode);
   const children: CanonicalNode[] = [];
   ts.forEachChild(node, (child) => {
     if (child.kind === ts.SyntaxKind.EndOfFileToken) return;
     if (ts.isJsxText(child) && child.containsOnlyTriviaWhiteSpaces) return;
-    children.push(toCanonicalNode(child));
+    children.push(toCanonicalNode(child, sourceFile));
   });
 
-  const value = getLeafValue(node);
+  const value = getLeafValue(node, sourceFile);
   const n = node as unknown as {
     isTypeOnly?: boolean;
     isExportEquals?: boolean;
@@ -102,6 +164,8 @@ function toCanonicalNode(rawNode: ts.Node): CanonicalNode {
   const isTypeOnly = typeof n.isTypeOnly === 'boolean' ? n.isTypeOnly : undefined;
   const isExportEquals = typeof n.isExportEquals === 'boolean' ? n.isExportEquals : undefined;
   const isTypeOf = typeof n.isTypeOf === 'boolean' ? n.isTypeOf : undefined;
+  const hasEscape = hasDirectiveEscape(node, sourceFile) ? true : undefined;
+  const semanticComments = getSemanticComments(rawNode, sourceFile);
 
   return {
     kind: node.kind,
@@ -110,6 +174,8 @@ function toCanonicalNode(rawNode: ts.Node): CanonicalNode {
     ...(isTypeOnly !== undefined ? { isTypeOnly } : {}),
     ...(isExportEquals !== undefined ? { isExportEquals } : {}),
     ...(isTypeOf !== undefined ? { isTypeOf } : {}),
+    ...(hasEscape !== undefined ? { hasEscape } : {}),
+    ...(semanticComments.length > 0 ? { semanticComments } : {}),
     children,
   };
 }
@@ -121,6 +187,13 @@ function areCanonicalNodesEqual(a: CanonicalNode, b: CanonicalNode): boolean {
   if (a.isTypeOnly !== b.isTypeOnly) return false;
   if (a.isExportEquals !== b.isExportEquals) return false;
   if (a.isTypeOf !== b.isTypeOf) return false;
+  if (a.hasEscape !== b.hasEscape) return false;
+  if ((a.semanticComments?.length ?? 0) !== (b.semanticComments?.length ?? 0)) return false;
+  if (a.semanticComments && b.semanticComments) {
+    for (let i = 0; i < a.semanticComments.length; i++) {
+      if (a.semanticComments[i] !== b.semanticComments[i]) return false;
+    }
+  }
   if (a.children.length !== b.children.length) return false;
   for (let i = 0; i < a.children.length; i++) {
     if (!areCanonicalNodesEqual(a.children[i]!, b.children[i]!)) {
@@ -158,45 +231,9 @@ function isFormattingOnlyTsJs(
       return false;
     }
 
-    const beforeCanonical = toCanonicalNode(beforeSf);
-    const afterCanonical = toCanonicalNode(afterSf);
+    const beforeCanonical = toCanonicalNode(beforeSf, beforeSf);
+    const afterCanonical = toCanonicalNode(afterSf, afterSf);
     return areCanonicalNodesEqual(beforeCanonical, afterCanonical);
-  } catch {
-    return false;
-  }
-}
-
-function isEqualCanonicalJson(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== typeof b || a === null || b === null) return false;
-  if (Array.isArray(a)) {
-    if (!Array.isArray(b) || a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (!isEqualCanonicalJson(a[i], b[i])) return false;
-    }
-    return true;
-  }
-  if (typeof a === 'object') {
-    if (Array.isArray(b) || typeof b !== 'object') return false;
-    const aObj = a as Record<string, unknown>;
-    const bObj = b as Record<string, unknown>;
-    const keysA = Object.keys(aObj).sort();
-    const keysB = Object.keys(bObj).sort();
-    if (keysA.length !== keysB.length) return false;
-    for (let i = 0; i < keysA.length; i++) {
-      if (keysA[i] !== keysB[i]) return false;
-      if (!isEqualCanonicalJson(aObj[keysA[i]!], bObj[keysB[i]!])) return false;
-    }
-    return true;
-  }
-  return false;
-}
-
-function isFormattingOnlyJson(beforeContent: string, afterContent: string): boolean {
-  try {
-    const beforeParsed: unknown = JSON.parse(beforeContent);
-    const afterParsed: unknown = JSON.parse(afterContent);
-    return isEqualCanonicalJson(beforeParsed, afterParsed);
   } catch {
     return false;
   }
@@ -208,9 +245,6 @@ export function isFormattingOnlyChange(
   afterContent: string,
 ): boolean {
   const ext = getExtension(path);
-  if (ext === '.json') {
-    return isFormattingOnlyJson(beforeContent, afterContent);
-  }
   const scriptKind = getScriptKind(ext);
   if (scriptKind !== undefined) {
     return isFormattingOnlyTsJs(path, beforeContent, afterContent, scriptKind);

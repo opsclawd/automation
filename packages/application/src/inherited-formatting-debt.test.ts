@@ -65,7 +65,7 @@ describe('inherited formatting debt', () => {
       }
     });
 
-    it('treats parsed JSON object formatting and key order as semantically equivalent', () => {
+    it('rejects parsed JSON object key reordering as semantically significant', () => {
       const before = JSON.stringify({
         alpha: 1,
         beta: { innerB: true, innerA: [1, 2, 'three'] },
@@ -74,12 +74,100 @@ describe('inherited formatting debt', () => {
 
       const after = `{\n  "gamma": null,\n  "beta": {\n    "innerA": [\n      1,\n      2,\n      "three"\n    ],\n    "innerB": true\n  },\n  "alpha": 1\n}\n`;
 
-      expect(isFormattingOnlyChange('package.json', before, after)).toBe(true);
+      expect(isFormattingOnlyChange('package.json', before, after)).toBe(false);
       expect(
         isFormattingOnlyChange(
           'configs/settings.json',
           '{\n  "z": 1,\n  "a": 2\n}',
           '{"a":2,"z":1}',
+        ),
+      ).toBe(false);
+    });
+
+    it('accepts JSON formatting when object key order is preserved', () => {
+      expect(
+        isFormattingOnlyChange(
+          'data.json',
+          '{"a":1,"b":{"c":2}}',
+          '{\n  "a": 1,\n  "b": {\n    "c": 2\n  }\n}\n',
+        ),
+      ).toBe(true);
+    });
+
+    it('rejects order-sensitive package exports key reordering', () => {
+      expect(
+        isFormattingOnlyChange(
+          'package.json',
+          '{"exports":{".":{"import":"./esm.js","default":"./cjs.js"}}}',
+          '{"exports":{".":{"default":"./cjs.js","import":"./esm.js"}}}',
+        ),
+      ).toBe(false);
+    });
+
+    it('rejects semantic trivia, directives, and syntax discriminant changes', () => {
+      const nonEquivalentCases: Array<{ file: string; before: string; after: string }> = [
+        {
+          file: 'src/check.ts',
+          before: 'const x = 1;\n',
+          after: '// @ts-nocheck\nconst x = 1;\n',
+        },
+        {
+          file: 'src/cli.js',
+          before: 'const x = 1;\n',
+          after: '#!/usr/bin/env node\nconst x = 1;\n',
+        },
+        {
+          file: 'src/class.ts',
+          before: 'class A extends B {}\n',
+          after: 'class A implements B {}\n',
+        },
+        {
+          file: 'src/directive.js',
+          before: '"use strict";\nconst x = 1;\n',
+          after: '("use strict");\nconst x = 1;\n',
+        },
+      ];
+
+      for (const c of nonEquivalentCases) {
+        expect(isFormattingOnlyChange(c.file, c.before, c.after)).toBe(false);
+      }
+    });
+
+    it('rejects semantic TypeScript tokens, directive escapes, and relocated diagnostic comments', () => {
+      const nonEquivalentCases: Array<{ file: string; before: string; after: string }> = [
+        {
+          file: 'src/type-operator.ts',
+          before: 'type T = keyof X[];\n',
+          after: 'type T = readonly X[];\n',
+        },
+        {
+          file: 'src/import-attributes.ts',
+          before: 'import data from "./data.json" with { type: "json" };\n',
+          after: 'import data from "./data.json" assert { type: "json" };\n',
+        },
+        {
+          file: 'src/directive-escape.js',
+          before: '"use strict";\nconst value = 1;\n',
+          after: '"use\\x20strict";\nconst value = 1;\n',
+        },
+        {
+          file: 'src/diagnostic-comment.ts',
+          before: '// @ts-ignore\nconst first = 1;\nconst second = 2;\n',
+          after: 'const first = 1;\n// @ts-ignore\nconst second = 2;\n',
+        },
+      ];
+
+      for (const c of nonEquivalentCases) {
+        expect(isFormattingOnlyChange(c.file, c.before, c.after)).toBe(false);
+      }
+    });
+
+    it('accepts block-comment line-ending normalization as formatting-only', () => {
+      expect(
+        isFormattingOnlyChange(
+          'src/comments.ts',
+          '/* first line\r\n * second line */\r\nconst value=1;\r\n',
+          '/* first line\n * second line */\nconst value = 1;\n',
         ),
       ).toBe(true);
     });
@@ -179,6 +267,23 @@ describe('inherited formatting debt', () => {
       expect(isFormattingOnlyChange('data.json', '{"a": [1, 2]}', '{"a": [2, 1]}')).toBe(false);
       expect(isFormattingOnlyChange('data.json', '{"a": 1}', '{"a": 1, "b": 2}')).toBe(false);
       expect(isFormattingOnlyChange('data.json', '{"a": 1, "b": 2}', '{"a": 1}')).toBe(false);
+    });
+
+    it('rejects JSON member order, lossless numeric, negative-zero, and duplicate-member changes', () => {
+      expect(isFormattingOnlyChange('data.json', '{"2":"b","1":"a"}', '{"1":"a","2":"b"}')).toBe(
+        false,
+      );
+      expect(
+        isFormattingOnlyChange(
+          'data.json',
+          '{"value":9007199254740992}',
+          '{"value":9007199254740993}',
+        ),
+      ).toBe(false);
+      expect(isFormattingOnlyChange('data.json', '{"value":0}', '{"value":-0}')).toBe(false);
+      expect(isFormattingOnlyChange('data.json', '{"value":1}', '{"value":1,"value":1}')).toBe(
+        false,
+      );
     });
 
     it('fails closed for unsupported extensions parser diagnostics missing blobs and read errors', () => {

@@ -444,6 +444,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
           n: 2,
           title: 'Add the RED-first regression proof',
           expected_files: ['src/proof.test.ts'],
+          reference_files: ['src/earlier.ts'],
           validation_commands: ['! pnpm test -- src/proof.test.ts'],
         },
       ],
@@ -475,10 +476,10 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     expect(result.outcome).toBe('failed');
     expect(
       harness.events.find((event) => event.type === 'step.red_first_violation')?.metadata,
-    ).toMatchObject({ undeclaredFiles: ['src/earlier.ts'] });
+    ).toMatchObject({ modifiedReferenceFiles: ['src/earlier.ts'] });
   });
 
-  it('keeps reference files in RED-first scope violations even when an earlier completed task also declares them', async () => {
+  it('allows formatter-only edits to reference files owned by an earlier completed task', async () => {
     const twoTaskManifestWithRef: TaskManifest = {
       version: 2,
       task_count: 2,
@@ -521,9 +522,9 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
 
     const result = await harness.loop.execute(harness.input);
 
-    expect(result.outcome).toBe('failed');
-    expect(
-      harness.events.find((event) => event.type === 'step.red_first_violation')?.metadata,
-    ).toMatchObject({ modifiedReferenceFiles: ['src/earlier.ts'] });
+    expect(result.outcome).toBe('success');
+    expect(harness.events.some((event) => event.type === 'step.red_first_violation')).toBe(false);
+    expect(harness.runSpecReview).toHaveBeenCalled();
+    expect(harness.runQualityReview).toHaveBeenCalled();
   });
 });

@@ -902,7 +902,9 @@ export class ImplementStepLoop {
               manifest: input.manifest,
               currentTaskNumber: input.stepIndex,
               completedTaskNumbers,
-              candidateFiles: undeclaredFiles.filter((path) => !isProtectedFilePath(path)),
+              candidateFiles: [...new Set([...modifiedReferenceFiles, ...undeclaredFiles])].filter(
+                (path) => !isProtectedFilePath(path),
+              ),
               preStepHead: input.initialPreStepHead,
               postStepHead: currentHead,
               git: deps.git,
@@ -911,6 +913,7 @@ export class ImplementStepLoop {
 
       if (inheritedFormattingDebtFiles.length > 0) {
         const inheritedSet = new Set(inheritedFormattingDebtFiles);
+        modifiedReferenceFiles = modifiedReferenceFiles.filter((path) => !inheritedSet.has(path));
         undeclaredFiles = undeclaredFiles.filter((path) => !inheritedSet.has(path));
       }
 

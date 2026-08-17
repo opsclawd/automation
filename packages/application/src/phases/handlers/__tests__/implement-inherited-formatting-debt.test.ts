@@ -56,6 +56,7 @@ describe('ImplementHandler inherited formatting debt regression proof', () => {
           n: 2,
           title: 'Write task B after the repo formatter',
           expected_files: ['src/b.ts'],
+          reference_files: ['src/a.ts'],
           validation_commands: ['pnpm format'],
         },
       ],
