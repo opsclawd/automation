@@ -1,3 +1,5 @@
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PlanReviewContext } from '@ai-sdlc/application';
 import type { SignatureReferenceAnalyzerPort } from '@ai-sdlc/application';
 import type { TaskManifest } from '@ai-sdlc/application';
@@ -7,7 +9,11 @@ import {
   renderSignatureBlastRadiusDiagnostic,
   type SignatureBlastRadiusFailure,
 } from '@ai-sdlc/application';
-import { parseTaskManifest, validatePlanTaskList } from '@ai-sdlc/application';
+import {
+  parseTaskManifest,
+  validatePlanTaskList,
+  checkTaskValidationCommandsSatisfiability,
+} from '@ai-sdlc/application';
 
 export interface DeterministicPlanCheckResult {
   diagnostic: string | null;
@@ -140,10 +146,30 @@ export function createDeterministicPlanCheck(options: CreateDeterministicPlanChe
     }
 
     const blastRadiusDiagnostic = renderSignatureBlastRadiusDiagnostic(blastRadiusFailures);
+
+    const validationCommandDiagnostic = await checkTaskValidationCommandsSatisfiability(
+      manifest,
+      {
+        worktreeRoot: ctx.cwd,
+        readWorktreeFile: (relativePath: string) => {
+          const fullPath = join(ctx.cwd, relativePath);
+          if (existsSync(fullPath)) {
+            try {
+              return readFileSync(fullPath, 'utf-8');
+            } catch {
+              return null;
+            }
+          }
+          return null;
+        },
+      },
+    );
+
     const diagnostic = joinDiagnostics(
       structuralDiagnostic,
       forbiddenArtifactDiagnostic,
       blastRadiusDiagnostic,
+      validationCommandDiagnostic,
     );
 
     return { diagnostic, signatureBlastRadiusFailures: blastRadiusFailures };

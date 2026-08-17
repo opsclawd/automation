@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildTaskValidationCommands } from '../task-validation-commands.js';
+import {
+  buildTaskValidationCommands,
+  checkTaskValidationCommandsSatisfiability,
+  globToRegex,
+  parseRunnerConfigExclusions,
+} from '../task-validation-commands.js';
 import type { TaskManifest } from '../phases/index.js';
 
 import type { ValidationCommand } from '../ports/validation-port.js';
@@ -233,5 +238,140 @@ describe('buildTaskValidationCommands', () => {
       ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
       ['vitest', 'run', 'src/foo.test.ts', '--passWithNoTests=false'],
     ]);
+  });
+});
+
+describe('checkTaskValidationCommandsSatisfiability', () => {
+  it('globToRegex correctly converts glob patterns to RegExp, including brace expansion', () => {
+    const re1 = globToRegex('**/*.integration.test.ts');
+    expect(re1.test('packages/infrastructure/src/postgres/baseline-schema.integration.test.ts')).toBe(true);
+    expect(re1.test('src/foo.test.ts')).toBe(false);
+
+    const re2 = globToRegex('packages/*/src/**/*.test.ts');
+    expect(re2.test('packages/infrastructure/src/postgres/baseline-schema.test.ts')).toBe(true);
+
+    const reBrace = globToRegex('**/*.{test,spec}.ts');
+    expect(reBrace.test('src/foo.test.ts')).toBe(true);
+    expect(reBrace.test('src/foo.spec.ts')).toBe(true);
+    expect(reBrace.test('src/foo.other.ts')).toBe(false);
+  });
+
+  it('filters config files by invoked runner kind so jest.config does not pollute vitest', async () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          validation_commands: ['pnpm vitest run src/foo.test.ts'],
+        },
+      ],
+    };
+
+    const vitestConfig = `
+      export default defineConfig({
+        test: {
+          include: ["src/**/*.test.ts"],
+          exclude: ["**/*.integration.test.ts"],
+        }
+      });
+    `;
+
+    const jestConfig = `
+      module.exports = {
+        testPathIgnorePatterns: ["src/foo.test.ts"],
+      };
+    `;
+
+    const diagnostic = await checkTaskValidationCommandsSatisfiability(manifest, {
+      worktreeRoot: '/dummy/worktree',
+      readWorktreeFile: async (path) => {
+        if (path === 'vitest.config.ts') return vitestConfig;
+        if (path === 'jest.config.js') return jestConfig;
+        return null;
+      },
+    });
+
+    expect(diagnostic).toBeNull();
+  });
+
+  it('parseRunnerConfigExclusions extracts include and exclude patterns', () => {
+    const config = `
+      export default defineConfig({
+        test: {
+          include: ["packages/*/src/**/*.test.ts", "apps/*/src/**/*.test.ts"],
+          exclude: ["**/*.integration.test.ts", "**/node_modules/**", "**/dist/**"],
+        }
+      });
+    `;
+    const { include, exclude } = parseRunnerConfigExclusions(config);
+    expect(include).toEqual(["packages/*/src/**/*.test.ts", "apps/*/src/**/*.test.ts"]);
+    expect(exclude).toEqual(["**/*.integration.test.ts", "**/node_modules/**", "**/dist/**"]);
+  });
+
+  it('rejects a task validation command targeting a path excluded by runner config', async () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          validation_commands: [
+            'pnpm vitest run packages/infrastructure/src/postgres/baseline-schema.integration.test.ts',
+          ],
+        },
+      ],
+    };
+
+    const vitestConfig = `
+      export default defineConfig({
+        test: {
+          include: ["packages/*/src/**/*.test.ts"],
+          exclude: ["**/*.integration.test.ts"],
+        }
+      });
+    `;
+
+    const diagnostic = await checkTaskValidationCommandsSatisfiability(manifest, {
+      worktreeRoot: '/dummy/worktree',
+      readWorktreeFile: async (path) => (path === 'vitest.config.ts' ? vitestConfig : null),
+    });
+
+    expect(diagnostic).not.toBeNull();
+    expect(diagnostic).toContain('Task 1: validation_command');
+    expect(diagnostic).toContain('is unsatisfiable by construction');
+    expect(diagnostic).toContain('baseline-schema.integration.test.ts');
+  });
+
+  it('accepts satisfiable commands matching runner config', async () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          validation_commands: ['pnpm vitest run packages/infrastructure/src/postgres/baseline-schema.test.ts'],
+        },
+      ],
+    };
+
+    const vitestConfig = `
+      export default defineConfig({
+        test: {
+          include: ["packages/*/src/**/*.test.ts"],
+          exclude: ["**/*.integration.test.ts"],
+        }
+      });
+    `;
+
+    const diagnostic = await checkTaskValidationCommandsSatisfiability(manifest, {
+      worktreeRoot: '/dummy/worktree',
+      readWorktreeFile: async (path) => (path === 'vitest.config.ts' ? vitestConfig : null),
+    });
+
+    expect(diagnostic).toBeNull();
   });
 });

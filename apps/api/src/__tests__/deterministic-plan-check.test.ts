@@ -334,4 +334,63 @@ describe('createDeterministicPlanCheck', () => {
       'structural mismatch error\n\nTask 1 changes fooFunc, but the check could not run:\n  (unresolved: Could not create TypeScript program)',
     );
   });
+
+  it('rejects a task validation command pointing to an excluded integration test path (regression test)', async () => {
+    const readPlanMd = vi.fn().mockResolvedValue('some plan markdown');
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          validation_commands: [
+            'pnpm vitest run packages/infrastructure/src/postgres/baseline-schema.integration.test.ts',
+          ],
+        },
+      ],
+    };
+    const readManifest = vi.fn().mockResolvedValue(JSON.stringify(manifest));
+    const validatePlanTaskList = vi.fn().mockReturnValue({ success: true });
+    const signatureAnalyzer: SignatureReferenceAnalyzerPort = {
+      analyze: vi.fn(),
+    };
+
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'det-check-test-'));
+    try {
+      const vitestConfig = `
+        import { defineConfig } from 'vitest/config';
+        export default defineConfig({
+          test: {
+            include: ["packages/*/src/**/*.test.ts", "apps/*/src/**/*.test.ts"],
+            exclude: ["**/*.integration.test.ts", "**/node_modules/**", "**/dist/**"],
+          },
+        });
+      `;
+      fs.writeFileSync(path.join(tmpDir, 'vitest.config.ts'), vitestConfig, 'utf-8');
+
+      const check = createDeterministicPlanCheck({
+        readPlanMd,
+        readManifest,
+        validatePlanTaskList,
+        signatureAnalyzer,
+      });
+
+      const result = await check({
+        ...dummyCtx,
+        cwd: tmpDir,
+      });
+
+      expect(result.diagnostic).not.toBeNull();
+      expect(result.diagnostic).toContain('Task 1: validation_command');
+      expect(result.diagnostic).toContain('baseline-schema.integration.test.ts');
+      expect(result.diagnostic).toContain('is unsatisfiable by construction');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
