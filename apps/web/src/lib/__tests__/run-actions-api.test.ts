@@ -184,6 +184,18 @@ describe('run actions API client', () => {
       }
     });
 
+    it('handles invalid response on 409 (malformed JSON)', async () => {
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: () => Promise.reject(new Error('SyntaxError')),
+      });
+
+      await expect(resumeRunAction('repo-123', 'uuid-123')).rejects.toThrow(
+        'failed to resume run action: 409',
+      );
+    });
+
     it('handles resume for runs in needs_human_review state', async () => {
       const needsReviewRun = {
         ...mockRun,

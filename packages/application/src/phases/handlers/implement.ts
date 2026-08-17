@@ -537,6 +537,7 @@ export class ImplementHandler implements PhaseHandler {
             let repairedProtectedRecord:
               | { revertedProtectedFiles: string[]; removedNewlyIgnoredFilesCount: number }
               | undefined;
+            let protectedRepairError: string | undefined;
 
             if (undeclaredProtectedPaths.length > 0) {
               if (this.opts.revertProtectedFiles) {
@@ -560,8 +561,8 @@ export class ImplementHandler implements PhaseHandler {
                     removedNewlyIgnoredFilesCount: repairResult.removedNewlyIgnoredFiles.length,
                   };
                 } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error);
                   if (preservedModifiedReferenceFiles.length === 0) {
-                    const message = error instanceof Error ? error.message : String(error);
                     this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
                     emit(
                       'step.failed',
@@ -576,6 +577,7 @@ export class ImplementHandler implements PhaseHandler {
                       `step ${d.index} (${d.title}) protected file repair failed: ${message}`,
                     );
                   }
+                  protectedRepairError = message;
                 }
               } else if (preservedModifiedReferenceFiles.length === 0) {
                 const repairError = 'revertProtectedFiles port is not configured';
@@ -639,7 +641,9 @@ export class ImplementHandler implements PhaseHandler {
 
             const hasManifestFault = modifiedReferenceFiles.length > 0;
             if (hasManifestFault) {
-              const failureMessage = `step ${d.index} (${d.title}) modified reference_files ${modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
+              const failureMessage = protectedRepairError
+                ? `step ${d.index} (${d.title}) modified reference_files ${modifiedReferenceFiles.join(', ')} and protected file repair failed: ${protectedRepairError}. This is a manifest fault: expected_files must include these files.`
+                : `step ${d.index} (${d.title}) modified reference_files ${modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
               this.opts.steps.upsert({
                 ...step,
                 status: 'needs_human_review',
@@ -648,22 +652,29 @@ export class ImplementHandler implements PhaseHandler {
               emit(
                 'step.needs_human_review',
                 'warn',
-                `step ${d.index}/${totalSteps} needs human review: modified reference files (${modifiedReferenceFiles.join(', ')})`,
+                protectedRepairError
+                  ? `step ${d.index}/${totalSteps} needs human review: modified reference files (${modifiedReferenceFiles.join(', ')}); protected file repair failed: ${protectedRepairError}`
+                  : `step ${d.index}/${totalSteps} needs human review: modified reference files (${modifiedReferenceFiles.join(', ')})`,
                 {
                   index: d.index,
                   total: totalSteps,
                   taskTitle: task?.title ?? d.title,
                   modifiedReferenceFiles,
+                  ...(protectedRepairError ? { protectedRepairError } : {}),
                   preStepHead,
                   postStepHead,
                 },
               );
+              const suggestedAction = protectedRepairError
+                ? `Repair the protected path changes (${undeclaredProtectedPaths.join(', ')}) and update task-manifest.json to add ${modifiedReferenceFiles.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`
+                : `Update task-manifest.json to add ${modifiedReferenceFiles.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`;
               return this.needsHumanReview(
                 ctx,
                 emit,
                 'needs_human_review',
                 failureMessage,
-                `Update task-manifest.json to add ${modifiedReferenceFiles.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`,
+                suggestedAction,
+                ['task-manifest.json'],
               );
             }
 
@@ -848,16 +859,19 @@ export class ImplementHandler implements PhaseHandler {
               ...(preStepHead !== undefined ? { preStepHead } : {}),
             },
           );
-          const suggestedAction =
-            result.modifiedReferenceFiles && result.modifiedReferenceFiles.length > 0
-              ? `Update task-manifest.json to add ${result.modifiedReferenceFiles.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`
-              : undefined;
+          const isManifestFault =
+            result.modifiedReferenceFiles && result.modifiedReferenceFiles.length > 0;
+          const suggestedAction = isManifestFault
+            ? `Update task-manifest.json to add ${result.modifiedReferenceFiles!.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`
+            : undefined;
+          const artifacts = isManifestFault ? ['task-manifest.json'] : [];
           return this.needsHumanReview(
             ctx,
             emit,
             result.failureKind ?? 'agent_incomplete',
             result.failureMessage ?? `step ${d.index} (${d.title}) needs human review`,
             suggestedAction,
+            artifacts,
           );
         } else {
           this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
@@ -941,6 +955,7 @@ export class ImplementHandler implements PhaseHandler {
     kind: FailureKind,
     message: string,
     suggestedAction?: string,
+    artifacts: string[] = [],
   ): PhaseResult {
     emit('implement.needs_human_review', 'warn', message);
     return {
@@ -952,7 +967,7 @@ export class ImplementHandler implements PhaseHandler {
         message,
         canRetry: true,
         suggestedAction: suggestedAction ?? 'Review the step that needs attention and resume.',
-        artifacts: ['task-manifest.json'],
+        artifacts,
         detectedAt: ctx.now(),
       },
     };
