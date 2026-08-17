@@ -4,13 +4,19 @@ import { createEventEmitter } from '../handler.js';
 import { getPhaseDefinition } from '../phase-definitions.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 
+export interface SingleShotAgentHandlerOptions {
+  skipResultExtraction?: boolean;
+  cleanArtifacts?: boolean;
+  skipCompletedEmit?: boolean;
+}
+
 export class SingleShotAgentHandler implements PhaseHandler {
   readonly phase: PhaseName;
 
   constructor(
     phaseName: PhaseName,
     private readonly step: string,
-    private readonly options: { skipResultExtraction?: boolean; cleanArtifacts?: boolean } = {},
+    private readonly options: SingleShotAgentHandlerOptions = {},
   ) {
     this.phase = phaseName;
   }
@@ -84,7 +90,11 @@ export class SingleShotAgentHandler implements PhaseHandler {
       ...(this.options.skipResultExtraction ? { skipResultExtraction: true } : {}),
       ...(this.options.cleanArtifacts ? { cleanArtifacts: true } : {}),
     });
-    if (this.options.skipResultExtraction && result.outcome === 'passed') {
+    if (
+      this.options.skipResultExtraction &&
+      !this.options.skipCompletedEmit &&
+      result.outcome === 'passed'
+    ) {
       emit(`${String(this.phase)}.completed`, 'info', `${String(this.phase)} completed`);
     }
     return result;

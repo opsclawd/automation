@@ -62,3 +62,30 @@ export function classifyUndeclaredFiles(
     undeclaredFiles: undeclared.filter((file) => !referenceFiles.has(file)),
   };
 }
+
+export function getManifestBoundaries(manifest: unknown): {
+  writableSet: Set<string>;
+  referenceSet: Set<string>;
+} {
+  if (!manifest || typeof manifest !== 'object') {
+    return { writableSet: new Set(), referenceSet: new Set() };
+  }
+  const record = manifest as Record<string, unknown>;
+  const tasks = Array.isArray(record.tasks) ? record.tasks : [];
+  const writableFiles = tasks.flatMap((t) => declaredTaskFiles(t));
+  const referenceFiles = tasks.flatMap((t) => referenceTaskFiles(t));
+  return {
+    writableSet: normalizedPathSet(writableFiles),
+    referenceSet: normalizedPathSet(referenceFiles),
+  };
+}
+
+export function checkTaskBoundaries(
+  committedFiles: readonly string[],
+  manifest: unknown,
+  exemptFiles?: readonly string[],
+): TaskBoundaryClassification {
+  const { writableSet, referenceSet } = getManifestBoundaries(manifest);
+  const exemptSet = normalizedPathSet(exemptFiles);
+  return classifyUndeclaredFiles(committedFiles, writableSet, referenceSet, exemptSet);
+}

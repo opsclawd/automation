@@ -20,6 +20,7 @@ import type {
 } from '../review-state/types.js';
 import type { ArbiterResult } from '../results/schemas/arbiter.js';
 import type { ExtractResultOutcome } from '../results/extract-result.js';
+import type { TaskManifest } from '../results/schemas/task-manifest.js';
 
 type ExtractResultFailure = Extract<ExtractResultOutcome, { ok: false }>;
 
@@ -281,6 +282,7 @@ export interface ReviewFixLoopInput {
   fixFallbackProfile?: AgentProfileName;
   architectPlan?: ArchitectPlan;
   options?: ReviewFixLoopOptions;
+  manifest?: TaskManifest;
 }
 
 export interface ReviewFixLoopResult {
