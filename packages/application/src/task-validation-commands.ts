@@ -106,12 +106,9 @@ function makeLiteralVitestCommandStrict(command: ValidationCommand): ValidationC
     : makeLiteralVitestStringStrict(command);
 }
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 export interface CheckTaskValidationCommandsOptions {
-  worktreeRoot: string;
-  readWorktreeFile?: (path: string) => Promise<string | null>;
+  worktreeRoot?: string;
+  readWorktreeFile?: (path: string) => Promise<string | null> | string | null;
 }
 
 export function globToRegex(glob: string): RegExp {
@@ -304,22 +301,13 @@ export async function checkTaskValidationCommandsSatisfiability(
   ];
 
   const configContents = new Map<string, string>();
-  for (const configFile of configFiles) {
-    if (readWorktreeFile) {
+  if (readWorktreeFile) {
+    for (const configFile of configFiles) {
       try {
         const content = await readWorktreeFile(configFile);
         if (content) configContents.set(configFile, content);
       } catch {
         // ignore
-      }
-    } else {
-      const fullPath = join(worktreeRoot, configFile);
-      if (existsSync(fullPath)) {
-        try {
-          configContents.set(configFile, readFileSync(fullPath, 'utf-8'));
-        } catch {
-          // ignore
-        }
       }
     }
   }

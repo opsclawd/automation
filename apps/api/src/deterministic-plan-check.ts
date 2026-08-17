@@ -1,3 +1,5 @@
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PlanReviewContext } from '@ai-sdlc/application';
 import type { SignatureReferenceAnalyzerPort } from '@ai-sdlc/application';
 import type { TaskManifest } from '@ai-sdlc/application';
@@ -147,7 +149,20 @@ export function createDeterministicPlanCheck(options: CreateDeterministicPlanChe
 
     const validationCommandDiagnostic = await checkTaskValidationCommandsSatisfiability(
       manifest,
-      { worktreeRoot: ctx.cwd },
+      {
+        worktreeRoot: ctx.cwd,
+        readWorktreeFile: (relativePath: string) => {
+          const fullPath = join(ctx.cwd, relativePath);
+          if (existsSync(fullPath)) {
+            try {
+              return readFileSync(fullPath, 'utf-8');
+            } catch {
+              return null;
+            }
+          }
+          return null;
+        },
+      },
     );
 
     const diagnostic = joinDiagnostics(
