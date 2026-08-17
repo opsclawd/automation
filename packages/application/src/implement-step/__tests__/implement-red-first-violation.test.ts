@@ -3,11 +3,7 @@ import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { FakeGitPort } from '../../test-doubles/fake-git-port.js';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
-import { FakeArtifactStore } from '../../test-doubles/fake-artifact-store.js';
-import { FakeStepRepository } from '../../test-doubles/fake-step-repository.js';
 import { ImplementStepLoop } from '../implement-step-loop.js';
-import { ImplementHandler } from '../../phases/handlers/implement.js';
-import type { PhaseHandlerContext } from '../../phases/handler.js';
 import type {
   ImplementStepLoopDeps,
   ImplementResult,
@@ -23,7 +19,6 @@ import type {
 import type { EventBusPort } from '../../ports/event-bus-port.js';
 import type { RevalidationResult } from '../../review-fix/types.js';
 import type { TaskManifest } from '../../results/schemas/task-manifest.js';
-import type { StepRunContext, StepRunResult } from '../../phases/handlers/implement.js';
 
 const baseManifest: TaskManifest = {
   version: 2,
@@ -356,150 +351,6 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     expect(harness.runSpecReview).toHaveBeenCalled();
     expect(harness.runQualityReview).toHaveBeenCalled();
     expect(harness.events.some((e) => e.type === 'step.red_first_violation')).toBe(false);
-  });
-
-  it('propagates the purely undeclared RED-first violation through the implement phase failure', async () => {
-    const artifacts = new FakeArtifactStore();
-    const manifestJson = JSON.stringify(baseManifest);
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'task-manifest.json',
-      contents: manifestJson,
-    });
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Add the RED-first regression proof\n',
-    });
-
-    const steps = new FakeStepRepository();
-    const events: OrchestratorEvent[] = [];
-    const git = new FakeGitPort();
-    git.headByCwd.set('/wt', 'pre-step-sha');
-
-    const ctx: PhaseHandlerContext = {
-      runId: 'run-1',
-      runUuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      repoFullName: 'acme/widgets',
-      issueNumber: 42,
-      cwd: '/wt',
-      artifacts,
-      github: {} as PhaseHandlerContext['github'],
-      git,
-      agent: {} as PhaseHandlerContext['agent'],
-      events: {
-        publish: (_u: string, e: OrchestratorEvent) => {
-          events.push(e);
-        },
-        subscribe: () => () => {},
-      },
-      now: () => new Date('2026-06-16T00:00:00Z'),
-      idFactory: (() => {
-        let n = 0;
-        return () => `id-${++n}`;
-      })(),
-    };
-
-    const redMessage =
-      'RED-first violation: Task 1 (Add the RED-first regression proof) requires inverted validation command(s) "! pnpm test -- src/proof.test.ts" to pass, but the commit included out-of-scope files: src/future-fix.ts. Separate the regression proof from its implementation.';
-
-    const stepResult: StepRunResult = {
-      outcome: 'failed',
-      failureMessage: redMessage,
-    };
-
-    const runStep = vi
-      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
-      .mockResolvedValue(stepResult);
-
-    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
-
-    expect(result.outcome).toBe('failed');
-    if (result.outcome === 'failed') {
-      expect(result.failure.kind).toBe('invalid_result');
-      expect(result.failure.message).toBe(redMessage);
-    }
-
-    const failedEvent = events.find((e) => e.type === 'implement.failed');
-    expect(failedEvent).toBeDefined();
-    expect(failedEvent?.message).toBe(redMessage);
-  });
-
-  it('propagates the reference-file RED-first violation through implement phase as needs_human_review', async () => {
-    const artifacts = new FakeArtifactStore();
-    const manifestJson = JSON.stringify(baseManifest);
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'task-manifest.json',
-      contents: manifestJson,
-    });
-    await artifacts.write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Add the RED-first regression proof\n',
-    });
-
-    const steps = new FakeStepRepository();
-    const events: OrchestratorEvent[] = [];
-    const git = new FakeGitPort();
-    git.headByCwd.set('/wt', 'pre-step-sha');
-
-    const ctx: PhaseHandlerContext = {
-      runId: 'run-1',
-      runUuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      repoFullName: 'acme/widgets',
-      issueNumber: 42,
-      cwd: '/wt',
-      artifacts,
-      github: {} as PhaseHandlerContext['github'],
-      git,
-      agent: {} as PhaseHandlerContext['agent'],
-      events: {
-        publish: (_u: string, e: OrchestratorEvent) => {
-          events.push(e);
-        },
-        subscribe: () => () => {},
-      },
-      now: () => new Date('2026-06-16T00:00:00Z'),
-      idFactory: (() => {
-        let n = 0;
-        return () => `id-${++n}`;
-      })(),
-    };
-
-    const manifestFaultMessage =
-      'step 1 (Add the RED-first regression proof) modified reference_files src/read-only.ts. This is a manifest fault: expected_files must include these files.';
-
-    const stepResult: StepRunResult = {
-      outcome: 'needs_human_review',
-      failureMessage: manifestFaultMessage,
-      failureKind: 'needs_human_review',
-      modifiedReferenceFiles: ['src/read-only.ts'],
-    };
-
-    const runStep = vi
-      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
-      .mockResolvedValue(stepResult);
-
-    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
-
-    expect(result.outcome).toBe('needs_human_review');
-    if (result.outcome === 'needs_human_review') {
-      expect(result.failure.kind).toBe('needs_human_review');
-      expect(result.failure.message).toBe(manifestFaultMessage);
-      expect(result.failure.artifacts).toEqual(['task-manifest.json']);
-      expect(result.failure.suggestedAction).toContain('Update task-manifest.json');
-    }
-
-    const stepNeedsReviewEvent = events.find((e) => e.type === 'step.needs_human_review');
-    expect(stepNeedsReviewEvent).toBeDefined();
-    expect(stepNeedsReviewEvent?.metadata).toMatchObject({
-      modifiedReferenceFiles: ['src/read-only.ts'],
-    });
-
-    const phaseNeedsReviewEvent = events.find((e) => e.type === 'implement.needs_human_review');
-    expect(phaseNeedsReviewEvent).toBeDefined();
-    expect(phaseNeedsReviewEvent?.message).toBe(manifestFaultMessage);
   });
 
   it('allows a RED-first proof to carry inherited formatter-only edits from a completed task', async () => {

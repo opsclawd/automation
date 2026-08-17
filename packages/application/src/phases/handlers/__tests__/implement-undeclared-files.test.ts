@@ -683,4 +683,108 @@ describe('ImplementHandler undeclared files regression proof', () => {
     expect(events.filter((e) => e.type === 'step.failed')).toHaveLength(1);
     expect(events.filter((e) => e.type === 'step.completed')).toHaveLength(0);
   });
+
+  it('propagates the purely undeclared RED-first violation through the implement phase failure', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Add the RED-first regression proof',
+          expected_files: ['src/proof.test.ts'],
+          reference_files: ['src/read-only.ts'],
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step-sha');
+
+    const redMessage =
+      'RED-first violation: Task 1 (Add the RED-first regression proof) requires inverted validation command(s) "! pnpm test -- src/proof.test.ts" to pass, but the commit included out-of-scope files: src/future-fix.ts. Separate the regression proof from its implementation.';
+
+    const stepResult: StepRunResult = {
+      outcome: 'failed',
+      failureMessage: redMessage,
+    };
+
+    const runStep = vi
+      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+      .mockResolvedValue(stepResult);
+
+    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('invalid_result');
+      expect(result.failure.message).toBe(redMessage);
+    }
+
+    const failedEvent = events.find((e) => e.type === 'implement.failed');
+    expect(failedEvent).toBeDefined();
+    expect(failedEvent?.message).toBe(redMessage);
+  });
+
+  it('propagates the reference-file RED-first violation through implement phase as needs_human_review', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Add the RED-first regression proof',
+          expected_files: ['src/proof.test.ts'],
+          reference_files: ['src/read-only.ts'],
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step-sha');
+
+    const manifestFaultMessage =
+      'step 1 (Add the RED-first regression proof) modified reference_files src/read-only.ts. This is a manifest fault: expected_files must include these files.';
+
+    const stepResult: StepRunResult = {
+      outcome: 'needs_human_review',
+      failureMessage: manifestFaultMessage,
+      failureKind: 'needs_human_review',
+      modifiedReferenceFiles: ['src/read-only.ts'],
+    };
+
+    const runStep = vi
+      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+      .mockResolvedValue(stepResult);
+
+    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toBe(manifestFaultMessage);
+      expect(result.failure.artifacts).toEqual(['task-manifest.json']);
+      expect(result.failure.suggestedAction).toContain('Update task-manifest.json');
+    }
+
+    const stepNeedsReviewEvent = events.find((e) => e.type === 'step.needs_human_review');
+    expect(stepNeedsReviewEvent).toBeDefined();
+    expect(stepNeedsReviewEvent?.metadata).toMatchObject({
+      modifiedReferenceFiles: ['src/read-only.ts'],
+    });
+
+    const phaseNeedsReviewEvent = events.find((e) => e.type === 'implement.needs_human_review');
+    expect(phaseNeedsReviewEvent).toBeDefined();
+    expect(phaseNeedsReviewEvent?.message).toBe(manifestFaultMessage);
+  });
 });
