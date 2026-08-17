@@ -388,6 +388,87 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     expect(result.phaseOutcome).toBe('failed');
   });
 
+  it('recovers in deterministic gate fix path on next iteration after boundary violation, staying in deterministic mode without running review', async () => {
+    vi.mocked(baseDeps.runPostFixGate)
+      .mockResolvedValueOnce({ outcome: 'fail', output: 'typecheck failed' })
+      .mockResolvedValueOnce({ outcome: 'pass', output: '' });
+
+    vi.mocked(baseDeps.runReview)
+      .mockResolvedValueOnce({
+        invocationId: 'rev-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [
+          { severity: 'P1', summary: 'initial review finding', files: ['src/declared.ts'] },
+        ],
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'rev-2',
+        agentOutcome: 'success',
+        verdict: 'pass',
+        offendingFindings: [],
+      });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/declared.ts']);
+
+    const fixCalls: import('../types.js').FixStepOptions[] = [];
+    vi.mocked(baseDeps.runFix)
+      .mockImplementationOnce(async (_ctx, opts) => {
+        fixCalls.push(opts);
+        return {
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'head-0',
+          summary: 'fixed review finding',
+        };
+      })
+      .mockImplementationOnce(async (_ctx, opts) => {
+        fixCalls.push(opts);
+        git.headByCwd.set('/tmp/wt', 'head-2');
+        git.changedFilesResults.set('head-1|head-2', ['src/undeclared.ts']);
+        return {
+          invocationId: 'fix-2',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'head-1',
+          summary: 'fixed gate by touching undeclared file',
+        };
+      })
+      .mockImplementationOnce(async (_ctx, opts) => {
+        fixCalls.push(opts);
+        git.headByCwd.set('/tmp/wt', 'head-3');
+        git.changedFilesResults.set('head-1|head-3', ['src/declared.ts']);
+        return {
+          invocationId: 'fix-3',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'head-1',
+          summary: 'fixed gate by touching declared file',
+        };
+      });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({ ...baseInput, maxIterations: 4 });
+
+    expect(result.phaseOutcome).toBe('passed');
+    expect(result.loop.iterations).toHaveLength(4);
+    expect(result.loop.iterations[0]?.outcome).toBe('fixed');
+    expect(result.loop.iterations[1]?.outcome).toBe('unresolved');
+    expect(result.loop.iterations[2]?.outcome).toBe('fixed');
+    expect(result.loop.iterations[3]?.outcome).toBe('resolved');
+
+    expect(baseDeps.runReview).toHaveBeenCalledTimes(2);
+    expect(fixCalls).toHaveLength(3);
+    expect(fixCalls[1]?.attemptKind).toBe('deterministic');
+    expect(fixCalls[1]?.deterministicDiagnostic).toBe('typecheck failed');
+    expect(fixCalls[2]?.attemptKind).toBe('deterministic');
+    expect(fixCalls[2]?.deterministicDiagnostic).toContain(
+      'review-fix modified undeclared files: src/undeclared.ts',
+    );
+  });
+
   it('treats malformed manifest in artifactStore as synthetic check failure', async () => {
     await artifacts.write({
       runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',

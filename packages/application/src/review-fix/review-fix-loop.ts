@@ -455,7 +455,7 @@ export class ReviewFixLoop {
                   ...(boundaryCheck.files ? { files: boundaryCheck.files } : {}),
                 };
                 lastOffendingFindings = [syntheticFinding];
-                pendingDeterministicDiagnostic = boundaryCheck.message;
+                preEvaluatedGateResult = { outcome: 'fail', output: boundaryCheck.message };
                 consecutiveFixFailures = 0;
                 consecutiveFixFailuresForCap = 0;
                 lastIterationHadFixCommit = false;
@@ -554,7 +554,7 @@ export class ReviewFixLoop {
                       ...(boundaryCheck.files ? { files: boundaryCheck.files } : {}),
                     };
                     lastOffendingFindings = [syntheticFinding];
-                    pendingDeterministicDiagnostic = boundaryCheck.message;
+                    preEvaluatedGateResult = { outcome: 'fail', output: boundaryCheck.message };
                     consecutiveFixFailures = 0;
                     consecutiveFixFailuresForCap = 0;
                     lastIterationHadFixCommit = false;
