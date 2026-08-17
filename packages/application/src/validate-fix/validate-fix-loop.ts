@@ -7,14 +7,19 @@ import {
   type AgentProfileName,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
-import type { RevalidationResult } from '../review-fix/types.js';
-import { checkTaskBoundaries } from '../task-file-boundaries.js';
+import type { RevalidationResult, FixStepOptions } from '../review-fix/types.js';
+import { checkTaskBoundaries, getManifestBoundaries } from '../task-file-boundaries.js';
 import type {
   ValidateFixLoopDeps,
   ValidateFixLoopInput,
   ValidateFixLoopResult,
   ValidateFixStepContext,
 } from './types.js';
+
+type ManifestLoadResult =
+  | { status: 'found'; manifest: unknown }
+  | { status: 'missing'; message: string }
+  | { status: 'malformed'; message: string; error: string };
 
 export class ValidateFixLoop {
   constructor(private readonly deps: ValidateFixLoopDeps) {}
@@ -32,6 +37,7 @@ export class ValidateFixLoop {
     deps.loops.insert(loop);
 
     let consecutiveFixFailures = 0;
+    let nextDeterministicDiagnostic: string | undefined;
 
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -52,13 +58,31 @@ export class ValidateFixLoop {
         { index: iterationIndex },
       );
 
+      const manifestResult = await this.loadManifest(input, ctx);
+      let allowedFiles: string[] | undefined;
+      if (manifestResult.status === 'found') {
+        const boundaries = getManifestBoundaries(manifestResult.manifest);
+        if (boundaries.writableSet.size > 0) {
+          allowedFiles = [...boundaries.writableSet].sort();
+        }
+      }
+
       // fix
       const useFallback = consecutiveFixFailures >= 2 && input.fixFallbackProfile !== undefined;
       if (useFallback) {
         this.emitEscalation(input, 'two_consecutive_fix_failures');
       }
 
-      const fix = await deps.runFix(ctx, { useFallback });
+      const fixOpts: FixStepOptions = {
+        useFallback,
+        ...(nextDeterministicDiagnostic
+          ? { deterministicDiagnostic: nextDeterministicDiagnostic }
+          : {}),
+        ...(allowedFiles ? { allowedFiles } : {}),
+      };
+      nextDeterministicDiagnostic = undefined;
+
+      const fix = await deps.runFix(ctx, fixOpts);
       loop = startIteration(loop, { reviewInvocationId: fix.invocationId, now: deps.now() });
       deps.loops.update(loop);
 
@@ -76,7 +100,7 @@ export class ValidateFixLoop {
         break;
       }
 
-      let boundaryViolation: { files: string[]; message: string } | undefined;
+      let boundaryFailure: { files?: string[]; message: string } | undefined;
       if (deps.git && fix.headBeforeFix) {
         try {
           const currentHead = await deps.git.headCommitSha(ctx.cwd);
@@ -86,9 +110,28 @@ export class ValidateFixLoop {
               fix.headBeforeFix,
               currentHead,
             );
-            const manifest = await this.loadManifest(input, ctx);
-            if (manifest) {
-              const classification = checkTaskBoundaries(committedFiles, manifest);
+            if (manifestResult.status === 'missing') {
+              const errorMsg = 'task-manifest.json not found';
+              this.emit(
+                input,
+                'task_boundary.check_failed',
+                'warn',
+                `task boundary check failed: ${errorMsg}`,
+                { iterationIndex, reason: 'missing_manifest', error: errorMsg },
+              );
+              boundaryFailure = { message: `task boundary check failed: ${errorMsg}` };
+            } else if (manifestResult.status === 'malformed') {
+              const errorMsg = manifestResult.message;
+              this.emit(
+                input,
+                'task_boundary.check_failed',
+                'warn',
+                `task boundary check failed: ${errorMsg}`,
+                { iterationIndex, reason: 'malformed_manifest', error: manifestResult.error },
+              );
+              boundaryFailure = { message: `task boundary check failed: ${errorMsg}` };
+            } else {
+              const classification = checkTaskBoundaries(committedFiles, manifestResult.manifest);
               const violatingFiles = [
                 ...classification.modifiedReferenceFiles,
                 ...classification.undeclaredFiles,
@@ -102,7 +145,7 @@ export class ValidateFixLoop {
                   undeclaredFiles: classification.undeclaredFiles,
                   iterationIndex,
                 });
-                boundaryViolation = { files: violatingFiles, message };
+                boundaryFailure = { files: violatingFiles, message };
               }
             }
           }
@@ -113,29 +156,20 @@ export class ValidateFixLoop {
             'task_boundary.check_failed',
             'warn',
             `task boundary check failed: ${errorMsg}`,
-            { iterationIndex, error: errorMsg },
+            { iterationIndex, reason: 'check_error', error: errorMsg },
           );
+          boundaryFailure = { message: `task boundary check failed: ${errorMsg}` };
         }
       }
 
-      // If boundary violation occurred, surface as synthetic revalidation failure and rollback
-      if (boundaryViolation) {
+      // If boundary failure occurred, surface as synthetic revalidation failure and rollback
+      if (boundaryFailure) {
         const reval: RevalidationResult = {
           validationRunId: deps.idFactory(),
           passed: false,
           category: 'boundary',
-          failureDetail: boundaryViolation.message,
+          failureDetail: boundaryFailure.message,
         };
-
-        if (!fix.headBeforeFix && deps.rollbackFix) {
-          this.emit(
-            input,
-            'loop.rollback.unavailable',
-            'error',
-            `revalidation failed on iteration ${iterationIndex} but headBeforeFix not set — cannot roll back`,
-            { index: iterationIndex },
-          );
-        }
 
         if (fix.headBeforeFix && deps.rollbackFix) {
           const rollbackOk = await deps.rollbackFix(ctx, fix.headBeforeFix);
@@ -169,6 +203,8 @@ export class ValidateFixLoop {
         this.emitIterationCompleted(input, iterationIndex, 'revalidation_failed');
 
         if (!couldRollback) break;
+        consecutiveFixFailures = 0;
+        nextDeterministicDiagnostic = boundaryFailure.message;
         continue;
       }
 
@@ -344,24 +380,69 @@ export class ValidateFixLoop {
   private async loadManifest(
     input: ValidateFixLoopInput,
     ctx: ValidateFixStepContext,
-  ): Promise<unknown | undefined> {
-    if (input.manifest) return input.manifest;
+  ): Promise<ManifestLoadResult> {
+    if (input.manifest) {
+      if (typeof input.manifest === 'object' && input.manifest !== null) {
+        return { status: 'found', manifest: input.manifest };
+      }
+      return {
+        status: 'malformed',
+        message: 'input manifest is invalid',
+        error: 'input manifest is not an object',
+      };
+    }
     if (this.deps.artifactStore) {
       try {
         const raw = await this.deps.artifactStore.read(input.runId as string, 'task-manifest.json');
-        return JSON.parse(raw);
+        try {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed === 'object' && parsed !== null) {
+            return { status: 'found', manifest: parsed };
+          }
+          return {
+            status: 'malformed',
+            message: 'task-manifest.json in artifact store is not an object',
+            error: 'parsed to non-object',
+          };
+        } catch (parseErr) {
+          const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
+          return {
+            status: 'malformed',
+            message: `malformed task-manifest.json in artifact store: ${errStr}`,
+            error: errStr,
+          };
+        }
       } catch {
-        // not found
+        // not found in artifact store, try readWorktreeFile
       }
     }
     if (this.deps.readWorktreeFile) {
       try {
         const raw = await this.deps.readWorktreeFile(ctx.cwd, 'task-manifest.json');
-        if (raw) return JSON.parse(raw);
+        if (raw !== undefined && raw !== null && raw !== '') {
+          try {
+            const parsed = JSON.parse(raw);
+            if (typeof parsed === 'object' && parsed !== null) {
+              return { status: 'found', manifest: parsed };
+            }
+            return {
+              status: 'malformed',
+              message: 'task-manifest.json in worktree is not an object',
+              error: 'parsed to non-object',
+            };
+          } catch (parseErr) {
+            const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
+            return {
+              status: 'malformed',
+              message: `malformed task-manifest.json in worktree: ${errStr}`,
+              error: errStr,
+            };
+          }
+        }
       } catch {
-        // not found
+        // not found in worktree
       }
     }
-    return undefined;
+    return { status: 'missing', message: 'task-manifest.json not found' };
   }
 }
