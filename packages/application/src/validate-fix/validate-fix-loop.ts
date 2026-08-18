@@ -9,6 +9,7 @@ import {
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { RevalidationResult, FixStepOptions } from '../review-fix/types.js';
 import { checkTaskBoundaries, getManifestBoundaries } from '../task-file-boundaries.js';
+import { uncommittedSourcePaths } from '../artifacts/orchestrator-artifacts.js';
 import type {
   ValidateFixLoopDeps,
   ValidateFixLoopInput,
@@ -36,6 +37,18 @@ export class ValidateFixLoop {
     });
     deps.loops.insert(loop);
 
+    const manifestResult = await this.loadManifest(input, {
+      cwd: input.cwd,
+      runId: input.runId,
+    });
+    let allowedFiles: string[] | undefined;
+    if (manifestResult.status === 'found') {
+      const boundaries = getManifestBoundaries(manifestResult.manifest);
+      if (boundaries.writableSet.size > 0) {
+        allowedFiles = [...boundaries.writableSet].sort();
+      }
+    }
+
     let consecutiveFixFailures = 0;
     let nextDeterministicDiagnostic: string | undefined;
 
@@ -57,15 +70,6 @@ export class ValidateFixLoop {
         `validate-fix iteration ${iterationIndex} started`,
         { index: iterationIndex },
       );
-
-      const manifestResult = await this.loadManifest(input, ctx);
-      let allowedFiles: string[] | undefined;
-      if (manifestResult.status === 'found') {
-        const boundaries = getManifestBoundaries(manifestResult.manifest);
-        if (boundaries.writableSet.size > 0) {
-          allowedFiles = [...boundaries.writableSet].sort();
-        }
-      }
 
       // fix
       const useFallback = consecutiveFixFailures >= 2 && input.fixFallbackProfile !== undefined;
@@ -103,13 +107,19 @@ export class ValidateFixLoop {
       let boundaryFailure: { files?: string[]; message: string } | undefined;
       if (deps.git && fix.headBeforeFix) {
         try {
+          let committedFiles: string[] = [];
           const currentHead = await deps.git.headCommitSha(ctx.cwd);
           if (currentHead !== fix.headBeforeFix) {
-            const committedFiles = await deps.git.changedFiles(
-              ctx.cwd,
-              fix.headBeforeFix,
-              currentHead,
-            );
+            committedFiles = await deps.git.changedFiles(ctx.cwd, fix.headBeforeFix, currentHead);
+          }
+
+          let uncommittedFiles: string[] = [];
+          const statusOutput = await deps.git.status(ctx.cwd);
+          uncommittedFiles = uncommittedSourcePaths(statusOutput);
+
+          const changedFiles = [...new Set([...committedFiles, ...uncommittedFiles])];
+
+          if (changedFiles.length > 0) {
             if (manifestResult.status === 'missing') {
               const errorMsg = 'task-manifest.json not found';
               this.emit(
@@ -131,7 +141,7 @@ export class ValidateFixLoop {
               );
               boundaryFailure = { message: `task boundary check failed: ${errorMsg}` };
             } else {
-              const classification = checkTaskBoundaries(committedFiles, manifestResult.manifest);
+              const classification = checkTaskBoundaries(changedFiles, manifestResult.manifest);
               const violatingFiles = [
                 ...classification.modifiedReferenceFiles,
                 ...classification.undeclaredFiles,
@@ -379,7 +389,7 @@ export class ValidateFixLoop {
 
   private async loadManifest(
     input: ValidateFixLoopInput,
-    ctx: ValidateFixStepContext,
+    ctx: { cwd: string; runId: unknown },
   ): Promise<ManifestLoadResult> {
     if (input.manifest) {
       if (typeof input.manifest === 'object' && input.manifest !== null) {

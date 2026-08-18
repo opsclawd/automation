@@ -40,6 +40,21 @@ function baseInput(overrides?: Partial<ReviewFixLoopInput>): ReviewFixLoopInput 
     reviewProfile: AgentProfileName('review'),
     fixProfile: AgentProfileName('fix'),
     baselineCommitSha: 'run-start-sha',
+    manifest: {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: [
+            'packages/api/src/handler.ts',
+            '.gitignore',
+            'packages/api/src/handler.test.ts',
+          ],
+        },
+      ],
+    },
     ...overrides,
   };
 }
@@ -66,6 +81,7 @@ function makeHarness(options: HarnessOptions = {}) {
   const changedFiles = options.changedFiles ?? ['packages/api/src/handler.ts', '.gitignore'];
 
   if (options.throwOnChangedFiles) {
+    let fixBaseCallCount = 0;
     const origChangedFiles = git.changedFiles.bind(git);
     git.changedFiles = async (cwd: string, base: string, head?: string) => {
       if (
@@ -74,7 +90,10 @@ function makeHarness(options: HarnessOptions = {}) {
         base === 'fake-sha-1' ||
         base === 'fake-sha-2'
       ) {
-        throw new Error('git diff failed');
+        fixBaseCallCount++;
+        if (fixBaseCallCount > 1) {
+          throw new Error('git diff failed');
+        }
       }
       return origChangedFiles(cwd, base, head);
     };

@@ -25,6 +25,17 @@ function baseInput(overrides?: Partial<ReviewFixLoopInput>): ReviewFixLoopInput 
     reviewProfile: AgentProfileName('reviewer'),
     fixProfile: AgentProfileName('fixer'),
     baselineCommitSha: 'base-sha-123',
+    manifest: {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['src/config.ts'],
+        },
+      ],
+    },
     ...overrides,
   };
 }

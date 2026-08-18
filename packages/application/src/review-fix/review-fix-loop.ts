@@ -2673,7 +2673,19 @@ export class ReviewFixLoop {
     }
 
     if (manifestResult.status === 'missing') {
-      return { ok: true, changedFiles: [] };
+      const errorMsg = 'task-manifest.json not found';
+      this.emit(
+        loopInput,
+        'task_boundary.check_failed',
+        'warn',
+        `task boundary check failed: ${errorMsg}`,
+        {
+          iterationIndex: ctx.iterationIndex,
+          reason: 'missing_manifest',
+          error: errorMsg,
+        },
+      );
+      return { ok: false, message: `task boundary check failed: ${errorMsg}` };
     }
     if (manifestResult.status === 'malformed') {
       const errorMsg = manifestResult.message;

@@ -530,6 +530,48 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     });
   });
 
+  it('treats missing manifest as synthetic check failure, emits check_failed, rolls back, and marks iteration unresolved', async () => {
+    const inputWithoutManifest = {
+      ...baseInput,
+      maxIterations: 1,
+      manifest: undefined,
+    };
+
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/declared.ts']);
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'attempted fix',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute(inputWithoutManifest);
+
+    expect(result.phaseOutcome).toBe('failed');
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+
+    const checkFailedEvents = events.filter((e) => e.type === 'task_boundary.check_failed');
+    expect(checkFailedEvents).toHaveLength(1);
+    expect(checkFailedEvents[0]?.metadata).toMatchObject({
+      reason: 'missing_manifest',
+      error: 'task-manifest.json not found',
+    });
+  });
+
   it('treats git errors during boundary check as synthetic failure, rolls back, and marks iteration unresolved', async () => {
     git.changedFiles = vi.fn().mockRejectedValue(new Error('git error: corrupt pack file'));
 

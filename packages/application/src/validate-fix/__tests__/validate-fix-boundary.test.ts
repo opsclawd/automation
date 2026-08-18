@@ -377,4 +377,88 @@ describe('ValidateFixLoop task boundary enforcement (regression)', () => {
     const escalationEvents = events.filter((e) => e.type === 'phase.fallback.escalated');
     expect(escalationEvents).toHaveLength(0);
   });
+
+  it('detects uncommitted undeclared files without a commit, emits task_boundary.violated, and treats revalidation as failed', async () => {
+    git.headByCwd.set('/tmp/wt', 'head-0');
+    git.statusByCwd.set('/tmp/wt', '?? src/undeclared.ts');
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'fixed',
+      headBeforeFix: 'head-0',
+    });
+
+    const loop = new ValidateFixLoop(baseDeps);
+    const result = await loop.execute({ ...baseInput, maxIterations: 1 });
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.phase).toBe('fix-validate');
+    expect(boundaryEvents[0]?.message).toContain(
+      'fix-validate modified undeclared files: src/undeclared.ts',
+    );
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+  });
+
+  it('rejects fix commit when worktree task-manifest.json is rewritten by fixer to include undeclared file', async () => {
+    let worktreeManifestContent = JSON.stringify({
+      version: 2,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+    });
+
+    const depsWithWorktreeFile: ValidateFixLoopDeps = {
+      ...baseDeps,
+      artifactStore: undefined,
+      readWorktreeFile: vi.fn().mockImplementation(async (_cwd, file) => {
+        if (file === 'task-manifest.json') return worktreeManifestContent;
+        return undefined;
+      }),
+    };
+
+    const inputWithoutManifest: ValidateFixLoopInput = {
+      ...baseInput,
+      maxIterations: 1,
+      manifest: undefined,
+    };
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/undeclared.ts']);
+
+    vi.mocked(depsWithWorktreeFile.runFix).mockImplementationOnce(async () => {
+      // Fixer attempts to rewrite task-manifest.json to whitelist undeclared file
+      worktreeManifestContent = JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          { n: 1, title: 'Task 1', expected_files: ['src/declared.ts', 'src/undeclared.ts'] },
+        ],
+      });
+      return {
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'fixed',
+        headBeforeFix: 'head-0',
+      };
+    });
+
+    const loop = new ValidateFixLoop(depsWithWorktreeFile);
+    const result = await loop.execute(inputWithoutManifest);
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.message).toContain(
+      'fix-validate modified undeclared files: src/undeclared.ts',
+    );
+    expect(depsWithWorktreeFile.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+  });
 });
