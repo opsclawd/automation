@@ -1,0 +1,10 @@
+{
+  "steps": [
+    {
+      "stepIndex": 8,
+      "totalSteps": 8,
+      "stepTitle": "Composition Root Wiring and Compose Integration Tests",
+      "files": ["test-tdz.ts"]
+    }
+  ]
+}
