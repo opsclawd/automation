@@ -19,7 +19,7 @@ import {
   writeFileSync,
   copyFileSync,
 } from 'node:fs';
-import { dirname, join, basename } from 'node:path';
+import { dirname, join, basename, resolve, relative, isAbsolute, sep } from 'node:path';
 import {
   openDatabase,
   applyMigrations,
@@ -3262,7 +3262,19 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const readWorktreeFile: ReadWorktreeFilePort = async (cwd, relativePath) => {
         try {
-          return await fsReadFile(join(cwd, relativePath), 'utf-8');
+          const resolvedCwd = resolve(cwd);
+          const targetPath = resolve(resolvedCwd, relativePath);
+          const rel = relative(resolvedCwd, targetPath);
+          if (
+            rel === '' ||
+            rel === '..' ||
+            rel.startsWith(`..${sep}`) ||
+            rel.startsWith('../') ||
+            isAbsolute(rel)
+          ) {
+            return undefined;
+          }
+          return await fsReadFile(targetPath, 'utf-8');
         } catch {
           return undefined;
         }
