@@ -19,12 +19,11 @@ import {
 import { extractEvidence } from './extract-evidence.js';
 import { appendRebuttalToCodeReview } from './append-rebuttal.js';
 import { verifyFixCommit } from '../fix-commit-verifier.js';
-import { checkTaskBoundaries } from '../task-file-boundaries.js';
-
-type ManifestLoadResult =
-  | { status: 'found'; manifest: unknown }
-  | { status: 'missing'; message: string }
-  | { status: 'malformed'; message: string; error: string };
+import {
+  checkTaskBoundaries,
+  loadManifest,
+  type ManifestLoadResult,
+} from '../task-file-boundaries.js';
 import {
   captureNetRevertBaseline,
   checkForNetReverts,
@@ -187,6 +186,7 @@ export class ReviewFixLoop {
 
     const manifestResult = await this.loadManifest(input, {
       cwd: input.cwd,
+      runId: input.runId,
     });
 
     let consecutiveFixFailures = 0;
@@ -2591,71 +2591,9 @@ export class ReviewFixLoop {
 
   private async loadManifest(
     input: ReviewFixLoopInput,
-    ctx: { cwd: string },
+    ctx: { cwd: string; runId?: unknown },
   ): Promise<ManifestLoadResult> {
-    if (input.manifest) {
-      if (typeof input.manifest === 'object' && input.manifest !== null) {
-        return { status: 'found', manifest: input.manifest };
-      }
-      return {
-        status: 'malformed',
-        message: 'input manifest is invalid',
-        error: 'input manifest is not an object',
-      };
-    }
-    if (this.deps.artifactStore) {
-      try {
-        const raw = await this.deps.artifactStore.read(String(input.runId), 'task-manifest.json');
-        try {
-          const parsed = JSON.parse(raw);
-          if (typeof parsed === 'object' && parsed !== null) {
-            return { status: 'found', manifest: parsed };
-          }
-          return {
-            status: 'malformed',
-            message: 'task-manifest.json in artifact store is not an object',
-            error: 'parsed to non-object',
-          };
-        } catch (parseErr) {
-          const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
-          return {
-            status: 'malformed',
-            message: `malformed task-manifest.json in artifact store: ${errStr}`,
-            error: errStr,
-          };
-        }
-      } catch {
-        // not found in artifact store, try readWorktreeFile
-      }
-    }
-    if (this.deps.readWorktreeFile) {
-      try {
-        const raw = await this.deps.readWorktreeFile(ctx.cwd, 'task-manifest.json');
-        if (raw !== undefined && raw !== null && raw !== '') {
-          try {
-            const parsed = JSON.parse(raw);
-            if (typeof parsed === 'object' && parsed !== null) {
-              return { status: 'found', manifest: parsed };
-            }
-            return {
-              status: 'malformed',
-              message: 'task-manifest.json in worktree is not an object',
-              error: 'parsed to non-object',
-            };
-          } catch (parseErr) {
-            const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
-            return {
-              status: 'malformed',
-              message: `malformed task-manifest.json in worktree: ${errStr}`,
-              error: errStr,
-            };
-          }
-        }
-      } catch {
-        // not found in worktree
-      }
-    }
-    return { status: 'missing', message: 'task-manifest.json not found' };
+    return loadManifest(input, ctx, this.deps);
   }
 
   private async checkTaskBoundary(

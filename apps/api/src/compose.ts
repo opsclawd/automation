@@ -2410,6 +2410,27 @@ export function composeRoot(opts: ComposeOptions): Container {
   let runExecutor: RunExecutor | undefined;
   let buildRunContext: ((run: Run) => PhaseHandlerContext) | undefined;
   const reviewStateRepository = new ReviewStateRepository(db);
+
+  const readWorktreeFile: ReadWorktreeFilePort = async (cwd, relativePath) => {
+    try {
+      const resolvedCwd = resolve(cwd);
+      const targetPath = resolve(resolvedCwd, relativePath);
+      const rel = relative(resolvedCwd, targetPath);
+      if (
+        rel === '' ||
+        rel === '..' ||
+        rel.startsWith(`..${sep}`) ||
+        rel.startsWith('../') ||
+        isAbsolute(rel)
+      ) {
+        return undefined;
+      }
+      return await fsReadFile(targetPath, 'utf-8');
+    } catch {
+      return undefined;
+    }
+  };
+
   try {
     const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
     let layered = layeredConfigCache.get(cacheKey);
@@ -3258,26 +3279,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
 
         return arbiterResult;
-      };
-
-      const readWorktreeFile: ReadWorktreeFilePort = async (cwd, relativePath) => {
-        try {
-          const resolvedCwd = resolve(cwd);
-          const targetPath = resolve(resolvedCwd, relativePath);
-          const rel = relative(resolvedCwd, targetPath);
-          if (
-            rel === '' ||
-            rel === '..' ||
-            rel.startsWith(`..${sep}`) ||
-            rel.startsWith('../') ||
-            isAbsolute(rel)
-          ) {
-            return undefined;
-          }
-          return await fsReadFile(targetPath, 'utf-8');
-        } catch {
-          return undefined;
-        }
       };
 
       const loopArtifactStore: ArtifactStore = {
@@ -6854,6 +6855,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       ...base,
       ...(resolveProfileForPhaseBound ? { resolveProfile: resolveProfileForPhaseBound } : {}),
       idFactory,
+      readWorktreeFile,
       ...opts,
     };
   };

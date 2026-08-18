@@ -89,3 +89,93 @@ export function checkTaskBoundaries(
   const exemptSet = normalizedPathSet(exemptFiles);
   return classifyUndeclaredFiles(committedFiles, writableSet, referenceSet, exemptSet);
 }
+
+export type ManifestLoadResult =
+  | { status: 'found'; manifest: unknown }
+  | { status: 'missing'; message: string }
+  | { status: 'malformed'; message: string; error: string };
+
+export async function loadManifest(
+  input: { manifest?: unknown; runId?: unknown },
+  ctx: { cwd: string; runId?: unknown },
+  deps?: {
+    artifactStore?: { read: (runId: string, relativePath: string) => Promise<string> } | undefined;
+    readWorktreeFile?:
+      | ((cwd: string, relativePath: string) => Promise<string | undefined>)
+      | undefined;
+  },
+): Promise<ManifestLoadResult> {
+  if (input.manifest) {
+    if (typeof input.manifest === 'object' && input.manifest !== null) {
+      return { status: 'found', manifest: input.manifest };
+    }
+    return {
+      status: 'malformed',
+      message: 'input manifest is invalid',
+      error: 'input manifest is not an object',
+    };
+  }
+
+  const runId =
+    input.runId !== undefined && input.runId !== null
+      ? String(input.runId)
+      : ctx.runId !== undefined && ctx.runId !== null
+        ? String(ctx.runId)
+        : undefined;
+
+  if (deps?.artifactStore && runId !== undefined) {
+    try {
+      const raw = await deps.artifactStore.read(runId, 'task-manifest.json');
+      try {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === 'object' && parsed !== null) {
+          return { status: 'found', manifest: parsed };
+        }
+        return {
+          status: 'malformed',
+          message: 'task-manifest.json in artifact store is not an object',
+          error: 'parsed to non-object',
+        };
+      } catch (parseErr) {
+        const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        return {
+          status: 'malformed',
+          message: `malformed task-manifest.json in artifact store: ${errStr}`,
+          error: errStr,
+        };
+      }
+    } catch {
+      // not found in artifact store, try readWorktreeFile
+    }
+  }
+
+  if (deps?.readWorktreeFile) {
+    try {
+      const raw = await deps.readWorktreeFile(ctx.cwd, 'task-manifest.json');
+      if (raw !== undefined && raw !== null && raw !== '') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed === 'object' && parsed !== null) {
+            return { status: 'found', manifest: parsed };
+          }
+          return {
+            status: 'malformed',
+            message: 'task-manifest.json in worktree is not an object',
+            error: 'parsed to non-object',
+          };
+        } catch (parseErr) {
+          const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
+          return {
+            status: 'malformed',
+            message: `malformed task-manifest.json in worktree: ${errStr}`,
+            error: errStr,
+          };
+        }
+      }
+    } catch {
+      // not found in worktree
+    }
+  }
+
+  return { status: 'missing', message: 'task-manifest.json not found' };
+}

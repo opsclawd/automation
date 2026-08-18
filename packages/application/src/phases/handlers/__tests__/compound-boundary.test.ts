@@ -86,6 +86,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
   let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.clearAllMocks();
     ctx = makeCtx();
     const git = ctx.git as FakeGitPort;
@@ -760,10 +761,12 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
 
     const git = ctx.git as FakeGitPort;
 
-    vi.spyOn(SingleShotAgentHandler.prototype, 'run').mockImplementation(async () => {
-      git.headByCwd.set(ctx.cwd, 'sha-after');
-      return { outcome: 'passed' };
-    });
+    const runSpy = vi
+      .spyOn(SingleShotAgentHandler.prototype, 'run')
+      .mockImplementation(async () => {
+        git.headByCwd.set(ctx.cwd, 'sha-after');
+        return { outcome: 'passed' };
+      });
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
@@ -789,17 +792,107 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
 
     git.changedFilesResults.set('sha-before|sha-after', ['src/undeclared.ts']);
 
-    const handler = new CustomCompoundHandler();
+    try {
+      const handler = new CustomCompoundHandler();
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.phase).toBe('custom-phase');
+        expect(result.failure.message).toContain(
+          'custom-phase phase modified undeclared files: src/undeclared.ts',
+        );
+      }
+      expect(eventsOf(ctx, 'custom-phase.boundary_violation')).toHaveLength(1);
+      expect(eventsOf(ctx, 'custom-phase.failed')).toHaveLength(1);
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
+
+  it('loads manifest from readWorktreeFile when not in artifactStore and passes when only declared files changed', async () => {
+    ctx.readWorktreeFile = vi.fn().mockImplementation(async (_cwd, file) => {
+      if (file === 'task-manifest.json') {
+        return JSON.stringify({
+          version: 2,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/worktree-declared.ts'] }],
+        });
+      }
+      return undefined;
+    });
+
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      git.headByCwd.set(ctx.cwd, 'sha-after');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    git.changedFilesResults.set('sha-before|sha-after', ['src/worktree-declared.ts']);
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(ctx.readWorktreeFile).toHaveBeenCalledWith(ctx.cwd, 'task-manifest.json');
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
+  });
+
+  it('loads manifest from readWorktreeFile when not in artifactStore and fails on undeclared files', async () => {
+    ctx.readWorktreeFile = vi.fn().mockImplementation(async (_cwd, file) => {
+      if (file === 'task-manifest.json') {
+        return JSON.stringify({
+          version: 2,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/worktree-declared.ts'] }],
+        });
+      }
+      return undefined;
+    });
+
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      git.headByCwd.set(ctx.cwd, 'sha-after');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    git.changedFilesResults.set('sha-before|sha-after', ['src/unauthorized.ts']);
+
+    const handler = new CompoundHandler();
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('failed');
     if (result.outcome === 'failed') {
-      expect(result.failure.phase).toBe('custom-phase');
+      expect(result.failure.kind).toBe('validation_failed');
       expect(result.failure.message).toContain(
-        'custom-phase phase modified undeclared files: src/undeclared.ts',
+        'compound phase modified undeclared files: src/unauthorized.ts',
       );
     }
-    expect(eventsOf(ctx, 'custom-phase.boundary_violation')).toHaveLength(1);
-    expect(eventsOf(ctx, 'custom-phase.failed')).toHaveLength(1);
+    expect(ctx.readWorktreeFile).toHaveBeenCalledWith(ctx.cwd, 'task-manifest.json');
+    expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
   });
 });

@@ -4,6 +4,7 @@ import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
 import type { AgentPort } from '../ports/agent-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
+import type { ReadWorktreeFilePort } from '../ports/read-worktree-file-port.js';
 
 export interface PhaseHandlerContext {
   runId: string;
@@ -28,6 +29,7 @@ export interface PhaseHandlerContext {
   baseBranch?: string;
   resolveProfile?: (phase: string) => AgentProfileName;
   idFactory?: () => string;
+  readWorktreeFile?: ReadWorktreeFilePort;
 }
 
 export type PhaseOutcome =
@@ -78,6 +80,7 @@ export type PhaseHandlerContextFactory = (
     | 'baseBranch'
     | 'resolveProfile'
     | 'idFactory'
+    | 'readWorktreeFile'
   >,
   opts?: Partial<
     Pick<
@@ -88,6 +91,7 @@ export type PhaseHandlerContextFactory = (
       | 'baseBranch'
       | 'resolveProfile'
       | 'idFactory'
+      | 'readWorktreeFile'
     >
   >,
 ) => PhaseHandlerContext;
@@ -101,6 +105,7 @@ export function buildPhaseHandlerContext(
     | 'baseBranch'
     | 'resolveProfile'
     | 'idFactory'
+    | 'readWorktreeFile'
   >,
   opts?: Partial<
     Pick<
@@ -111,6 +116,7 @@ export function buildPhaseHandlerContext(
       | 'baseBranch'
       | 'resolveProfile'
       | 'idFactory'
+      | 'readWorktreeFile'
     >
   >,
 ): PhaseHandlerContext {

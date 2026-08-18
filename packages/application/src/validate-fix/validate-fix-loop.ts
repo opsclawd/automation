@@ -8,7 +8,12 @@ import {
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { RevalidationResult, FixStepOptions } from '../review-fix/types.js';
-import { checkTaskBoundaries, getManifestBoundaries } from '../task-file-boundaries.js';
+import {
+  checkTaskBoundaries,
+  getManifestBoundaries,
+  loadManifest,
+  type ManifestLoadResult,
+} from '../task-file-boundaries.js';
 import { uncommittedSourcePaths } from '../artifacts/orchestrator-artifacts.js';
 import type {
   ValidateFixLoopDeps,
@@ -16,11 +21,6 @@ import type {
   ValidateFixLoopResult,
   ValidateFixStepContext,
 } from './types.js';
-
-type ManifestLoadResult =
-  | { status: 'found'; manifest: unknown }
-  | { status: 'missing'; message: string }
-  | { status: 'malformed'; message: string; error: string };
 
 export class ValidateFixLoop {
   constructor(private readonly deps: ValidateFixLoopDeps) {}
@@ -39,6 +39,7 @@ export class ValidateFixLoop {
 
     const manifestResult = await this.loadManifest(input, {
       cwd: input.cwd,
+      runId: input.runId,
     });
     let allowedFiles: string[] | undefined;
     if (manifestResult.status === 'found') {
@@ -388,70 +389,8 @@ export class ValidateFixLoop {
 
   private async loadManifest(
     input: ValidateFixLoopInput,
-    ctx: { cwd: string },
+    ctx: { cwd: string; runId?: unknown },
   ): Promise<ManifestLoadResult> {
-    if (input.manifest) {
-      if (typeof input.manifest === 'object' && input.manifest !== null) {
-        return { status: 'found', manifest: input.manifest };
-      }
-      return {
-        status: 'malformed',
-        message: 'input manifest is invalid',
-        error: 'input manifest is not an object',
-      };
-    }
-    if (this.deps.artifactStore) {
-      try {
-        const raw = await this.deps.artifactStore.read(String(input.runId), 'task-manifest.json');
-        try {
-          const parsed = JSON.parse(raw);
-          if (typeof parsed === 'object' && parsed !== null) {
-            return { status: 'found', manifest: parsed };
-          }
-          return {
-            status: 'malformed',
-            message: 'task-manifest.json in artifact store is not an object',
-            error: 'parsed to non-object',
-          };
-        } catch (parseErr) {
-          const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
-          return {
-            status: 'malformed',
-            message: `malformed task-manifest.json in artifact store: ${errStr}`,
-            error: errStr,
-          };
-        }
-      } catch {
-        // not found in artifact store, try readWorktreeFile
-      }
-    }
-    if (this.deps.readWorktreeFile) {
-      try {
-        const raw = await this.deps.readWorktreeFile(ctx.cwd, 'task-manifest.json');
-        if (raw !== undefined && raw !== null && raw !== '') {
-          try {
-            const parsed = JSON.parse(raw);
-            if (typeof parsed === 'object' && parsed !== null) {
-              return { status: 'found', manifest: parsed };
-            }
-            return {
-              status: 'malformed',
-              message: 'task-manifest.json in worktree is not an object',
-              error: 'parsed to non-object',
-            };
-          } catch (parseErr) {
-            const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
-            return {
-              status: 'malformed',
-              message: `malformed task-manifest.json in worktree: ${errStr}`,
-              error: errStr,
-            };
-          }
-        }
-      } catch {
-        // not found in worktree
-      }
-    }
-    return { status: 'missing', message: 'task-manifest.json not found' };
+    return loadManifest(input, ctx, this.deps);
   }
 }

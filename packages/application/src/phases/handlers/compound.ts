@@ -2,7 +2,7 @@ import { PhaseName } from '@ai-sdlc/domain';
 import type { PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import { SingleShotAgentHandler } from './single-shot-agent-handler.js';
-import { checkTaskBoundaries } from '../../task-file-boundaries.js';
+import { checkTaskBoundaries, loadManifest } from '../../task-file-boundaries.js';
 import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
 
 export class CompoundHandler extends SingleShotAgentHandler {
@@ -110,12 +110,17 @@ export class CompoundHandler extends SingleShotAgentHandler {
 
     const changedFiles = [...new Set([...committedFiles, ...uncommittedFiles])];
     if (changedFiles.length > 0) {
-      let manifest: unknown;
-      try {
-        const manifestRaw = await ctx.artifacts.read(ctx.runUuid, 'task-manifest.json');
-        manifest = JSON.parse(manifestRaw);
-      } catch (err) {
-        const message = `Could not read or parse task-manifest.json for boundary enforcement: ${err instanceof Error ? err.message : String(err)}`;
+      const manifestResult = await loadManifest(
+        { runId: ctx.runUuid },
+        { cwd: ctx.cwd, runId: ctx.runUuid },
+        {
+          artifactStore: ctx.artifacts,
+          readWorktreeFile: ctx.readWorktreeFile,
+        },
+      );
+
+      if (manifestResult.status === 'missing' || manifestResult.status === 'malformed') {
+        const message = `Could not read or parse task-manifest.json for boundary enforcement: ${manifestResult.message}`;
         emit(`${String(this.phase)}.failed`, 'error', message);
         return {
           outcome: 'failed',
@@ -132,7 +137,7 @@ export class CompoundHandler extends SingleShotAgentHandler {
         };
       }
 
-      const classification = checkTaskBoundaries(changedFiles, manifest);
+      const classification = checkTaskBoundaries(changedFiles, manifestResult.manifest);
       const violatingFiles = [
         ...classification.modifiedReferenceFiles,
         ...classification.undeclaredFiles,
