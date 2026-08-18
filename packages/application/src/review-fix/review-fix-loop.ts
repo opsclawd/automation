@@ -187,6 +187,7 @@ export class ReviewFixLoop {
 
     const manifestResult = await this.loadManifest(input, {
       cwd: input.cwd,
+      runId: input.runId,
     });
 
     let consecutiveFixFailures = 0;
@@ -2591,7 +2592,7 @@ export class ReviewFixLoop {
 
   private async loadManifest(
     input: ReviewFixLoopInput,
-    ctx: { cwd: string },
+    ctx: { cwd: string; runId: unknown },
   ): Promise<ManifestLoadResult> {
     if (input.manifest) {
       if (typeof input.manifest === 'object' && input.manifest !== null) {
