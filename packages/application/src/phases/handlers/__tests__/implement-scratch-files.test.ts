@@ -73,7 +73,7 @@ async function makeHarness(task: TaskSurface, status: string) {
 }
 
 describe('ImplementHandler scratch-file reporting', () => {
-  it('warns with sorted undeclared root files without failing or deleting the step output', async () => {
+  it('warns with sorted undeclared files without failing or deleting the step output', async () => {
     const harness = await makeHarness(
       {
         expected_files: ['src/declared.ts'],
@@ -103,10 +103,10 @@ describe('ImplementHandler scratch-file reporting', () => {
         index: 1,
         total: 1,
         taskTitle: 'detect scratch files',
-        files: ['scratch file.ts', 'z-scratch.txt'],
+        files: ['nested/not-root.ts', 'scratch file.ts', 'z-scratch.txt'],
       },
     });
-    expect(warning?.message).toContain('scratch file.ts, z-scratch.txt');
+    expect(warning?.message).toContain('nested/not-root.ts, scratch file.ts, z-scratch.txt');
     expect(harness.events.filter((event) => event.type === 'step.completed')).toHaveLength(1);
     expect(harness.events.filter((event) => event.type === 'step.failed')).toHaveLength(0);
     expect(
@@ -176,7 +176,7 @@ describe('ImplementHandler scratch-file reporting', () => {
     expect(harness.events.filter((event) => event.type === 'step.failed')).toHaveLength(0);
   });
 
-  it('removes undeclared untracked root files from disk and records scratch-files.json artifact', async () => {
+  it('removes undeclared untracked root files from disk and records .ai-tmp/scratch-files.json artifact', async () => {
     const tmpCwd = mkdtempSync(join(tmpdir(), 'scratch-test-'));
     try {
       const rootScratch = join(tmpCwd, 'test-ast.js');
@@ -207,12 +207,11 @@ describe('ImplementHandler scratch-file reporting', () => {
       }).run(harness.ctx);
 
       expect(result).toEqual({ outcome: 'passed' });
-
       expect(existsSync(rootScratch)).toBe(false);
       expect(existsSync(nestedScratch)).toBe(true);
       expect(existsSync(protectedFile)).toBe(true);
 
-      const artifactContent = await harness.artifacts.read(RUN_UUID, 'scratch-files.json');
+      const artifactContent = await harness.artifacts.read(RUN_UUID, '.ai-tmp/scratch-files.json');
       const parsed = JSON.parse(artifactContent);
       expect(parsed).toEqual({
         steps: [
@@ -220,10 +219,45 @@ describe('ImplementHandler scratch-file reporting', () => {
             stepIndex: 1,
             totalSteps: 1,
             stepTitle: 'detect scratch files',
-            files: ['test-ast.js'],
+            files: ['nested/deep-scratch.js', 'test-ast.js'],
           },
         ],
       });
+    } finally {
+      rmSync(tmpCwd, { recursive: true, force: true });
+    }
+  });
+
+  it('records subdirectory untracked files in .ai-tmp/scratch-files.json without deleting them from disk', async () => {
+    const tmpCwd = mkdtempSync(join(tmpdir(), 'subdir-scratch-'));
+    try {
+      const pkgDir = join(tmpCwd, 'packages', 'contracts');
+      mkdirSync(pkgDir, { recursive: true });
+      const subScratch = join(pkgDir, 'scratch.ts');
+      writeFileSync(subScratch, 'export const probe = 1;');
+
+      const harness = await makeHarness(
+        { expected_files: ['src/declared.ts'] },
+        '?? packages/contracts/scratch.ts',
+      );
+      harness.ctx.cwd = tmpCwd;
+      harness.git.headByCwd.set(tmpCwd, 'pre-step');
+      harness.git.statusByCwd.set(tmpCwd, '?? packages/contracts/scratch.ts');
+      harness.git.changedFilesResults.set('pre-step|post-step', ['src/declared.ts']);
+
+      const implementResult = await new ImplementHandler({
+        steps: harness.steps,
+        runStep: harness.runStep,
+      }).run(harness.ctx);
+
+      expect(implementResult).toEqual({ outcome: 'passed' });
+      // Subdirectory file must NOT be deleted from disk
+      expect(existsSync(subScratch)).toBe(true);
+
+      // Artifact in .ai-tmp must contain the subdirectory file
+      const artifactContent = await harness.artifacts.read(RUN_UUID, '.ai-tmp/scratch-files.json');
+      const parsed = JSON.parse(artifactContent);
+      expect(parsed.steps[0].files).toContain('packages/contracts/scratch.ts');
     } finally {
       rmSync(tmpCwd, { recursive: true, force: true });
     }
