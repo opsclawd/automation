@@ -39,7 +39,6 @@ export class ValidateFixLoop {
 
     const manifestResult = await this.loadManifest(input, {
       cwd: input.cwd,
-      runId: input.runId,
     });
     let allowedFiles: string[] | undefined;
     if (manifestResult.status === 'found') {
@@ -389,7 +388,7 @@ export class ValidateFixLoop {
 
   private async loadManifest(
     input: ValidateFixLoopInput,
-    ctx: { cwd: string; runId: unknown },
+    ctx: { cwd: string },
   ): Promise<ManifestLoadResult> {
     if (input.manifest) {
       if (typeof input.manifest === 'object' && input.manifest !== null) {
