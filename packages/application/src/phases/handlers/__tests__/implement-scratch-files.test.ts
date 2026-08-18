@@ -103,10 +103,10 @@ describe('ImplementHandler scratch-file reporting', () => {
         index: 1,
         total: 1,
         taskTitle: 'detect scratch files',
-        files: ['scratch file.ts', 'z-scratch.txt'],
+        files: ['nested/not-root.ts', 'scratch file.ts', 'z-scratch.txt'],
       },
     });
-    expect(warning?.message).toContain('scratch file.ts, z-scratch.txt');
+    expect(warning?.message).toContain('nested/not-root.ts, scratch file.ts, z-scratch.txt');
     expect(harness.events.filter((event) => event.type === 'step.completed')).toHaveLength(1);
     expect(harness.events.filter((event) => event.type === 'step.failed')).toHaveLength(0);
     expect(
@@ -212,7 +212,7 @@ describe('ImplementHandler scratch-file reporting', () => {
       expect(existsSync(nestedScratch)).toBe(true);
       expect(existsSync(protectedFile)).toBe(true);
 
-      const artifactContent = await harness.artifacts.read(RUN_UUID, 'scratch-files.json');
+      const artifactContent = await harness.artifacts.read(RUN_UUID, '.ai-runs/scratch-files.json');
       const parsed = JSON.parse(artifactContent);
       expect(parsed).toEqual({
         steps: [
@@ -220,7 +220,7 @@ describe('ImplementHandler scratch-file reporting', () => {
             stepIndex: 1,
             totalSteps: 1,
             stepTitle: 'detect scratch files',
-            files: ['test-ast.js'],
+            files: ['nested/deep-scratch.js', 'test-ast.js'],
           },
         ],
       });
@@ -286,6 +286,85 @@ describe('ImplementHandler scratch-file reporting', () => {
       }).run(harness.ctx);
 
       expect(validateResult).toEqual({ outcome: 'passed' });
+    } finally {
+      rmSync(tmpCwd, { recursive: true, force: true });
+    }
+  });
+
+  it('records subdirectory scratch files without deleting them and validate names the step', async () => {
+    const tmpCwd = mkdtempSync(join(tmpdir(), 'sub-scratch-test-'));
+    try {
+      const subDir = join(tmpCwd, 'packages', 'contracts');
+      mkdirSync(subDir, { recursive: true });
+      const subScratch = join(subDir, 'scratch.ts');
+      writeFileSync(subScratch, 'console.log("scratch probe");');
+
+      const harness = await makeHarness(
+        { expected_files: ['src/declared.ts'] },
+        '?? packages/contracts/scratch.ts',
+      );
+      harness.ctx.cwd = tmpCwd;
+      harness.git.headByCwd.set(tmpCwd, 'pre-step');
+      harness.git.statusByCwd.set(tmpCwd, '?? packages/contracts/scratch.ts');
+      harness.git.changedFilesResults.set('pre-step|post-step', ['src/declared.ts']);
+
+      const implementResult = await new ImplementHandler({
+        steps: harness.steps,
+        runStep: harness.runStep,
+      }).run(harness.ctx);
+
+      expect(implementResult).toEqual({ outcome: 'passed' });
+      // Legitimate source or scratch in subdirectory is NOT deleted
+      expect(existsSync(subScratch)).toBe(true);
+
+      const artifactContent = await harness.artifacts.read(RUN_UUID, '.ai-runs/scratch-files.json');
+      const parsed = JSON.parse(artifactContent);
+      expect(parsed).toEqual({
+        steps: [
+          {
+            stepIndex: 1,
+            totalSteps: 1,
+            stepTitle: 'detect scratch files',
+            files: ['packages/contracts/scratch.ts'],
+          },
+        ],
+      });
+
+      const validationPort = new FakeValidationPort();
+      validationPort.result = [
+        {
+          command: 'pnpm test',
+          exitCode: 0,
+          durationMs: 100,
+          stdout: 'ok',
+          stderr: '',
+          stdoutPath: 'out',
+          stderrPath: 'err',
+          outcome: 'passed',
+        },
+      ];
+      const runValidation = new RunValidation({
+        validation: validationPort,
+        validationRunRepository: new FakeValidationRunRepository(),
+        idFactory: () => 'vr-sub',
+        now: () => new Date('2026-08-16T18:00:00.000Z'),
+      });
+
+      const validateResult = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm test'],
+        timeoutSeconds: 60,
+        logDir: tmpCwd,
+        fixValidateEnabled: false,
+      }).run(harness.ctx);
+
+      expect(validateResult).toEqual({
+        outcome: 'failed',
+        failure: expect.objectContaining({
+          message:
+            'Validation blocked by uncommitted source changes (reported by step 1): packages/contracts/scratch.ts',
+        }),
+      });
     } finally {
       rmSync(tmpCwd, { recursive: true, force: true });
     }

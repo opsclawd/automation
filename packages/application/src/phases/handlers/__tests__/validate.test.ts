@@ -97,7 +97,7 @@ describe('ValidateHandler', () => {
       await artifacts.write({
         runId: ctx.runUuid,
         phaseId: 'implement',
-        relativePath: 'scratch-files.json',
+        relativePath: '.ai-runs/scratch-files.json',
         contents: JSON.stringify({
           steps: [
             {
@@ -135,7 +135,7 @@ describe('ValidateHandler', () => {
       await artifacts.write({
         runId: ctx.runUuid,
         phaseId: 'implement',
-        relativePath: 'scratch-files.json',
+        relativePath: '.ai-runs/scratch-files.json',
         contents: JSON.stringify({
           steps: [
             {
