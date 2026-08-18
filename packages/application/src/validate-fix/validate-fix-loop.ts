@@ -39,7 +39,6 @@ export class ValidateFixLoop {
 
     const manifestResult = await this.loadManifest(input, {
       cwd: input.cwd,
-      runId: input.runId,
     });
     let allowedFiles: string[] | undefined;
     if (manifestResult.status === 'found') {
@@ -389,7 +388,7 @@ export class ValidateFixLoop {
 
   private async loadManifest(
     input: ValidateFixLoopInput,
-    ctx: { cwd: string; runId: unknown },
+    ctx: { cwd: string },
   ): Promise<ManifestLoadResult> {
     if (input.manifest) {
       if (typeof input.manifest === 'object' && input.manifest !== null) {
@@ -403,7 +402,7 @@ export class ValidateFixLoop {
     }
     if (this.deps.artifactStore) {
       try {
-        const raw = await this.deps.artifactStore.read(input.runId as string, 'task-manifest.json');
+        const raw = await this.deps.artifactStore.read(String(input.runId), 'task-manifest.json');
         try {
           const parsed = JSON.parse(raw);
           if (typeof parsed === 'object' && parsed !== null) {
