@@ -86,7 +86,7 @@ describe('task-file-boundaries helpers', () => {
     it('loads from artifactStore when available', async () => {
       const mockRead = vi.fn().mockResolvedValue(JSON.stringify({ version: 2, tasks: [] }));
       const result = await loadManifest(
-        {},
+        { runId: 'run-1' },
         { cwd: '/repo', runId: 'run-1' },
         { artifactStore: { read: mockRead } },
       );
@@ -94,13 +94,13 @@ describe('task-file-boundaries helpers', () => {
       expect(result).toEqual({ status: 'found', manifest: { version: 2, tasks: [] } });
     });
 
-    it('falls back to readWorktreeFile when artifactStore throws', async () => {
+    it('falls back to readWorktreeFile when artifactStore throws not-found', async () => {
       const mockRead = vi.fn().mockRejectedValue(new Error('not found'));
       const mockReadWorktree = vi
         .fn()
         .mockResolvedValue(JSON.stringify({ version: 2, tasks: [{ n: 1 }] }));
       const result = await loadManifest(
-        {},
+        { runId: 'run-1' },
         { cwd: '/repo', runId: 'run-1' },
         {
           artifactStore: { read: mockRead },
@@ -114,7 +114,7 @@ describe('task-file-boundaries helpers', () => {
     it('returns malformed when artifactStore returns non-object JSON', async () => {
       const mockRead = vi.fn().mockResolvedValue('"just a string"');
       const result = await loadManifest(
-        {},
+        { runId: 'run-1' },
         { cwd: '/repo', runId: 'run-1' },
         { artifactStore: { read: mockRead } },
       );
@@ -131,11 +131,48 @@ describe('task-file-boundaries helpers', () => {
       expect(result.status).toBe('malformed');
     });
 
+    it('propagates non-not-found errors from artifactStore', async () => {
+      const mockRead = vi.fn().mockRejectedValue(new Error('network timeout'));
+      await expect(
+        loadManifest(
+          { runId: 'run-1' },
+          { cwd: '/repo', runId: 'run-1' },
+          { artifactStore: { read: mockRead } },
+        ),
+      ).rejects.toThrow('network timeout');
+    });
+
+    it('propagates permission denied errors from artifactStore', async () => {
+      const mockRead = vi.fn().mockRejectedValue(new Error('permission denied'));
+      await expect(
+        loadManifest(
+          { runId: 'run-1' },
+          { cwd: '/repo', runId: 'run-1' },
+          { artifactStore: { read: mockRead } },
+        ),
+      ).rejects.toThrow('permission denied');
+    });
+
+    it('returns malformed when input.manifest is an empty object', async () => {
+      const result = await loadManifest({ manifest: {} }, { cwd: '/repo', runId: 'run-1' });
+      expect(result.status).toBe('malformed');
+      expect(result.error).toBe('manifest must be an object with a tasks property');
+    });
+
+    it('returns malformed when input.manifest lacks tasks property', async () => {
+      const result = await loadManifest(
+        { manifest: { version: 2 } },
+        { cwd: '/repo', runId: 'run-1' },
+      );
+      expect(result.status).toBe('malformed');
+      expect(result.error).toBe('manifest must be an object with a tasks property');
+    });
+
     it('returns missing when manifest is not found anywhere', async () => {
       const mockRead = vi.fn().mockRejectedValue(new Error('not found'));
       const mockReadWorktree = vi.fn().mockResolvedValue(undefined);
       const result = await loadManifest(
-        {},
+        { runId: 'run-1' },
         { cwd: '/repo', runId: 'run-1' },
         {
           artifactStore: { read: mockRead },

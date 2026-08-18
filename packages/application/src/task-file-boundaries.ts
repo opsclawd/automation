@@ -95,6 +95,27 @@ export type ManifestLoadResult =
   | { status: 'missing'; message: string }
   | { status: 'malformed'; message: string; error: string };
 
+function isNotFoundError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return (
+      msg.includes('not found') ||
+      msg.includes('enoent') ||
+      msg.includes('file does not exist') ||
+      msg.includes('missing') ||
+      msg.includes('no such file')
+    );
+  }
+  const errStr = String(err).toLowerCase();
+  return (
+    errStr.includes('not found') ||
+    errStr.includes('enoent') ||
+    errStr.includes('file does not exist') ||
+    errStr.includes('missing') ||
+    errStr.includes('no such file')
+  );
+}
+
 export async function loadManifest(
   input: { manifest?: unknown; runId?: unknown },
   ctx: { cwd: string; runId?: unknown },
@@ -106,22 +127,21 @@ export async function loadManifest(
   },
 ): Promise<ManifestLoadResult> {
   if (input.manifest) {
-    if (typeof input.manifest === 'object' && input.manifest !== null) {
+    if (
+      typeof input.manifest === 'object' &&
+      input.manifest !== null &&
+      'tasks' in input.manifest
+    ) {
       return { status: 'found', manifest: input.manifest };
     }
     return {
       status: 'malformed',
       message: 'input manifest is invalid',
-      error: 'input manifest is not an object',
+      error: 'manifest must be an object with a tasks property',
     };
   }
 
-  const runId =
-    input.runId !== undefined && input.runId !== null
-      ? String(input.runId)
-      : ctx.runId !== undefined && ctx.runId !== null
-        ? String(ctx.runId)
-        : undefined;
+  const runId = input.runId !== undefined && input.runId !== null ? String(input.runId) : undefined;
 
   if (deps?.artifactStore && runId !== undefined) {
     try {
@@ -144,8 +164,10 @@ export async function loadManifest(
           error: errStr,
         };
       }
-    } catch {
-      // not found in artifact store, try readWorktreeFile
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        throw err;
+      }
     }
   }
 
