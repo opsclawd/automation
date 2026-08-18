@@ -19,7 +19,7 @@ import {
   writeFileSync,
   copyFileSync,
 } from 'node:fs';
-import { dirname, join, basename } from 'node:path';
+import { dirname, join, basename, resolve, relative, isAbsolute, sep } from 'node:path';
 import {
   openDatabase,
   applyMigrations,
@@ -2410,6 +2410,27 @@ export function composeRoot(opts: ComposeOptions): Container {
   let runExecutor: RunExecutor | undefined;
   let buildRunContext: ((run: Run) => PhaseHandlerContext) | undefined;
   const reviewStateRepository = new ReviewStateRepository(db);
+
+  const readWorktreeFile: ReadWorktreeFilePort = async (cwd, relativePath) => {
+    try {
+      const resolvedCwd = resolve(cwd);
+      const targetPath = resolve(resolvedCwd, relativePath);
+      const rel = relative(resolvedCwd, targetPath);
+      if (
+        rel === '' ||
+        rel === '..' ||
+        rel.startsWith(`..${sep}`) ||
+        rel.startsWith('../') ||
+        isAbsolute(rel)
+      ) {
+        return undefined;
+      }
+      return await fsReadFile(targetPath, 'utf-8');
+    } catch {
+      return undefined;
+    }
+  };
+
   try {
     const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
     let layered = layeredConfigCache.get(cacheKey);
@@ -3260,12 +3281,43 @@ export function composeRoot(opts: ComposeOptions): Container {
         return arbiterResult;
       };
 
-      const readWorktreeFile: ReadWorktreeFilePort = async (cwd, relativePath) => {
-        try {
-          return await fsReadFile(join(cwd, relativePath), 'utf-8');
-        } catch {
-          return undefined;
-        }
+      const loopArtifactStore: ArtifactStore = {
+        read: async (runId, relativePath) => {
+          const run = runRepository.findByUuid(runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
+          return artifactStoreForRun(runId, cwd).read(runId, relativePath);
+        },
+        write: async (input) => {
+          const run = runRepository.findByUuid(input.runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${input.runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
+          return artifactStoreForRun(input.runId, cwd).write(input);
+        },
+        list: async (runId) => {
+          const run = runRepository.findByUuid(runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
+          return artifactStoreForRun(runId, cwd).list(runId);
+        },
+        hydrateWorktree: async (runId) => {
+          const run = runRepository.findByUuid(runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
+          return artifactStoreForRun(runId, cwd).hydrateWorktree(runId);
+        },
       };
 
       // Non-optional local so the ReviewFixHandler closure below can reference it
@@ -3294,44 +3346,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             window: config.phases.reviewFix.trendAwareExit.window,
           },
         },
-        artifactStore: {
-          read: async (runId, relativePath) => {
-            const run = runRepository.findByUuid(runId);
-            if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
-            const repo = registryBackedRepo.findById(run.repoId);
-            const repoRootPath = repo ? repo.localBasePath : targetRoot;
-            const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
-            const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
-            return artifactStoreForRun(runId, cwd).read(runId, relativePath);
-          },
-          write: async (input) => {
-            const run = runRepository.findByUuid(input.runId);
-            if (!run) throw new Error(`ArtifactStore: no run found for ${input.runId}`);
-            const repo = registryBackedRepo.findById(run.repoId);
-            const repoRootPath = repo ? repo.localBasePath : targetRoot;
-            const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
-            const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
-            return artifactStoreForRun(input.runId, cwd).write(input);
-          },
-          list: async (runId) => {
-            const run = runRepository.findByUuid(runId);
-            if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
-            const repo = registryBackedRepo.findById(run.repoId);
-            const repoRootPath = repo ? repo.localBasePath : targetRoot;
-            const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
-            const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
-            return artifactStoreForRun(runId, cwd).list(runId);
-          },
-          hydrateWorktree: async (runId) => {
-            const run = runRepository.findByUuid(runId);
-            if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
-            const repo = registryBackedRepo.findById(run.repoId);
-            const repoRootPath = repo ? repo.localBasePath : targetRoot;
-            const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
-            const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
-            return artifactStoreForRun(runId, cwd).hydrateWorktree(runId);
-          },
-        },
+        artifactStore: loopArtifactStore,
         now: () => new Date(),
         idFactory: () => randomUUID(),
         cleanArtifacts: async (ctx) => {
@@ -3416,6 +3431,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         rollbackFix,
         loops: loopRepository,
         events: persistingEventBusForLoop,
+        git: gitAdapter,
+        readWorktreeFile,
+        artifactStore: loopArtifactStore,
         now: () => new Date(),
         idFactory: () => randomUUID(),
       });
@@ -6837,6 +6855,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       ...base,
       ...(resolveProfileForPhaseBound ? { resolveProfile: resolveProfileForPhaseBound } : {}),
       idFactory,
+      readWorktreeFile,
       ...opts,
     };
   };

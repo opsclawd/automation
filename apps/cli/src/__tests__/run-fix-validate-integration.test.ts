@@ -24,8 +24,11 @@ vi.mock('@ai-sdlc/infrastructure', async (importOriginal) => {
             result: mockBehavior.fixResult,
           }),
         );
-        execFileSync('git', ['add', '-A'], { cwd: request.cwd });
-        execFileSync('git', ['commit', '-qm', 'fix: test fix'], { cwd: request.cwd });
+        if (mockBehavior.fixResult === 'done_with_fixes') {
+          writeFileSync(join(request.cwd, 'src/fix.ts'), '// fixed\n');
+          execFileSync('git', ['add', '-A'], { cwd: request.cwd });
+          execFileSync('git', ['commit', '-qm', 'fix: test fix'], { cwd: request.cwd });
+        }
         const endCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
           cwd: request.cwd,
         })
@@ -49,7 +52,7 @@ vi.mock('@ai-sdlc/infrastructure', async (importOriginal) => {
   };
 });
 
-describe('run-fix-validate integration', () => {
+describe('run-fix-validate integration', { timeout: 20_000 }, () => {
   let repoRoot: string;
 
   const baseConfig = {
@@ -84,7 +87,29 @@ describe('run-fix-validate integration', () => {
     git('config', 'user.email', 'test@example.com');
     git('config', 'user.name', 'test');
     git('config', 'commit.gpgsign', 'false');
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(join(repoRoot, 'src'), { recursive: true });
+    writeFileSync(join(repoRoot, 'src/fix.ts'), '// initial\n');
+    writeFileSync(
+      join(repoRoot, '.gitignore'),
+      '/result.json\n.ai-runs/\n.ai-tmp/\n*.result\n*.log\n',
+    );
     writeFileSync(join(repoRoot, 'pnpm-workspace.yaml'), 'packages: []\n');
+    writeFileSync(join(repoRoot, '.ai-orchestrator.json'), JSON.stringify(baseConfig, null, 2));
+    writeFileSync(
+      join(repoRoot, 'task-manifest.json'),
+      JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Fix issue',
+            expected_files: ['src/fix.ts'],
+          },
+        ],
+      }),
+    );
     git('add', '-A');
     git('commit', '-qm', 'init');
   });
@@ -94,7 +119,6 @@ describe('run-fix-validate integration', () => {
   });
 
   async function compose() {
-    writeFileSync(join(repoRoot, '.ai-orchestrator.json'), JSON.stringify(baseConfig, null, 2));
     const { composeRoot } = await import('@ai-sdlc/api/compose.js');
     return composeRoot({
       repoRoot,

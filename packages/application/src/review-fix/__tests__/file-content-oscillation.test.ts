@@ -29,6 +29,17 @@ function baseInput(overrides?: Partial<ReviewFixLoopInput>): ReviewFixLoopInput 
     reviewProfile: AgentProfileName('reviewer'),
     fixProfile: AgentProfileName('fixer'),
     baselineCommitSha: 'sha-a',
+    manifest: {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['vitest.integration.config.ts'],
+        },
+      ],
+    },
     ...overrides,
   };
 }

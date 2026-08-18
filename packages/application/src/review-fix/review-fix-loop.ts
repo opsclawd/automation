@@ -20,6 +20,11 @@ import { extractEvidence } from './extract-evidence.js';
 import { appendRebuttalToCodeReview } from './append-rebuttal.js';
 import { verifyFixCommit } from '../fix-commit-verifier.js';
 import {
+  checkTaskBoundaries,
+  loadManifest,
+  type ManifestLoadResult,
+} from '../task-file-boundaries.js';
+import {
   captureNetRevertBaseline,
   checkForNetReverts,
   type NetRevertBaseline,
@@ -179,6 +184,11 @@ export class ReviewFixLoop {
       ...(input.baselineCommitSha ? { baselineCommitSha: input.baselineCommitSha } : {}),
     });
 
+    const manifestResult = await this.loadManifest(input, {
+      cwd: input.cwd,
+      runId: input.runId,
+    });
+
     let consecutiveFixFailures = 0;
     // Trackers for the optional runaway-protection caps (#667). Kept
     // separate from `consecutiveFixFailures` so we don't entangle
@@ -204,6 +214,7 @@ export class ReviewFixLoop {
     let lastFixVerdict: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix' | undefined;
     let pendingReconciliationContext: string | undefined;
     let pendingScopeReviewContext: string | undefined;
+    let pendingDeterministicDiagnostic: string | undefined;
     const findingArrayHistory: Array<
       Array<{ severity: string; summary: string; files?: string[] }>
     > = [];
@@ -423,6 +434,36 @@ export class ReviewFixLoop {
               expectedHead: fix.headBeforeFix,
             });
             if (verification.kind === 'advanced') {
+              const boundaryCheck = await this.checkTaskBoundary(
+                ctx,
+                input,
+                fix.headBeforeFix,
+                verification.headAfterFix,
+                manifestResult,
+              );
+              if (!boundaryCheck.ok) {
+                const failure = await this.handleBoundaryFailure(
+                  ctx,
+                  input,
+                  {},
+                  fix,
+                  boundaryCheck,
+                  thisLoop,
+                );
+                if (!failure.handled) {
+                  return failure.result;
+                }
+                thisLoop = failure.loop;
+                const gateOutput = gateResult?.output
+                  ? `${gateResult.output}\n\n${boundaryCheck.message}`
+                  : boundaryCheck.message;
+                preEvaluatedGateResult = { outcome: 'fail', output: gateOutput };
+                consecutiveFixFailures = 0;
+                consecutiveFixFailuresForCap = 0;
+                lastIterationHadFixCommit = false;
+                continue;
+              }
+
               lastFixHeadRange = {
                 before: fix.headBeforeFix,
                 after: verification.headAfterFix,
@@ -490,6 +531,36 @@ export class ReviewFixLoop {
                   committedSha = await this.deps.git!.commit(ctx.cwd, message);
                 } catch {}
                 if (committedSha) {
+                  const boundaryCheck = await this.checkTaskBoundary(
+                    ctx,
+                    input,
+                    fix.headBeforeFix ?? 'HEAD',
+                    committedSha,
+                    manifestResult,
+                  );
+                  if (!boundaryCheck.ok) {
+                    const failure = await this.handleBoundaryFailure(
+                      ctx,
+                      input,
+                      {},
+                      fix,
+                      boundaryCheck,
+                      thisLoop,
+                    );
+                    if (!failure.handled) {
+                      return failure.result;
+                    }
+                    thisLoop = failure.loop;
+                    const gateOutput = gateResult?.output
+                      ? `${gateResult.output}\n\n${boundaryCheck.message}`
+                      : boundaryCheck.message;
+                    preEvaluatedGateResult = { outcome: 'fail', output: gateOutput };
+                    consecutiveFixFailures = 0;
+                    consecutiveFixFailuresForCap = 0;
+                    lastIterationHadFixCommit = false;
+                    continue;
+                  }
+
                   const scopeResult = await this.finalizeScopeAndCommitMessage({
                     ctx,
                     loopInput: input,
@@ -1166,9 +1237,13 @@ export class ReviewFixLoop {
         ...(pendingReconciliationContext
           ? { reconciliationContext: pendingReconciliationContext }
           : {}),
+        ...(pendingDeterministicDiagnostic
+          ? { deterministicDiagnostic: pendingDeterministicDiagnostic }
+          : {}),
         ...(allowedFiles.length > 0 ? { allowedFiles } : {}),
       });
       pendingReconciliationContext = undefined;
+      pendingDeterministicDiagnostic = undefined;
       lastFixInvocationId = fix.invocationId;
       lastFixVerdict = fix.verdict;
 
@@ -1282,6 +1357,33 @@ export class ReviewFixLoop {
             expectedHead: fix.headBeforeFix,
           });
           if (verification.kind === 'advanced') {
+            const boundaryCheck = await this.checkTaskBoundary(
+              ctx,
+              input,
+              fix.headBeforeFix,
+              verification.headAfterFix,
+              manifestResult,
+            );
+            if (!boundaryCheck.ok) {
+              const failure = await this.handleBoundaryFailure(
+                ctx,
+                input,
+                review,
+                fix,
+                boundaryCheck,
+                thisLoop,
+              );
+              if (!failure.handled) {
+                return failure.result;
+              }
+              thisLoop = failure.loop;
+              pendingDeterministicDiagnostic = boundaryCheck.message;
+              consecutiveFixFailures = 0;
+              consecutiveFixFailuresForCap = 0;
+              lastIterationHadFixCommit = false;
+              continue;
+            }
+
             const scopeResult = await this.finalizeScopeAndCommitMessage({
               ctx,
               loopInput: input,
@@ -1377,6 +1479,33 @@ export class ReviewFixLoop {
               }
 
               if (committedSha) {
+                const boundaryCheck = await this.checkTaskBoundary(
+                  ctx,
+                  input,
+                  fix.headBeforeFix ?? 'HEAD',
+                  committedSha,
+                  manifestResult,
+                );
+                if (!boundaryCheck.ok) {
+                  const failure = await this.handleBoundaryFailure(
+                    ctx,
+                    input,
+                    review,
+                    fix,
+                    boundaryCheck,
+                    thisLoop,
+                  );
+                  if (!failure.handled) {
+                    return failure.result;
+                  }
+                  thisLoop = failure.loop;
+                  pendingDeterministicDiagnostic = boundaryCheck.message;
+                  consecutiveFixFailures = 0;
+                  consecutiveFixFailuresForCap = 0;
+                  lastIterationHadFixCommit = false;
+                  continue;
+                }
+
                 const scopeResult = await this.finalizeScopeAndCommitMessage({
                   ctx,
                   loopInput: input,
@@ -2458,5 +2587,147 @@ export class ReviewFixLoop {
       humanReviewReason,
       match,
     };
+  }
+
+  private async loadManifest(
+    input: ReviewFixLoopInput,
+    ctx: { cwd: string; runId?: unknown },
+  ): Promise<ManifestLoadResult> {
+    return loadManifest(input, ctx, this.deps);
+  }
+
+  private async checkTaskBoundary(
+    ctx: StepContext,
+    loopInput: ReviewFixLoopInput,
+    headBeforeFix: string,
+    headAfterFix: string,
+    manifestResult: ManifestLoadResult,
+  ): Promise<
+    { ok: true; changedFiles: string[] } | { ok: false; message: string; files?: string[] }
+  > {
+    if (!this.deps.git || typeof this.deps.git.changedFiles !== 'function') {
+      return { ok: true, changedFiles: [] };
+    }
+
+    if (manifestResult.status === 'missing') {
+      const errorMsg = 'task-manifest.json not found';
+      this.emit(
+        loopInput,
+        'task_boundary.check_failed',
+        'warn',
+        `task boundary check failed: ${errorMsg}`,
+        {
+          iterationIndex: ctx.iterationIndex,
+          reason: 'missing_manifest',
+          error: errorMsg,
+        },
+      );
+      return { ok: false, message: `task boundary check failed: ${errorMsg}` };
+    }
+    if (manifestResult.status === 'malformed') {
+      const errorMsg = manifestResult.message;
+      this.emit(
+        loopInput,
+        'task_boundary.check_failed',
+        'warn',
+        `task boundary check failed: ${errorMsg}`,
+        {
+          iterationIndex: ctx.iterationIndex,
+          reason: 'malformed_manifest',
+          error: manifestResult.error,
+        },
+      );
+      return { ok: false, message: `task boundary check failed: ${errorMsg}` };
+    }
+
+    let committedFiles: string[];
+    try {
+      committedFiles = await this.deps.git.changedFiles(ctx.cwd, headBeforeFix, headAfterFix);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.emit(
+        loopInput,
+        'task_boundary.check_failed',
+        'warn',
+        `task boundary check failed: ${errorMsg}`,
+        { iterationIndex: ctx.iterationIndex, reason: 'check_error', error: errorMsg },
+      );
+      return { ok: false, message: `task boundary check failed: ${errorMsg}` };
+    }
+
+    const classification = checkTaskBoundaries(committedFiles, manifestResult.manifest);
+    const violatingFiles = [
+      ...classification.modifiedReferenceFiles,
+      ...classification.undeclaredFiles,
+    ];
+    if (violatingFiles.length > 0) {
+      const message = `${loopInput.phaseId} modified undeclared files: ${violatingFiles.join(', ')}`;
+      this.emit(loopInput, 'task_boundary.violated', 'warn', message, {
+        phase: loopInput.phaseId,
+        files: violatingFiles,
+        modifiedReferenceFiles: classification.modifiedReferenceFiles,
+        undeclaredFiles: classification.undeclaredFiles,
+        iterationIndex: ctx.iterationIndex,
+      });
+      return { ok: false, message, files: violatingFiles };
+    }
+
+    return { ok: true, changedFiles: committedFiles };
+  }
+
+  private async handleBoundaryFailure(
+    ctx: StepContext,
+    input: ReviewFixLoopInput,
+    review: Partial<ReviewStepResult>,
+    fix: FixStepResult,
+    boundaryCheck: { ok: false; message: string; files?: string[] },
+    thisLoop: Loop,
+  ): Promise<{ handled: true; loop: Loop } | { handled: false; result: ReviewFixLoopResult }> {
+    let rollbackOk = true;
+    if (this.deps.rollbackFix && fix.headBeforeFix) {
+      rollbackOk = await this.deps.rollbackFix(ctx, fix.headBeforeFix);
+    }
+    if (!rollbackOk) {
+      this.emit(
+        input,
+        'loop.rollback.failed',
+        'error',
+        `rollback failed on iteration ${ctx.iterationIndex}, breaking loop`,
+        { index: ctx.iterationIndex },
+      );
+      const failedLoop = completeIteration(thisLoop, { outcome: 'failed', now: this.deps.now() });
+      this.deps.loops.update(failedLoop);
+      this.emitIterationCompleted(input, ctx.iterationIndex, 'failed');
+      await this.appendHistoryEntry(ctx, review, fix, undefined, 'failed', input);
+      await this.runCleanArtifacts(ctx);
+      return {
+        handled: false,
+        result: {
+          loop: failedLoop,
+          phaseOutcome: 'failed',
+          loopStatus: 'failed',
+          needsHumanReview: true,
+        },
+      };
+    }
+
+    const updatedLoop = completeIteration(thisLoop, {
+      outcome: 'unresolved',
+      fixInvocationId: fix.invocationId,
+      now: this.deps.now(),
+    });
+    this.deps.loops.update(updatedLoop);
+    this.emitIterationCompleted(input, ctx.iterationIndex, 'unresolved');
+    await this.appendHistoryEntry(
+      ctx,
+      review,
+      { ...fix, detail: boundaryCheck.message },
+      undefined,
+      'unresolved',
+      input,
+    );
+    await this.runCleanArtifacts(ctx);
+
+    return { handled: true, loop: updatedLoop };
   }
 }

@@ -7,6 +7,14 @@ import {
   type AgentProfileName,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
+import type { RevalidationResult, FixStepOptions } from '../review-fix/types.js';
+import {
+  checkTaskBoundaries,
+  getManifestBoundaries,
+  loadManifest,
+  type ManifestLoadResult,
+} from '../task-file-boundaries.js';
+import { uncommittedSourcePaths } from '../artifacts/orchestrator-artifacts.js';
 import type {
   ValidateFixLoopDeps,
   ValidateFixLoopInput,
@@ -29,7 +37,20 @@ export class ValidateFixLoop {
     });
     deps.loops.insert(loop);
 
+    const manifestResult = await this.loadManifest(input, {
+      cwd: input.cwd,
+      runId: input.runId,
+    });
+    let allowedFiles: string[] | undefined;
+    if (manifestResult.status === 'found') {
+      const boundaries = getManifestBoundaries(manifestResult.manifest);
+      if (boundaries.writableSet.size > 0) {
+        allowedFiles = [...boundaries.writableSet].sort();
+      }
+    }
+
     let consecutiveFixFailures = 0;
+    let nextDeterministicDiagnostic: string | undefined;
 
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -56,7 +77,16 @@ export class ValidateFixLoop {
         this.emitEscalation(input, 'two_consecutive_fix_failures');
       }
 
-      const fix = await deps.runFix(ctx, { useFallback });
+      const fixOpts: FixStepOptions = {
+        useFallback,
+        ...(nextDeterministicDiagnostic
+          ? { deterministicDiagnostic: nextDeterministicDiagnostic }
+          : {}),
+        ...(allowedFiles ? { allowedFiles } : {}),
+      };
+      nextDeterministicDiagnostic = undefined;
+
+      const fix = await deps.runFix(ctx, fixOpts);
       loop = startIteration(loop, { reviewInvocationId: fix.invocationId, now: deps.now() });
       deps.loops.update(loop);
 
@@ -72,6 +102,120 @@ export class ValidateFixLoop {
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
         break;
+      }
+
+      let boundaryFailure: { files?: string[]; message: string } | undefined;
+      if (deps.git && fix.headBeforeFix) {
+        try {
+          let committedFiles: string[] = [];
+          const currentHead = await deps.git.headCommitSha(ctx.cwd);
+          if (currentHead !== fix.headBeforeFix) {
+            committedFiles = await deps.git.changedFiles(ctx.cwd, fix.headBeforeFix, currentHead);
+          }
+
+          let uncommittedFiles: string[] = [];
+          const statusOutput = await deps.git.status(ctx.cwd);
+          uncommittedFiles = uncommittedSourcePaths(statusOutput);
+
+          const changedFiles = [...new Set([...committedFiles, ...uncommittedFiles])];
+
+          if (changedFiles.length > 0) {
+            if (manifestResult.status === 'missing') {
+              const errorMsg = 'task-manifest.json not found';
+              this.emit(
+                input,
+                'task_boundary.check_failed',
+                'warn',
+                `task boundary check failed: ${errorMsg}`,
+                { iterationIndex, reason: 'missing_manifest', error: errorMsg },
+              );
+              boundaryFailure = { message: `task boundary check failed: ${errorMsg}` };
+            } else if (manifestResult.status === 'malformed') {
+              const errorMsg = manifestResult.message;
+              this.emit(
+                input,
+                'task_boundary.check_failed',
+                'warn',
+                `task boundary check failed: ${errorMsg}`,
+                { iterationIndex, reason: 'malformed_manifest', error: manifestResult.error },
+              );
+              boundaryFailure = { message: `task boundary check failed: ${errorMsg}` };
+            } else {
+              const classification = checkTaskBoundaries(changedFiles, manifestResult.manifest);
+              const violatingFiles = [
+                ...classification.modifiedReferenceFiles,
+                ...classification.undeclaredFiles,
+              ];
+              if (violatingFiles.length > 0) {
+                const message = `${input.phaseId} modified undeclared files: ${violatingFiles.join(', ')}`;
+                this.emit(input, 'task_boundary.violated', 'warn', message, {
+                  phase: input.phaseId,
+                  files: violatingFiles,
+                  modifiedReferenceFiles: classification.modifiedReferenceFiles,
+                  undeclaredFiles: classification.undeclaredFiles,
+                  iterationIndex,
+                });
+                boundaryFailure = { files: violatingFiles, message };
+              }
+            }
+          }
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          this.emit(
+            input,
+            'task_boundary.check_failed',
+            'warn',
+            `task boundary check failed: ${errorMsg}`,
+            { iterationIndex, reason: 'check_error', error: errorMsg },
+          );
+          boundaryFailure = { message: `task boundary check failed: ${errorMsg}` };
+        }
+      }
+
+      // If boundary failure occurred, surface as synthetic revalidation failure and rollback
+      if (boundaryFailure) {
+        const reval: RevalidationResult = {
+          validationRunId: deps.idFactory(),
+          passed: false,
+          category: 'boundary',
+          failureDetail: boundaryFailure.message,
+        };
+
+        if (fix.headBeforeFix && deps.rollbackFix) {
+          const rollbackOk = await deps.rollbackFix(ctx, fix.headBeforeFix);
+          if (!rollbackOk) {
+            this.emit(
+              input,
+              'loop.rollback.failed',
+              'error',
+              `rollback failed on iteration ${iterationIndex}, breaking loop`,
+              { index: iterationIndex },
+            );
+            loop = completeIteration(loop, {
+              outcome: 'failed',
+              fixInvocationId: fix.invocationId,
+              now: deps.now(),
+            });
+            deps.loops.update(loop);
+            this.emitIterationCompleted(input, iterationIndex, 'failed');
+            break;
+          }
+        }
+
+        const couldRollback = Boolean(fix.headBeforeFix && deps.rollbackFix);
+        loop = completeIteration(loop, {
+          outcome: 'revalidation_failed',
+          fixInvocationId: fix.invocationId,
+          revalidationId: reval.validationRunId,
+          now: deps.now(),
+        });
+        deps.loops.update(loop);
+        this.emitIterationCompleted(input, iterationIndex, 'revalidation_failed');
+
+        if (!couldRollback) break;
+        consecutiveFixFailures = 0;
+        nextDeterministicDiagnostic = boundaryFailure.message;
+        continue;
       }
 
       if (fix.verdict === 'no_fixes_needed') {
@@ -128,7 +272,6 @@ export class ValidateFixLoop {
       }
       consecutiveFixFailures = 0;
 
-      // revalidate
       const reval = await deps.runRevalidation(ctx);
 
       if (!reval.passed && !fix.headBeforeFix && deps.rollbackFix) {
@@ -242,5 +385,12 @@ export class ValidateFixLoop {
       triggerReason,
       triggerOwner: 'use_case',
     });
+  }
+
+  private async loadManifest(
+    input: ValidateFixLoopInput,
+    ctx: { cwd: string; runId?: unknown },
+  ): Promise<ManifestLoadResult> {
+    return loadManifest(input, ctx, this.deps);
   }
 }

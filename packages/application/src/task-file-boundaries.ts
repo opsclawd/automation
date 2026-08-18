@@ -62,3 +62,142 @@ export function classifyUndeclaredFiles(
     undeclaredFiles: undeclared.filter((file) => !referenceFiles.has(file)),
   };
 }
+
+export function getManifestBoundaries(manifest: unknown): {
+  writableSet: Set<string>;
+  referenceSet: Set<string>;
+} {
+  if (!manifest || typeof manifest !== 'object') {
+    return { writableSet: new Set(), referenceSet: new Set() };
+  }
+  const record = manifest as Record<string, unknown>;
+  const tasks = Array.isArray(record.tasks) ? record.tasks : [];
+  const writableFiles = tasks.flatMap((t) => declaredTaskFiles(t));
+  const referenceFiles = tasks.flatMap((t) => referenceTaskFiles(t));
+  return {
+    writableSet: normalizedPathSet(writableFiles),
+    referenceSet: normalizedPathSet(referenceFiles),
+  };
+}
+
+export function checkTaskBoundaries(
+  committedFiles: readonly string[],
+  manifest: unknown,
+  exemptFiles?: readonly string[],
+): TaskBoundaryClassification {
+  const { writableSet, referenceSet } = getManifestBoundaries(manifest);
+  const exemptSet = normalizedPathSet(exemptFiles);
+  return classifyUndeclaredFiles(committedFiles, writableSet, referenceSet, exemptSet);
+}
+
+export type ManifestLoadResult =
+  | { status: 'found'; manifest: unknown }
+  | { status: 'missing'; message: string }
+  | { status: 'malformed'; message: string; error: string };
+
+function isNotFoundError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return (
+      msg.includes('not found') ||
+      msg.includes('enoent') ||
+      msg.includes('file does not exist') ||
+      msg.includes('missing') ||
+      msg.includes('no such file')
+    );
+  }
+  const errStr = String(err).toLowerCase();
+  return (
+    errStr.includes('not found') ||
+    errStr.includes('enoent') ||
+    errStr.includes('file does not exist') ||
+    errStr.includes('missing') ||
+    errStr.includes('no such file')
+  );
+}
+
+export async function loadManifest(
+  input: { manifest?: unknown; runId?: unknown },
+  ctx: { cwd: string; runId?: unknown },
+  deps?: {
+    artifactStore?: { read: (runId: string, relativePath: string) => Promise<string> } | undefined;
+    readWorktreeFile?:
+      | ((cwd: string, relativePath: string) => Promise<string | undefined>)
+      | undefined;
+  },
+): Promise<ManifestLoadResult> {
+  if (input.manifest) {
+    if (
+      typeof input.manifest === 'object' &&
+      input.manifest !== null &&
+      'tasks' in input.manifest
+    ) {
+      return { status: 'found', manifest: input.manifest };
+    }
+    return {
+      status: 'malformed',
+      message: 'input manifest is invalid',
+      error: 'manifest must be an object with a tasks property',
+    };
+  }
+
+  const runId = input.runId !== undefined && input.runId !== null ? String(input.runId) : undefined;
+
+  if (deps?.artifactStore && runId !== undefined) {
+    try {
+      const raw = await deps.artifactStore.read(runId, 'task-manifest.json');
+      try {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === 'object' && parsed !== null) {
+          return { status: 'found', manifest: parsed };
+        }
+        return {
+          status: 'malformed',
+          message: 'task-manifest.json in artifact store is not an object',
+          error: 'parsed to non-object',
+        };
+      } catch (parseErr) {
+        const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        return {
+          status: 'malformed',
+          message: `malformed task-manifest.json in artifact store: ${errStr}`,
+          error: errStr,
+        };
+      }
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        throw err;
+      }
+    }
+  }
+
+  if (deps?.readWorktreeFile) {
+    try {
+      const raw = await deps.readWorktreeFile(ctx.cwd, 'task-manifest.json');
+      if (raw !== undefined && raw !== null && raw !== '') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed === 'object' && parsed !== null) {
+            return { status: 'found', manifest: parsed };
+          }
+          return {
+            status: 'malformed',
+            message: 'task-manifest.json in worktree is not an object',
+            error: 'parsed to non-object',
+          };
+        } catch (parseErr) {
+          const errStr = parseErr instanceof Error ? parseErr.message : String(parseErr);
+          return {
+            status: 'malformed',
+            message: `malformed task-manifest.json in worktree: ${errStr}`,
+            error: errStr,
+          };
+        }
+      }
+    } catch {
+      // not found in worktree
+    }
+  }
+
+  return { status: 'missing', message: 'task-manifest.json not found' };
+}

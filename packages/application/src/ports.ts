@@ -117,10 +117,7 @@ export interface RunBashScriptResult {
 
 export type RunBashScriptFn = (input: RunBashScriptInput) => Promise<RunBashScriptResult>;
 
-export type ReadWorktreeFilePort = (
-  cwd: string,
-  relativePath: string,
-) => Promise<string | undefined>;
+export type { ReadWorktreeFilePort } from './ports/read-worktree-file-port.js';
 
 export interface TmpDirectoryHandle {
   readonly tmpDir: string;
