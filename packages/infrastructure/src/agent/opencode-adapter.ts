@@ -15,9 +15,6 @@ import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/app
 // content (e.g. a file the agent read, or a `git log` line containing "429").
 const PROVIDER_LOG_SERVICES = /service=(?:llm|provider)\b/;
 
-// Match `tokens=` prefix and extract the JSON payload
-const TOKENS_PREFIX_RE = /tokens=(\{.*\})/;
-
 export interface SessionLogUsage {
   inputTokens: number;
   outputTokens: number;
@@ -25,38 +22,106 @@ export interface SessionLogUsage {
   cachedTokens?: number;
 }
 
-export function parseSessionLogUsage(content: string): SessionLogUsage | undefined {
+export function parseSessionLogUsage(
+  content: string,
+  opts?: { runtime?: string; logPath?: string },
+): SessionLogUsage | undefined {
   const lines = content.split('\n');
   let inputTokens = 0;
   let outputTokens = 0;
   let reasoningTokens = 0;
   let cachedTokens = 0;
   let hasAny = false;
+
+  const runtime = opts?.runtime ?? 'opencode';
+  const logPath = opts?.logPath ?? 'session log';
+
+  const LOG_LINE_PREFIX_RE = /^(?:DEBUG|INFO|WARN|ERROR|\d{4}-\d{2}-\d{2}T|\[|\{"level":)/i;
+
   for (const line of lines) {
-    if (!PROVIDER_LOG_SERVICES.test(line)) continue;
-    const match = TOKENS_PREFIX_RE.exec(line);
+    if (!line.trim()) continue;
+    if (!LOG_LINE_PREFIX_RE.test(line) && !line.includes('service=')) continue;
+    const match =
+      /(?:tokens|usage)\s*[:=]\s*(\{.*\})/i.exec(line) ||
+      /(\{(?:.*?"(?:input|prompt|output|completion|cache|reasoning)"|.*?"(?:input_tokens|output_tokens)").*?\})/i.exec(line);
+
     if (!match) continue;
+
     try {
       const parsed = JSON.parse(match[1]!);
-      inputTokens += parsed.input ?? 0;
-      outputTokens += parsed.output ?? 0;
-      if (parsed.cacheRead) cachedTokens += parsed.cacheRead;
-      if (parsed.cache?.read) cachedTokens += parsed.cache.read;
-      if (parsed.reasoningTokens) reasoningTokens += parsed.reasoningTokens;
-      if (parsed.reasoning) reasoningTokens += parsed.reasoning;
-      hasAny = true;
-    } catch {
-      // Malformed tokens JSON — skip silently
+      const input =
+        typeof parsed.input === 'number'
+          ? parsed.input
+          : typeof parsed.input_tokens === 'number'
+            ? parsed.input_tokens
+            : typeof parsed.prompt_tokens === 'number'
+              ? parsed.prompt_tokens
+              : typeof parsed.inputTokens === 'number'
+                ? parsed.inputTokens
+                : 0;
+
+      const output =
+        typeof parsed.output === 'number'
+          ? parsed.output
+          : typeof parsed.output_tokens === 'number'
+            ? parsed.output_tokens
+            : typeof parsed.completion_tokens === 'number'
+              ? parsed.completion_tokens
+              : typeof parsed.outputTokens === 'number'
+                ? parsed.outputTokens
+                : 0;
+
+      const cached =
+        typeof parsed.cacheRead === 'number'
+          ? parsed.cacheRead
+          : typeof parsed.cache?.read === 'number'
+            ? parsed.cache.read
+            : typeof parsed.cache_read === 'number'
+              ? parsed.cache_read
+              : typeof parsed.cache_read_input_tokens === 'number'
+                ? parsed.cache_read_input_tokens
+                : typeof parsed.cached_tokens === 'number'
+                  ? parsed.cached_tokens
+                  : typeof parsed.cachedTokens === 'number'
+                    ? parsed.cachedTokens
+                    : typeof parsed.cache_read_tokens === 'number'
+                      ? parsed.cache_read_tokens
+                      : 0;
+
+      const reasoning =
+        typeof parsed.reasoning === 'number'
+          ? parsed.reasoning
+          : typeof parsed.reasoningTokens === 'number'
+            ? parsed.reasoningTokens
+            : typeof parsed.reasoning_tokens === 'number'
+              ? parsed.reasoning_tokens
+              : 0;
+
+      if (input > 0 || output > 0 || cached > 0 || reasoning > 0) {
+        inputTokens += input;
+        outputTokens += output;
+        cachedTokens += cached;
+        reasoningTokens += reasoning;
+        hasAny = true;
+      }
+    } catch (err) {
+      console.warn(`[${runtime}] Failed to parse token usage JSON in ${logPath}: ${String(err)}`);
     }
   }
-  return hasAny
-    ? {
-        inputTokens,
-        outputTokens,
-        ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
-        ...(cachedTokens > 0 ? { cachedTokens } : {}),
-      }
-    : undefined;
+
+  if (!hasAny) {
+    if (content.trim().length > 0) {
+      console.warn(`[${runtime}] No token usage found in ${logPath}`);
+    }
+    return undefined;
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
+    ...(cachedTokens > 0 ? { cachedTokens } : {}),
+  };
 }
 
 export interface OpenCodeAdapterOptions {
@@ -336,9 +401,19 @@ export class OpenCodeAgentAdapter implements AgentPort {
     writeFileSync(stderrPath, stderrForLog);
 
     // Parse token usage from the session log transcripts
+    const candidateLogs = this.candidateLogFiles(sessionLogDir, preexistingLogs, request.cwd);
+    const logPathsLabel = candidateLogs.length > 0 ? candidateLogs.join(', ') : sessionLogDir;
+
     const usage = postExit?.transcript
-      ? parseSessionLogUsage(OpenCodeAgentAdapter.providerLines(postExit.transcript))
+      ? parseSessionLogUsage(postExit.transcript, { runtime: 'opencode', logPath: logPathsLabel })
       : undefined;
+
+    const effectiveUsage = usage ?? { inputTokens: 0, outputTokens: 0 };
+    if (!usage) {
+      console.warn(
+        `[opencode] Usage was unavailable for invocation, recording explicit unknown usage: ${logPathsLabel}`,
+      );
+    }
 
     const ret: AgentInvocationResult = {
       runtime: 'opencode',
@@ -350,7 +425,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       stderrPath,
       contractViolations,
       outcome,
-      ...(usage ? { usage: { ...usage } } : {}),
+      usage: { ...effectiveUsage },
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
     if (request.stepId) ret.stepId = request.stepId;

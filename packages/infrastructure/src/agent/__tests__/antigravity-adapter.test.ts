@@ -68,6 +68,30 @@ const HISTORICAL_MODEL_LABELS = [
 ] as const;
 
 describe('AntigravityAgentAdapter', () => {
+  it('extracts usage from stdout when present', async () => {
+    const cwd = makeWorktree();
+    const fakeScript = join(cwd, 'fake-agy-usage.sh');
+    writeFileSync(
+      fakeScript,
+      `#!/usr/bin/env bash
+echo "Tokens: 1,500 input, 300 output"
+echo "Cache read: 50"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: fakeScript,
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke(req(cwd));
+    expect(result.usage).toEqual({
+      inputTokens: 1500,
+      outputTokens: 300,
+      cachedTokens: 50,
+    });
+  });
+
   it('returns success and runtime "antigravity" for a 0-exit child', async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({

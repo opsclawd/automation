@@ -17,6 +17,7 @@ import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { runExternalCli } from './external-cli-runner.js';
+import { extractTokenUsageFromText } from './usage-parser.js';
 
 const AGY_MODEL_LABEL_EXCEPTIONS: Readonly<Record<string, string>> = Object.freeze({
   'gpt-oss-120b-medium': 'GPT-OSS 120B (Medium)',
@@ -428,6 +429,32 @@ export class AntigravityAgentAdapter implements AgentPort {
       } catch (err) {
         console.warn('Failed to perform brain recovery:', err);
       }
+    }
+
+    // Extract token usage from stdout/stderr transcripts (including cache-read tokens if reported)
+    try {
+      const stdoutContent = readFileSync(result.stdoutPath, 'utf-8');
+      const stderrContent = readFileSync(result.stderrPath, 'utf-8');
+      const usage =
+        extractTokenUsageFromText(stdoutContent, {
+          runtime: 'antigravity',
+          logPath: result.stdoutPath,
+        }) ??
+        extractTokenUsageFromText(stderrContent, {
+          runtime: 'antigravity',
+          logPath: result.stderrPath,
+        });
+
+      if (usage) {
+        result.usage = usage;
+      } else {
+        console.warn(
+          `[antigravity] Usage was unavailable for invocation, recording explicit unknown usage: ${result.stdoutPath}`,
+        );
+        result.usage = { inputTokens: 0, outputTokens: 0 };
+      }
+    } catch {
+      result.usage = { inputTokens: 0, outputTokens: 0 };
     }
 
     return result;

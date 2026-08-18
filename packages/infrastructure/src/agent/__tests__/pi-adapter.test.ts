@@ -19,6 +19,34 @@ function makeWorktree(): string {
 const FIXTURES = join(__dirname, '..', '__fixtures__');
 
 describe('PiAgentAdapter', () => {
+  it('extracts token usage from output text when present', async () => {
+    const cwd = makeWorktree();
+    const shim = join(cwd, 'shim.sh');
+    writeFileSync(
+      shim,
+      `#!/usr/bin/env bash
+echo "Tokens: 800 in / 200 out"
+exit 0
+`,
+    );
+    execSync(`chmod +x ${shim}`);
+    const adapter = new PiAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('pi-local'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(result.usage).toEqual({
+      inputTokens: 800,
+      outputTokens: 200,
+    });
+  });
+
   it('returns success outcome for a 0-exit child', async () => {
     const cwd = makeWorktree();
     const adapter = new PiAgentAdapter({

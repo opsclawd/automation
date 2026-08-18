@@ -4,6 +4,7 @@ import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
+import { extractTokenUsageFromText } from './usage-parser.js';
 
 export interface PiAdapterOptions {
   binaryPath?: string;
@@ -88,6 +89,22 @@ export class PiAgentAdapter implements AgentPort {
       contractViolations = [...contractViolations, 'missing_commit'];
     }
 
+    // Extract token usage from stdout/stderr transcripts (including cache-read tokens if reported)
+    let usage: ReturnType<typeof extractTokenUsageFromText>;
+    try {
+      usage =
+        extractTokenUsageFromText(stdout, {
+          runtime: 'pi',
+          logPath: stdoutPath,
+        }) ??
+        extractTokenUsageFromText(stderr, {
+          runtime: 'pi',
+          logPath: stderrPath,
+        });
+    } catch {
+      // Ignore
+    }
+
     const ret: AgentInvocationResult = {
       runtime: 'pi',
       provider: '',
@@ -98,7 +115,15 @@ export class PiAgentAdapter implements AgentPort {
       stderrPath,
       contractViolations,
       outcome,
+      usage: usage ?? { inputTokens: 0, outputTokens: 0 },
     };
+
+    if (!usage) {
+      console.warn(
+        `[pi] Usage was unavailable for invocation, recording explicit unknown usage: ${stdoutPath}`,
+      );
+    }
+
     if (endCommitSha) ret.endCommitSha = endCommitSha;
     return ret;
   }

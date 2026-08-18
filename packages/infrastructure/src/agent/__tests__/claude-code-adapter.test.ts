@@ -44,6 +44,28 @@ function req(cwd: string, overrides = {}) {
 }
 
 describe('ClaudeCodeAgentAdapter', () => {
+  it('extracts token usage from output text when present', async () => {
+    const cwd = makeWorktree();
+    const shim = join(cwd, 'shim.sh');
+    writeFileSync(
+      shim,
+      `#!/usr/bin/env bash
+echo "Input tokens: 1,234"
+echo "Output tokens: 567"
+echo "Cache read: 42"
+exit 0
+`,
+    );
+    execSync(`chmod +x ${shim}`);
+    const adapter = new ClaudeCodeAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
+    const result = await adapter.invoke(req(cwd));
+    expect(result.usage).toEqual({
+      inputTokens: 1234,
+      outputTokens: 567,
+      cachedTokens: 42,
+    });
+  });
+
   it('returns success and runtime "claude-code" for a 0-exit child', async () => {
     const cwd = makeWorktree();
     const adapter = new ClaudeCodeAgentAdapter({

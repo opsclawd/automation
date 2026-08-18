@@ -55,7 +55,11 @@ export class CodexAgentAdapter implements AgentPort {
 
       let cleanTranscript = '';
       let detectedError: string | null = null;
-      let usage: AgentInvocationResult['usage'] | undefined;
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+      let totalReasoningTokens = 0;
+      let totalCachedTokens = 0;
+      let hasUsage = false;
 
       for (const line of lines) {
         if (!line.trim()) continue;
@@ -71,25 +75,48 @@ export class CodexAgentAdapter implements AgentPort {
             detectedError = ev.message ?? 'Unknown top-level error';
           } else if (ev.type === 'turn.failed') {
             detectedError = ev.error?.message ?? 'Unknown turn failure';
-          } else if (ev.type === 'turn.completed' && ev.usage) {
-            usage = {
-              inputTokens: ev.usage.input_tokens ?? ev.usage.prompt_tokens ?? 0,
-              outputTokens: ev.usage.output_tokens ?? ev.usage.completion_tokens ?? 0,
-              ...(ev.usage.reasoning_tokens !== undefined
-                ? { reasoningTokens: ev.usage.reasoning_tokens }
-                : {}),
-              ...(ev.usage.cache_read_tokens !== undefined
-                ? { cachedTokens: ev.usage.cache_read_tokens }
-                : {}),
-            };
           }
-        } catch {
-          // Non-JSON or malformed - ignore
+
+          const usageObj = ev.usage ?? ev.item?.usage;
+          if (usageObj && typeof usageObj === 'object') {
+            const inTok = usageObj.input_tokens ?? usageObj.prompt_tokens ?? usageObj.inputTokens ?? 0;
+            const outTok = usageObj.output_tokens ?? usageObj.completion_tokens ?? usageObj.outputTokens ?? 0;
+            const reasTok = usageObj.reasoning_tokens ?? usageObj.completion_tokens_details?.reasoning_tokens ?? usageObj.reasoningTokens ?? 0;
+            const cacheTok =
+              usageObj.cache_read_tokens ??
+              usageObj.cached_tokens ??
+              usageObj.cache_read_input_tokens ??
+              usageObj.prompt_tokens_details?.cached_tokens ??
+              usageObj.cachedTokens ??
+              0;
+
+            if (inTok > 0 || outTok > 0 || reasTok > 0 || cacheTok > 0) {
+              totalInputTokens += inTok;
+              totalOutputTokens += outTok;
+              totalReasoningTokens += reasTok;
+              totalCachedTokens += cacheTok;
+              hasUsage = true;
+            }
+          }
+        } catch (err) {
+          console.warn(`[codex] Failed to parse event JSON line in ${result.stdoutPath}: ${String(err)}`);
         }
       }
 
-      // Update the result with extracted usage and clean transcript
-      if (usage) result.usage = usage;
+      // Update the result with extracted usage (or explicit unknown) and clean transcript
+      if (hasUsage) {
+        result.usage = {
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          ...(totalReasoningTokens > 0 ? { reasoningTokens: totalReasoningTokens } : {}),
+          ...(totalCachedTokens > 0 ? { cachedTokens: totalCachedTokens } : {}),
+        };
+      } else {
+        console.warn(
+          `[codex] Usage was unavailable for invocation, recording explicit unknown usage: ${result.stdoutPath}`,
+        );
+        result.usage = { inputTokens: 0, outputTokens: 0 };
+      }
       writeFileSync(result.stdoutPath, cleanTranscript);
 
       if (detectedError) {
