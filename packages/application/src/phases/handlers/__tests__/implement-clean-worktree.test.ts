@@ -176,6 +176,41 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     ).toBe(true);
   });
 
+  it('treats substantive exempt files as permitted and auto-commits them', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: work']),
+    });
+    const steps = new FakeStepRepository();
+    const git = new FakeGitPort();
+    git.headByCwd.set('/tmp/wt', 'head-sha');
+    git.changedFilesResults.set('head-sha|step-1', ['src/util.ts']);
+    // Substantive change to an exempt file (not formatting-only)
+    git.statusByCwd.set('/tmp/wt', '?? generated/client.ts\n');
+    const runStep = vi
+      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+      .mockImplementation(async () => {
+        return { outcome: 'success' };
+      });
+    const { ctx } = makeCtx(artifacts, git);
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      exemptUndeclaredFiles: ['generated/client.ts'],
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    // The exempt file should have been auto-committed
+    expect(
+      git.commits.some((c: { message: string }) =>
+        c.message.includes('auto-commit formatting debt'),
+      ),
+    ).toBe(true);
+  });
+
   it('fails with needs_human_review when protected file is modified', async () => {
     const artifacts = new FakeArtifactStore();
     await artifacts.write({
