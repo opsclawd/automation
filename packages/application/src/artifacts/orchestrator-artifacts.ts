@@ -55,6 +55,27 @@ function patternToRegExp(pattern: string): RegExp {
   return new RegExp(regexString);
 }
 
+let cachedCompiledRegexes: readonly RegExp[] | undefined;
+
+function getOrchestratorRegexes(): readonly RegExp[] {
+  if (!cachedCompiledRegexes) {
+    cachedCompiledRegexes = Object.freeze(
+      orchestratorExcludePatterns().map(patternToRegExp),
+    );
+  }
+  return cachedCompiledRegexes;
+}
+
+export function isOrchestratorArtifactPattern(path: string): boolean {
+  if (!path || typeof path !== 'string') return false;
+  const normalized = path
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^(\.\/|\/)+/, '');
+  if (!normalized) return false;
+  return getOrchestratorRegexes().some((regex) => regex.test(normalized));
+}
+
 export function unquoteGitPath(path: string): string {
   const trimmed = path.trim();
   if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
@@ -90,8 +111,7 @@ export function unquoteGitPath(path: string): string {
 }
 
 export function uncommittedSourcePaths(status: string): string[] {
-  const patterns = orchestratorExcludePatterns();
-  const compiledRegexes = patterns.map(patternToRegExp);
+  const compiledRegexes = getOrchestratorRegexes();
   const sourcePaths = status
     .split('\n')
     .filter(Boolean)

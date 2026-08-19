@@ -12,7 +12,11 @@ import type { TaskManifest, TaskManifestEntry } from '../plan-tasks.js';
 import type { ValidationPort } from '../../ports/validation-port.js';
 import type { RunWorkspaceTypecheckPort } from '../../ports/run-workspace-typecheck-port.js';
 import { buildTaskValidationCommands } from '../../task-validation-commands.js';
-import { uncommittedSourcePaths, unquoteGitPath } from '../../artifacts/orchestrator-artifacts.js';
+import {
+  uncommittedSourcePaths,
+  unquoteGitPath,
+  isOrchestratorArtifactPattern,
+} from '../../artifacts/orchestrator-artifacts.js';
 
 import {
   normalizeTaskPath,
@@ -78,7 +82,8 @@ function undeclaredUntrackedFiles(
         !writableFiles.has(path) &&
         !referenceFiles.has(path) &&
         !exemptFiles.has(path) &&
-        !isProtectedFilePath(path),
+        !isProtectedFilePath(path) &&
+        !isOrchestratorArtifactPattern(path),
     );
 
   return [...new Set(paths)].sort();

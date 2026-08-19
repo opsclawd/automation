@@ -5,6 +5,7 @@ import {
   PROMPT_ORCHESTRATOR_ARTIFACT_PATHS,
   orchestratorArtifactPathSet,
   isOrchestratorArtifactPath,
+  isOrchestratorArtifactPattern,
   orchestratorExcludePatterns,
   uncommittedSourcePaths,
   unquoteGitPath,
@@ -144,6 +145,45 @@ describe('unquoteGitPath', () => {
 
   it('handles octal escapes', () => {
     expect(unquoteGitPath('"src/\\040file.ts"')).toBe('src/ file.ts');
+  });
+});
+
+describe('isOrchestratorArtifactPattern', () => {
+  it('matches literal orchestrator artifact paths', () => {
+    expect(isOrchestratorArtifactPattern('plan.md')).toBe(true);
+    expect(isOrchestratorArtifactPattern('task-manifest.json')).toBe(true);
+    expect(isOrchestratorArtifactPattern('result.json')).toBe(true);
+    expect(isOrchestratorArtifactPattern('design.md')).toBe(true);
+    expect(isOrchestratorArtifactPattern('issue.md')).toBe(true);
+    expect(isOrchestratorArtifactPattern('issue-comments.md')).toBe(true);
+    expect(isOrchestratorArtifactPattern('prompt.md')).toBe(true);
+    expect(isOrchestratorArtifactPattern('pr-summary.md')).toBe(true);
+    expect(isOrchestratorArtifactPattern('pr-url.txt')).toBe(true);
+    expect(isOrchestratorArtifactPattern('.ai-tmp/scratch-files.json')).toBe(true);
+  });
+
+  it('matches glob-form orchestrator artifact paths', () => {
+    expect(isOrchestratorArtifactPattern('implement-step-history-1.json')).toBe(true);
+    expect(isOrchestratorArtifactPattern('task-context-step-3.md')).toBe(true);
+    expect(isOrchestratorArtifactPattern('quality-review-result-1.json')).toBe(true);
+    expect(isOrchestratorArtifactPattern('spec-review-result-2.json')).toBe(true);
+    expect(isOrchestratorArtifactPattern('fix-result-1.json')).toBe(true);
+    expect(isOrchestratorArtifactPattern('implementation-log-task-1.md')).toBe(true);
+    expect(isOrchestratorArtifactPattern('foo.patch')).toBe(true);
+    expect(isOrchestratorArtifactPattern('bar.diff')).toBe(true);
+  });
+
+  it('handles normalized leading slashes and dot-slash prefixes', () => {
+    expect(isOrchestratorArtifactPattern('./plan.md')).toBe(true);
+    expect(isOrchestratorArtifactPattern('/task-manifest.json')).toBe(true);
+  });
+
+  it('returns false for non-artifact paths and nested paths with artifact filenames', () => {
+    expect(isOrchestratorArtifactPattern('src/index.ts')).toBe(false);
+    expect(isOrchestratorArtifactPattern('test-ast.js')).toBe(false);
+    expect(isOrchestratorArtifactPattern('src/plan.md')).toBe(false);
+    expect(isOrchestratorArtifactPattern('nested/design.md')).toBe(false);
+    expect(isOrchestratorArtifactPattern('')).toBe(false);
   });
 });
 

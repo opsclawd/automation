@@ -1,3 +1,5 @@
+import { isOrchestratorArtifactPattern } from './artifacts/orchestrator-artifacts.js';
+
 export interface TaskBoundaryClassification {
   modifiedReferenceFiles: string[];
   undeclaredFiles: string[];
@@ -55,7 +57,12 @@ export function classifyUndeclaredFiles(
   exemptFiles: ReadonlySet<string>,
 ): TaskBoundaryClassification {
   const undeclared = [...new Set(committedFiles.map(normalizeTaskPath).filter(Boolean))]
-    .filter((file) => !writableFiles.has(file) && !exemptFiles.has(file))
+    .filter(
+      (file) =>
+        !writableFiles.has(file) &&
+        !exemptFiles.has(file) &&
+        !isOrchestratorArtifactPattern(file),
+    )
     .sort();
   return {
     modifiedReferenceFiles: undeclared.filter((file) => referenceFiles.has(file)),
