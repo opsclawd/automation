@@ -62,7 +62,8 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     git.statusByCwd.set('/tmp/wt', ''); // clean
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
-      .mockImplementation(async () => {
+      .mockImplementation(async (sctx) => {
+        sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git);
@@ -91,7 +92,8 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     );
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
-      .mockImplementation(async () => {
+      .mockImplementation(async (sctx) => {
+        sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git);
@@ -118,11 +120,14 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     // Uncommitted: formatting-only change (whitespace change that parses the same)
     git.statusByCwd.set('/tmp/wt', ' M apps/control-api/src/app.ts\n');
     git.fileContentResults.set('HEAD:apps/control-api/src/app.ts', 'const x = 1;\n');
+    git.fileContentResults.set('head-sha:apps/control-api/src/app.ts', 'const x = 1;\n');
+    git.fileContentResults.set('step-1:apps/control-api/src/app.ts', 'const x = 1;\n');
     const worktreeFiles = new Map<string, string>();
     worktreeFiles.set('apps/control-api/src/app.ts', 'const x = 1; \n');
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
-      .mockImplementation(async () => {
+      .mockImplementation(async (sctx) => {
+        sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git, worktreeFiles);
@@ -149,7 +154,8 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     git.statusByCwd.set('/tmp/wt', '?? pnpm-lock.yaml\n');
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
-      .mockImplementation(async () => {
+      .mockImplementation(async (sctx) => {
+        sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git);
@@ -161,7 +167,13 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     }).run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(git.commits.some((c) => c.message.includes('auto-commit formatting debt'))).toBe(true);
+    expect(
+      git.commits.some(
+        (c) =>
+          c.message.includes('exempt files') ||
+          c.message.includes('auto-commit formatting debt and exempt files'),
+      ),
+    ).toBe(true);
   });
 
   it('fails with needs_human_review when protected file is modified', async () => {
@@ -179,7 +191,8 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     git.statusByCwd.set('/tmp/wt', ' M .gitignore\n');
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
-      .mockImplementation(async () => {
+      .mockImplementation(async (sctx) => {
+        sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git);
