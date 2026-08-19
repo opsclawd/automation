@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RunId, RepositoryId } from '@ai-sdlc/domain';
+import type { RunId, RepositoryId, WorkerLease } from '@ai-sdlc/domain';
 import { CancelRun } from '../cancel-run.js';
 import type { GitPort, WorkerLeasePort, RunAbortPort, LoggerPort } from '../ports.js';
 import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
@@ -9,10 +9,10 @@ const runId = (s: string) => s as RunId;
 
 const noopAbort: RunAbortPort = {
   register: () => {},
-  abort: () => Promise.resolve(),
+  abort: () => Promise.resolve({ status: 'exited' }),
   unregister: () => {},
 };
-const noopGit = { resetHard: () => Promise.resolve() } as GitPort;
+const noopGit = { resetHard: () => Promise.resolve(), cleanUntracked: () => Promise.resolve() } as GitPort;
 const noopLeases: WorkerLeasePort = {
   acquire: () => {
     throw new Error('unexpected');
@@ -52,11 +52,17 @@ describe('CancelRun', () => {
       startedAt: new Date('2026-05-13T19:00:00Z'),
     });
     const usecase = makeCancelRun({ runRepository: repo });
-    await usecase.execute({ runId: runId('abc-123'), reason: 'user requested' });
+    const res = await usecase.execute({ runId: runId('abc-123'), reason: 'user requested' });
     expect(repo.updates).toHaveLength(1);
     expect(repo.updates[0]!.patch.status).toBe('cancelled');
     expect(repo.updates[0]!.patch.failureReason).toBe('user requested');
     expect(repo.updates[0]!.patch.completedAt).toEqual(fixedNow());
+    expect(res).toEqual({
+      runId: 'abc-123',
+      status: 'cancelled',
+      abortStatus: 'exited',
+      worktreeReset: true,
+    });
   });
 
   it('throws when no run exists for the given runId', async () => {
@@ -92,8 +98,46 @@ describe('CancelRun', () => {
       startedAt: new Date('2026-05-13T19:00:00Z'),
     });
     const usecase = makeCancelRun({ runRepository: repo });
-    await usecase.execute({ runId: runId('abc-789') });
+    const res = await usecase.execute({ runId: runId('abc-789') });
     expect(repo.updates[0]!.patch.failureReason).toBeUndefined();
+    expect(res.worktreeReset).toBe(true);
+  });
+
+  it('skips worktree reset when abort times out', async () => {
+    const repo = new FakeRunRepository();
+    repo.addRun({
+      uuid: 'timeout-run',
+      displayId: 'issue-11-20260513-000000',
+      issueNumber: 11,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T19:00:00Z'),
+    });
+    let resetCalled = false;
+    const git: GitPort = {
+      ...noopGit,
+      resetHard: async () => {
+        resetCalled = true;
+      },
+      cleanUntracked: async () => {
+        resetCalled = true;
+      },
+    };
+    const runAbort: RunAbortPort = {
+      register: () => {},
+      abort: async () => ({ status: 'timed_out' }),
+      unregister: () => {},
+    };
+    const usecase = makeCancelRun({ runRepository: repo, git, runAbort });
+    const res = await usecase.execute({ runId: runId('timeout-run') });
+    expect(resetCalled).toBe(false);
+    expect(res).toEqual({
+      runId: 'timeout-run',
+      status: 'cancelled',
+      abortStatus: 'timed_out',
+      worktreeReset: false,
+    });
   });
 
   it('marks the run as cancelled via atomicUpdateByUuid', async () => {
@@ -140,7 +184,7 @@ describe('CancelRun', () => {
         register: () => {},
         abort: () => {
           callOrder.push('abort');
-          return Promise.resolve();
+          return Promise.resolve({ status: 'exited' });
         },
         unregister: () => {},
       };
@@ -320,9 +364,10 @@ describe('CancelRun', () => {
         logger: noopLogger,
         now: fixedNow,
       });
-      await usecase.execute({ runId: runId('best-effort') });
+      const res = await usecase.execute({ runId: runId('best-effort') });
       expect(repo.updates).toHaveLength(1);
       expect(repo.updates[0]!.patch.status).toBe('cancelled');
+      expect(res.worktreeReset).toBe(false);
     });
 
     it('marks cancelled when abort throws but other steps proceed', async () => {
@@ -404,7 +449,7 @@ describe('CancelRun', () => {
         register: () => {},
         abort: () => {
           callOrder.push('abort');
-          return Promise.resolve();
+          return Promise.resolve({ status: 'exited' });
         },
         unregister: () => {},
       };
@@ -444,10 +489,11 @@ describe('CancelRun', () => {
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
       });
-      await usecase.execute({ runId: runId('reset-throws') });
+      const res = await usecase.execute({ runId: runId('reset-throws') });
       expect(repo.updates).toHaveLength(1);
       expect(repo.updates[0]!.patch.status).toBe('cancelled');
       expect(callOrder).toContain('abort');
+      expect(res.worktreeReset).toBe(false);
     });
 
     it('marks cancelled when lease release throws but other steps proceed', async () => {
@@ -467,7 +513,7 @@ describe('CancelRun', () => {
         register: () => {},
         abort: () => {
           callOrder.push('abort');
-          return Promise.resolve();
+          return Promise.resolve({ status: 'exited' });
         },
         unregister: () => {},
       };

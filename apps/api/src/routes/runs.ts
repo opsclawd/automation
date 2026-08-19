@@ -274,7 +274,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         return reply.code(409).send({ error: 'denied', message: plan.denialReason });
       }
 
-      await c.cancelRun.execute({
+      const cancelResult = await c.cancelRun.execute({
         runId: RunId(req.params.runId),
         ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
       });
@@ -283,6 +283,8 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
       return reply.code(200).send({
         run: refetchedRun ? serializeRun(refetchedRun) : null,
         action: 'cancel',
+        abortStatus: cancelResult.abortStatus,
+        worktreeReset: cancelResult.worktreeReset,
       });
     } catch (err) {
       if (err instanceof UnknownPhaseError) {

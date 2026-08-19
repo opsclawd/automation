@@ -1,5 +1,9 @@
 import type { RunId } from '@ai-sdlc/domain';
 
+export type AbortResult = {
+  status: 'exited' | 'timed_out' | 'not_found';
+};
+
 export interface RunAbortPort {
   /**
    * Register a run's abort controller along with a `done` promise that resolves
@@ -7,6 +11,6 @@ export interface RunAbortPort {
    * then awaits `done`, so cleanup only runs after the agent has stopped writing.
    */
   register(runId: RunId, controller: AbortController, done: Promise<void>): void;
-  abort(runId: RunId): Promise<void>;
+  abort(runId: RunId): Promise<AbortResult>;
   unregister(runId: RunId): void;
 }

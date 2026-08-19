@@ -273,7 +273,7 @@ export type { PhaseHandlerRegistryPort } from './ports/phase-handler-registry-po
 
 export type { PhaseHandlerContext, PhaseHandlerContextFactory } from './phases/handler.js';
 
-export type { RunAbortPort } from './ports/run-abort-port.js';
+export type { RunAbortPort, AbortResult } from './ports/run-abort-port.js';
 
 export type { LoggerPort } from './ports/logger-port.js';
 /** Resolve the worktree CWD for a run. Must throw if the run is not found. */
