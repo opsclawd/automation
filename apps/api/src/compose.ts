@@ -5581,7 +5581,11 @@ export function composeRoot(opts: ComposeOptions): Container {
           enabled: config.phases.planReview?.enabled === true,
         }),
       );
-      phaseRegistry.register(new CompoundHandler());
+      phaseRegistry.register(
+        new CompoundHandler({
+          exemptUndeclaredFiles: config.phases.implement.exemptUndeclaredFiles,
+        }),
+      );
 
       const worktreeSetup = async (cwd: string): Promise<{ ok: boolean; error?: string }> => {
         try {
