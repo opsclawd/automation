@@ -324,4 +324,57 @@ describe('ImplementHandler scratch-file reporting', () => {
       rmSync(tmpCwd, { recursive: true, force: true });
     }
   });
+
+  it('does not report or delete orchestrator artifacts at root even if untracked, while deleting genuine scratch files', async () => {
+    const tmpCwd = mkdtempSync(join(tmpdir(), 'orchestrator-artifacts-test-'));
+    try {
+      const planFile = join(tmpCwd, 'plan.md');
+      const manifestFile = join(tmpCwd, 'task-manifest.json');
+      const contextFile = join(tmpCwd, 'task-context-step-1.md');
+      const stepHistoryFile = join(tmpCwd, 'implement-step-history-1.json');
+      const genuineScratch = join(tmpCwd, 'scratch-tool.js');
+
+      writeFileSync(planFile, '# Plan');
+      writeFileSync(manifestFile, '{}');
+      writeFileSync(contextFile, 'Context');
+      writeFileSync(stepHistoryFile, '{}');
+      writeFileSync(genuineScratch, 'console.log(1);');
+
+      const harness = await makeHarness(
+        { expected_files: ['src/declared.ts'] },
+        '?? plan.md\n?? task-manifest.json\n?? task-context-step-1.md\n?? implement-step-history-1.json\n?? scratch-tool.js',
+      );
+      harness.ctx.cwd = tmpCwd;
+      harness.git.headByCwd.set(tmpCwd, 'pre-step');
+      harness.git.statusByCwd.set(
+        tmpCwd,
+        '?? plan.md\n?? task-manifest.json\n?? task-context-step-1.md\n?? implement-step-history-1.json\n?? scratch-tool.js',
+      );
+      harness.git.changedFilesResults.set('pre-step|post-step', ['src/declared.ts']);
+
+      const result = await new ImplementHandler({
+        steps: harness.steps,
+        runStep: harness.runStep,
+      }).run(harness.ctx);
+
+      expect(result).toEqual({ outcome: 'passed' });
+      // Orchestrator artifacts must remain untouched
+      expect(existsSync(planFile)).toBe(true);
+      expect(existsSync(manifestFile)).toBe(true);
+      expect(existsSync(contextFile)).toBe(true);
+      expect(existsSync(stepHistoryFile)).toBe(true);
+
+      // Genuine scratch file at root must be deleted
+      expect(existsSync(genuineScratch)).toBe(false);
+
+      // Warning should only contain genuine scratch file
+      const warning = harness.events.find((e) => e.type === 'step.scratch_files_left');
+      expect(warning).toBeDefined();
+      expect(warning?.metadata).toMatchObject({
+        files: ['scratch-tool.js'],
+      });
+    } finally {
+      rmSync(tmpCwd, { recursive: true, force: true });
+    }
+  });
 });
