@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { PhaseName } from '@ai-sdlc/domain';
 import { CompoundHandler } from '../compound.js';
@@ -894,5 +897,182 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     }
     expect(ctx.readWorktreeFile).toHaveBeenCalledWith(ctx.cwd, 'task-manifest.json');
     expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
+  });
+
+  it('removes undeclared untracked root file created during compound, records artifact, and completes phase', async () => {
+    const tmpCwd = mkdtempSync(join(tmpdir(), 'compound-scratch-root-'));
+    try {
+      const rootScratch = join(tmpCwd, 'get_diff.sh');
+      writeFileSync(rootScratch, '#!/bin/sh\ngit diff');
+
+      ctx.cwd = tmpCwd;
+      const git = ctx.git as FakeGitPort;
+      git.currentBranchByCwd.set(tmpCwd, 'main');
+      git.headByCwd.set(tmpCwd, 'sha-before');
+      git.status = vi.fn().mockImplementation(async () => {
+        return existsSync(rootScratch) ? '?? get_diff.sh' : '';
+      });
+
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'plan_write',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 2,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        }),
+      });
+
+      const agent = ctx.agent as FakeAgentPort;
+      agent.enqueue('pi-qwen-local', successResult());
+
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+      });
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'compound.md',
+        contents: '# Learnings\n',
+      });
+
+      const handler = new CompoundHandler();
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(existsSync(rootScratch)).toBe(false);
+
+      const warnEvent = eventsOf(ctx, 'compound.scratch_files_left');
+      expect(warnEvent).toHaveLength(1);
+      expect(warnEvent[0].message).toContain('get_diff.sh');
+
+      const artifactContent = await ctx.artifacts.read(ctx.runUuid, '.ai-tmp/scratch-files.json');
+      const parsed = JSON.parse(artifactContent);
+      expect(parsed.steps).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            phase: 'compound',
+            files: ['get_diff.sh'],
+          }),
+        ]),
+      );
+      expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
+    } finally {
+      rmSync(tmpCwd, { recursive: true, force: true });
+    }
+  });
+
+  it('does not delete protected file .gitignore created during compound and fails boundary check', async () => {
+    const tmpCwd = mkdtempSync(join(tmpdir(), 'compound-scratch-protected-'));
+    try {
+      const protectedFile = join(tmpCwd, '.gitignore');
+      writeFileSync(protectedFile, '# gitignore');
+
+      ctx.cwd = tmpCwd;
+      const git = ctx.git as FakeGitPort;
+      git.currentBranchByCwd.set(tmpCwd, 'main');
+      git.headByCwd.set(tmpCwd, 'sha-before');
+      git.statusByCwd.set(tmpCwd, '?? .gitignore');
+
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'plan_write',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 2,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        }),
+      });
+
+      const agent = ctx.agent as FakeAgentPort;
+      agent.enqueue('pi-qwen-local', successResult());
+
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+      });
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'compound.md',
+        contents: '# Learnings\n',
+      });
+
+      const handler = new CompoundHandler();
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      expect(existsSync(protectedFile)).toBe(true);
+      expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
+    } finally {
+      rmSync(tmpCwd, { recursive: true, force: true });
+    }
+  });
+
+  it('reports but does NOT delete subdirectory untracked file created during compound and fails boundary check', async () => {
+    const tmpCwd = mkdtempSync(join(tmpdir(), 'compound-scratch-subdir-'));
+    try {
+      const pkgDir = join(tmpCwd, 'packages', 'contracts');
+      mkdirSync(pkgDir, { recursive: true });
+      const subScratch = join(pkgDir, 'scratch.ts');
+      writeFileSync(subScratch, 'export const probe = 1;');
+
+      ctx.cwd = tmpCwd;
+      const git = ctx.git as FakeGitPort;
+      git.currentBranchByCwd.set(tmpCwd, 'main');
+      git.headByCwd.set(tmpCwd, 'sha-before');
+      git.statusByCwd.set(tmpCwd, '?? packages/contracts/scratch.ts');
+
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'plan_write',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 2,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        }),
+      });
+
+      const agent = ctx.agent as FakeAgentPort;
+      agent.enqueue('pi-qwen-local', successResult());
+
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+      });
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'compound.md',
+        contents: '# Learnings\n',
+      });
+
+      const handler = new CompoundHandler();
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      expect(existsSync(subScratch)).toBe(true);
+
+      const warnEvent = eventsOf(ctx, 'compound.scratch_files_left');
+      expect(warnEvent).toHaveLength(1);
+
+      const artifactContent = await ctx.artifacts.read(ctx.runUuid, '.ai-tmp/scratch-files.json');
+      const parsed = JSON.parse(artifactContent);
+      expect(parsed.steps).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            phase: 'compound',
+            files: ['packages/contracts/scratch.ts'],
+          }),
+        ]),
+      );
+      expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
+    } finally {
+      rmSync(tmpCwd, { recursive: true, force: true });
+    }
   });
 });

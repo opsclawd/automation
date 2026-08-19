@@ -1,4 +1,10 @@
-import { isOrchestratorArtifactPattern } from './artifacts/orchestrator-artifacts.js';
+import { existsSync, unlinkSync } from 'node:fs';
+import path from 'node:path';
+import {
+  isOrchestratorArtifactPattern,
+  unquoteGitPath,
+} from './artifacts/orchestrator-artifacts.js';
+import type { PhaseHandlerContext } from './phases/handler.js';
 
 export interface TaskBoundaryClassification {
   modifiedReferenceFiles: string[];
@@ -207,4 +213,179 @@ export async function loadManifest(
   }
 
   return { status: 'missing', message: 'task-manifest.json not found' };
+}
+
+export function isProtectedFilePath(pathStr: string): boolean {
+  const norm = normalizeTaskPath(pathStr);
+  return norm === '.gitignore' || norm === '.ai-orchestrator.json' || norm.startsWith('.github/');
+}
+
+export function undeclaredUntrackedFiles(
+  status: string,
+  writableFiles: ReadonlySet<string>,
+  referenceFiles: ReadonlySet<string>,
+  exemptFiles: ReadonlySet<string>,
+): string[] {
+  const paths = status
+    .split('\n')
+    .filter((line) => line.startsWith('?? '))
+    .map((line) => normalizeTaskPath(unquoteGitPath(line.slice(3))))
+    .filter((pathStr) => pathStr.length > 0)
+    .filter(
+      (pathStr) =>
+        !writableFiles.has(pathStr) &&
+        !referenceFiles.has(pathStr) &&
+        !exemptFiles.has(pathStr) &&
+        !isProtectedFilePath(pathStr) &&
+        !isOrchestratorArtifactPattern(pathStr),
+    );
+
+  return [...new Set(paths)].sort();
+}
+
+export const SCRATCH_FILES_ARTIFACT_PATH = '.ai-tmp/scratch-files.json';
+
+export interface ScratchFileStepRecord {
+  stepIndex: number;
+  totalSteps: number;
+  stepTitle: string;
+  files: string[];
+  phase?: string;
+}
+
+export interface ScratchFilesReport {
+  steps: ScratchFileStepRecord[];
+}
+
+export async function recordScratchFilesReport(
+  ctx: PhaseHandlerContext,
+  stepIndex: number,
+  totalSteps: number,
+  stepTitle: string,
+  files: string[],
+  phaseId: string = 'implement',
+): Promise<void> {
+  let report: ScratchFilesReport = { steps: [] };
+  try {
+    let existing: string | undefined;
+    try {
+      existing = await ctx.artifacts.read(ctx.runUuid, SCRATCH_FILES_ARTIFACT_PATH);
+    } catch {
+      existing = await ctx.artifacts.read(ctx.runUuid, 'scratch-files.json');
+    }
+    const parsed = JSON.parse(existing) as ScratchFilesReport;
+    if (parsed && Array.isArray(parsed.steps)) {
+      report = parsed;
+    }
+  } catch {
+    // Artifact may not exist yet
+  }
+
+  const recordPhase = phaseId;
+  const existingIdx = report.steps.findIndex(
+    (s) => s.stepIndex === stepIndex && (s.phase ?? 'implement') === recordPhase,
+  );
+  const newRecord: ScratchFileStepRecord = {
+    stepIndex,
+    totalSteps,
+    stepTitle,
+    files,
+    ...(phaseId !== 'implement' ? { phase: phaseId } : {}),
+  };
+  if (existingIdx >= 0) {
+    report.steps[existingIdx] = newRecord;
+  } else {
+    report.steps.push(newRecord);
+  }
+
+  try {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId,
+      relativePath: SCRATCH_FILES_ARTIFACT_PATH,
+      contents: JSON.stringify(report, null, 2),
+    });
+  } catch {
+    // Writing report is best-effort
+  }
+}
+
+export interface RemediateScratchFilesOpts {
+  cwd: string;
+  ctx: PhaseHandlerContext;
+  statusOutput: string;
+  writableSet: ReadonlySet<string>;
+  referenceSet: ReadonlySet<string>;
+  exemptSet: ReadonlySet<string>;
+  stepIndex: number;
+  totalSteps: number;
+  stepTitle: string;
+  phaseId?: string;
+  onScratchFilesFound?: (
+    allScratchFiles: string[],
+    rootFiles: string[],
+    subDirFiles: string[],
+  ) => void;
+}
+
+export interface RemediateScratchFilesResult {
+  allScratchFiles: string[];
+  rootFilesDeleted: string[];
+  subDirFilesRemaining: string[];
+}
+
+export async function remediateScratchFiles(
+  opts: RemediateScratchFilesOpts,
+): Promise<RemediateScratchFilesResult> {
+  const allScratchFiles = undeclaredUntrackedFiles(
+    opts.statusOutput,
+    opts.writableSet,
+    opts.referenceSet,
+    opts.exemptSet,
+  );
+
+  if (allScratchFiles.length === 0) {
+    return { allScratchFiles: [], rootFilesDeleted: [], subDirFilesRemaining: [] };
+  }
+
+  const rootFiles = allScratchFiles.filter((f) => !f.includes('/'));
+  const subDirFiles = allScratchFiles.filter((f) => f.includes('/'));
+
+  if (opts.onScratchFilesFound) {
+    opts.onScratchFilesFound(allScratchFiles, rootFiles, subDirFiles);
+  }
+
+  const rootFilesDeleted: string[] = [];
+  for (const file of rootFiles) {
+    try {
+      const targetPath = path.resolve(opts.cwd, file);
+      if (
+        targetPath.startsWith(opts.cwd) &&
+        !file.includes('/') &&
+        !isProtectedFilePath(file) &&
+        !isOrchestratorArtifactPattern(file) &&
+        existsSync(targetPath)
+      ) {
+        unlinkSync(targetPath);
+        rootFilesDeleted.push(file);
+      }
+    } catch {
+      // File deletion is best-effort
+    }
+  }
+
+  await recordScratchFilesReport(
+    opts.ctx,
+    opts.stepIndex,
+    opts.totalSteps,
+    opts.stepTitle,
+    allScratchFiles,
+    opts.phaseId ?? 'implement',
+  );
+
+  return {
+    allScratchFiles,
+    rootFilesDeleted,
+    subDirFilesRemaining: subDirFiles,
+  };
 }

@@ -1,5 +1,3 @@
-import { existsSync, unlinkSync } from 'node:fs';
-import path from 'node:path';
 import { PhaseName } from '@ai-sdlc/domain';
 import type { FailureKind } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
@@ -12,11 +10,7 @@ import type { TaskManifest, TaskManifestEntry } from '../plan-tasks.js';
 import type { ValidationPort } from '../../ports/validation-port.js';
 import type { RunWorkspaceTypecheckPort } from '../../ports/run-workspace-typecheck-port.js';
 import { buildTaskValidationCommands } from '../../task-validation-commands.js';
-import {
-  uncommittedSourcePaths,
-  unquoteGitPath,
-  isOrchestratorArtifactPattern,
-} from '../../artifacts/orchestrator-artifacts.js';
+import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
 
 import {
   normalizeTaskPath,
@@ -25,7 +19,10 @@ import {
   normalizedPathSet,
   hasDeclaredSurface,
   classifyUndeclaredFiles,
+  isProtectedFilePath,
+  remediateScratchFiles,
 } from '../../task-file-boundaries.js';
+export type { ScratchFileStepRecord, ScratchFilesReport } from '../../task-file-boundaries.js';
 import {
   findInheritedFormattingDebtFiles,
   isFormattingOnlyChange,
@@ -34,11 +31,6 @@ import type {
   RevertProtectedFilesPort,
   RevertProtectedFilesResult,
 } from '../../ports/protected-file-reverter-port.js';
-
-function isProtectedFilePath(path: string): boolean {
-  const norm = normalizeTaskPath(path);
-  return norm === '.gitignore' || norm === '.ai-orchestrator.json' || norm.startsWith('.github/');
-}
 
 interface DirtyClassification {
   permitted: string[];
@@ -127,85 +119,6 @@ function formatProtectedDiagnostic(record: {
     }
   }
   return diagnostics.join('; ');
-}
-
-const SCRATCH_FILES_ARTIFACT_PATH = '.ai-tmp/scratch-files.json';
-
-function undeclaredUntrackedFiles(
-  status: string,
-  writableFiles: ReadonlySet<string>,
-  referenceFiles: ReadonlySet<string>,
-  exemptFiles: ReadonlySet<string>,
-): string[] {
-  const paths = status
-    .split('\n')
-    .filter((line) => line.startsWith('?? '))
-    .map((line) => normalizeTaskPath(unquoteGitPath(line.slice(3))))
-    .filter((path) => path.length > 0)
-    .filter(
-      (path) =>
-        !writableFiles.has(path) &&
-        !referenceFiles.has(path) &&
-        !exemptFiles.has(path) &&
-        !isProtectedFilePath(path) &&
-        !isOrchestratorArtifactPattern(path),
-    );
-
-  return [...new Set(paths)].sort();
-}
-
-export interface ScratchFileStepRecord {
-  stepIndex: number;
-  totalSteps: number;
-  stepTitle: string;
-  files: string[];
-}
-
-export interface ScratchFilesReport {
-  steps: ScratchFileStepRecord[];
-}
-
-async function recordScratchFilesReport(
-  ctx: PhaseHandlerContext,
-  stepIndex: number,
-  totalSteps: number,
-  stepTitle: string,
-  files: string[],
-): Promise<void> {
-  let report: ScratchFilesReport = { steps: [] };
-  try {
-    let existing: string | undefined;
-    try {
-      existing = await ctx.artifacts.read(ctx.runUuid, SCRATCH_FILES_ARTIFACT_PATH);
-    } catch {
-      existing = await ctx.artifacts.read(ctx.runUuid, 'scratch-files.json');
-    }
-    const parsed = JSON.parse(existing) as ScratchFilesReport;
-    if (parsed && Array.isArray(parsed.steps)) {
-      report = parsed;
-    }
-  } catch {
-    // Artifact may not exist yet
-  }
-
-  const existingIdx = report.steps.findIndex((s) => s.stepIndex === stepIndex);
-  const newRecord: ScratchFileStepRecord = { stepIndex, totalSteps, stepTitle, files };
-  if (existingIdx >= 0) {
-    report.steps[existingIdx] = newRecord;
-  } else {
-    report.steps.push(newRecord);
-  }
-
-  try {
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: 'implement',
-      relativePath: SCRATCH_FILES_ARTIFACT_PATH,
-      contents: JSON.stringify(report, null, 2),
-    });
-  } catch {
-    // Writing report is best-effort
-  }
 }
 
 export interface OversizedTask {
@@ -537,56 +450,35 @@ export class ImplementHandler implements PhaseHandler {
           };
 
           try {
-            const allScratchFiles = undeclaredUntrackedFiles(
-              await readStatus(),
+            const remediation = await remediateScratchFiles({
+              cwd: ctx.cwd,
+              ctx,
+              statusOutput: await readStatus(),
               writableSet,
               referenceSet,
               exemptSet,
-            );
-            if (allScratchFiles.length > 0) {
-              const rootFiles = allScratchFiles.filter((f) => !f.includes('/'));
-              const subDirFiles = allScratchFiles.filter((f) => f.includes('/'));
-
-              emit(
-                'step.scratch_files_left',
-                'warn',
-                `step ${d.index}/${totalSteps} left undeclared files: ${allScratchFiles.join(', ')}`,
-                {
-                  index: d.index,
-                  total: totalSteps,
-                  taskTitle: task?.title ?? d.title,
-                  files: allScratchFiles,
-                  ...(rootFiles.length > 0 ? { rootFiles } : {}),
-                  ...(subDirFiles.length > 0 ? { subDirFiles } : {}),
-                },
-              );
-
-              for (const file of rootFiles) {
-                try {
-                  const targetPath = path.resolve(ctx.cwd, file);
-                  if (
-                    targetPath.startsWith(ctx.cwd) &&
-                    !file.includes('/') &&
-                    !isProtectedFilePath(file) &&
-                    existsSync(targetPath)
-                  ) {
-                    unlinkSync(targetPath);
-                  }
-                } catch {
-                  // File deletion is best-effort
-                }
-              }
-              if (rootFiles.length > 0) {
-                statusPromise = undefined;
-              }
-
-              await recordScratchFilesReport(
-                ctx,
-                d.index,
-                totalSteps,
-                task?.title ?? d.title,
-                allScratchFiles,
-              );
+              stepIndex: d.index,
+              totalSteps,
+              stepTitle: task?.title ?? d.title,
+              phaseId: 'implement',
+              onScratchFilesFound: (allScratchFiles, rootFiles, subDirFiles) => {
+                emit(
+                  'step.scratch_files_left',
+                  'warn',
+                  `step ${d.index}/${totalSteps} left undeclared files: ${allScratchFiles.join(', ')}`,
+                  {
+                    index: d.index,
+                    total: totalSteps,
+                    taskTitle: task?.title ?? d.title,
+                    files: allScratchFiles,
+                    ...(rootFiles.length > 0 ? { rootFiles } : {}),
+                    ...(subDirFiles.length > 0 ? { subDirFiles } : {}),
+                  },
+                );
+              },
+            });
+            if (remediation.rootFilesDeleted.length > 0) {
+              statusPromise = undefined;
             }
           } catch {
             // Reporting is best-effort. Existing declared-file checks below still
