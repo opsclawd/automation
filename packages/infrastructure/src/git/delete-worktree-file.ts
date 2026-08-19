@@ -12,6 +12,9 @@ export const deleteWorktreeFile: DeleteWorktreeFilePort = async (
   relativePath: string,
 ): Promise<boolean> => {
   try {
+    if (isAbsolute(relativePath)) {
+      return false;
+    }
     const resolvedCwd = resolve(cwd);
     const targetPath = resolve(resolvedCwd, relativePath);
     const rel = relative(resolvedCwd, targetPath);
