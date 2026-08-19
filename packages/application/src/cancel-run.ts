@@ -18,11 +18,16 @@ export interface CancelRunDeps {
   git: GitPort;
   leases: WorkerLeasePort;
   findCwd: ResolveWorktreeCwdFn;
-  findStartCommitSha: ResolveStartCommitShaFn;
+  findStartCommitSha?: ResolveStartCommitShaFn;
   logger: LoggerPort;
   now?: () => Date;
 }
 
+/**
+ * CancelRun transitions an active run to 'cancelled', aborts any running agent,
+ * cleans up in-progress uncommitted working tree changes and untracked scratch files,
+ * and leaves all committed history on the target branch intact (branch tip left at current HEAD).
+ */
 export class CancelRun implements CancelRunUseCase {
   constructor(private readonly deps: CancelRunDeps) {}
 
@@ -73,10 +78,14 @@ export class CancelRun implements CancelRunUseCase {
       this.deps.logger.error(`CancelRun: unregister failed for ${input.runId}`, err);
     }
 
-    // Step 4: Reset worktree (best-effort) — independent of repoId
+    // Step 4: Reset uncommitted worktree state (best-effort) — independent of repoId
     // CRITICAL: Do NOT reset worktree if abort timed out, because a still-running
     // process may still be writing to the worktree and would race with the reset.
+    // Cancelling a run cleans up in-progress uncommitted/unstaged working tree changes
+    // and untracked scratch files, while preserving all commits made to the branch by
+    // completed or in-progress phases (leaving the branch tip at current HEAD SHA).
     let worktreeReset = false;
+    let branchSha: string | undefined;
     if (abortStatus === 'timed_out') {
       this.deps.logger.error(
         `CancelRun: abort timed out for ${input.runId}; skipping worktree reset to avoid racing with still-running process`,
@@ -84,8 +93,10 @@ export class CancelRun implements CancelRunUseCase {
     } else {
       try {
         const cwd = this.deps.findCwd(input.runId);
-        const startCommitSha = this.deps.findStartCommitSha(input.runId);
-        await git.resetHard(cwd, startCommitSha);
+        branchSha = (await git.headCommitShaOf(cwd)) ?? (await git.headCommitSha(cwd));
+        if (branchSha) {
+          await git.resetHard(cwd, branchSha);
+        }
         await git.cleanUntracked(cwd);
         worktreeReset = true;
       } catch (err) {
@@ -124,6 +135,7 @@ export class CancelRun implements CancelRunUseCase {
       status: cancelled.status as RunStatus,
       abortStatus,
       worktreeReset,
+      ...(branchSha !== undefined ? { branchSha } : {}),
     };
   }
 }
