@@ -1,4 +1,5 @@
 import type { GitPort } from './ports/git-port.js';
+import { uncommittedSourcePaths } from './artifacts/orchestrator-artifacts.js';
 
 export type FixCommitVerification =
   | { kind: 'advanced'; headAfterFix: string; statusOutput: string }
@@ -30,7 +31,7 @@ export async function verifyFixCommit(deps: {
   } catch (err: unknown) {
     return { kind: 'verification_error', error: err instanceof Error ? err.message : String(err) };
   }
-  const dirtyFiles = statusOutput.split('\n').filter((l) => l.length > 0);
+  const dirtyFiles = uncommittedSourcePaths(statusOutput);
   if (dirtyFiles.length > 0) {
     return { kind: 'uncommitted_changes', headAfterFix, dirtyFiles, statusOutput };
   }

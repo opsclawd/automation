@@ -48,7 +48,7 @@ describe('verifyFixCommit', () => {
     expect(result.kind).toBe('uncommitted_changes');
     if (result.kind === 'uncommitted_changes') {
       expect(result.headAfterFix).toBe('after');
-      expect(result.dirtyFiles).toEqual([' M packages/foo.ts']);
+      expect(result.dirtyFiles).toEqual(['packages/foo.ts']);
     }
   });
 
@@ -60,7 +60,7 @@ describe('verifyFixCommit', () => {
     const result = await verifyFixCommit({ git, cwd: '/wt', expectedHead: 'same' });
     expect(result.kind).toBe('uncommitted_changes');
     if (result.kind === 'uncommitted_changes') {
-      expect(result.dirtyFiles).toEqual([' M packages/foo.ts', ' M README.md']);
+      expect(result.dirtyFiles).toEqual(['README.md', 'packages/foo.ts']);
     }
   });
 
@@ -135,7 +135,7 @@ describe('verifyFixCommit', () => {
     const result = await verifyFixCommit({ git, cwd: '/wt', expectedHead: 'before' });
     expect(result.kind).toBe('uncommitted_changes');
     if (result.kind === 'uncommitted_changes') {
-      expect(result.dirtyFiles).toEqual([' M packages/foo.ts']);
+      expect(result.dirtyFiles).toEqual(['packages/foo.ts']);
     }
   });
 });
