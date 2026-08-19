@@ -427,13 +427,13 @@ function buildSchedulerDeps(
         const donePromise = new Promise<void>((resolve) => {
           doneResolve = resolve;
         });
-        c.runAbort.register(r.uuid, controller, donePromise);
+        c.runAbort.register(RunId(r.uuid), controller, donePromise);
         try {
           const result = await runExecutor.execute({ run: r, skip: [], presentArtifacts: [] });
           return { ok: result.run.status === 'passed' };
         } finally {
           doneResolve();
-          c.runAbort.unregister(r.uuid);
+          c.runAbort.unregister(RunId(r.uuid));
           if (signal) {
             signal.removeEventListener('abort', onAbort);
           }

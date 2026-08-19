@@ -170,6 +170,7 @@ import {
   fingerprintFinding,
   type RepositoryAvailabilityPort,
   type AgentPort,
+  type RunAbortPort,
   type ValidationPort,
   type ValidationCommand,
   buildTaskValidationCommands,
@@ -6274,13 +6275,13 @@ export function composeRoot(opts: ComposeOptions): Container {
             const donePromise = new Promise<void>((resolve) => {
               doneResolve = resolve;
             });
-            abortRegistry.register(run.uuid, controller, donePromise);
+            abortRegistry.register(RunId(run.uuid), controller, donePromise);
             try {
               const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
               return { ok: result.run.status === 'passed' };
             } finally {
               doneResolve();
-              abortRegistry.unregister(run.uuid);
+              abortRegistry.unregister(RunId(run.uuid));
               if (signal) {
                 signal.removeEventListener('abort', onAbort);
               }
