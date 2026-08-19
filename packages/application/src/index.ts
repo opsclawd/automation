@@ -112,3 +112,4 @@ export * from './use-cases/load-repository-for-run.js';
 export * from './fair-repository-scheduler.js';
 export * from './task-validation-commands.js';
 export * from './task-file-boundaries.js';
+export * from './scratch-file-remediation.js';
