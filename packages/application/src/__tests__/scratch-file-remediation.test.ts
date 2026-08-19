@@ -121,7 +121,7 @@ describe('scratch-file-remediation', () => {
   });
 
   describe('remediateScratchFiles', () => {
-    it('deletes root untracked files via deleteWorktreeFile and leaves subdirectory files while recording both in report', async () => {
+    it('deletes root untracked files and leaves subdirectory files while recording both in report', async () => {
       const tmpCwd = mkdtempSync(join(tmpdir(), 'remediation-test-'));
       try {
         const rootFile = join(tmpCwd, 'scratch.js');
