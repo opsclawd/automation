@@ -344,11 +344,11 @@ describe('WorkerScheduler', () => {
 
     vi.mocked(workerLoop).mockImplementationOnce(async (_wid, deps) => {
       // Wait for more than the timeout (100ms), but signal progress in between
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      await new Promise((resolve) => setTimeout(resolve, 70));
       deps.onProgress?.();
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      await new Promise((resolve) => setTimeout(resolve, 70));
       deps.onProgress?.();
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      await new Promise((resolve) => setTimeout(resolve, 70));
     });
 
     const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 5, 100);
