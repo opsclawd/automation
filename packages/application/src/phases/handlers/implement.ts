@@ -26,7 +26,10 @@ import {
   hasDeclaredSurface,
   classifyUndeclaredFiles,
 } from '../../task-file-boundaries.js';
-import { findInheritedFormattingDebtFiles } from '../../inherited-formatting-debt.js';
+import {
+  findInheritedFormattingDebtFiles,
+  isFormattingOnlyChange,
+} from '../../inherited-formatting-debt.js';
 import type {
   RevertProtectedFilesPort,
   RevertProtectedFilesResult,
@@ -35,6 +38,68 @@ import type {
 function isProtectedFilePath(path: string): boolean {
   const norm = normalizeTaskPath(path);
   return norm === '.gitignore' || norm === '.ai-orchestrator.json' || norm.startsWith('.github/');
+}
+
+interface DirtyClassification {
+  permitted: string[];
+  unpermitted: string[];
+  protected: string[];
+  exempt: string[];
+  formattingDebt: string[];
+}
+
+async function classifyPhaseBoundaryDirtyPaths({
+  cwd,
+  dirtyPaths,
+  exemptSet,
+  git,
+  readWorktreeFile,
+}: {
+  cwd: string;
+  dirtyPaths: string[];
+  exemptSet: ReadonlySet<string>;
+  git: PhaseHandlerContext['git'];
+  readWorktreeFile?: PhaseHandlerContext['readWorktreeFile'];
+}): Promise<DirtyClassification> {
+  const permitted: string[] = [];
+  const unpermitted: string[] = [];
+  const protectedFiles: string[] = [];
+  const exempt: string[] = [];
+  const formattingDebt: string[] = [];
+
+  for (const p of dirtyPaths) {
+    const norm = normalizeTaskPath(p);
+    if (!norm) continue;
+    if (isProtectedFilePath(norm)) {
+      protectedFiles.push(norm);
+      unpermitted.push(norm);
+    } else if (exemptSet.has(norm)) {
+      exempt.push(norm);
+      permitted.push(norm);
+    } else {
+      // Check if formatting-only change by comparing worktree to HEAD via readWorktreeFile port
+      let isFormattingOnly = false;
+      try {
+        if (git?.fileContent && readWorktreeFile) {
+          const worktreeContent = await readWorktreeFile(cwd, norm);
+          if (worktreeContent !== undefined) {
+            const headContent = await git.fileContent(cwd, 'HEAD', norm);
+            isFormattingOnly = isFormattingOnlyChange(norm, headContent, worktreeContent);
+          }
+        }
+      } catch {
+        // Cannot determine — treat as unpermitted
+      }
+      if (isFormattingOnly) {
+        formattingDebt.push(norm);
+        permitted.push(norm);
+      } else {
+        unpermitted.push(norm);
+      }
+    }
+  }
+
+  return { permitted, unpermitted, protected: protectedFiles, exempt, formattingDebt };
 }
 
 function formatProtectedDiagnostic(record: {
@@ -995,6 +1060,63 @@ export class ImplementHandler implements PhaseHandler {
         }
         break;
       }
+    }
+
+    // Phase-boundary worktree reconciliation
+    try {
+      const statusOutput = await ctx.git.status(ctx.cwd);
+      const dirtyPaths = uncommittedSourcePaths(statusOutput);
+      if (dirtyPaths.length > 0) {
+        const exemptSet = normalizedPathSet(this.opts.exemptUndeclaredFiles);
+        const classification = await classifyPhaseBoundaryDirtyPaths({
+          cwd: ctx.cwd,
+          dirtyPaths,
+          exemptSet,
+          git: ctx.git,
+          readWorktreeFile: ctx.readWorktreeFile,
+        });
+
+        if (classification.unpermitted.length > 0) {
+          emit(
+            'implement.needs_human_review',
+            'warn',
+            `implement phase boundary: uncommitted substantive files need attention: ${classification.unpermitted.join(', ')}`,
+          );
+          return this.needsHumanReview(
+            ctx,
+            emit,
+            'agent_incomplete',
+            `implement phase has uncommitted non-formatting, non-exempt files: ${classification.unpermitted.join(', ')}. Commit or revert these files before resuming.`,
+            `Commit the listed files or revert them, then resume the run.`,
+            classification.unpermitted,
+          );
+        }
+
+        if (classification.permitted.length > 0) {
+          // Auto-commit permitted formatting debt and exempt files
+          try {
+            await ctx.git.add(ctx.cwd, classification.permitted);
+            await ctx.git.commit(
+              ctx.cwd,
+              'chore: auto-commit formatting debt and exempt files at implement phase boundary',
+              classification.permitted,
+            );
+            emit(
+              'implement.formatting_debt_auto_committed',
+              'info',
+              `auto-committed ${classification.permitted.length} permitted file(s) at phase boundary`,
+              { files: classification.permitted },
+            );
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return this.fail(ctx, emit, 'unknown', `phase-boundary auto-commit failed: ${msg}`);
+          }
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // If we cannot determine cleanliness, fail rather than pass with dirty tree
+      return this.fail(ctx, emit, 'unknown', `phase-boundary worktree check failed: ${msg}`);
     }
 
     emit('implement.completed', 'info', 'implement complete');

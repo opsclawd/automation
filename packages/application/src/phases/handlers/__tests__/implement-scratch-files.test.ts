@@ -95,7 +95,7 @@ describe('ImplementHandler scratch-file reporting', () => {
       exemptUndeclaredFiles: ['allowed-root.txt'],
     }).run(harness.ctx);
 
-    expect(result).toEqual({ outcome: 'passed' });
+    expect(result).toMatchObject({ outcome: 'needs_human_review' });
     const warning = harness.events.find((event) => event.type === 'step.scratch_files_left');
     expect(warning).toMatchObject({
       level: 'warn',
@@ -125,7 +125,7 @@ describe('ImplementHandler scratch-file reporting', () => {
     }).run(harness.ctx);
 
     expect(result).toEqual({ outcome: 'passed' });
-    expect(harness.git.statusCalls).toEqual([harness.ctx.cwd]);
+    expect(harness.git.statusCalls).toEqual([harness.ctx.cwd, harness.ctx.cwd]);
     expect(harness.events.filter((event) => event.type === 'step.scratch_files_left')).toHaveLength(
       0,
     );
@@ -137,6 +137,11 @@ describe('ImplementHandler scratch-file reporting', () => {
       { expected_files: ['src/declared.ts', 'deliverable.txt'] },
       '?? deliverable.txt\n',
     );
+    harness.git.status = vi.fn(async (cwd: string) => {
+      harness.git.statusCalls.push(cwd);
+      const committed = harness.git.commits.some((c) => c.files?.includes('deliverable.txt'));
+      return committed ? '' : '?? deliverable.txt\n';
+    });
     harness.git.changedFilesResults.set('pre-step|post-step', ['src/declared.ts']);
     harness.git.changedFilesResults.set('pre-step|fake-sha-1', [
       'src/declared.ts',
@@ -149,7 +154,7 @@ describe('ImplementHandler scratch-file reporting', () => {
     }).run(harness.ctx);
 
     expect(result).toEqual({ outcome: 'passed' });
-    expect(harness.git.statusCalls).toEqual([harness.ctx.cwd]);
+    expect(harness.git.statusCalls).toEqual([harness.ctx.cwd, harness.ctx.cwd]);
     expect(harness.git.addCalls).toEqual([{ cwd: harness.ctx.cwd, files: ['deliverable.txt'] }]);
     expect(harness.git.commits[0]?.files).toEqual(['deliverable.txt']);
     expect(harness.events.filter((event) => event.type === 'step.scratch_files_left')).toHaveLength(
@@ -167,8 +172,14 @@ describe('ImplementHandler scratch-file reporting', () => {
       runStep: harness.runStep,
     }).run(harness.ctx);
 
-    expect(result).toEqual({ outcome: 'passed' });
-    expect(statusSpy).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      failure: expect.objectContaining({
+        kind: 'unknown',
+        message: expect.stringContaining('phase-boundary worktree check failed'),
+      }),
+    });
+    expect(statusSpy).toHaveBeenCalledTimes(2);
     expect(harness.events.filter((event) => event.type === 'step.scratch_files_left')).toHaveLength(
       0,
     );
@@ -206,7 +217,7 @@ describe('ImplementHandler scratch-file reporting', () => {
         runStep: harness.runStep,
       }).run(harness.ctx);
 
-      expect(result).toEqual({ outcome: 'passed' });
+      expect(result).toMatchObject({ outcome: 'needs_human_review' });
       expect(existsSync(rootScratch)).toBe(false);
       expect(existsSync(nestedScratch)).toBe(true);
       expect(existsSync(protectedFile)).toBe(true);
@@ -250,7 +261,7 @@ describe('ImplementHandler scratch-file reporting', () => {
         runStep: harness.runStep,
       }).run(harness.ctx);
 
-      expect(implementResult).toEqual({ outcome: 'passed' });
+      expect(implementResult).toMatchObject({ outcome: 'needs_human_review' });
       // Subdirectory file must NOT be deleted from disk
       expect(existsSync(subScratch)).toBe(true);
 
@@ -277,7 +288,10 @@ describe('ImplementHandler scratch-file reporting', () => {
       );
       harness.ctx.cwd = tmpCwd;
       harness.git.headByCwd.set(tmpCwd, 'pre-step');
-      harness.git.statusByCwd.set(tmpCwd, '?? test-ast.js\n?? test-ast.cjs');
+      harness.git.status = vi.fn(async () => {
+        const files = ['test-ast.js', 'test-ast.cjs'].filter((f) => existsSync(join(tmpCwd, f)));
+        return files.map((f) => `?? ${f}`).join('\n');
+      });
       harness.git.changedFilesResults.set('pre-step|post-step', ['src/declared.ts']);
 
       const implementResult = await new ImplementHandler({
