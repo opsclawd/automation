@@ -4766,6 +4766,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 changedFiles,
                 existingCommands: taskValidationCommands,
                 worktreeRoot: ctx.cwd,
+                fileExists: (relPath) => existsSync(resolve(ctx.cwd, relPath)),
               });
             }
           } catch {

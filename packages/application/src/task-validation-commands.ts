@@ -1,5 +1,3 @@
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { TaskManifest } from './phases/plan-tasks.js';
 import type { ValidationCommand } from './ports/validation-port.js';
 
@@ -480,16 +478,14 @@ export function buildTargetedTestCommand(
 export function expandTaskValidationCommandsWithNewTests(
   options: ExpandTaskValidationCommandsOptions,
 ): ValidationCommand[] {
-  const { changedFiles, existingCommands, worktreeRoot, fileExists } = options;
+  const { changedFiles, existingCommands, worktreeRoot: _worktreeRoot, fileExists } = options;
   if (!changedFiles || changedFiles.length === 0) {
     return existingCommands;
   }
 
   const checkExists = (relPath: string): boolean => {
     if (fileExists) return fileExists(relPath);
-    const norm = relPath.replace(/\\/g, '/');
-    if (worktreeRoot) return existsSync(resolve(worktreeRoot, norm));
-    return existsSync(norm);
+    return false;
   };
 
   const discoveredTestFiles = new Set<string>();
