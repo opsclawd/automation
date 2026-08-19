@@ -11,6 +11,7 @@ import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { FindingEvidenceInspectorPort } from '../ports/finding-evidence-inspector-port.js';
 import type { ArtifactStore, ReadWorktreeFilePort } from '../ports.js';
 import type { GitPort } from '../ports/git-port.js';
+import type { RevertProtectedFilesPort } from '../ports/protected-file-reverter-port.js';
 import type {
   ReviewMode,
   ReviewSnapshot,
@@ -137,6 +138,13 @@ export interface ReviewFixLoopDeps {
   now: () => Date;
   idFactory: () => string;
   rollbackFix?: (ctx: StepContext, targetSha: string) => Promise<boolean>;
+  /**
+   * Reverts protected files (.gitignore, .ai-orchestrator.json, .github/*)
+   * that the fixer modified without declaring, amending the fix commit so
+   * the loop can advance without those changes. If absent, protected-file
+   * modifications are treated as a task boundary violation and rolled back.
+   */
+  revertProtectedFiles?: RevertProtectedFilesPort;
   cleanArtifacts?: (ctx: StepContext) => Promise<void>;
   loopHistory?: ReviewLoopHistoryPort;
   /**

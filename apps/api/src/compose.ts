@@ -3337,6 +3337,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         runFix,
         runRevalidation,
         rollbackFix,
+        revertProtectedFiles,
         loops: loopRepository,
         events: persistingEventBusForLoop,
         git: gitAdapter,

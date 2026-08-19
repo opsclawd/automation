@@ -79,15 +79,20 @@ function makeDeps(
   over: Partial<ReviewFixLoopDeps> & { revertProtectedFiles?: RevertProtectedFilesPort },
 ): ReviewFixLoopDeps {
   let n = 0;
+  let reviewCallCount = 0;
   const { bus } = collectEvents();
   return {
     runPostFixGate: async (): Promise<PostFixGateResult> => ({ outcome: 'pass', output: '' }),
-    runReview: async (): Promise<ReviewStepResult> => ({
-      invocationId: `rev-${++n}`,
-      agentOutcome: 'success',
-      verdict: n === 1 ? 'fail' : 'pass',
-      offendingFindings: n === 1 ? [{ severity: 'high', summary: 'bug' }] : undefined,
-    }),
+    runReview: async (): Promise<ReviewStepResult> => {
+      reviewCallCount += 1;
+      return {
+        invocationId: `rev-${++n}`,
+        agentOutcome: 'success',
+        verdict: reviewCallCount === 1 ? 'fail' : 'pass',
+        offendingFindings:
+          reviewCallCount === 1 ? [{ severity: 'high', summary: 'bug' }] : undefined,
+      };
+    },
     runFix: async (): Promise<FixStepResult> => ({
       invocationId: `fix-${++n}`,
       agentOutcome: 'success',
