@@ -285,6 +285,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         action: 'cancel',
         abortStatus: cancelResult.abortStatus,
         worktreeReset: cancelResult.worktreeReset,
+        ...(cancelResult.branchSha ? { branchSha: cancelResult.branchSha } : {}),
       });
     } catch (err) {
       if (err instanceof UnknownPhaseError) {

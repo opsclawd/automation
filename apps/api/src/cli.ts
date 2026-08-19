@@ -1441,6 +1441,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 process.stdout.write(
                   'Run cancelled, but process abort timed out. Worktree was NOT reset because the process may still be running.\n',
                 );
+              } else if (cancelResult.branchSha) {
+                process.stdout.write(
+                  `Run cancelled successfully (branch left at ${cancelResult.branchSha})\n`,
+                );
               } else {
                 process.stdout.write('Run cancelled successfully\n');
               }

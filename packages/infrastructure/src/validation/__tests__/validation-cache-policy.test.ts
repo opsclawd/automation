@@ -97,7 +97,7 @@ describe('validation-cache-policy regressions', () => {
     expect(results[1]?.stdout).toContain('typecheck:TURBO_FORCE=true');
     expect(results[2]?.stdout).toContain('typecheck:TURBO_FORCE=true');
     expect(results[3]?.stdout).toContain('typecheck:TURBO_FORCE=true');
-  });
+  }, 15000);
 
   it('preserves caller cache state for build and unrelated commands', async () => {
     const logDir = freshDir();

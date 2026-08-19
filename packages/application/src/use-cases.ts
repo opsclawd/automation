@@ -27,6 +27,7 @@ export interface CancelRunResult {
   status: RunStatus;
   abortStatus: AbortResult['status'];
   worktreeReset: boolean;
+  branchSha?: string | undefined;
 }
 
 export interface CancelRunUseCase {

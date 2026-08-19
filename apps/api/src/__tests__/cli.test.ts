@@ -276,6 +276,57 @@ describe('CLI runs cancel command', () => {
     spy.mockRestore();
   });
 
+  it('explicitly reports branch left at SHA on cancel when worktree commit SHA exists', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-sha-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'cancel-sha-test',
+      'issue-54-20260519-000000',
+      54,
+      'issue_to_pr',
+      'running',
+      '["read_issue", "implement", "fix-validate"]',
+      new Date().toISOString(),
+      null,
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const spy1 = vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitShaOf').mockResolvedValue('8de189a');
+      const spy2 = vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha').mockResolvedValue('8de189a');
+      const spy3 = vi.spyOn(GitWorktreeAdapter.prototype, 'resetHard').mockResolvedValue(undefined);
+      const spy4 = vi.spyOn(GitWorktreeAdapter.prototype, 'cleanUntracked').mockResolvedValue(undefined);
+
+      const stdoutChunks: string[] = [];
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
+
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['cancel', '--uuid', 'cancel-sha-test'], { from: 'user' });
+      writeSpy.mockRestore();
+      spy1.mockRestore();
+      spy2.mockRestore();
+      spy3.mockRestore();
+      spy4.mockRestore();
+
+      expect(stdoutChunks.join('')).toContain('Run cancelled successfully (branch left at 8de189a)');
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
   it('cancels a run by uuid using CancelRun use case', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-uuid-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');

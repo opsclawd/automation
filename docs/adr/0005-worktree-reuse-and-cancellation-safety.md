@@ -10,7 +10,7 @@ We reuse one issue-scoped worktree per issue and make cancellation restore a cle
 
 **Start-state handling**: Trust the current branch state vs. verify and reset before starting. We chose to verify the worktree is clean and reset it to the latest main baseline before each Run.
 
-**Cancel behavior**: Leave the workspace dirty vs. reset to the last known-good commit. We chose kill-with-reset so cancellation leaves the worktree ready for the next attempt.
+**Cancel behavior**: Leave the workspace dirty vs. reset to the last known-good commit. We chose kill-with-reset so cancellation cleans uncommitted worktree changes and untracked files while leaving all committed history intact on the target branch (leaving the branch tip at current HEAD), keeping validated progress safe for subsequent attempts or manual inspection.
 
 ## Consequences
 

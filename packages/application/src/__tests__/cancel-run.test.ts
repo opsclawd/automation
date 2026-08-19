@@ -12,7 +12,12 @@ const noopAbort: RunAbortPort = {
   abort: () => Promise.resolve({ status: 'exited' }),
   unregister: () => {},
 };
-const noopGit = { resetHard: () => Promise.resolve(), cleanUntracked: () => Promise.resolve() } as GitPort;
+const noopGit = {
+  resetHard: () => Promise.resolve(),
+  cleanUntracked: () => Promise.resolve(),
+  headCommitSha: () => Promise.resolve('sha-123'),
+  headCommitShaOf: () => Promise.resolve('sha-123'),
+} as GitPort;
 const noopLeases: WorkerLeasePort = {
   acquire: () => {
     throw new Error('unexpected');
@@ -62,6 +67,7 @@ describe('CancelRun', () => {
       status: 'cancelled',
       abortStatus: 'exited',
       worktreeReset: true,
+      branchSha: 'sha-123',
     });
   });
 
@@ -177,6 +183,58 @@ describe('CancelRun', () => {
     );
   });
 
+  it('returns branchSha and preserves committed history on the branch without resetting to startCommitSha', async () => {
+    const repo = new FakeRunRepository();
+    repo.addRun({
+      uuid: 'history-run',
+      displayId: 'issue-54-20260513-000000',
+      issueNumber: 54,
+      repoId: 'repo-1' as RepositoryId,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: ['read_issue', 'implement', 'fix-validate'],
+      startedAt: new Date('2026-05-13T19:00:00Z'),
+    });
+
+    const resetHardCalls: Array<{ cwd: string; sha: string }> = [];
+    const cleanUntrackedCalls: string[] = [];
+
+    const git: GitPort = {
+      createWorktree: async () => {},
+      removeWorktree: async () => {},
+      currentBranch: async () => 'ai/issue-54',
+      headCommitSha: async () => '5f83e8d',
+      headCommitShaOf: async () => '5f83e8d',
+      resetHard: async (cwd, sha) => {
+        resetHardCalls.push({ cwd, sha });
+      },
+      diff: async () => '',
+      commit: async () => '',
+      push: async () => {},
+      remoteRef: async () => undefined,
+      isAncestor: async () => false,
+      logBetween: async () => [],
+      cleanUntracked: async (cwd) => {
+        cleanUntrackedCalls.push(cwd);
+      },
+    };
+
+    const usecase = makeCancelRun({
+      runRepository: repo,
+      git,
+      findCwd: () => '/tmp/worktree-54',
+      findStartCommitSha: () => '2fc18c9', // start commit before implement/review-fix
+    });
+
+    const result = await usecase.execute({ runId: runId('history-run'), reason: 'interrupted' });
+
+    expect(result.branchSha).toBe('5f83e8d');
+    // Ensure resetHard was called with the current HEAD SHA (5f83e8d) to clean uncommitted changes,
+    // NOT with the startCommitSha (2fc18c9) which would discard completed phase commits!
+    expect(resetHardCalls).toEqual([{ cwd: '/tmp/worktree-54', sha: '5f83e8d' }]);
+    expect(cleanUntrackedCalls).toEqual(['/tmp/worktree-54']);
+  });
+
   describe('ordering', () => {
     it('calls runAbort.abort() before git.resetHard()', async () => {
       const callOrder: string[] = [];
@@ -192,7 +250,8 @@ describe('CancelRun', () => {
         createWorktree: async () => {},
         removeWorktree: async () => {},
         currentBranch: async () => '',
-        headCommitSha: async () => '',
+        headCommitSha: async () => 'sha-123',
+        headCommitShaOf: async () => 'sha-123',
         resetHard: async () => {
           callOrder.push('reset');
         },
@@ -203,7 +262,6 @@ describe('CancelRun', () => {
         isAncestor: async () => false,
         logBetween: async () => [],
         cleanUntracked: async () => {},
-        headCommitShaOf: async () => undefined,
       };
       const leases: WorkerLeasePort = {
         acquire: () => {
@@ -245,7 +303,8 @@ describe('CancelRun', () => {
         createWorktree: async () => {},
         removeWorktree: async () => {},
         currentBranch: async () => '',
-        headCommitSha: async () => '',
+        headCommitSha: async () => 'sha-123',
+        headCommitShaOf: async () => 'sha-123',
         resetHard: async () => {
           callOrder.push('reset');
         },
@@ -256,7 +315,6 @@ describe('CancelRun', () => {
         isAncestor: async () => false,
         logBetween: async () => [],
         cleanUntracked: async () => {},
-        headCommitShaOf: async () => undefined,
       };
       const leaseObj: WorkerLease = {
         repoId: 'repo-1' as RepositoryId,
@@ -326,7 +384,7 @@ describe('CancelRun', () => {
         createWorktree: async () => {},
         removeWorktree: async () => {},
         currentBranch: async () => '',
-        headCommitSha: async () => '',
+        headCommitSha: async () => 'sha-123',
         resetHard: async () => {
           throw new Error('reset fail');
         },
@@ -337,7 +395,7 @@ describe('CancelRun', () => {
         isAncestor: async () => false,
         logBetween: async () => [],
         cleanUntracked: async () => {},
-        headCommitShaOf: async () => undefined,
+        headCommitShaOf: async () => 'sha-123',
       };
       const leases: WorkerLeasePort = {
         acquire: () => {
@@ -394,7 +452,8 @@ describe('CancelRun', () => {
         createWorktree: async () => {},
         removeWorktree: async () => {},
         currentBranch: async () => '',
-        headCommitSha: async () => '',
+        headCommitSha: async () => 'sha-123',
+        headCommitShaOf: async () => 'sha-123',
         resetHard: async () => {
           callOrder.push('reset');
         },
@@ -405,7 +464,6 @@ describe('CancelRun', () => {
         isAncestor: async () => false,
         logBetween: async () => [],
         cleanUntracked: async () => {},
-        headCommitShaOf: async () => undefined,
       };
       const leases: WorkerLeasePort = {
         acquire: () => {
@@ -457,7 +515,7 @@ describe('CancelRun', () => {
         createWorktree: async () => {},
         removeWorktree: async () => {},
         currentBranch: async () => '',
-        headCommitSha: async () => '',
+        headCommitSha: async () => 'sha-123',
         resetHard: async () => {
           throw new Error('reset fail');
         },
@@ -468,7 +526,7 @@ describe('CancelRun', () => {
         isAncestor: async () => false,
         logBetween: async () => [],
         cleanUntracked: async () => {},
-        headCommitShaOf: async () => undefined,
+        headCommitShaOf: async () => 'sha-123',
       };
       const leases: WorkerLeasePort = {
         acquire: () => {
@@ -521,7 +579,8 @@ describe('CancelRun', () => {
         createWorktree: async () => {},
         removeWorktree: async () => {},
         currentBranch: async () => '',
-        headCommitSha: async () => '',
+        headCommitSha: async () => 'sha-123',
+        headCommitShaOf: async () => 'sha-123',
         resetHard: async () => {
           callOrder.push('reset');
         },
@@ -532,7 +591,6 @@ describe('CancelRun', () => {
         isAncestor: async () => false,
         logBetween: async () => [],
         cleanUntracked: async () => {},
-        headCommitShaOf: async () => undefined,
       };
       const leases: WorkerLeasePort = {
         acquire: () => {
@@ -576,7 +634,8 @@ describe('CancelRun', () => {
         createWorktree: async () => {},
         removeWorktree: async () => {},
         currentBranch: async () => '',
-        headCommitSha: async () => '',
+        headCommitSha: async () => 'sha-123',
+        headCommitShaOf: async () => 'sha-123',
         resetHard: async () => {
           callOrder.push('reset');
         },
@@ -589,7 +648,6 @@ describe('CancelRun', () => {
         cleanUntracked: async () => {
           callOrder.push('clean');
         },
-        headCommitShaOf: async () => undefined,
       };
       const leases: WorkerLeasePort = {
         acquire: () => {
