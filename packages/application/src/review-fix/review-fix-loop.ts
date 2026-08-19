@@ -21,12 +21,9 @@ import { appendRebuttalToCodeReview } from './append-rebuttal.js';
 import { verifyFixCommit } from '../fix-commit-verifier.js';
 import {
   checkTaskBoundaries,
-  getManifestBoundaries,
   loadManifest,
-  normalizeTaskPath,
   type ManifestLoadResult,
 } from '../task-file-boundaries.js';
-import { isProtectedFilePath } from '../scratch-file-remediation.js';
 import {
   captureNetRevertBaseline,
   checkForNetReverts,
@@ -469,13 +466,13 @@ export class ReviewFixLoop {
 
               lastFixHeadRange = {
                 before: fix.headBeforeFix,
-                after: boundaryCheck.headAfterFix,
+                after: verification.headAfterFix,
               };
               const scopeResult = await this.finalizeScopeAndCommitMessage({
                 ctx,
                 loopInput: input,
                 headBeforeFix: fix.headBeforeFix,
-                headAfterFix: boundaryCheck.headAfterFix,
+                headAfterFix: verification.headAfterFix,
                 findings: lastOffendingFindings,
                 ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
               });
@@ -568,7 +565,7 @@ export class ReviewFixLoop {
                     ctx,
                     loopInput: input,
                     headBeforeFix: fix.headBeforeFix ?? 'HEAD',
-                    headAfterFix: boundaryCheck.headAfterFix,
+                    headAfterFix: committedSha,
                     findings: lastOffendingFindings,
                     ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
                   });
@@ -1391,7 +1388,7 @@ export class ReviewFixLoop {
               ctx,
               loopInput: input,
               headBeforeFix: fix.headBeforeFix,
-              headAfterFix: boundaryCheck.headAfterFix,
+              headAfterFix: verification.headAfterFix,
               findings: review.offendingFindings ?? [],
               ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
             });
@@ -1513,7 +1510,7 @@ export class ReviewFixLoop {
                   ctx,
                   loopInput: input,
                   headBeforeFix: fix.headBeforeFix ?? 'HEAD',
-                  headAfterFix: boundaryCheck.headAfterFix,
+                  headAfterFix: committedSha,
                   findings: review.offendingFindings ?? [],
                   ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
                 });
@@ -2606,91 +2603,10 @@ export class ReviewFixLoop {
     headAfterFix: string,
     manifestResult: ManifestLoadResult,
   ): Promise<
-    | { ok: true; changedFiles: string[]; headAfterFix: string }
-    | { ok: false; message: string; files?: string[] }
+    { ok: true; changedFiles: string[] } | { ok: false; message: string; files?: string[] }
   > {
     if (!this.deps.git || typeof this.deps.git.changedFiles !== 'function') {
-      return { ok: true, changedFiles: [], headAfterFix };
-    }
-
-    let effectiveHeadAfterFix = headAfterFix;
-    let committedFiles: string[];
-    try {
-      committedFiles = await this.deps.git.changedFiles(
-        ctx.cwd,
-        headBeforeFix,
-        effectiveHeadAfterFix,
-      );
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      this.emit(
-        loopInput,
-        'task_boundary.check_failed',
-        'warn',
-        `task boundary check failed: ${errorMsg}`,
-        { iterationIndex: ctx.iterationIndex, reason: 'check_error', error: errorMsg },
-      );
-      return { ok: false, message: `task boundary check failed: ${errorMsg}` };
-    }
-
-    const { writableSet } = getManifestBoundaries(
-      manifestResult.status === 'found' ? manifestResult.manifest : undefined,
-    );
-    const protectedFiles = [
-      ...new Set(
-        committedFiles.filter(
-          (f) => isProtectedFilePath(f) && !writableSet.has(normalizeTaskPath(f)),
-        ),
-      ),
-    ];
-    if (protectedFiles.length > 0) {
-      if (this.deps.revertProtectedFiles) {
-        try {
-          const repairResult = await this.deps.revertProtectedFiles({
-            cwd: ctx.cwd,
-            baseline: headBeforeFix,
-            protectedFiles,
-          });
-          this.emit(
-            loopInput,
-            'fix.protected_file_reverted',
-            'info',
-            `reverted ${repairResult.revertedProtectedFiles.length} protected file(s) modified by the fixer: ${repairResult.revertedProtectedFiles.join(', ')}`,
-            {
-              iterationIndex: ctx.iterationIndex,
-              revertedProtectedFiles: repairResult.revertedProtectedFiles,
-              removedNewlyIgnoredFiles: repairResult.removedNewlyIgnoredFiles,
-              amendedHeadSha: repairResult.amendedHeadSha,
-            },
-          );
-          effectiveHeadAfterFix = repairResult.amendedHeadSha;
-          committedFiles = await this.deps.git.changedFiles(
-            ctx.cwd,
-            headBeforeFix,
-            effectiveHeadAfterFix,
-          );
-        } catch (err: unknown) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          const message = `${loopInput.phaseId} modified protected files and revert failed: ${protectedFiles.join(', ')} (${errorMsg})`;
-          this.emit(loopInput, 'task_boundary.violated', 'warn', message, {
-            phase: loopInput.phaseId,
-            files: protectedFiles,
-            protectedFiles,
-            iterationIndex: ctx.iterationIndex,
-            revertError: errorMsg,
-          });
-          return { ok: false, message, files: protectedFiles };
-        }
-      } else {
-        const message = `${loopInput.phaseId} modified protected files: ${protectedFiles.join(', ')}`;
-        this.emit(loopInput, 'task_boundary.violated', 'warn', message, {
-          phase: loopInput.phaseId,
-          files: protectedFiles,
-          protectedFiles,
-          iterationIndex: ctx.iterationIndex,
-        });
-        return { ok: false, message, files: protectedFiles };
-      }
+      return { ok: true, changedFiles: [] };
     }
 
     if (manifestResult.status === 'missing') {
@@ -2724,6 +2640,21 @@ export class ReviewFixLoop {
       return { ok: false, message: `task boundary check failed: ${errorMsg}` };
     }
 
+    let committedFiles: string[];
+    try {
+      committedFiles = await this.deps.git.changedFiles(ctx.cwd, headBeforeFix, headAfterFix);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.emit(
+        loopInput,
+        'task_boundary.check_failed',
+        'warn',
+        `task boundary check failed: ${errorMsg}`,
+        { iterationIndex: ctx.iterationIndex, reason: 'check_error', error: errorMsg },
+      );
+      return { ok: false, message: `task boundary check failed: ${errorMsg}` };
+    }
+
     const classification = checkTaskBoundaries(committedFiles, manifestResult.manifest);
     const violatingFiles = [
       ...classification.modifiedReferenceFiles,
@@ -2741,7 +2672,7 @@ export class ReviewFixLoop {
       return { ok: false, message, files: violatingFiles };
     }
 
-    return { ok: true, changedFiles: committedFiles, headAfterFix: effectiveHeadAfterFix };
+    return { ok: true, changedFiles: committedFiles };
   }
 
   private async handleBoundaryFailure(

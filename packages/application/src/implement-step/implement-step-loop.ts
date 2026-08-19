@@ -42,9 +42,14 @@ import {
   referenceTaskFiles,
   normalizedPathSet,
   classifyUndeclaredFiles,
+  normalizeTaskPath,
 } from '../task-file-boundaries.js';
 import { findInheritedFormattingDebtFiles } from '../inherited-formatting-debt.js';
-import { isProtectedFilePath } from '../scratch-file-remediation.js';
+
+function isProtectedFilePath(path: string): boolean {
+  const norm = normalizeTaskPath(path);
+  return norm === '.gitignore' || norm === '.ai-orchestrator.json' || norm.startsWith('.github/');
+}
 
 function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, ' ').toLowerCase();
