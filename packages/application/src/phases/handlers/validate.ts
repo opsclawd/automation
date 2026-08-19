@@ -85,9 +85,16 @@ export class ValidateHandler implements PhaseHandler {
 
     const dirtyPaths = uncommittedSourcePaths(statusOutput);
     if (dirtyPaths.length > 0) {
-      let scratchReport: { steps?: Array<{ stepIndex: number; totalSteps?: number; files: string[] }> } | undefined;
+      let scratchReport:
+        | { steps?: Array<{ stepIndex: number; totalSteps?: number; files: string[] }> }
+        | undefined;
       try {
-        const scratchJson = await ctx.artifacts.read(ctx.runUuid, 'scratch-files.json');
+        let scratchJson: string;
+        try {
+          scratchJson = await ctx.artifacts.read(ctx.runUuid, '.ai-tmp/scratch-files.json');
+        } catch {
+          scratchJson = await ctx.artifacts.read(ctx.runUuid, 'scratch-files.json');
+        }
         scratchReport = JSON.parse(scratchJson);
       } catch {
         // Artifact may not exist

@@ -60,7 +60,9 @@ function formatProtectedDiagnostic(record: {
   return diagnostics.join('; ');
 }
 
-function undeclaredUntrackedRootFiles(
+const SCRATCH_FILES_ARTIFACT_PATH = '.ai-tmp/scratch-files.json';
+
+function undeclaredUntrackedFiles(
   status: string,
   writableFiles: ReadonlySet<string>,
   referenceFiles: ReadonlySet<string>,
@@ -70,7 +72,7 @@ function undeclaredUntrackedRootFiles(
     .split('\n')
     .filter((line) => line.startsWith('?? '))
     .map((line) => normalizeTaskPath(unquoteGitPath(line.slice(3))))
-    .filter((path) => path.length > 0 && !path.includes('/'))
+    .filter((path) => path.length > 0)
     .filter(
       (path) =>
         !writableFiles.has(path) &&
@@ -102,7 +104,12 @@ async function recordScratchFilesReport(
 ): Promise<void> {
   let report: ScratchFilesReport = { steps: [] };
   try {
-    const existing = await ctx.artifacts.read(ctx.runUuid, 'scratch-files.json');
+    let existing: string | undefined;
+    try {
+      existing = await ctx.artifacts.read(ctx.runUuid, SCRATCH_FILES_ARTIFACT_PATH);
+    } catch {
+      existing = await ctx.artifacts.read(ctx.runUuid, 'scratch-files.json');
+    }
     const parsed = JSON.parse(existing) as ScratchFilesReport;
     if (parsed && Array.isArray(parsed.steps)) {
       report = parsed;
@@ -123,7 +130,7 @@ async function recordScratchFilesReport(
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       phaseId: 'implement',
-      relativePath: 'scratch-files.json',
+      relativePath: SCRATCH_FILES_ARTIFACT_PATH,
       contents: JSON.stringify(report, null, 2),
     });
   } catch {
@@ -460,26 +467,31 @@ export class ImplementHandler implements PhaseHandler {
           };
 
           try {
-            const scratchFiles = undeclaredUntrackedRootFiles(
+            const allScratchFiles = undeclaredUntrackedFiles(
               await readStatus(),
               writableSet,
               referenceSet,
               exemptSet,
             );
-            if (scratchFiles.length > 0) {
+            if (allScratchFiles.length > 0) {
+              const rootFiles = allScratchFiles.filter((f) => !f.includes('/'));
+              const subDirFiles = allScratchFiles.filter((f) => f.includes('/'));
+
               emit(
                 'step.scratch_files_left',
                 'warn',
-                `step ${d.index}/${totalSteps} left undeclared root files: ${scratchFiles.join(', ')}`,
+                `step ${d.index}/${totalSteps} left undeclared files: ${allScratchFiles.join(', ')}`,
                 {
                   index: d.index,
                   total: totalSteps,
                   taskTitle: task?.title ?? d.title,
-                  files: scratchFiles,
+                  files: allScratchFiles,
+                  ...(rootFiles.length > 0 ? { rootFiles } : {}),
+                  ...(subDirFiles.length > 0 ? { subDirFiles } : {}),
                 },
               );
 
-              for (const file of scratchFiles) {
+              for (const file of rootFiles) {
                 try {
                   const targetPath = path.resolve(ctx.cwd, file);
                   if (
@@ -494,14 +506,16 @@ export class ImplementHandler implements PhaseHandler {
                   // File deletion is best-effort
                 }
               }
-              statusPromise = undefined;
+              if (rootFiles.length > 0) {
+                statusPromise = undefined;
+              }
 
               await recordScratchFilesReport(
                 ctx,
                 d.index,
                 totalSteps,
                 task?.title ?? d.title,
-                scratchFiles,
+                allScratchFiles,
               );
             }
           } catch {
