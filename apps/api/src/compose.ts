@@ -174,6 +174,8 @@ import {
   type ValidationPort,
   type ValidationCommand,
   buildTaskValidationCommands,
+  expandTaskValidationCommandsWithNewTests,
+  uncommittedSourcePaths,
   CONTRACT_VIOLATION_CODES,
   type RunWorkspaceTypecheckPort,
   verifyArbiterGrounding,
@@ -4734,6 +4736,42 @@ export function composeRoot(opts: ComposeOptions): Container {
             }
           } catch {
             // Task manifest might not be present or parseable; fall back to global only
+          }
+
+          try {
+            let changedFiles: string[] = [];
+            const stepCtx = ctx as Partial<StepLoopContext> & { initialPreStepHead?: string };
+            if (stepCtx.initialPreStepHead) {
+              const currentHead = await gitAdapter.headCommitSha(ctx.cwd);
+              const committed = await gitAdapter.changedFiles(
+                ctx.cwd,
+                stepCtx.initialPreStepHead,
+                currentHead,
+              );
+              let statusOutput = '';
+              try {
+                statusOutput = await gitAdapter.status(ctx.cwd);
+              } catch {}
+              const untracked = uncommittedSourcePaths(statusOutput);
+              changedFiles = Array.from(new Set([...committed, ...untracked]));
+            } else {
+              let statusOutput = '';
+              try {
+                statusOutput = await gitAdapter.status(ctx.cwd);
+              } catch {}
+              changedFiles = uncommittedSourcePaths(statusOutput);
+            }
+
+            if (changedFiles.length > 0) {
+              taskValidationCommands = expandTaskValidationCommandsWithNewTests({
+                changedFiles,
+                existingCommands: taskValidationCommands,
+                worktreeRoot: ctx.cwd,
+                fileExists: (relPath) => existsSync(resolve(ctx.cwd, relPath)),
+              });
+            }
+          } catch {
+            // Fall back to original taskValidationCommands if git diff/status checks fail
           }
           const runDir =
             runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);

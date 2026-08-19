@@ -374,6 +374,177 @@ export async function checkTaskValidationCommandsSatisfiability(
   return diagnostics.join('\n\n');
 }
 
+export interface ExpandTaskValidationCommandsOptions {
+  changedFiles: string[];
+  existingCommands: ValidationCommand[];
+  worktreeRoot?: string;
+  fileExists?: (relativePath: string) => boolean;
+}
+
+export function isTestFileCoveredByCommands(
+  testPath: string,
+  existingCommands: ValidationCommand[],
+): boolean {
+  const normTestPath = testPath.replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '');
+
+  for (const cmd of existingCommands) {
+    if (typeof cmd === 'string' && cmd.trimStart().startsWith('!')) {
+      continue;
+    }
+
+    const argv = parseCommandArgv(cmd);
+    if (argv.length === 0) continue;
+
+    const cmdStr = Array.isArray(cmd) ? cmd.join(' ') : String(cmd);
+    if (
+      cmdStr.includes(normTestPath) ||
+      cmdStr.includes(`./${normTestPath}`) ||
+      argv.includes(normTestPath) ||
+      argv.includes(`./${normTestPath}`)
+    ) {
+      return true;
+    }
+
+    const targetPath = extractTargetTestFilePath(argv);
+    if (targetPath) {
+      if (targetPath === normTestPath) {
+        return true;
+      }
+      // Command specifically targets a different literal test file, so it does not cover normTestPath
+      continue;
+    }
+
+    // Check positional non-flag arguments for globs or directory prefixes
+    const positionalArgs = argv.slice(1).filter((arg) => {
+      if (arg.startsWith('-')) return false;
+      if (['run', 'exec', 'test', 'vitest', 'jest', 'playwright', 'pytest', 'pnpm', 'npx', 'npm'].includes(arg.toLowerCase())) {
+        return false;
+      }
+      return true;
+    });
+
+    if (positionalArgs.length === 0) {
+      // General test runner command with no file/dir restrictions (e.g. pnpm test, vitest run)
+      return true;
+    }
+
+    for (const arg of positionalArgs) {
+      const cleanArg = arg.replace(/^["']|["']$/g, '').replace(/\\/g, '/');
+      if (GLOB_METACHARACTERS.test(cleanArg)) {
+        if (globToRegex(cleanArg).test(normTestPath)) {
+          return true;
+        }
+      } else {
+        const normDir = cleanArg.replace(/\/+$/, '');
+        if (normTestPath === normDir || normTestPath.startsWith(`${normDir}/`)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+export function buildTargetedTestCommand(
+  testPath: string,
+  existingCommands: ValidationCommand[],
+): ValidationCommand {
+  const normTestPath = testPath.replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '');
+  let detectedRunner: TestRunnerKind | null = null;
+
+  for (const cmd of existingCommands) {
+    const argv = parseCommandArgv(cmd);
+    const runner = detectTestRunnerKind(argv);
+    if (runner) {
+      detectedRunner = runner;
+      break;
+    }
+  }
+
+  switch (detectedRunner) {
+    case 'jest':
+      return `pnpm jest ${shellQuote(normTestPath)}`;
+    case 'playwright':
+      return `pnpm playwright test ${shellQuote(normTestPath)}`;
+    case 'pytest':
+      return `pytest ${shellQuote(normTestPath)}`;
+    case 'vitest':
+    default:
+      return makeLiteralVitestStringStrict(`pnpm vitest run ${shellQuote(normTestPath)}`);
+  }
+}
+
+export function expandTaskValidationCommandsWithNewTests(
+  options: ExpandTaskValidationCommandsOptions,
+): ValidationCommand[] {
+  const { changedFiles, existingCommands, worktreeRoot: _worktreeRoot, fileExists } = options;
+  if (!changedFiles || changedFiles.length === 0) {
+    return existingCommands;
+  }
+
+  const checkExists = (relPath: string): boolean => {
+    if (fileExists) return fileExists(relPath);
+    return false;
+  };
+
+  const discoveredTestFiles = new Set<string>();
+
+  for (const rawPath of changedFiles) {
+    const normPath = rawPath.replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '');
+    if (!normPath) continue;
+
+    if (LITERAL_TEST_FILE.test(normPath) || /\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(normPath)) {
+      if (checkExists(normPath)) {
+        discoveredTestFiles.add(normPath);
+      }
+      continue;
+    }
+
+    // Source file: check for co-located tests
+    const lastSlash = normPath.lastIndexOf('/');
+    const dir = lastSlash !== -1 ? normPath.slice(0, lastSlash) : '.';
+    const filename = lastSlash !== -1 ? normPath.slice(lastSlash + 1) : normPath;
+    const nameWithoutExt = filename.replace(/\.[cm]?[jt]sx?$/i, '');
+
+    if (!nameWithoutExt || nameWithoutExt === filename) continue;
+
+    const extensions = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs', '.cts', '.cjs'];
+    const candidates: string[] = [];
+
+    for (const ext of extensions) {
+      candidates.push(`${dir}/__tests__/${nameWithoutExt}.test${ext}`);
+      candidates.push(`${dir}/__tests__/${nameWithoutExt}.spec${ext}`);
+      candidates.push(`${dir}/${nameWithoutExt}.test${ext}`);
+      candidates.push(`${dir}/${nameWithoutExt}.spec${ext}`);
+    }
+
+    for (const candidate of candidates) {
+      const cleanCandidate = candidate.replace(/^\.\//, '');
+      if (checkExists(cleanCandidate)) {
+        discoveredTestFiles.add(cleanCandidate);
+      }
+    }
+  }
+
+  const uncoveredTestFiles: string[] = [];
+  for (const testPath of discoveredTestFiles) {
+    if (!isTestFileCoveredByCommands(testPath, existingCommands)) {
+      uncoveredTestFiles.push(testPath);
+    }
+  }
+
+  if (uncoveredTestFiles.length === 0) {
+    return existingCommands;
+  }
+
+  const newCommands = uncoveredTestFiles.map((testPath) =>
+    buildTargetedTestCommand(testPath, existingCommands),
+  );
+
+  return [...existingCommands, ...newCommands];
+}
+
 export function buildTaskValidationCommands(
   manifest: TaskManifest,
   taskNumber: number,
