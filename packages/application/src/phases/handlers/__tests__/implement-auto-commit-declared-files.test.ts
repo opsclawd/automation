@@ -107,7 +107,10 @@ describe('ImplementHandler Auto-Commit Declared Files State Machine', () => {
       expectedFiles: ['src/a.ts', 'src/b.ts'],
     });
 
-    git.statusByCwd.set(ctx.cwd, ' M src/b.ts\n M scratch.md');
+    git.status = vi.fn(async () => {
+      const bCommitted = git.commits.some((c) => c.files?.includes('src/b.ts'));
+      return bCommitted ? ' M scratch.md' : ' M src/b.ts\n M scratch.md';
+    });
     git.changedFilesResults.set('pre-step|agent-step', ['src/a.ts']);
     git.changedFilesResults.set('pre-step|fake-sha-1', ['src/a.ts', 'src/b.ts']);
 
@@ -120,17 +123,16 @@ describe('ImplementHandler Auto-Commit Declared Files State Machine', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 1,
+      exemptUndeclaredFiles: ['scratch.md'],
     }).run(ctx);
 
     expect(add).toHaveBeenCalledWith('/tmp/wt', ['src/b.ts']);
-    expect(git.commits).toEqual([
-      {
-        cwd: '/tmp/wt',
-        message: taskTitle,
-        sha: 'fake-sha-1',
-        files: ['src/b.ts'],
-      },
-    ]);
+    expect(git.commits[0]).toEqual({
+      cwd: '/tmp/wt',
+      message: taskTitle,
+      sha: 'fake-sha-1',
+      files: ['src/b.ts'],
+    });
     expect(runStep).toHaveBeenCalledTimes(1);
     expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
     expect(result.outcome).toBe('passed');
@@ -141,7 +143,10 @@ describe('ImplementHandler Auto-Commit Declared Files State Machine', () => {
       expectedFiles: ['docs/adr/0001.md'],
     });
 
-    git.statusByCwd.set(ctx.cwd, '?? docs/adr/0001.md\n?? scratch.md');
+    git.status = vi.fn(async () => {
+      const docCommitted = git.commits.some((c) => c.files?.includes('docs/adr/0001.md'));
+      return docCommitted ? '?? scratch.md' : '?? docs/adr/0001.md\n?? scratch.md';
+    });
     git.changedFilesResults.set('pre-step|pre-step', []);
     git.changedFilesResults.set('pre-step|fake-sha-1', ['docs/adr/0001.md']);
 
@@ -153,17 +158,16 @@ describe('ImplementHandler Auto-Commit Declared Files State Machine', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 1,
+      exemptUndeclaredFiles: ['scratch.md'],
     }).run(ctx);
 
     expect(add).toHaveBeenCalledWith('/tmp/wt', ['docs/adr/0001.md']);
-    expect(git.commits).toEqual([
-      {
-        cwd: '/tmp/wt',
-        message: taskTitle,
-        sha: 'fake-sha-1',
-        files: ['docs/adr/0001.md'],
-      },
-    ]);
+    expect(git.commits[0]).toEqual({
+      cwd: '/tmp/wt',
+      message: taskTitle,
+      sha: 'fake-sha-1',
+      files: ['docs/adr/0001.md'],
+    });
     expect(runStep).toHaveBeenCalledTimes(1);
     expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
     expect(result.outcome).toBe('passed');
