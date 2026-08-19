@@ -19,6 +19,7 @@ import type {
 import type { FixStepOptions } from '../../review-fix/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
 import type { GitPort } from '../../ports/git-port.js';
+import { expandTaskValidationCommandsWithNewTests } from '../../task-validation-commands.js';
 
 function makeFakeGitPort(opts: {
   headSha: string | string[];
@@ -4779,5 +4780,117 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     expect(accepted).toBeDefined();
     expect(accepted?.metadata.revalidationOutcome).toBeUndefined();
     expect(accepted?.metadata.revalidationFailureDetail).toBeUndefined();
+  });
+});
+
+describe('mid-task test discovery and validation command expansion', () => {
+  it('prevents resolution when review-fix introduces a new source file with a failing test mid-task', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      subscribe: () => () => {},
+      publish: (_r, event) => events.push(event),
+    };
+
+    let reviewAttempts = 0;
+    let gitHead = 'sha-1';
+    const initialCommands: ValidationCommand[] = [
+      'pnpm vitest run src/existing.test.ts --passWithNoTests=false',
+    ];
+
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Extract Shared Scratch File Remediation Module',
+          validation_commands: initialCommands,
+        },
+      ],
+    };
+
+    let filesInTree = new Set(['src/existing.test.ts', 'src/existing.ts']);
+
+    const deps = makeDeps({
+      events: eventBus,
+      git: {
+        ...makeDeps().git,
+        headCommitSha: async () => gitHead,
+        changedFiles: async () => Array.from(filesInTree),
+        status: async () => '',
+      },
+      runImplement: async () => ({
+        invocationId: 'impl-1',
+        agentOutcome: 'success',
+      }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => {
+        reviewAttempts++;
+        if (reviewAttempts === 1) {
+          return { invocationId: 'sr-1', agentOutcome: 'success', verdict: 'fail' };
+        }
+        return { invocationId: 'sr-2', agentOutcome: 'success', verdict: 'pass' };
+      },
+      runQualityReview: async () => {
+        if (reviewAttempts === 1) {
+          return { invocationId: 'qr-1', agentOutcome: 'success', verdict: 'fail' };
+        }
+        return { invocationId: 'qr-2', agentOutcome: 'success', verdict: 'pass' };
+      },
+      runFix: async () => {
+        // Fix introduces a new source file and a failing co-located test
+        gitHead = 'sha-2';
+        filesInTree = new Set([
+          'src/existing.test.ts',
+          'src/existing.ts',
+          'packages/infrastructure/src/git/delete-worktree-file.ts',
+          'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
+        ]);
+        return {
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'sha-1',
+        };
+      },
+      runRevalidation: async (_ctx) => {
+        // Revalidation evaluates changed files since initialPreStepHead and expands task commands
+        const changedFiles = Array.from(filesInTree);
+        const expanded = expandTaskValidationCommandsWithNewTests({
+          changedFiles,
+          existingCommands: initialCommands,
+          fileExists: (p) => filesInTree.has(p),
+        });
+
+        const hasNewTest = expanded.some(
+          (cmd) =>
+            typeof cmd === 'string' &&
+            cmd.includes('delete-worktree-file.test.ts'),
+        );
+
+        if (hasNewTest) {
+          return {
+            validationRunId: 'val-fail',
+            passed: false,
+            failureDetail:
+              'FAIL packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts\n  > rejects absolute paths and returns false\n  AssertionError: expected true to be false',
+          };
+        }
+
+        return { validationRunId: 'val-pass', passed: true };
+      },
+    });
+
+    const input: ImplementStepLoopInput = {
+      ...baseInput(),
+      manifest,
+      initialPreStepHead: 'sha-0',
+      maxIterations: 3,
+    };
+
+    const result = await new ImplementStepLoop(deps).execute(input);
+
+    // The loop must not converge to success/resolved when the new mid-task test fails
+    expect(result.outcome).not.toBe('success');
   });
 });

@@ -358,6 +358,7 @@ export class ImplementStepLoop {
       return domainCompleteIteration(currentLoop, options);
     };
 
+    let hasFixLanded = false;
     let consecutiveFixFailures = 0;
     let lastFixInvocationId: string | undefined;
     let lastFixHeadBeforeFix: string | undefined;
@@ -1590,33 +1591,47 @@ export class ImplementStepLoop {
         const snapshotsMatch =
           specSnapshot === finalPairSpecSnapshot && qualitySnapshot === finalPairQualitySnapshot;
         if (snapshotsMatch) {
-          const currentHead = await deps.git?.headCommitSha(ctx.cwd);
-          this.emit(
-            input,
-            'loop.final_pair.confirmed',
-            'info',
-            `final pair confirmed: HEAD and snapshots stable`,
-            { head: currentHead, iterationIndex },
-          );
-          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
-          deps.loops.update(loop);
-          await appendHistory(
-            buildHistoryEntry(
-              iterationIndex,
-              specReview,
-              qualityReview,
-              undefined,
-              undefined,
-              'resolved',
-            ),
-          );
-          this.emitIterationCompleted(input, iterationIndex, 'resolved');
-          return { outcome: 'success', loop };
+          let revalPassed = true;
+          if (hasFixLanded && deps.runRevalidation) {
+            const reval = await deps.runRevalidation(ctx);
+            if (!reval.passed) {
+              revalPassed = false;
+              pendingTypecheckErrors = reval.failureDetail;
+              isInFinalPair = false;
+            }
+          }
+
+          if (revalPassed) {
+            const currentHead = await deps.git?.headCommitSha(ctx.cwd);
+            this.emit(
+              input,
+              'loop.final_pair.confirmed',
+              'info',
+              `final pair confirmed: HEAD and snapshots stable`,
+              { head: currentHead, iterationIndex },
+            );
+            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+            deps.loops.update(loop);
+            await appendHistory(
+              buildHistoryEntry(
+                iterationIndex,
+                specReview,
+                qualityReview,
+                undefined,
+                undefined,
+                'resolved',
+              ),
+            );
+            this.emitIterationCompleted(input, iterationIndex, 'resolved');
+            return { outcome: 'success', loop };
+          }
+        } else {
+          // Snapshots changed - continue to capture new baseline
+          finalPairSpecSnapshot = specSnapshot;
+          finalPairQualitySnapshot = qualitySnapshot;
+          persistReviewState();
         }
-        // Snapshots changed - continue to capture new baseline
-        finalPairSpecSnapshot = specSnapshot;
-        finalPairQualitySnapshot = qualitySnapshot;
-        persistReviewState();
+
         loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
         deps.loops.update(loop);
         await appendHistory(
@@ -1634,39 +1649,66 @@ export class ImplementStepLoop {
       }
 
       if (specReview.verdict === 'pass' && qualityReview.verdict === 'pass') {
-        // All dimensions clean - enter final pair tracking on next iteration
-        if (areAllDimensionsClean(dirtyDimensions) && !isInFinalPair) {
-          const head = await deps.git?.headCommitSha(ctx.cwd);
-          if (head) {
-            isInFinalPair = true;
-            finalPairCandidateHead = head;
-            finalPairSpecSnapshot = specReview.snapshot?.snapshot ?? '';
-            finalPairQualitySnapshot = qualityReview.snapshot?.snapshot ?? '';
-            this.emit(
-              input,
-              'loop.final_pair.candidate',
-              'info',
-              `entering final pair candidate state`,
-              { head, iterationIndex },
-            );
-            persistReviewState();
-            loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
-            deps.loops.update(loop);
-            await appendHistory(
-              buildHistoryEntry(
-                iterationIndex,
-                specReview,
-                qualityReview,
-                undefined,
-                undefined,
-                'unresolved',
-              ),
-            );
-            this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-            continue;
+        let revalPassed = true;
+        if (hasFixLanded && deps.runRevalidation) {
+          const reval = await deps.runRevalidation(ctx);
+          if (!reval.passed) {
+            revalPassed = false;
+            pendingTypecheckErrors = reval.failureDetail;
+            isInFinalPair = false;
           }
         }
-        loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+
+        if (revalPassed) {
+          // All dimensions clean - enter final pair tracking on next iteration
+          if (areAllDimensionsClean(dirtyDimensions) && !isInFinalPair) {
+            const head = await deps.git?.headCommitSha(ctx.cwd);
+            if (head) {
+              isInFinalPair = true;
+              finalPairCandidateHead = head;
+              finalPairSpecSnapshot = specReview.snapshot?.snapshot ?? '';
+              finalPairQualitySnapshot = qualityReview.snapshot?.snapshot ?? '';
+              this.emit(
+                input,
+                'loop.final_pair.candidate',
+                'info',
+                `entering final pair candidate state`,
+                { head, iterationIndex },
+              );
+              persistReviewState();
+              loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+              deps.loops.update(loop);
+              await appendHistory(
+                buildHistoryEntry(
+                  iterationIndex,
+                  specReview,
+                  qualityReview,
+                  undefined,
+                  undefined,
+                  'unresolved',
+                ),
+              );
+              this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+              continue;
+            }
+          }
+          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(loop);
+          await appendHistory(
+            buildHistoryEntry(
+              iterationIndex,
+              specReview,
+              qualityReview,
+              undefined,
+              undefined,
+              'resolved',
+            ),
+          );
+          this.emitIterationCompleted(input, iterationIndex, 'resolved');
+          return { outcome: 'success', loop };
+        }
+
+        loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
         deps.loops.update(loop);
         await appendHistory(
           buildHistoryEntry(
@@ -1675,11 +1717,11 @@ export class ImplementStepLoop {
             qualityReview,
             undefined,
             undefined,
-            'resolved',
+            'unresolved',
           ),
         );
-        this.emitIterationCompleted(input, iterationIndex, 'resolved');
-        return { outcome: 'success', loop };
+        this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        continue;
       }
 
       // --- FALLBACK ESCALATION ---
@@ -2354,6 +2396,7 @@ export class ImplementStepLoop {
             }
 
             if (committedSha) {
+              hasFixLanded = true;
               this.emit(
                 input,
                 'fix.auto_commit.succeeded',
@@ -2479,6 +2522,7 @@ export class ImplementStepLoop {
         }
       }
 
+      hasFixLanded = true;
       loop = completeIteration(loop, {
         outcome: 'fixed',
         fixInvocationId: fix.invocationId,

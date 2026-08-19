@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTaskValidationCommands,
   checkTaskValidationCommandsSatisfiability,
+  expandTaskValidationCommandsWithNewTests,
   globToRegex,
+  isTestFileCoveredByCommands,
   parseRunnerConfigExclusions,
 } from '../task-validation-commands.js';
 import type { TaskManifest } from '../phases/index.js';
@@ -373,5 +375,85 @@ describe('checkTaskValidationCommandsSatisfiability', () => {
     });
 
     expect(diagnostic).toBeNull();
+  });
+});
+
+describe('expandTaskValidationCommandsWithNewTests', () => {
+  it('detects covered and uncovered test files accurately with isTestFileCoveredByCommands', () => {
+    const commands: ValidationCommand[] = [
+      'pnpm vitest run packages/infrastructure/src/git/existing.test.ts --passWithNoTests=false',
+    ];
+
+    expect(
+      isTestFileCoveredByCommands(
+        'packages/infrastructure/src/git/existing.test.ts',
+        commands,
+      ),
+    ).toBe(true);
+
+    expect(
+      isTestFileCoveredByCommands(
+        'packages/infrastructure/src/git/delete-worktree-file.test.ts',
+        commands,
+      ),
+    ).toBe(false);
+
+    const generalCommands: ValidationCommand[] = ['pnpm test'];
+    expect(
+      isTestFileCoveredByCommands(
+        'packages/infrastructure/src/git/delete-worktree-file.test.ts',
+        generalCommands,
+      ),
+    ).toBe(true);
+  });
+
+  it('expands task validation commands when new source and co-located tests are added mid-task', () => {
+    const existingCommands: ValidationCommand[] = [
+      'pnpm vitest run packages/infrastructure/src/git/existing.test.ts --passWithNoTests=false',
+    ];
+
+    const changedFiles = [
+      'packages/infrastructure/src/git/delete-worktree-file.ts',
+      'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
+    ];
+
+    const existingFiles = new Set([
+      'packages/infrastructure/src/git/delete-worktree-file.ts',
+      'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
+    ]);
+
+    const result = expandTaskValidationCommandsWithNewTests({
+      changedFiles,
+      existingCommands,
+      fileExists: (p) => existingFiles.has(p),
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual(existingCommands[0]);
+    expect(result[1]).toContain(
+      'pnpm vitest run \'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts\'',
+    );
+  });
+
+  it('does not duplicate commands if the new test file is already covered', () => {
+    const existingCommands: ValidationCommand[] = [
+      'pnpm vitest run packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts --passWithNoTests=false',
+    ];
+
+    const changedFiles = [
+      'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
+    ];
+
+    const existingFiles = new Set([
+      'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
+    ]);
+
+    const result = expandTaskValidationCommandsWithNewTests({
+      changedFiles,
+      existingCommands,
+      fileExists: (p) => existingFiles.has(p),
+    });
+
+    expect(result).toEqual(existingCommands);
   });
 });
