@@ -82,7 +82,14 @@ const base = {
   now: () => new Date('2026-01-01T00:00:00Z'),
 } satisfies Omit<
   PhaseHandlerContext,
-  'promptsRoot' | 'startCommitSha' | 'expectedBranch' | 'resolveProfile' | 'idFactory'
+  | 'promptsRoot'
+  | 'startCommitSha'
+  | 'expectedBranch'
+  | 'baseBranch'
+  | 'resolveProfile'
+  | 'idFactory'
+  | 'readWorktreeFile'
+  | 'deleteWorktreeFile'
 >;
 
 describe('buildPhaseHandlerContext', () => {
@@ -108,17 +115,23 @@ describe('buildPhaseHandlerContext', () => {
     expect(ctx.expectedBranch).toBeUndefined();
     expect(ctx.resolveProfile).toBeUndefined();
     expect(ctx.idFactory).toBeUndefined();
+    expect(ctx.readWorktreeFile).toBeUndefined();
+    expect(ctx.deleteWorktreeFile).toBeUndefined();
   });
 
   it('populates all optional fields when provided', () => {
     const resolveProfile = (_p: string) => 'opencode-frontier';
     const idFactory = () => 'custom-id';
+    const readWorktreeFile = async () => 'content';
+    const deleteWorktreeFile = async () => true;
     const ctx = buildPhaseHandlerContext(base, {
       promptsRoot: '/prompts',
       startCommitSha: 'abc123',
       expectedBranch: 'feature/foo',
       resolveProfile,
       idFactory,
+      readWorktreeFile,
+      deleteWorktreeFile,
     });
     expect(ctx.promptsRoot).toBe('/prompts');
     expect(ctx.startCommitSha).toBe('abc123');
@@ -127,6 +140,8 @@ describe('buildPhaseHandlerContext', () => {
     expect(ctx.resolveProfile?.('any')).toBe('opencode-frontier');
     expect(ctx.idFactory).toBe(idFactory);
     expect(ctx.idFactory?.()).toBe('custom-id');
+    expect(ctx.readWorktreeFile).toBe(readWorktreeFile);
+    expect(ctx.deleteWorktreeFile).toBe(deleteWorktreeFile);
   });
 
   it('populates a subset of optional fields', () => {

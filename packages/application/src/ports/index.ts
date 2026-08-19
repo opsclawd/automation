@@ -138,3 +138,4 @@ export type {
   RevertProtectedFilesPort,
 } from './protected-file-reverter-port.js';
 export type { ReadWorktreeFilePort } from './read-worktree-file-port.js';
+export type { DeleteWorktreeFilePort } from './delete-worktree-file-port.js';

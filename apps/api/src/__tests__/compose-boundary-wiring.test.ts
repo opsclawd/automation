@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -247,5 +247,42 @@ describe('ValidateFixLoop and ReviewFixLoop wiring in composeRoot', () => {
     expect(typeof ctx.readWorktreeFile).toBe('function');
     const content = await ctx.readWorktreeFile!(root, testFile);
     expect(content).toBe('manifest content for phase');
+  });
+
+  it('wires deleteWorktreeFile into buildPhaseHandlerContext', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-delete-')));
+    const scriptPath = fakeScript(0);
+    writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(makeAgentConfig()));
+
+    const container = composeRoot({
+      repoRoot: root,
+      scriptPath,
+      metadataResolver: FAKE_METADATA_RESOLVER,
+    });
+
+    const testFile = 'scratch-to-delete.txt';
+    const filePath = path.join(root, testFile);
+    writeFileSync(filePath, 'scratch file content');
+    expect(existsSync(filePath)).toBe(true);
+
+    const ctx = container.buildPhaseHandlerContext({
+      runId: 'run-1',
+      runUuid: '550e8400-e29b-41d4-a716-446655440000',
+      repoFullName: 'owner/repo',
+      issueNumber: 1,
+      cwd: root,
+      artifacts: container.artifactRepository,
+      github: {} as unknown as import('@ai-sdlc/application').GitHubPort,
+      git: container.git,
+      agent: {} as unknown as import('@ai-sdlc/application').AgentPort,
+      events: container.eventBus,
+      now: () => new Date(),
+    });
+
+    expect(ctx.deleteWorktreeFile).toBeDefined();
+    expect(typeof ctx.deleteWorktreeFile).toBe('function');
+    const deleted = await ctx.deleteWorktreeFile!(root, testFile);
+    expect(deleted).toBe(true);
+    expect(existsSync(filePath)).toBe(false);
   });
 });

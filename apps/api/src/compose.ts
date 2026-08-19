@@ -247,6 +247,7 @@ import {
   RepositoryRegistryRepository,
   StructuredResultRepair,
   createSignatureReferenceAnalyzer,
+  deleteWorktreeFile,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { deriveTrustedImplicatedFiles } from './typecheck-implicated-files.js';
@@ -5588,7 +5589,11 @@ export function composeRoot(opts: ComposeOptions): Container {
           enabled: config.phases.planReview?.enabled === true,
         }),
       );
-      phaseRegistry.register(new CompoundHandler());
+      phaseRegistry.register(
+        new CompoundHandler({
+          exemptUndeclaredFiles: config.phases.implement.exemptUndeclaredFiles,
+        }),
+      );
 
       const worktreeSetup = async (cwd: string): Promise<{ ok: boolean; error?: string }> => {
         try {
@@ -5687,6 +5692,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             maxDeclaredFilesRetries: config.phases.implement.maxDeclaredFilesRetries,
             exemptUndeclaredFiles: config.phases.implement.exemptUndeclaredFiles,
             revertProtectedFiles,
+            deleteWorktreeFile,
           }),
         );
       }
@@ -6888,6 +6894,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       ...(resolveProfileForPhaseBound ? { resolveProfile: resolveProfileForPhaseBound } : {}),
       idFactory,
       readWorktreeFile,
+      deleteWorktreeFile,
       ...opts,
     };
   };
