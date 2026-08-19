@@ -170,6 +170,7 @@ import {
   fingerprintFinding,
   type RepositoryAvailabilityPort,
   type AgentPort,
+  type RunAbortPort,
   type ValidationPort,
   type ValidationCommand,
   buildTaskValidationCommands,
@@ -625,6 +626,7 @@ export interface Container {
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   loadRepositoryForRun: LoadRepositoryForRun;
+  runAbort: RunAbortPort;
   cancelRun: CancelRun;
   checkMergeReadiness: CheckMergeReadiness;
   stepRepository: StepRepositoryPort;
@@ -727,7 +729,7 @@ export interface ComposeOptions {
   validationPort?: ValidationPort;
 }
 
-class AbortRegistry {
+class AbortRegistry implements RunAbortPort {
   private readonly entries = new Map<
     string,
     { controller: AbortController; done: Promise<void> }
@@ -737,16 +739,22 @@ class AbortRegistry {
     this.entries.set(runId, { controller, done });
   }
 
-  async abort(runId: string): Promise<void> {
+  async abort(runId: string): Promise<import('@ai-sdlc/application').AbortResult> {
     const entry = this.entries.get(runId);
-    if (entry) {
-      entry.controller.abort();
-      let timer: NodeJS.Timeout;
-      const timeout = new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, 30_000);
-      });
-      await Promise.race([entry.done.catch(() => {}), timeout]).finally(() => clearTimeout(timer));
+    if (!entry) {
+      return { status: 'not_found' };
     }
+    entry.controller.abort();
+    let timer: NodeJS.Timeout;
+    const timeout = new Promise<{ status: 'timed_out' }>((resolve) => {
+      timer = setTimeout(() => resolve({ status: 'timed_out' }), 30_000);
+    });
+    const donePromise = entry.done
+      .then(() => ({ status: 'exited' as const }))
+      .catch(() => ({ status: 'exited' as const }));
+
+    const res = await Promise.race([donePromise, timeout]).finally(() => clearTimeout(timer));
+    return res;
   }
 
   unregister(runId: string): void {
@@ -6250,10 +6258,34 @@ export function composeRoot(opts: ComposeOptions): Container {
           leases: workerLeaseRepository,
           repos: registryBackedRepo,
           repoId,
-          executeRun: async ({ run, signal: _signal }) => {
+          executeRun: async ({ run, signal }) => {
             runRepository.update(run.uuid, { pid: process.pid });
-            const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
-            return { ok: result.run.status === 'passed' };
+            const controller = new AbortController();
+            const onAbort = () => {
+              controller.abort(signal?.reason);
+            };
+            if (signal) {
+              if (signal.aborted) {
+                controller.abort(signal.reason);
+              } else {
+                signal.addEventListener('abort', onAbort, { once: true });
+              }
+            }
+            let doneResolve!: () => void;
+            const donePromise = new Promise<void>((resolve) => {
+              doneResolve = resolve;
+            });
+            abortRegistry.register(RunId(run.uuid), controller, donePromise);
+            try {
+              const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
+              return { ok: result.run.status === 'passed' };
+            } finally {
+              doneResolve();
+              abortRegistry.unregister(RunId(run.uuid));
+              if (signal) {
+                signal.removeEventListener('abort', onAbort);
+              }
+            }
           },
           prepareWorktree: async ({ repoId, runId, signal: _signal }) => {
             const r = runRepository.findByUuid(runId);
@@ -7117,6 +7149,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     runValidation,
     startIssueRun,
     loadRepositoryForRun,
+    runAbort: abortRegistry,
     cancelRun,
     checkMergeReadiness,
     stepRepository,

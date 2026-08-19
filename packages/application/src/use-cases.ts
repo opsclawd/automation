@@ -1,4 +1,5 @@
-import type { RepositoryId, IssueNumber, RunId, JobId, WorkerId } from '@ai-sdlc/domain';
+import type { RepositoryId, IssueNumber, RunId, JobId, WorkerId, RunStatus } from '@ai-sdlc/domain';
+import type { AbortResult } from './ports/run-abort-port.js';
 
 export interface StartIssueRunUseCase {
   /** Enqueues a Job; never executes the phase pipeline inline. */
@@ -21,8 +22,15 @@ export interface RetryFailedPhaseUseCase {
   execute(input: { runId: RunId; workerId: WorkerId }): Promise<void>;
 }
 
+export interface CancelRunResult {
+  runId: RunId;
+  status: RunStatus;
+  abortStatus: AbortResult['status'];
+  worktreeReset: boolean;
+}
+
 export interface CancelRunUseCase {
-  execute(input: { runId: RunId; reason?: string }): Promise<void>;
+  execute(input: { runId: RunId; reason?: string }): Promise<CancelRunResult>;
 }
 
 export interface ClaimNextJobUseCase {

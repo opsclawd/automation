@@ -360,10 +360,16 @@ describe('ImplementHandler scratch-file reporting', () => {
       );
       harness.ctx.cwd = tmpCwd;
       harness.git.headByCwd.set(tmpCwd, 'pre-step');
-      harness.git.statusByCwd.set(
-        tmpCwd,
-        '?? plan.md\n?? task-manifest.json\n?? task-context-step-1.md\n?? implement-step-history-1.json\n?? scratch-tool.js',
-      );
+      harness.git.status = vi.fn(async () => {
+        const files = [
+          'plan.md',
+          'task-manifest.json',
+          'task-context-step-1.md',
+          'implement-step-history-1.json',
+          'scratch-tool.js',
+        ].filter((f) => existsSync(join(tmpCwd, f)));
+        return files.map((f) => `?? ${f}`).join('\n');
+      });
       harness.git.changedFilesResults.set('pre-step|post-step', ['src/declared.ts']);
 
       const result = await new ImplementHandler({

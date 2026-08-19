@@ -1,5 +1,5 @@
 import { cancelRun, LeaseOwnershipLostError } from '@ai-sdlc/domain';
-import type { RunId } from '@ai-sdlc/domain'; // run identification
+import type { RunId, RunStatus } from '@ai-sdlc/domain'; // run identification
 import type {
   RunRepositoryPort,
   RunAbortPort,
@@ -8,8 +8,9 @@ import type {
   LoggerPort,
   ResolveWorktreeCwdFn,
   ResolveStartCommitShaFn,
+  AbortResult,
 } from './ports.js';
-import type { CancelRunUseCase } from './use-cases.js';
+import type { CancelRunUseCase, CancelRunResult } from './use-cases.js';
 
 export interface CancelRunDeps {
   runRepository: RunRepositoryPort;
@@ -25,7 +26,7 @@ export interface CancelRunDeps {
 export class CancelRun implements CancelRunUseCase {
   constructor(private readonly deps: CancelRunDeps) {}
 
-  async execute(input: { runId: RunId; reason?: string }): Promise<void> {
+  async execute(input: { runId: RunId; reason?: string }): Promise<CancelRunResult> {
     const now = this.deps.now ?? (() => new Date());
     const run = this.deps.runRepository.findByUuid(input.runId);
     if (!run) {
@@ -55,8 +56,14 @@ export class CancelRun implements CancelRunUseCase {
     }
 
     // Step 3: Abort agent (best-effort)
+    let abortStatus: AbortResult['status'] = 'not_found';
     try {
-      await runAbort.abort(input.runId);
+      const abortRes = await runAbort.abort(input.runId);
+      if (abortRes && abortRes.status) {
+        abortStatus = abortRes.status;
+      } else {
+        abortStatus = 'exited';
+      }
     } catch (err) {
       this.deps.logger.error(`CancelRun: abort failed for ${input.runId}`, err);
     }
@@ -67,17 +74,23 @@ export class CancelRun implements CancelRunUseCase {
     }
 
     // Step 4: Reset worktree (best-effort) — independent of repoId
-    // If the worktree directory was never created (e.g., run failed before
-    // worktree setup), resetHard/cleanUntracked throw on missing directories.
-    // The catch block logs and swallows the error, which is benign — the run
-    // is already being cancelled and logging the issue is sufficient.
-    try {
-      const cwd = this.deps.findCwd(input.runId);
-      const startCommitSha = this.deps.findStartCommitSha(input.runId);
-      await git.resetHard(cwd, startCommitSha);
-      await git.cleanUntracked(cwd);
-    } catch (err) {
-      this.deps.logger.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
+    // CRITICAL: Do NOT reset worktree if abort timed out, because a still-running
+    // process may still be writing to the worktree and would race with the reset.
+    let worktreeReset = false;
+    if (abortStatus === 'timed_out') {
+      this.deps.logger.error(
+        `CancelRun: abort timed out for ${input.runId}; skipping worktree reset to avoid racing with still-running process`,
+      );
+    } else {
+      try {
+        const cwd = this.deps.findCwd(input.runId);
+        const startCommitSha = this.deps.findStartCommitSha(input.runId);
+        await git.resetHard(cwd, startCommitSha);
+        await git.cleanUntracked(cwd);
+        worktreeReset = true;
+      } catch (err) {
+        this.deps.logger.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
+      }
     }
 
     // Step 5: Release lease (best-effort) — requires repoId
@@ -105,5 +118,12 @@ export class CancelRun implements CancelRunUseCase {
         }
       }
     }
+
+    return {
+      runId: input.runId,
+      status: cancelled.status as RunStatus,
+      abortStatus,
+      worktreeReset,
+    };
   }
 }

@@ -410,10 +410,34 @@ function buildSchedulerDeps(
       leases: runtime.workerLeaseRepository,
       repos: runtime.workerLoopDeps.repos,
       repoId: runtime.repository.id,
-      executeRun: async ({ run: r }) => {
+      executeRun: async ({ run: r, signal }) => {
         runtime.runRepository.update(r.uuid, { pid: process.pid });
-        const result = await runExecutor.execute({ run: r, skip: [], presentArtifacts: [] });
-        return { ok: result.run.status === 'passed' };
+        const controller = new AbortController();
+        const onAbort = () => {
+          controller.abort(signal?.reason);
+        };
+        if (signal) {
+          if (signal.aborted) {
+            controller.abort(signal.reason);
+          } else {
+            signal.addEventListener('abort', onAbort, { once: true });
+          }
+        }
+        let doneResolve!: () => void;
+        const donePromise = new Promise<void>((resolve) => {
+          doneResolve = resolve;
+        });
+        c.runAbort.register(RunId(r.uuid), controller, donePromise);
+        try {
+          const result = await runExecutor.execute({ run: r, skip: [], presentArtifacts: [] });
+          return { ok: result.run.status === 'passed' };
+        } finally {
+          doneResolve();
+          c.runAbort.unregister(RunId(r.uuid));
+          if (signal) {
+            signal.removeEventListener('abort', onAbort);
+          }
+        }
       },
       prepareWorktree: async ({ repoId: _repoId, runId: rId }) => {
         const r = runtime.runRepository.findByUuid(rId);
@@ -1409,11 +1433,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   }
                 }
               }
-              await c.cancelRun.execute({
+              const cancelResult = await c.cancelRun.execute({
                 runId: RunId(uuid),
                 ...(opts.reason ? { reason: opts.reason } : {}),
               });
-              process.stdout.write('Run cancelled successfully\n');
+              if (cancelResult.abortStatus === 'timed_out') {
+                process.stdout.write(
+                  'Run cancelled, but process abort timed out. Worktree was NOT reset because the process may still be running.\n',
+                );
+              } else {
+                process.stdout.write('Run cancelled successfully\n');
+              }
             } catch (err) {
               console.error(err instanceof Error ? err.message : String(err));
               process.exit(EXIT_USER_ERROR);
