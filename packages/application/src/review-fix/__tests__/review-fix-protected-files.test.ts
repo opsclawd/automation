@@ -51,7 +51,14 @@ function makeFakeGit(opts: { headSha: string; changedFilesList?: string[] }): Gi
     headCommitShaOf: async () => undefined,
     status: async () => '',
     resetWorktreeIfClean: async () => undefined,
-    changedFiles: async () => opts.changedFilesList ?? [],
+    changedFiles: async (_cwd, _base, target) => {
+      if (target?.startsWith('sha-amended')) {
+        return (opts.changedFilesList ?? []).filter(
+          (f) => !f.startsWith('.') && !f.includes('.github'),
+        );
+      }
+      return opts.changedFilesList ?? [];
+    },
   };
 }
 
