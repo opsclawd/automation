@@ -246,6 +246,7 @@ import {
   RepositoryRegistryRepository,
   StructuredResultRepair,
   createSignatureReferenceAnalyzer,
+  deleteWorktreeFile,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { deriveTrustedImplicatedFiles } from './typecheck-implicated-files.js';
@@ -5679,6 +5680,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             maxDeclaredFilesRetries: config.phases.implement.maxDeclaredFilesRetries,
             exemptUndeclaredFiles: config.phases.implement.exemptUndeclaredFiles,
             revertProtectedFiles,
+            deleteWorktreeFile,
           }),
         );
       }
@@ -6856,6 +6858,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       ...(resolveProfileForPhaseBound ? { resolveProfile: resolveProfileForPhaseBound } : {}),
       idFactory,
       readWorktreeFile,
+      deleteWorktreeFile,
       ...opts,
     };
   };

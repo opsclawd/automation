@@ -28,6 +28,7 @@ import type {
   RevertProtectedFilesPort,
   RevertProtectedFilesResult,
 } from '../../ports/protected-file-reverter-port.js';
+import type { DeleteWorktreeFilePort } from '../../ports/delete-worktree-file-port.js';
 import { isProtectedFilePath, remediateScratchFiles } from '../../scratch-file-remediation.js';
 export type { ScratchFileStepRecord, ScratchFilesReport } from '../../scratch-file-remediation.js';
 
@@ -169,9 +170,10 @@ export interface ImplementHandlerOpts {
   validationPort?: ValidationPort;
   runWorkspaceTypecheck?: RunWorkspaceTypecheckPort;
   typecheckLogDir?: string | ((runUuid: string) => string);
-  maxDeclaredFilesRetries?: number;
-  exemptUndeclaredFiles?: string[];
-  revertProtectedFiles?: RevertProtectedFilesPort;
+  maxDeclaredFilesRetries?: number | undefined;
+  exemptUndeclaredFiles?: string[] | undefined;
+  revertProtectedFiles?: RevertProtectedFilesPort | undefined;
+  deleteWorktreeFile?: DeleteWorktreeFilePort | undefined;
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -457,6 +459,7 @@ export class ImplementHandler implements PhaseHandler {
               referenceFiles: referenceSet,
               exemptFiles: exemptSet,
               artifacts: ctx.artifacts,
+              deleteWorktreeFile: this.opts.deleteWorktreeFile ?? ctx.deleteWorktreeFile,
               emit,
               phase: 'implement',
               stepIndex: d.index,

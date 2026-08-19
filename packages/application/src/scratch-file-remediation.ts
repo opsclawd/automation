@@ -1,4 +1,5 @@
 import type { EventEmitter, PhaseHandlerContext } from './phases/handler.js';
+import type { DeleteWorktreeFilePort } from './ports/delete-worktree-file-port.js';
 import { normalizeTaskPath } from './task-file-boundaries.js';
 import {
   unquoteGitPath,
@@ -36,6 +37,7 @@ export function undeclaredUntrackedFiles(
 }
 
 export interface ScratchFileStepRecord {
+  phaseId?: string | undefined;
   stepIndex: number;
   totalSteps: number;
   stepTitle: string;
@@ -72,9 +74,11 @@ export async function recordScratchFilesReport(
   }
 
   const existingIdx = report.steps.findIndex(
-    (s) => s.stepTitle === stepTitle || (stepIndex !== 0 && s.stepIndex === stepIndex),
+    (s) =>
+      (s.phaseId ?? 'implement') === phaseId &&
+      (s.stepTitle === stepTitle || (stepIndex !== 0 && s.stepIndex === stepIndex)),
   );
-  const newRecord: ScratchFileStepRecord = { stepIndex, totalSteps, stepTitle, files };
+  const newRecord: ScratchFileStepRecord = { phaseId, stepIndex, totalSteps, stepTitle, files };
   if (existingIdx >= 0) {
     report.steps[existingIdx] = newRecord;
   } else {
@@ -101,11 +105,12 @@ export interface RemediateScratchFilesOptions {
   referenceFiles: ReadonlySet<string>;
   exemptFiles: ReadonlySet<string>;
   artifacts: Pick<PhaseHandlerContext['artifacts'], 'read' | 'write'>;
-  emit?: EventEmitter;
-  phase?: string;
-  stepIndex?: number;
-  totalSteps?: number;
-  stepTitle?: string;
+  deleteWorktreeFile?: DeleteWorktreeFilePort | undefined;
+  emit?: EventEmitter | undefined;
+  phase?: string | undefined;
+  stepIndex?: number | undefined;
+  totalSteps?: number | undefined;
+  stepTitle?: string | undefined;
 }
 
 export interface RemediateScratchFilesResult {
@@ -169,30 +174,19 @@ export async function remediateScratchFiles(
   }
 
   const deletedRootFiles: string[] = [];
-  try {
-    const fsModName = 'node' + ':fs';
-    const fs = (await import(/* @vite-ignore */ fsModName)) as {
-      existsSync: (p: string) => boolean;
-      unlinkSync: (p: string) => void;
-    };
+  if (opts.deleteWorktreeFile) {
     for (const file of rootFiles) {
       try {
-        const targetPath = `${opts.cwd.replace(/\/+$/, '')}/${file}`;
-        if (
-          targetPath.startsWith(opts.cwd) &&
-          !file.includes('/') &&
-          !isProtectedFilePath(file) &&
-          fs.existsSync(targetPath)
-        ) {
-          fs.unlinkSync(targetPath);
-          deletedRootFiles.push(file);
+        if (!file.includes('/') && !isProtectedFilePath(file)) {
+          const deleted = await opts.deleteWorktreeFile(opts.cwd, file);
+          if (deleted) {
+            deletedRootFiles.push(file);
+          }
         }
       } catch {
         // File deletion is best-effort
       }
     }
-  } catch {
-    // File deletion is best-effort
   }
 
   await recordScratchFilesReport(

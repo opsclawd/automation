@@ -59,6 +59,18 @@ async function makeHarness(task: TaskSurface, status: string) {
     },
     now: () => new Date('2026-08-16T18:00:00.000Z'),
     idFactory: () => 'step-1',
+    deleteWorktreeFile: async (cwd: string, rel: string) => {
+      try {
+        const p = join(cwd, rel);
+        if (existsSync(p)) {
+          rmSync(p);
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    },
   } satisfies PhaseHandlerContext;
 
   git.headByCwd.set(ctx.cwd, 'pre-step');
@@ -227,6 +239,7 @@ describe('ImplementHandler scratch-file reporting', () => {
       expect(parsed).toEqual({
         steps: [
           {
+            phaseId: 'implement',
             stepIndex: 1,
             totalSteps: 1,
             stepTitle: 'detect scratch files',

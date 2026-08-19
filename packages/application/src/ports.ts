@@ -341,3 +341,4 @@ export type {
   RevertProtectedFilesResult,
   RevertProtectedFilesPort,
 } from './ports/protected-file-reverter-port.js';
+export type { DeleteWorktreeFilePort } from './ports/delete-worktree-file-port.js';
