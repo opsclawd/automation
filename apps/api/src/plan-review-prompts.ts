@@ -301,10 +301,10 @@ export function buildPlanReviewReviewPrompt(
   basePrompt: string,
   opts?: PlanReviewStepOptions,
 ): string {
-  if (opts === undefined) return basePrompt;
-  const scopeBlock = buildPlanReviewReviewScopeBlock(opts);
-  if (!scopeBlock) return basePrompt;
-  return [basePrompt, scopeBlock].join('\n\n');
+  const scopeBlock = opts ? buildPlanReviewReviewScopeBlock(opts) : '';
+  const withScope = scopeBlock ? [basePrompt, scopeBlock].join('\n\n') : basePrompt;
+  if (withScope.includes(SCRATCH_FILE_POLICY)) return withScope;
+  return [withScope, '', '## SCRATCH WORKSPACE POLICY', '', SCRATCH_FILE_POLICY].join('\n');
 }
 
 /**

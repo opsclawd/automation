@@ -225,7 +225,11 @@ export class RunExecutor {
       }
 
       // Run handler
-      const ctx = this.deps.contextFactory(run);
+      // Use `currentRun` (not the function-parameter `run`) so context-derived
+      // state like `priorPhaseName` reflects phases completed earlier in this
+      // same execution. The function-parameter `run` was captured before any
+      // phase completed, so its `completedPhases` would always be empty.
+      const ctx = this.deps.contextFactory(currentRun);
       let result: PhaseResult;
       try {
         result = await handler.run(ctx);
