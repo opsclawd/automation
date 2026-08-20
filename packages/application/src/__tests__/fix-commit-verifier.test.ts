@@ -48,7 +48,7 @@ describe('verifyFixCommit', () => {
     expect(result.kind).toBe('uncommitted_changes');
     if (result.kind === 'uncommitted_changes') {
       expect(result.headAfterFix).toBe('after');
-      expect(result.dirtyFiles).toEqual([' M packages/foo.ts']);
+      expect(result.dirtyFiles).toEqual(['packages/foo.ts']);
     }
   });
 
@@ -60,7 +60,7 @@ describe('verifyFixCommit', () => {
     const result = await verifyFixCommit({ git, cwd: '/wt', expectedHead: 'same' });
     expect(result.kind).toBe('uncommitted_changes');
     if (result.kind === 'uncommitted_changes') {
-      expect(result.dirtyFiles).toEqual([' M packages/foo.ts', ' M README.md']);
+      expect(result.dirtyFiles).toEqual(['README.md', 'packages/foo.ts']);
     }
   });
 
@@ -95,6 +95,47 @@ describe('verifyFixCommit', () => {
     expect(result.kind).toBe('verification_error');
     if (result.kind === 'verification_error') {
       expect(result.error).toMatch(/not a git repo/);
+    }
+  });
+
+  it('returns advanced when HEAD advanced and status contains only untracked orchestrator artifacts', async () => {
+    const git = makeGit({
+      headSha: 'after',
+      statusOutput:
+        [
+          '?? design.md',
+          '?? task-manifest.json',
+          '?? task-context-step-1.md',
+          '?? quality-review-result-1.json',
+          '?? plan.md',
+        ].join('\n') + '\n',
+    });
+    const result = await verifyFixCommit({ git, cwd: '/wt', expectedHead: 'before' });
+    expect(result.kind).toBe('advanced');
+    if (result.kind === 'advanced') {
+      expect(result.headAfterFix).toBe('after');
+    }
+  });
+
+  it('returns no_commit_claimed when HEAD unchanged and status contains only untracked orchestrator artifacts', async () => {
+    const git = makeGit({
+      headSha: 'same',
+      statusOutput: '?? design.md\n?? task-manifest.json\n',
+    });
+    const result = await verifyFixCommit({ git, cwd: '/wt', expectedHead: 'same' });
+    expect(result.kind).toBe('no_commit_claimed');
+  });
+
+  it('returns uncommitted_changes with filtered dirtyFiles when status contains real source files and orchestrator artifacts', async () => {
+    const git = makeGit({
+      headSha: 'after',
+      statusOutput:
+        [' M packages/foo.ts', '?? design.md', '?? task-manifest.json'].join('\n') + '\n',
+    });
+    const result = await verifyFixCommit({ git, cwd: '/wt', expectedHead: 'before' });
+    expect(result.kind).toBe('uncommitted_changes');
+    if (result.kind === 'uncommitted_changes') {
+      expect(result.dirtyFiles).toEqual(['packages/foo.ts']);
     }
   });
 });

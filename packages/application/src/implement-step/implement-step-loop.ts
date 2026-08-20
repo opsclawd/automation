@@ -2366,7 +2366,7 @@ export class ImplementStepLoop {
 
             for (let attempt = 1; attempt <= 2; attempt++) {
               try {
-                await this.deps.git!.addAll(baseCtx.cwd);
+                await this.deps.git!.add(baseCtx.cwd, verification.dirtyFiles);
                 committedSha = await this.deps.git!.commit(baseCtx.cwd, message);
                 break;
               } catch (err: unknown) {
@@ -2681,7 +2681,8 @@ export class ImplementStepLoop {
           headAfter !== undefined &&
           headAfter !== terminalFix.headBeforeFix;
         const statusOutput = await deps.git.status(baseCtx.cwd);
-        const dirty = statusOutput.trim().length > 0;
+        const dirtySource = uncommittedSourcePaths(statusOutput);
+        const dirty = dirtySource.length > 0;
 
         if (dirty) {
           // Never commit a broken tree: typecheck gates the auto-commit. A
@@ -2691,7 +2692,7 @@ export class ImplementStepLoop {
           typecheckAfterFix = await deps.runTypecheck(baseCtx);
           if (typecheckAfterFix.outcome === 'pass') {
             try {
-              await deps.git.addAll(baseCtx.cwd);
+              await deps.git.add(baseCtx.cwd, dirtySource);
               await deps.git.commit(
                 baseCtx.cwd,
                 `fix: ${input.stepTitle} (terminal fix — auto-committed)`,

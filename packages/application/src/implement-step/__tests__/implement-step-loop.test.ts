@@ -44,6 +44,7 @@ function makeFakeGitPort(opts: {
     resetHard: async () => undefined,
     diff: async () => '',
     diffStat: async () => '',
+    add: async () => undefined,
     addAll: async () => undefined,
     commit: async () => 'sha-new',
     push: async () => undefined,
@@ -3387,9 +3388,9 @@ describe('ImplementStepLoop auto-commit fallback', () => {
     const { events, bus } = collectEvents();
     const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
     let commitCalled = false;
-    let addAllCalled = false;
-    git.addAll = async () => {
-      addAllCalled = true;
+    let addCalled = false;
+    git.add = async () => {
+      addCalled = true;
     };
     git.commit = async (cwd, message) => {
       commitCalled = true;
@@ -3421,7 +3422,7 @@ describe('ImplementStepLoop auto-commit fallback', () => {
     });
 
     const result = await new ImplementStepLoop(deps).execute(baseInput());
-    expect(addAllCalled).toBe(true);
+    expect(addCalled).toBe(true);
     expect(commitCalled).toBe(true);
     expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
     // Iteration 1 is implement + initial TC (pass). Then it enters review-fix loop.
@@ -3769,9 +3770,9 @@ describe('ImplementStepLoop auto-commit fallback', () => {
     const { events, bus } = collectEvents();
     const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
     let commitCalled = false;
-    let addAllCalled = false;
-    git.addAll = async () => {
-      addAllCalled = true;
+    let addCalled = false;
+    git.add = async () => {
+      addCalled = true;
     };
     git.commit = async (_cwd, _message) => {
       commitCalled = true;
@@ -3797,7 +3798,7 @@ describe('ImplementStepLoop auto-commit fallback', () => {
     });
 
     const result = await new ImplementStepLoop(deps).execute(baseInput());
-    expect(addAllCalled).toBe(true);
+    expect(addCalled).toBe(true);
     expect(commitCalled).toBe(true);
     expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
     expect(result.loop.iterations[0].outcome).toBe('fixed');
@@ -4275,10 +4276,10 @@ describe('ImplementStepLoop terminal fix escalation', () => {
   it('auto-commits a dirty terminal fix after typecheck passes, then accepts on verification', async () => {
     const { bus, events } = collectEvents();
     const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
-    let addAllCalled = false;
+    let addCalled = false;
     let commitCalled = false;
-    git.addAll = async () => {
-      addAllCalled = true;
+    git.add = async () => {
+      addCalled = true;
     };
     git.commit = async (_cwd, message) => {
       commitCalled = true;
@@ -4309,7 +4310,7 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
 
     expect(out.outcome).toBe('success');
-    expect(addAllCalled).toBe(true);
+    expect(addCalled).toBe(true);
     expect(commitCalled).toBe(true);
     const accepted = events.find((e) => e.type === 'step.terminal_fix.accepted');
     expect(accepted?.metadata.autoCommitted).toBe(true);
@@ -4343,6 +4344,53 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
 
     expect(out.outcome).toBe('needs_human_review');
+    const failed = events.find((e) => e.type === 'step.terminal_fix.failed');
+    expect(failed).toBeDefined();
+    expect(failed?.metadata.headAdvanced).toBe(false);
+    expect(failed?.metadata.autoCommitted).toBe(false);
+  });
+
+  it('does not auto-commit terminal fix when only orchestrator artifacts are dirty', async () => {
+    const { bus, events } = collectEvents();
+    const git = makeFakeGitPort({
+      headSha: 'sha-1',
+      statusOutput: '?? design.md\n?? task-manifest.json\n?? result.json\n',
+    });
+    let addCalled = false;
+    let commitCalled = false;
+    git.add = async () => {
+      addCalled = true;
+    };
+    git.commit = async () => {
+      commitCalled = true;
+      return 'sha-new';
+    };
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (_ctx, opts) =>
+        opts.isTerminalFix
+          ? {
+              invocationId: 'fix-terminal',
+              agentOutcome: 'success' as const,
+              verdict: 'done_with_fixes' as const,
+              headBeforeFix: 'sha-1',
+            }
+          : { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' },
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+      runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('needs_human_review');
+    expect(addCalled).toBe(false);
+    expect(commitCalled).toBe(false);
     const failed = events.find((e) => e.type === 'step.terminal_fix.failed');
     expect(failed).toBeDefined();
     expect(failed?.metadata.headAdvanced).toBe(false);
