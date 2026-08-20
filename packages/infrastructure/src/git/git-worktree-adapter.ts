@@ -119,7 +119,19 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     if (files && files.length > 0) {
       args.push('--', ...files);
     }
-    await git(cwd, args, undefined, message);
+    try {
+      await git(cwd, args, undefined, message);
+    } catch (err) {
+      if (err instanceof GitFailedError) {
+        const causeObj = err.cause as { stdout?: string; stderr?: string } | undefined;
+        const combined =
+          `${err.stderr} ${err.message} ${causeObj?.stdout ?? ''} ${causeObj?.stderr ?? ''}`.toLowerCase();
+        if (combined.includes('nothing to commit') || combined.includes('working tree clean')) {
+          return git(cwd, ['rev-parse', 'HEAD']);
+        }
+      }
+      throw err;
+    }
     return git(cwd, ['rev-parse', 'HEAD']);
   }
 

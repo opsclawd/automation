@@ -128,6 +128,8 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
       .mockImplementation(async (sctx) => {
         sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
+        // Simulate status after add
+        git.statusByCwd.set(sctx.cwd, 'M  apps/control-api/src/app.ts\n');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git, worktreeFiles);
@@ -156,6 +158,7 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
       .mockImplementation(async (sctx) => {
         sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
+        git.statusByCwd.set(sctx.cwd, 'A  pnpm-lock.yaml\n');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git);
@@ -191,7 +194,8 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     git.statusByCwd.set('/tmp/wt', '?? generated/client.ts\n');
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
-      .mockImplementation(async () => {
+      .mockImplementation(async (sctx) => {
+        git.statusByCwd.set(sctx.cwd, 'A  generated/client.ts\n');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git);
@@ -238,5 +242,80 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.message).toContain('.gitignore');
     }
+  });
+
+  it('skips stat-cache dirty files with identical content to HEAD without scheduling auto-commits', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: work']),
+    });
+    const steps = new FakeStepRepository();
+    const git = new FakeGitPort();
+    git.headByCwd.set('/tmp/wt', 'head-sha');
+    git.changedFilesResults.set('head-sha|step-1', ['src/util.ts']);
+
+    // Status reports dirty files due to mtime/stat touch
+    git.statusByCwd.set('/tmp/wt', ' M packages/infrastructure/src/index.ts\n');
+    git.fileContentResults.set('HEAD:packages/infrastructure/src/index.ts', 'export * from "./git";\n');
+    git.fileContentResults.set('head-sha:packages/infrastructure/src/index.ts', 'export * from "./git";\n');
+    git.fileContentResults.set('step-1:packages/infrastructure/src/index.ts', 'export * from "./git";\n');
+
+    const worktreeFiles = new Map<string, string>();
+    // Exact identical content to HEAD
+    worktreeFiles.set('packages/infrastructure/src/index.ts', 'export * from "./git";\n');
+
+    const runStep = vi
+      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+      .mockImplementation(async (sctx) => {
+        sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
+        return { outcome: 'success' };
+      });
+    const { ctx } = makeCtx(artifacts, git, worktreeFiles);
+
+    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    // No auto-commit should be scheduled for stat-drift file with identical content to HEAD
+    expect(git.commits).toHaveLength(0);
+    expect(git.addCalls).toHaveLength(0);
+  });
+
+  it('does not pass files pathspecs to git.commit during phase-boundary auto-commit', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: work']),
+    });
+    const steps = new FakeStepRepository();
+    const git = new FakeGitPort();
+    git.headByCwd.set('/tmp/wt', 'head-sha');
+    git.changedFilesResults.set('head-sha|step-1', ['src/util.ts']);
+
+    // Uncommitted exempt file
+    git.statusByCwd.set('/tmp/wt', '?? pnpm-lock.yaml\n');
+
+    const runStep = vi
+      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+      .mockImplementation(async (sctx) => {
+        sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
+        // When status is checked after git.add('pnpm-lock.yaml'), simulate staged status
+        git.statusByCwd.set(sctx.cwd, 'A  pnpm-lock.yaml\n');
+        return { outcome: 'success' };
+      });
+    const { ctx } = makeCtx(artifacts, git);
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      exemptUndeclaredFiles: ['pnpm-lock.yaml'],
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(git.commits).toHaveLength(1);
+    // Verify files parameter was omitted / undefined so no pathspec '-- <files>' was used
+    expect(git.commits[0]!.files).toBeUndefined();
   });
 });
