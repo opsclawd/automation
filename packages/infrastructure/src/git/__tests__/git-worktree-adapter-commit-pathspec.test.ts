@@ -73,4 +73,14 @@ describe('GitWorktreeAdapter.commit() pathspec', () => {
     expect(await commitPaths(repo, sha)).toEqual(['declared.txt', 'orchestrator-artifact.json']);
     expect(await git(repo, ['status', '--porcelain'])).toBe('');
   });
+
+  it('handles clean index gracefully and returns HEAD sha without throwing', async () => {
+    const repo = await makeTempRepo();
+    const adapter = new GitWorktreeAdapter();
+    const initialHead = await adapter.headCommitSha(repo);
+
+    const sha = await commit(adapter, repo);
+
+    expect(sha).toBe(initialHead);
+  });
 });

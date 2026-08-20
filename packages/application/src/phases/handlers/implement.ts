@@ -71,16 +71,24 @@ async function classifyPhaseBoundaryDirtyPaths({
     } else {
       // Check if formatting-only change by comparing worktree to HEAD via readWorktreeFile port
       let isFormattingOnly = false;
+      let isIdenticalToHead = false;
       try {
         if (git?.fileContent && readWorktreeFile) {
           const worktreeContent = await readWorktreeFile(cwd, norm);
           if (worktreeContent !== undefined) {
             const headContent = await git.fileContent(cwd, 'HEAD', norm);
-            isFormattingOnly = isFormattingOnlyChange(norm, headContent, worktreeContent);
+            if (headContent === worktreeContent) {
+              isIdenticalToHead = true;
+            } else {
+              isFormattingOnly = isFormattingOnlyChange(norm, headContent, worktreeContent);
+            }
           }
         }
       } catch {
         // Cannot determine — treat as unpermitted
+      }
+      if (isIdenticalToHead) {
+        continue;
       }
       if (isFormattingOnly) {
         formattingDebt.push(norm);
@@ -1008,17 +1016,22 @@ export class ImplementHandler implements PhaseHandler {
 
             if (permittedAtActionTime.length > 0) {
               await ctx.git.add(ctx.cwd, permittedAtActionTime);
-              await ctx.git.commit(
-                ctx.cwd,
-                'chore: auto-commit formatting debt and exempt files at implement phase boundary',
-                permittedAtActionTime,
-              );
-              emit(
-                'implement.formatting_debt_auto_committed',
-                'info',
-                `auto-committed ${permittedAtActionTime.length} permitted file(s) at phase boundary`,
-                { files: permittedAtActionTime },
-              );
+              const statusAfterAdd = await ctx.git.status(ctx.cwd);
+              const hasStaged = statusAfterAdd
+                .split('\n')
+                .some((line) => line.length >= 2 && line[0] !== ' ' && line[0] !== '?' && line[0] !== '!');
+              if (hasStaged) {
+                await ctx.git.commit(
+                  ctx.cwd,
+                  'chore: auto-commit formatting debt and exempt files at implement phase boundary',
+                );
+                emit(
+                  'implement.formatting_debt_auto_committed',
+                  'info',
+                  `auto-committed ${permittedAtActionTime.length} permitted file(s) at phase boundary`,
+                  { files: permittedAtActionTime },
+                );
+              }
             }
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);

@@ -114,6 +114,7 @@ describe('ImplementHandler phase-boundary stale status recovery (issue #960)', (
       ' M apps/control-api/src/app.ts\n?? pnpm-lock.yaml\n',
       ' M apps/control-api/src/app.ts\n?? pnpm-lock.yaml\n',
       ' M apps/control-api/src/app.ts\n',
+      'M  apps/control-api/src/app.ts\n',
     ];
     git.status = vi.fn(async (_cwd: string) => {
       const next = statusOutputs.shift();
@@ -142,6 +143,6 @@ describe('ImplementHandler phase-boundary stale status recovery (issue #960)', (
     expect(result.outcome).toBe('passed');
     const autoCommit = git.commits.find((c) => c.message.includes('auto-commit formatting debt'));
     expect(autoCommit).toBeDefined();
-    expect(autoCommit?.files).toEqual(['apps/control-api/src/app.ts']);
+    expect(autoCommit?.files).toBeUndefined();
   });
 });
