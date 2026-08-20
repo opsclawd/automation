@@ -7,16 +7,6 @@ import { FakeStepRepository } from '../../../test-doubles/fake-step-repository.j
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 
-type SelectiveGitFake = FakeGitPort & {
-  add: (cwd: string, files: string[]) => Promise<void>;
-};
-
-function installSelectiveAdd(git: FakeGitPort) {
-  const add = vi.fn(async (_cwd: string, _files: string[]) => undefined);
-  Object.assign(git, { add });
-  return { git: git as SelectiveGitFake, add };
-}
-
 function planMd(tasks: string[]): string {
   return ['# Plan', '', ...tasks.map((t) => `## ${t}`), '', '## Notes', 'Extra.'].join('\n');
 }
@@ -62,8 +52,7 @@ async function setupHarness(options: SetupOptions = {}) {
   const mayExtend = options.mayExtend;
   const permittedAreas = options.permittedAreas;
   const artifacts = new FakeArtifactStore();
-  const rawGit = new FakeGitPort();
-  const { git, add } = installSelectiveAdd(rawGit);
+  const git = new FakeGitPort();
 
   const manifest = {
     version: 2,
@@ -98,7 +87,6 @@ async function setupHarness(options: SetupOptions = {}) {
   return {
     artifacts,
     git,
-    add,
     steps,
     ctx,
     events,
@@ -111,7 +99,7 @@ async function setupHarness(options: SetupOptions = {}) {
 
 describe('ImplementHandler Scope-Aware Auto-Commit', () => {
   it('auto-commits a dirty may_extend file with the required deliverable', async () => {
-    const { git, add, steps, ctx, events, taskTitle } = await setupHarness({
+    const { git, steps, ctx, events, taskTitle } = await setupHarness({
       expectedFiles: ['src/feature.ts'],
       mayExtend: ['src/client.ts'],
     });
@@ -135,7 +123,7 @@ describe('ImplementHandler Scope-Aware Auto-Commit', () => {
       maxDeclaredFilesRetries: 1,
     }).run(ctx);
 
-    expect(add).toHaveBeenCalledWith('/tmp/wt', ['src/client.ts', 'src/feature.ts']);
+    expect(git.addCalls).toEqual([{ cwd: '/tmp/wt', files: ['src/client.ts', 'src/feature.ts'] }]);
     expect(git.commits[0]).toEqual({
       cwd: '/tmp/wt',
       message: taskTitle,
@@ -148,7 +136,7 @@ describe('ImplementHandler Scope-Aware Auto-Commit', () => {
   });
 
   it('does not auto-commit an untracked file authorized only by permitted_areas', async () => {
-    const { git, add, steps, ctx } = await setupHarness({
+    const { git, steps, ctx } = await setupHarness({
       expectedFiles: ['src/feature.ts'],
       permittedAreas: ['src'],
     });
@@ -170,12 +158,12 @@ describe('ImplementHandler Scope-Aware Auto-Commit', () => {
       maxDeclaredFilesRetries: 1,
     }).run(ctx);
 
-    for (const call of add.mock.calls) {
-      expect(call[1]).not.toContain('src/untracked.ts');
+    for (const call of git.addCalls) {
+      expect(call.files).not.toContain('src/untracked.ts');
     }
     for (const commit of git.commits) {
       expect(commit.files).not.toContain('src/untracked.ts');
     }
-    expect(result.outcome).not.toBe('passed');
+    expect(result.outcome).toBe('needs_human_review');
   });
 });
