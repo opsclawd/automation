@@ -151,6 +151,7 @@ describe('ValidateFixLoop and ReviewFixLoop wiring in composeRoot', () => {
     expect(loopDeps.artifactStore).toBeDefined();
     expect(typeof loopDeps.artifactStore?.read).toBe('function');
     expect(typeof loopDeps.artifactStore?.write).toBe('function');
+    expect(typeof loopDeps.revertProtectedFiles).toBe('function');
   });
 
   it('artifactStore wired into ReviewFixLoop reads and writes through the worktree path resolution, falling back to repoRootPath when no worktree exists', async () => {

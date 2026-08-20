@@ -3341,6 +3341,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         events: persistingEventBusForLoop,
         git: gitAdapter,
         loopHistory,
+        revertProtectedFiles,
         findingEvidenceInspector: createFindingEvidenceInspector(),
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
         readWorktreeFile,

@@ -28,7 +28,12 @@ function collectEvents() {
   return { events, bus };
 }
 
-function makeFakeGit(opts: { headSha: string; changedFilesList?: string[] }): GitPort {
+function makeFakeGit(opts: {
+  headSha: string;
+  changedFilesList?: string[];
+  statusOutput?: string;
+  commitSha?: string;
+}): GitPort {
   let currentHead = opts.headSha;
   return {
     createWorktree: async () => undefined,
@@ -42,14 +47,14 @@ function makeFakeGit(opts: { headSha: string; changedFilesList?: string[] }): Gi
     diffStat: async () => '',
     add: async () => undefined,
     addAll: async () => undefined,
-    commit: async () => 'sha-new',
+    commit: async () => opts.commitSha ?? 'sha-new',
     push: async () => undefined,
     remoteRef: async () => undefined,
     isAncestor: async () => true,
     logBetween: async () => [],
     cleanUntracked: async () => undefined,
     headCommitShaOf: async () => undefined,
-    status: async () => '',
+    status: async () => opts.statusOutput ?? '',
     resetWorktreeIfClean: async () => undefined,
     changedFiles: async (_cwd, _base, target) => {
       if (target?.startsWith('sha-amended')) {
@@ -72,6 +77,17 @@ function baseInput() {
     reviewProfile: AgentProfileName('opencode-frontier'),
     fixProfile: AgentProfileName('pi-qwen-local'),
     fixFallbackProfile: AgentProfileName('opencode-frontier'),
+    manifest: {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['packages/application/src/fix.ts'],
+        },
+      ],
+    },
   };
 }
 
@@ -270,5 +286,149 @@ describe('ReviewFixLoop protected file policy', () => {
 
     expect(rollbackCalls).toContain('sha-pre');
     expect(events.find((e) => e.type === 'task_boundary.violated')).toBeDefined();
+  });
+
+  it('reverts protected files during auto-commit fallback when fixer leaves uncommitted changes and advances with amended SHA', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGit({
+      headSha: 'sha-pre',
+      statusOutput: ' M .gitignore\n M packages/application/src/fix.ts',
+      commitSha: 'sha-auto-1',
+      changedFilesList: ['.gitignore', 'packages/application/src/fix.ts'],
+    });
+    const revertProtectedFiles = vi.fn<RevertProtectedFilesPort>(
+      async ({ cwd: _cwd, baseline: _baseline, protectedFiles }) => ({
+        revertedProtectedFiles: [...protectedFiles],
+        removedNewlyIgnoredFiles: [],
+        amendedHeadSha: 'sha-amended-auto-1',
+      }),
+    );
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      revertProtectedFiles,
+      runFix: async () => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-pre',
+      }),
+    });
+
+    const loop = new ReviewFixLoop(deps);
+    const result = await loop.execute(baseInput());
+
+    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
+    expect(revertProtectedFiles).toHaveBeenCalledWith({
+      cwd: '/wt',
+      baseline: 'sha-pre',
+      protectedFiles: ['.gitignore'],
+    });
+
+    const revertedEvent = events.find((e) => e.type === 'fix.protected_file_reverted');
+    expect(revertedEvent).toBeDefined();
+    expect(revertedEvent?.metadata.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(revertedEvent?.metadata.amendedHeadSha).toBe('sha-amended-auto-1');
+
+    const autoCommitEvent = events.find((e) => e.type === 'fix.auto_commit.succeeded');
+    expect(autoCommitEvent).toBeDefined();
+    expect(autoCommitEvent?.metadata.sha).toBe('sha-amended-auto-1');
+
+    expect(result.phaseOutcome).toBe('passed');
+  });
+
+  it('reverts protected files during deterministic gate auto-commit fallback and succeeds', async () => {
+    const { events, bus } = collectEvents();
+    let gateCalls = 0;
+    let fixCalls = 0;
+    let gitHead = 'sha-pre';
+    const fakeGit: GitPort = {
+      createWorktree: async () => undefined,
+      removeWorktree: async () => undefined,
+      currentBranch: async () => 'main',
+      headCommitSha: async () => gitHead,
+      resetHard: async (_cwd, sha) => {
+        gitHead = sha;
+      },
+      diff: async () => '',
+      diffStat: async () => '',
+      add: async () => undefined,
+      addAll: async () => undefined,
+      commit: async () => 'sha-auto-gate-1',
+      push: async () => undefined,
+      remoteRef: async () => undefined,
+      isAncestor: async () => true,
+      logBetween: async () => [],
+      cleanUntracked: async () => undefined,
+      headCommitShaOf: async () => undefined,
+      status: async () =>
+        fixCalls >= 2 ? ' M .gitignore\n M packages/application/src/fix.ts' : '',
+      resetWorktreeIfClean: async () => undefined,
+      changedFiles: async (_cwd, _base, target) => {
+        if (target?.startsWith('sha-amended')) {
+          return ['packages/application/src/fix.ts'];
+        }
+        if (target === 'sha-auto-gate-1') {
+          return ['.gitignore', 'packages/application/src/fix.ts'];
+        }
+        return ['packages/application/src/fix.ts'];
+      },
+    };
+    const revertProtectedFiles = vi.fn<RevertProtectedFilesPort>(
+      async ({ cwd: _cwd, baseline: _baseline, protectedFiles }) => ({
+        revertedProtectedFiles: [...protectedFiles],
+        removedNewlyIgnoredFiles: [],
+        amendedHeadSha: 'sha-amended-gate-1',
+      }),
+    );
+
+    const deps = makeDeps({
+      events: bus,
+      git: fakeGit,
+      revertProtectedFiles,
+      runPostFixGate: async (): Promise<PostFixGateResult> => {
+        gateCalls += 1;
+        // Fail on iteration 2 (post-fix gate) first time, then pass next
+        if (gateCalls === 1) {
+          return { outcome: 'fail', output: 'gate error' };
+        }
+        return { outcome: 'pass', output: '' };
+      },
+      runFix: async () => {
+        fixCalls += 1;
+        if (fixCalls === 1) {
+          gitHead = 'sha-fix-1';
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+            headBeforeFix: 'sha-pre',
+          };
+        }
+        return {
+          invocationId: 'fix-2',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'sha-fix-1',
+        };
+      },
+    });
+
+    const loop = new ReviewFixLoop(deps);
+    const result = await loop.execute(baseInput());
+
+    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
+    expect(revertProtectedFiles).toHaveBeenCalledWith({
+      cwd: '/wt',
+      baseline: 'sha-fix-1',
+      protectedFiles: ['.gitignore'],
+    });
+
+    const revertedEvent = events.find((e) => e.type === 'fix.protected_file_reverted');
+    expect(revertedEvent).toBeDefined();
+    expect(revertedEvent?.metadata.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(revertedEvent?.metadata.amendedHeadSha).toBe('sha-amended-gate-1');
+    expect(result.phaseOutcome).toBe('passed');
   });
 });

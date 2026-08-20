@@ -21,9 +21,12 @@ import { appendRebuttalToCodeReview } from './append-rebuttal.js';
 import { verifyFixCommit } from '../fix-commit-verifier.js';
 import {
   checkTaskBoundaries,
+  getManifestBoundaries,
   loadManifest,
+  normalizeTaskPath,
   type ManifestLoadResult,
 } from '../task-file-boundaries.js';
+import { isProtectedFilePath } from '../scratch-file-remediation.js';
 import {
   captureNetRevertBaseline,
   checkForNetReverts,
@@ -434,11 +437,20 @@ export class ReviewFixLoop {
               expectedHead: fix.headBeforeFix,
             });
             if (verification.kind === 'advanced') {
+              let headAfterFix = verification.headAfterFix;
+              headAfterFix = await this.guardProtectedFiles(
+                ctx,
+                input,
+                fix.headBeforeFix,
+                headAfterFix,
+                manifestResult,
+              );
+
               const boundaryCheck = await this.checkTaskBoundary(
                 ctx,
                 input,
                 fix.headBeforeFix,
-                verification.headAfterFix,
+                headAfterFix,
                 manifestResult,
               );
               if (!boundaryCheck.ok) {
@@ -466,13 +478,13 @@ export class ReviewFixLoop {
 
               lastFixHeadRange = {
                 before: fix.headBeforeFix,
-                after: verification.headAfterFix,
+                after: headAfterFix,
               };
               const scopeResult = await this.finalizeScopeAndCommitMessage({
                 ctx,
                 loopInput: input,
                 headBeforeFix: fix.headBeforeFix,
-                headAfterFix: verification.headAfterFix,
+                headAfterFix: headAfterFix,
                 findings: lastOffendingFindings,
                 ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
               });
@@ -531,10 +543,17 @@ export class ReviewFixLoop {
                   committedSha = await this.deps.git!.commit(ctx.cwd, message);
                 } catch {}
                 if (committedSha) {
+                  committedSha = await this.guardProtectedFiles(
+                    ctx,
+                    input,
+                    fix.headBeforeFix,
+                    committedSha,
+                    manifestResult,
+                  );
                   const boundaryCheck = await this.checkTaskBoundary(
                     ctx,
                     input,
-                    fix.headBeforeFix ?? 'HEAD',
+                    fix.headBeforeFix,
                     committedSha,
                     manifestResult,
                   );
@@ -564,7 +583,7 @@ export class ReviewFixLoop {
                   const scopeResult = await this.finalizeScopeAndCommitMessage({
                     ctx,
                     loopInput: input,
-                    headBeforeFix: fix.headBeforeFix ?? 'HEAD',
+                    headBeforeFix: fix.headBeforeFix,
                     headAfterFix: committedSha,
                     findings: lastOffendingFindings,
                     ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
@@ -577,7 +596,7 @@ export class ReviewFixLoop {
                   const oscillation = await this.checkFileOscillation({
                     ctx,
                     loopInput: input,
-                    headBeforeFix: fix.headBeforeFix ?? 'HEAD',
+                    headBeforeFix: fix.headBeforeFix,
                     headAfterFix: scopeResult.headAfterFix,
                     fixChangedFiles: currentFixChangedFiles,
                     history: fileStateHistory,
@@ -1357,11 +1376,20 @@ export class ReviewFixLoop {
             expectedHead: fix.headBeforeFix,
           });
           if (verification.kind === 'advanced') {
+            let headAfterFix = verification.headAfterFix;
+            headAfterFix = await this.guardProtectedFiles(
+              ctx,
+              input,
+              fix.headBeforeFix,
+              headAfterFix,
+              manifestResult,
+            );
+
             const boundaryCheck = await this.checkTaskBoundary(
               ctx,
               input,
               fix.headBeforeFix,
-              verification.headAfterFix,
+              headAfterFix,
               manifestResult,
             );
             if (!boundaryCheck.ok) {
@@ -1388,7 +1416,7 @@ export class ReviewFixLoop {
               ctx,
               loopInput: input,
               headBeforeFix: fix.headBeforeFix,
-              headAfterFix: verification.headAfterFix,
+              headAfterFix: headAfterFix,
               findings: review.offendingFindings ?? [],
               ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
             });
@@ -1479,10 +1507,17 @@ export class ReviewFixLoop {
               }
 
               if (committedSha) {
+                committedSha = await this.guardProtectedFiles(
+                  ctx,
+                  input,
+                  fix.headBeforeFix,
+                  committedSha,
+                  manifestResult,
+                );
                 const boundaryCheck = await this.checkTaskBoundary(
                   ctx,
                   input,
-                  fix.headBeforeFix ?? 'HEAD',
+                  fix.headBeforeFix,
                   committedSha,
                   manifestResult,
                 );
@@ -1509,7 +1544,7 @@ export class ReviewFixLoop {
                 const scopeResult = await this.finalizeScopeAndCommitMessage({
                   ctx,
                   loopInput: input,
-                  headBeforeFix: fix.headBeforeFix ?? 'HEAD',
+                  headBeforeFix: fix.headBeforeFix,
                   headAfterFix: committedSha,
                   findings: review.offendingFindings ?? [],
                   ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
@@ -1522,7 +1557,7 @@ export class ReviewFixLoop {
                 const oscillation = await this.checkFileOscillation({
                   ctx,
                   loopInput: input,
-                  headBeforeFix: fix.headBeforeFix ?? 'HEAD',
+                  headBeforeFix: fix.headBeforeFix,
                   headAfterFix: scopeResult.headAfterFix,
                   fixChangedFiles: currentFixChangedFiles,
                   history: fileStateHistory,
@@ -2587,6 +2622,61 @@ export class ReviewFixLoop {
       humanReviewReason,
       match,
     };
+  }
+
+  private async guardProtectedFiles(
+    ctx: StepContext,
+    loopInput: ReviewFixLoopInput,
+    headBeforeFix: string,
+    headAfterFix: string,
+    manifestResult: ManifestLoadResult,
+  ): Promise<string> {
+    if (
+      !this.deps.revertProtectedFiles ||
+      !this.deps.git ||
+      typeof this.deps.git.changedFiles !== 'function'
+    ) {
+      return headAfterFix;
+    }
+
+    try {
+      const committedFiles = await this.deps.git.changedFiles(ctx.cwd, headBeforeFix, headAfterFix);
+      const { writableSet } = getManifestBoundaries(
+        manifestResult.status === 'found' ? manifestResult.manifest : undefined,
+      );
+      const protectedFiles = [
+        ...new Set(
+          committedFiles
+            .map(normalizeTaskPath)
+            .filter((p) => p.length > 0 && isProtectedFilePath(p) && !writableSet.has(p)),
+        ),
+      ].sort();
+
+      if (protectedFiles.length > 0 && this.deps.revertProtectedFiles) {
+        const repairResult = await this.deps.revertProtectedFiles({
+          cwd: ctx.cwd,
+          baseline: headBeforeFix,
+          protectedFiles,
+        });
+        this.emit(
+          loopInput,
+          'fix.protected_file_reverted',
+          'warn',
+          `review/fix iteration ${ctx.iterationIndex} modified protected files (${protectedFiles.join(', ')}); reverted protected changes`,
+          {
+            iterationIndex: ctx.iterationIndex,
+            revertedProtectedFiles: repairResult.revertedProtectedFiles,
+            removedNewlyIgnoredFiles: repairResult.removedNewlyIgnoredFiles,
+            amendedHeadSha: repairResult.amendedHeadSha,
+          },
+        );
+        return repairResult.amendedHeadSha;
+      }
+    } catch {
+      // If inspection or repair fails, checkTaskBoundary downstream handles any boundary violation
+    }
+
+    return headAfterFix;
   }
 
   private async loadManifest(

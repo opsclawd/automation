@@ -11,6 +11,7 @@ import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { FindingEvidenceInspectorPort } from '../ports/finding-evidence-inspector-port.js';
 import type { ArtifactStore, ReadWorktreeFilePort } from '../ports.js';
 import type { GitPort } from '../ports/git-port.js';
+import type { RevertProtectedFilesPort } from '../ports/protected-file-reverter-port.js';
 import type {
   ReviewMode,
   ReviewSnapshot,
@@ -187,6 +188,7 @@ export interface ReviewFixLoopDeps {
    * optional so test doubles can omit it.
    */
   git?: GitPort;
+  revertProtectedFiles?: RevertProtectedFilesPort;
   reviewStateRepository?: ReviewStateRepositoryPort;
   runArbiter?: (
     ctx: StepContext,
