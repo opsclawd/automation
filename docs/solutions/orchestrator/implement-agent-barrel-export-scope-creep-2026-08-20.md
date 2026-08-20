@@ -98,36 +98,71 @@ not see Task 3 from inside Task 2's prompt context.
    name which task owns the barrel for each new module.
 
 6. **Plan-review should reject a manifest where a task's
-   `validation_commands` would typecheck/lint files it does not own.**
-   If Task 2's `pnpm --filter @cco/infrastructure typecheck` runs after
-   the package barrel test is added by Task 3, but Task 2 must pass
-   typecheck itself, the barrel must be reachable to Task 2 — usually
-   by including it in Task 2's `expected_files` or splitting the
-   work so the wiring task runs before the linter does.
+    `validation_commands` would typecheck/lint files it does not own.**
+    If Task 2's `pnpm --filter @cco/infrastructure typecheck` runs after
+    the package barrel test is added by Task 3, but Task 2 must pass
+    typecheck itself, the barrel must be reachable to Task 2 — usually
+    by including it in Task 2's `expected_files` or splitting the
+    work so the wiring task runs before the linter does.
+
+7. **Plan-review should enforce a barrel-coverage invariant** before
+    approving the manifest. If a task creates a new module under
+    `packages/<pkg>/src/<sub>/` that produces public symbols, then
+    `packages/<pkg>/src/index.ts` (and its sibling test, where
+    applicable) must be declared by either:
+    1. The implementing task's `expected_files` (Option A — co-located), **or**
+    2. A downstream sibling task whose own `expected_files` lists it,
+       and whose ownership is visible in the task list rather than only
+       in prose (Option B — explicit handoff).
+
+    A negative step-prompt constraint ("Do not update `src/index.ts`;
+    Task N+1 owns exports") is acceptable as a backstop but is weaker
+    than either of the above — prompts degrade under context pressure
+    and only manifest entries are diff-enforceable. Proactively flagging
+    uncoordinated barrel splits here means the failure mode is caught
+    before the implement agent runs, rather than discovered at the
+    boundary guard and paid for in a wasted retry.
 
 ### For the implement-phase boundary guard
 
-7. **Do not trust `implementation-log.md` narratives about file
-   removals; the only authoritative post-step state is `git diff`.**
-   The current handler already does this correctly for the *initial*
-   detection, but the retry's feedback prompt is narrative-shaped — it
-   asks the agent to "remove" things and trusts the agent's claim. After
-   every retry, re-run the diff-based classification before declaring
-   the retry successful.
+8. **Do not trust `implementation-log.md` narratives about file
+    removals; the only authoritative post-step state is `git diff`.**
+    The current handler already does this correctly for the *initial*
+    detection, but the retry's feedback prompt is narrative-shaped — it
+    asks the agent to "remove" things and trusts the agent's claim. After
+    every retry, re-run the diff-based classification before declaring
+    the retry successful.
 
-8. **Increase the default `maxDeclaredFilesRetries` from 1 to at least
-   2** for `expected_files`-style violations, or, better, switch to a
-   revert-and-continue model (see #936) so a single revert-and-inform
-   cycle replaces the wasted narrative retry.
+9. **Mechanically restore undeclared files at the runner layer
+    before invoking the retry prompt.** Instead of asking the LLM to
+    rewrite commits or revert files in the worktree, the orchestrator
+    runner should run `git checkout <preStepHead> -- <undeclaredFiles>`
+    (or `git restore`) for the flagged set, then hand the cleaned
+    working tree to the retry prompt. This removes the LLM from the
+    revert loop, which is exactly where claim/reality divergence lives
+    — the agent in this run wrote "Removed any out-of-scope
+    modifications" while the post-retry `git diff` still showed the
+    same two files modified. A targeted restore of only the flagged
+    files leaves legitimately-declared modifications in the index
+    intact, so it is safe to apply automatically.
+
+10. **Increase the default `maxDeclaredFilesRetries` from 1 to at least
+    2** for `expected_files`-style violations, or, better, switch to a
+    revert-and-continue model (see #936) so a single revert-and-inform
+    cycle replaces the wasted narrative retry. The mechanical revert
+    in #9 can ship ahead of #936 as a tactical mitigation.
 
 ## Why This Matters
 
 - The run fails not because the work was wrong, but because the
   boundary check is more truthful than the agent's narrative.
 - A wasted retry costs 5–20 minutes of model time per occurrence.
-- The fix path here is mechanical (revert the two files in the worktree,
-  resume the run) but operators without this context will misdiagnose it
-  as an agent capability problem and escalate.
+- The fix path here is mechanical at two layers: an operator can revert
+  the two files in the worktree and resume the run (today), and the
+  runner can automate the same revert at the orchestrator layer
+  (§9) so the wasted narrative retry never runs. Operators without
+  this context will misdiagnose it as an agent capability problem and
+  escalate.
 
 Issue #936 ("replace file-exact task boundaries with a scope contract,
 recoverable drift, and explicit scope expansion") tracks the structural
@@ -136,7 +171,9 @@ fix: separating `expected_files` (obligation) from `permitted_areas`
 within the task's directory subtree without a manifest edit, and
 undeclared modifications revert-and-continue rather than hard-fail.
 This pattern is one of the eight evidence rows cited in #936's
-problem statement.
+problem statement. The mechanical-revert recommendation in §9 is the
+tactical form of #936's revert-and-continue model — it can ship ahead
+of the structural change and shrinks the wasted retry to zero.
 
 ## When to Apply
 
