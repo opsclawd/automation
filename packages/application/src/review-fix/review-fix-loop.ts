@@ -539,7 +539,7 @@ export class ReviewFixLoop {
                 const message = `fix: deterministic gate resolution (auto-committed)`;
                 let committedSha: string | undefined;
                 try {
-                  await this.deps.git!.addAll(ctx.cwd);
+                  await this.deps.git!.add(ctx.cwd, verification.dirtyFiles);
                   committedSha = await this.deps.git!.commit(ctx.cwd, message);
                 } catch {}
                 if (committedSha) {
@@ -1477,7 +1477,7 @@ export class ReviewFixLoop {
 
               for (let attempt = 1; attempt <= 2; attempt++) {
                 try {
-                  await this.deps.git!.addAll(ctx.cwd);
+                  await this.deps.git!.add(ctx.cwd, verification.dirtyFiles);
                   committedSha = await this.deps.git!.commit(ctx.cwd, message);
                   break;
                 } catch (err: unknown) {
