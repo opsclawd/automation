@@ -213,6 +213,8 @@ export class ReviewFixLoop {
     let lastReviewedCommitSha = integrationState?.latestSnapshot?.identity;
     let lastFixVerdict: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix' | undefined;
     let pendingReconciliationContext: string | undefined;
+    let lastReviewResult: ReviewStepResult | undefined;
+    let arbiterAlreadyRuledValid = false;
     let pendingScopeReviewContext: string | undefined;
     let pendingDeterministicDiagnostic: string | undefined;
     const findingArrayHistory: Array<
@@ -257,15 +259,37 @@ export class ReviewFixLoop {
         iterationIndex,
       };
 
-      // --- POST-FIX GATE (skip iteration 1 — fixer has not yet committed) ---
+      const skippingRedundantReview =
+        pendingReconciliationContext !== undefined && lastReviewResult !== undefined;
+      let review: ReviewStepResult;
+
       let gateResult: PostFixGateResult | undefined;
-      if (preEvaluatedGateResult) {
-        gateResult = preEvaluatedGateResult;
-        preEvaluatedGateResult = undefined;
-        lastPostFixGateFailed = gateResult.outcome === 'fail';
-      } else if (iterationIndex > 1 && lastIterationHadFixCommit) {
-        gateResult = await deps.runPostFixGate(ctx);
-        lastPostFixGateFailed = gateResult.outcome === 'fail';
+
+      if (skippingRedundantReview) {
+        review = lastReviewResult!;
+        thisLoop = startIteration(thisLoop, {
+          reviewInvocationId: review.invocationId,
+          now: deps.now(),
+        });
+        deps.loops.update(thisLoop);
+        this.emit(
+          input,
+          'review.bypassed_for_arbitration',
+          'info',
+          `bypassing redundant re-review at iteration ${iterationIndex} to route arbiter rationale directly to fix step`,
+          { iterationIndex },
+        );
+      } else {
+        arbiterAlreadyRuledValid = false;
+        // --- POST-FIX GATE (skip iteration 1 — fixer has not yet committed) ---
+        if (preEvaluatedGateResult) {
+          gateResult = preEvaluatedGateResult;
+          preEvaluatedGateResult = undefined;
+          lastPostFixGateFailed = gateResult.outcome === 'fail';
+        } else if (iterationIndex > 1 && lastIterationHadFixCommit) {
+          gateResult = await deps.runPostFixGate(ctx);
+          lastPostFixGateFailed = gateResult.outcome === 'fail';
+        }
       }
 
       if (lastPostFixGateFailed && gateResult) {
@@ -857,72 +881,75 @@ export class ReviewFixLoop {
 
       const reviewMode: ReviewMode =
         iterationIndex === 1 ? 'integration_full' : 'intermediate_delta';
-      const reviewOptions = {
-        ...(gateResult && gateResult.outcome === 'pass' ? { gateResult } : {}),
-        ...(combinedHistoryContext ? { historyContext: combinedHistoryContext } : {}),
-        ...(iterationIndex >= 2 && lastReviewedCommitSha && (opts.deltaScopedReReview ?? true)
-          ? { prevReviewedCommitSha: lastReviewedCommitSha }
-          : {}),
-        ...(deps.reviewStateRepository !== undefined
-          ? {
-              mode: reviewMode,
-              unresolvedRecords: integrationState?.unresolvedRecords ?? [],
-              dispositionHistory: integrationState?.dispositionHistory ?? [],
-            }
-          : {}),
-        ...(branchCreatedFiles.length > 0 ? { createdFiles: branchCreatedFiles } : {}),
-      };
-      ctx.metadata = {
-        iteration: iterationIndex,
-        invocation_type: iterationIndex === 1 ? 'initial' : 'semantic_retry',
-        reviewMode,
-      };
-      let review = await deps.runReview(
-        ctx,
-        Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
-      );
-
-      if (review.verdict === undefined && review.classification === 'serialization_artifact') {
-        this.emit(
-          input,
-          'review.artifact_recovery_retry',
-          'warn',
-          `retrying serialization artifact failure in review loop iteration ${iterationIndex}`,
-          {
-            iterationIndex,
-            previousInvocationId: review.invocationId,
-            violationCode: review.violationCode,
-          },
+      if (!skippingRedundantReview) {
+        const reviewOptions = {
+          ...(gateResult && gateResult.outcome === 'pass' ? { gateResult } : {}),
+          ...(combinedHistoryContext ? { historyContext: combinedHistoryContext } : {}),
+          ...(iterationIndex >= 2 && lastReviewedCommitSha && (opts.deltaScopedReReview ?? true)
+            ? { prevReviewedCommitSha: lastReviewedCommitSha }
+            : {}),
+          ...(deps.reviewStateRepository !== undefined
+            ? {
+                mode: reviewMode,
+                unresolvedRecords: integrationState?.unresolvedRecords ?? [],
+                dispositionHistory: integrationState?.dispositionHistory ?? [],
+              }
+            : {}),
+          ...(branchCreatedFiles.length > 0 ? { createdFiles: branchCreatedFiles } : {}),
+        };
+        ctx.metadata = {
+          iteration: iterationIndex,
+          invocation_type: iterationIndex === 1 ? 'initial' : 'semantic_retry',
+          reviewMode,
+        };
+        review = await deps.runReview(
+          ctx,
+          Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
         );
-        await this.runCleanArtifacts(ctx);
-        review = await deps.runReview(ctx, {
-          ...reviewOptions,
-          artifactRecoveryRetry: true,
-        });
-      }
-      if (review.offendingFindings) {
-        lastOffendingFindings = review.offendingFindings;
-      }
 
-      if (review.overridden) {
-        const direction: 'upgrade' | 'downgrade' =
-          review.verdict === 'fail' ? 'upgrade' : 'downgrade';
-        const message =
-          direction === 'upgrade'
-            ? `review returned pass but severity gate overrode to fail`
-            : `review returned fail but severity gate overrode to pass (all findings below threshold)`;
-        this.emit(input, 'review.verdict.overridden', 'warn', message, {
-          direction,
-          iterationIndex,
-          offendingFindings: review.offendingFindings ?? [],
-          threshold: input.blockOnSeverity ?? 'high',
+        if (review.verdict === undefined && review.classification === 'serialization_artifact') {
+          this.emit(
+            input,
+            'review.artifact_recovery_retry',
+            'warn',
+            `retrying serialization artifact failure in review loop iteration ${iterationIndex}`,
+            {
+              iterationIndex,
+              previousInvocationId: review.invocationId,
+              violationCode: review.violationCode,
+            },
+          );
+          await this.runCleanArtifacts(ctx);
+          review = await deps.runReview(ctx, {
+            ...reviewOptions,
+            artifactRecoveryRetry: true,
+          });
+        }
+        if (review.offendingFindings) {
+          lastOffendingFindings = review.offendingFindings;
+        }
+
+        if (review.overridden) {
+          const direction: 'upgrade' | 'downgrade' =
+            review.verdict === 'fail' ? 'upgrade' : 'downgrade';
+          const message =
+            direction === 'upgrade'
+              ? `review returned pass but severity gate overrode to fail`
+              : `review returned fail but severity gate overrode to pass (all findings below threshold)`;
+          this.emit(input, 'review.verdict.overridden', 'warn', message, {
+            direction,
+            iterationIndex,
+            offendingFindings: review.offendingFindings ?? [],
+            threshold: input.blockOnSeverity ?? 'high',
+          });
+        }
+        thisLoop = startIteration(thisLoop, {
+          reviewInvocationId: review.invocationId,
+          now: deps.now(),
         });
+        deps.loops.update(thisLoop);
+        lastReviewResult = review;
       }
-      thisLoop = startIteration(thisLoop, {
-        reviewInvocationId: review.invocationId,
-        now: deps.now(),
-      });
-      deps.loops.update(thisLoop);
 
       if (review.agentOutcome !== 'success' || review.verdict === undefined) {
         thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
@@ -1341,6 +1368,146 @@ export class ReviewFixLoop {
         };
       }
 
+      // --- FAST-TRACK CONTRADICTION ADJUDICATION ---
+      if (fix.verdict === 'done_no_fixes_needed' && deps.runArbiter !== undefined) {
+        if (arbiterAlreadyRuledValid) {
+          this.emit(
+            input,
+            'needs_human_review',
+            'warn',
+            `fixer declined to fix finding at iteration ${iterationIndex} despite prior arbiter ruling finding_valid — escalating to human`,
+            { iterationIndex },
+          );
+          thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+          deps.loops.update(thisLoop);
+          return {
+            loop: thisLoop,
+            phaseOutcome: 'failed',
+            loopStatus: 'failed',
+            needsHumanReview: true,
+            residualFindingsCount: lastOffendingFindings.length,
+          };
+        }
+
+        this.emit(
+          input,
+          'review.contradiction.escalated',
+          'warn',
+          `escalating review/fix contradiction to arbiter at iteration ${iterationIndex}`,
+          {
+            toProfile: 'arbiter',
+            reason: 'contradiction_not_resolved_by_rerun',
+            iterationIndex,
+          },
+        );
+        const arbiterResult = await deps.runArbiter(
+          {
+            ...ctx,
+            metadata: {
+              iteration: iterationIndex,
+              invocation_type: 'initial',
+            },
+          },
+          review,
+          fix,
+        );
+
+        if (
+          !arbiterResult.evidence ||
+          arbiterResult.evidence.trim().length === 0 ||
+          arbiterResult.outcome === 'insufficient_evidence' ||
+          arbiterResult.outcome === 'ambiguous'
+        ) {
+          this.emit(
+            input,
+            'needs_human_review',
+            'warn',
+            `arbiter did not resolve contradiction at iteration ${iterationIndex} — escalating to human`,
+            { iterationIndex, outcome: arbiterResult.outcome },
+          );
+          thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+          deps.loops.update(thisLoop);
+          return {
+            loop: thisLoop,
+            phaseOutcome: 'failed',
+            loopStatus: 'failed',
+            needsHumanReview: true,
+            residualFindingsCount: lastOffendingFindings.length,
+          };
+        }
+
+        if (arbiterResult.outcome === 'finding_invalid') {
+          this.emit(
+            input,
+            'review.contradiction.resolved',
+            'info',
+            `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
+            {
+              ruling: arbiterResult.outcome,
+              evidence: arbiterResult.evidence,
+              iterationIndex,
+            },
+          );
+          if (this.deps.artifactStore) {
+            await appendRebuttalToCodeReview(this.deps.artifactStore, {
+              runId: String(input.runId),
+              phaseId: String(input.phaseId),
+              iterationIndex,
+              rebuttal: fix.rebuttal ?? '(no rebuttal text provided)',
+              unfoundedFindings: (review.offendingFindings ?? []).map((f) => ({
+                severity: f.severity,
+                summary: f.summary,
+              })),
+            });
+          }
+          const reval = await deps.runRevalidation(ctx);
+          const iterationOutcome = reval.passed ? 'resolved' : 'unresolved';
+          thisLoop = completeIteration(thisLoop, {
+            outcome: iterationOutcome,
+            fixInvocationId: fix.invocationId,
+            revalidationId: reval.validationRunId,
+            now: this.deps.now(),
+          });
+          deps.loops.update(thisLoop);
+          this.emitIterationCompleted(input, iterationIndex, iterationOutcome);
+          await this.appendHistoryEntry(ctx, review, fix, reval, iterationOutcome, input);
+          if (iterationOutcome === 'resolved') {
+            return await this.finalizeOutcome(input, baseline, {
+              loop: thisLoop,
+              phaseOutcome: 'passed',
+              loopStatus: 'converged',
+            });
+          }
+          continue;
+        }
+
+        if (arbiterResult.outcome === 'finding_valid') {
+          this.emit(
+            input,
+            'review.contradiction.resolved',
+            'info',
+            `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
+            {
+              ruling: arbiterResult.outcome,
+              evidence: arbiterResult.evidence,
+              iterationIndex,
+            },
+          );
+          pendingReconciliationContext = arbiterResult.rationale;
+          arbiterAlreadyRuledValid = true;
+          thisLoop = completeIteration(thisLoop, {
+            outcome: 'unresolved',
+            fixInvocationId: fix.invocationId,
+            now: deps.now(),
+          });
+          deps.loops.update(thisLoop);
+          await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input);
+          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+          consecutiveFixFailures = 0;
+          continue;
+        }
+      }
+
       if (fix.verdict === 'done_with_fixes') {
         headRevalidated = false;
         lastPostFixGateFailed = false;
@@ -1731,121 +1898,6 @@ export class ReviewFixLoop {
         lastFailingCategory = reval.category;
       }
 
-      const hasContradiction = fix.verdict === 'done_no_fixes_needed';
-      if (hasContradiction && deps.runArbiter !== undefined) {
-        this.emit(
-          input,
-          'review.contradiction.escalated',
-          'warn',
-          `escalating review/fix contradiction to arbiter at iteration ${iterationIndex}`,
-          {
-            toProfile: 'arbiter',
-            reason: 'contradiction_not_resolved_by_rerun',
-            iterationIndex,
-          },
-        );
-        const arbiterResult = await deps.runArbiter(
-          {
-            ...ctx,
-            metadata: {
-              iteration: iterationIndex,
-              invocation_type: 'initial',
-            },
-          },
-          review,
-          fix,
-        );
-
-        if (
-          !arbiterResult.evidence ||
-          arbiterResult.evidence.trim().length === 0 ||
-          arbiterResult.outcome === 'insufficient_evidence' ||
-          arbiterResult.outcome === 'ambiguous'
-        ) {
-          this.emit(
-            input,
-            'needs_human_review',
-            'warn',
-            `arbiter did not resolve contradiction at iteration ${iterationIndex} — escalating to human`,
-            { iterationIndex, outcome: arbiterResult.outcome },
-          );
-          thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
-          deps.loops.update(thisLoop);
-          return {
-            loop: thisLoop,
-            phaseOutcome: 'failed',
-            loopStatus: 'failed',
-            needsHumanReview: true,
-            residualFindingsCount: lastOffendingFindings.length,
-          };
-        }
-
-        if (arbiterResult.outcome === 'finding_invalid') {
-          this.emit(
-            input,
-            'review.contradiction.resolved',
-            'info',
-            `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
-            {
-              ruling: arbiterResult.outcome,
-              evidence: arbiterResult.evidence,
-              iterationIndex,
-            },
-          );
-          if (this.deps.artifactStore) {
-            await appendRebuttalToCodeReview(this.deps.artifactStore, {
-              runId: String(input.runId),
-              phaseId: String(input.phaseId),
-              iterationIndex,
-              rebuttal: fix.rebuttal ?? '(no rebuttal text provided)',
-              unfoundedFindings: (review.offendingFindings ?? []).map((f) => ({
-                severity: f.severity,
-                summary: f.summary,
-              })),
-            });
-          }
-          thisLoop = completeIteration(thisLoop, {
-            outcome: 'resolved',
-            fixInvocationId: fix.invocationId,
-            revalidationId: reval.validationRunId,
-            now: this.deps.now(),
-          });
-          deps.loops.update(thisLoop);
-          this.emitIterationCompleted(input, iterationIndex, 'resolved');
-          await this.appendHistoryEntry(ctx, review, fix, reval, 'resolved', input);
-          return await this.finalizeOutcome(input, baseline, {
-            loop: thisLoop,
-            phaseOutcome: 'passed',
-            loopStatus: 'converged',
-          });
-        }
-
-        if (arbiterResult.outcome === 'finding_valid') {
-          this.emit(
-            input,
-            'review.contradiction.resolved',
-            'info',
-            `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
-            {
-              ruling: arbiterResult.outcome,
-              evidence: arbiterResult.evidence,
-              iterationIndex,
-            },
-          );
-          pendingReconciliationContext = arbiterResult.rationale;
-          thisLoop = completeIteration(thisLoop, {
-            outcome: 'unresolved',
-            fixInvocationId: fix.invocationId,
-            revalidationId: reval.validationRunId,
-            now: deps.now(),
-          });
-          deps.loops.update(thisLoop);
-          await this.appendHistoryEntry(ctx, review, fix, reval, 'unresolved', input);
-          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-          consecutiveFixFailures = 0;
-          continue;
-        }
-      }
 
       // Default path: complete the iteration as fixed or unresolved.
       const iterationOutcome = reval.passed ? 'fixed' : 'unresolved';

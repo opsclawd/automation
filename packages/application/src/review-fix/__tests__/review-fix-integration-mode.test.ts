@@ -193,4 +193,104 @@ describe('ReviewFixLoop integration mode tests', () => {
     expect(result.phaseOutcome).toBe('failed');
     expect(result.needsHumanReview).toBe(true);
   });
+
+  it('fast-tracks formal review rebuttal directly to arbiter on done_no_fixes_needed and resolves on finding_invalid', async () => {
+    let reviewCalls = 0;
+    let fixCalls = 0;
+    let arbiterCalls = 0;
+    let revalCalls = 0;
+
+    const fakeRepo = new FakeReviewStateRepository();
+    const deps = makeDeps({
+      reviewStateRepository: fakeRepo,
+      runReview: async () => {
+        reviewCalls++;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success',
+          verdict: 'fail',
+          reviewedCommitSha: 'sha-1',
+          offendingFindings: [{ severity: 'high', summary: 'Defect in worker' }],
+        };
+      },
+      runFix: async () => {
+        fixCalls++;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success',
+          verdict: 'done_no_fixes_needed',
+          rebuttal: 'Code is already valid',
+          headBeforeFix: 'sha-1',
+        };
+      },
+      runArbiter: async () => {
+        arbiterCalls++;
+        return {
+          outcome: 'finding_invalid',
+          evidence: 'Code satisfies requirement at worker.ts:12',
+          rationale: 'Rebuttal accepted',
+        };
+      },
+      runRevalidation: async () => {
+        revalCalls++;
+        return { passed: true, validationRunId: `val-${revalCalls}` };
+      },
+    });
+
+    const result = await new ReviewFixLoop(deps).execute(baseInput());
+    expect(result.phaseOutcome).toBe('passed');
+    expect(arbiterCalls).toBe(1);
+    expect(reviewCalls).toBe(1);
+    expect(fixCalls).toBe(1);
+    expect(revalCalls).toBe(1);
+  });
+
+  it('bypasses redundant re-review when arbiter rules finding_valid and passes rationale to fix step', async () => {
+    let reviewCalls = 0;
+    let fixCalls = 0;
+    let arbiterCalls = 0;
+    const fixOptionsList: Array<Record<string, unknown>> = [];
+
+    const fakeRepo = new FakeReviewStateRepository();
+    const deps = makeDeps({
+      reviewStateRepository: fakeRepo,
+      runReview: async () => {
+        reviewCalls++;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success',
+          verdict: reviewCalls === 2 ? 'pass' : 'fail',
+          reviewedCommitSha: `sha-${reviewCalls}`,
+          offendingFindings:
+            reviewCalls === 2 ? [] : [{ severity: 'high', summary: 'Defect in worker' }],
+        };
+      },
+      runFix: async (_ctx, opts) => {
+        fixCalls++;
+        fixOptionsList.push(opts as Record<string, unknown>);
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success',
+          verdict: fixCalls === 1 ? 'done_no_fixes_needed' : 'done_with_fixes',
+          headBeforeFix: `sha-${fixCalls}`,
+        };
+      },
+      runArbiter: async () => {
+        arbiterCalls++;
+        return {
+          outcome: 'finding_valid',
+          evidence: 'Defect is real at worker.ts:12',
+          rationale: 'Arbiter rationale: add null check',
+        };
+      },
+      runRevalidation: async () => ({ passed: true, validationRunId: 'val-1' }),
+    });
+
+    const result = await new ReviewFixLoop(deps).execute(baseInput());
+    expect(result.phaseOutcome).toBe('passed');
+    expect(arbiterCalls).toBe(1);
+    expect(fixCalls).toBe(2);
+    expect(reviewCalls).toBe(2);
+    expect(fixOptionsList[1]?.reconciliationContext).toBe('Arbiter rationale: add null check');
+  });
 });
