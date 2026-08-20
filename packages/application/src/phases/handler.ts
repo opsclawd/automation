@@ -32,6 +32,13 @@ export interface PhaseHandlerContext {
   idFactory?: () => string;
   readWorktreeFile?: ReadWorktreeFilePort | undefined;
   deleteWorktreeFile?: DeleteWorktreeFilePort | undefined;
+  /**
+   * Name of the phase that completed immediately before this one. Used by
+   * phase boundary checks to attribute dirty-worktree failures to the phase
+   * that actually dirtied the tree rather than the phase that discovered it.
+   * Optional: handlers that don't need it see `undefined` and skip the check.
+   */
+  priorPhaseName?: string;
 }
 
 export type PhaseOutcome =
@@ -84,6 +91,7 @@ export type PhaseHandlerContextFactory = (
     | 'idFactory'
     | 'readWorktreeFile'
     | 'deleteWorktreeFile'
+    | 'priorPhaseName'
   >,
   opts?: Partial<
     Pick<
@@ -96,6 +104,7 @@ export type PhaseHandlerContextFactory = (
       | 'idFactory'
       | 'readWorktreeFile'
       | 'deleteWorktreeFile'
+      | 'priorPhaseName'
     >
   >,
 ) => PhaseHandlerContext;
@@ -111,6 +120,7 @@ export function buildPhaseHandlerContext(
     | 'idFactory'
     | 'readWorktreeFile'
     | 'deleteWorktreeFile'
+    | 'priorPhaseName'
   >,
   opts?: Partial<
     Pick<
@@ -123,6 +133,7 @@ export function buildPhaseHandlerContext(
       | 'idFactory'
       | 'readWorktreeFile'
       | 'deleteWorktreeFile'
+      | 'priorPhaseName'
     >
   >,
 ): PhaseHandlerContext {

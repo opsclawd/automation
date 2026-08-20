@@ -14,6 +14,7 @@ export type FailureKind =
   | 'handler_not_wired'
   | 'setup_failed'
   | 'needs_human_review'
+  | 'phase_boundary_violation'
   | 'unknown';
 
 export interface Failure {
