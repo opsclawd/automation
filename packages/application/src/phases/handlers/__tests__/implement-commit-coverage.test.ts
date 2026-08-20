@@ -400,6 +400,7 @@ describe('ImplementHandler Commit Coverage', () => {
 
     git.headByCwd.set(ctx.cwd, 'head-after-prior-attempt');
     const headCommitSha = vi.spyOn(git, 'headCommitSha');
+    git.ancestorResults.set('head-before-first-attempt|head-after-prior-attempt', true);
     git.changedFilesResults.set('head-before-first-attempt|head-after-prior-attempt', [
       'src/step2.ts',
     ]);
@@ -419,7 +420,7 @@ describe('ImplementHandler Commit Coverage', () => {
         head: 'head-after-prior-attempt',
       },
     ]);
-    expect(headCommitSha).toHaveBeenCalledTimes(1);
+    expect(headCommitSha).toHaveBeenCalledTimes(2);
     expect(
       steps.findByIndex(RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'), PhaseName('implement'), 2)
         ?.initialPreStepHead,

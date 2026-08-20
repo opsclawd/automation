@@ -268,6 +268,7 @@ describe('ImplementHandler undeclared files regression proof', () => {
     });
 
     git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.ancestorResults.set('pre-step|attempt-1', true);
     git.changedFilesResults.set('pre-step|attempt-1', ['src/task.ts', 'src/ref.ts']);
 
     const runStep = vi.fn(async (): Promise<StepRunResult> => {

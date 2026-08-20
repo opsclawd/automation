@@ -377,6 +377,21 @@ export class ImplementHandler implements PhaseHandler {
             `step ${d.index} (${d.title}) failed baseline commit query: ${message}`,
           );
         }
+      } else if (shouldCaptureBaseline && preStepHead !== undefined && existingStep) {
+        try {
+          const currentHead = await ctx.git.headCommitSha(ctx.cwd);
+          const stillAncestor = await ctx.git.isAncestor(ctx.cwd, preStepHead, currentHead);
+          if (!stillAncestor && currentHead !== preStepHead) {
+            preStepHead = currentHead;
+            this.opts.steps.upsert({
+              ...existingStep,
+              initialPreStepHead: preStepHead,
+              title: d.title,
+            });
+          }
+        } catch {
+          // If we cannot verify ancestry, keep the persisted value rather than fail the run.
+        }
       }
 
       const startedAt = ctx.now();
@@ -976,18 +991,35 @@ export class ImplementHandler implements PhaseHandler {
         if (classification.permitted.length > 0) {
           // Auto-commit permitted formatting debt and exempt files
           try {
-            await ctx.git.add(ctx.cwd, classification.permitted);
-            await ctx.git.commit(
-              ctx.cwd,
-              'chore: auto-commit formatting debt and exempt files at implement phase boundary',
-              classification.permitted,
-            );
-            emit(
-              'implement.formatting_debt_auto_committed',
-              'info',
-              `auto-committed ${classification.permitted.length} permitted file(s) at phase boundary`,
-              { files: classification.permitted },
-            );
+            let permittedAtActionTime = classification.permitted;
+            try {
+              const recheckStatusOutput = await ctx.git.status(ctx.cwd);
+              const stillDirty = new Set(
+                uncommittedSourcePaths(recheckStatusOutput).map(normalizeTaskPath).filter(Boolean),
+              );
+              permittedAtActionTime = classification.permitted.filter((p) => {
+                const norm = normalizeTaskPath(p);
+                return norm && stillDirty.has(norm);
+              });
+            } catch {
+              // If re-check fails, fall back to the originally-classified list.
+              permittedAtActionTime = classification.permitted;
+            }
+
+            if (permittedAtActionTime.length > 0) {
+              await ctx.git.add(ctx.cwd, permittedAtActionTime);
+              await ctx.git.commit(
+                ctx.cwd,
+                'chore: auto-commit formatting debt and exempt files at implement phase boundary',
+                permittedAtActionTime,
+              );
+              emit(
+                'implement.formatting_debt_auto_committed',
+                'info',
+                `auto-committed ${permittedAtActionTime.length} permitted file(s) at phase boundary`,
+                { files: permittedAtActionTime },
+              );
+            }
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             return this.fail(ctx, emit, 'unknown', `phase-boundary auto-commit failed: ${msg}`);
