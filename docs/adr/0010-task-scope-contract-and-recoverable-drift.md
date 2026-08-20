@@ -18,38 +18,46 @@ Between 2026-08-16 and 2026-08-20, dozens of orchestrator runs across multiple r
 
 ### 1. Split Obligation from Permission in Task Declarations
 - **`expected_files` (Obligation only)**: Precise, minimal deliverables promised by the task. The `missingFiles` check at step completion verifies that declared deliverables were committed.
-- **`permitted_areas` (Permission only)**: Directory-scoped permission. Defaults to the **immediate parent directory** of each `expected_file`. Tasks with `expected_files: []` (e.g. verification/cleanup tasks) inherit the cumulative union of `permitted_areas` from all preceding tasks in the manifest.
-- **`may_extend`**: Optional list of explicit files outside permitted areas that the task is allowed, but not required, to modify.
-- **`non_goals`**: Explicitly forbidden areas/files that fail immediately without a retry cycle.
-- **Modify vs. Create Invariant**: Modifying an existing tracked file within a permitted area is allowed; creating a new untracked file requires explicit declaration in `expected_files` or `may_extend`.
-- **Auto-commit Sweep**: The step auto-commit sweeps all dirty files within `permitted_areas`, not just `uncommittedDeclared`.
+- **`permitted_areas` (Permission only)**: Directory-scoped permission. Defaults to the **immediate parent directory** of each non-root `expected_file`. Root-level files (e.g. `package.json`, `README.md`) authorize only that exact file and **never** derive repository-root (`.`) permission.
+- **Explicit Permission Precedence**:
+  1. `protected_files` (`.gitignore`, `task-manifest.json`) $\rightarrow$ protected reverter / invariant check.
+  2. `non_goals` $\rightarrow$ immediate hard failure (`canRetry: false`).
+  3. `downstream expected_files` $\rightarrow$ `premature_implementation` (revert & name owning task).
+  4. `reference_files` $\rightarrow$ read-only; modified = manifest fault.
+  5. `expected_files` & `may_extend` $\rightarrow$ permitted (tracked or new).
+  6. `permitted_areas` $\rightarrow$ tracked file modifications permitted; untracked file creations = drift.
+  7. `undeclared untracked` $\rightarrow$ drift.
+- **Verification / Empty Tasks**: Tasks with `expected_files: []` requiring write access must explicitly declare `permitted_areas`; otherwise they remain read-only (preserving repo validation guidance).
+- **Auto-commit Sweep**: The step auto-commit consumes the classifier's permitted-paths output directly, committing only files verified as permitted rather than doing an unconstrained directory sweep.
 
-### 2. Mechanical Revert-and-Continue for Recoverable Scope Drift
-- When an undeclared file modification is detected:
-  - The runner mechanically restores the file using `git checkout <preStepHead> -- <undeclaredFiles>` (or `git restore`) rather than relying on LLM narrative commit rewrites.
-  - The step is informed of the revert and continues.
-  - A revert cap is enforced: after $N = 2$ reverts of the same path in a step, the runner halts and escalates to `needs_human_review` with a structured `task-boundary-blocked` finding.
-- Deep scratch file remediation sweeps uncommitted untracked probes across all package subdirectories, preserving orchestrator-written artifacts.
+### 2. Generalized Scope Reverter, Stateful Cap, and Deep Scratch Purge
+- When an undeclared file modification or drift is detected:
+  - The runner invokes a generalized `RevertScopeFilesPort` (generalizing `revertProtectedFiles`): restores baseline-present files via `git checkout <preStepHead> -- <files>`, removes newly created baseline-absent files via `git rm -rf` / working tree deletion, amends the commit with `--no-edit`, and returns the amended SHA.
+  - Reclassification re-runs against both the amended commit diff and any remaining dirty worktree files.
+  - A per-step, normalized-path $\rightarrow$ count map (`revertCounts: Record<string, number>`) is persisted in the domain `Step` entity in the SQLite step repository. Resuming a run does not reset the count. After $N = 2$ reverts of the same path, the step escalates to `needs_human_review` with a structured `task-boundary-blocked` finding.
+- Deep scratch file remediation sweeps uncommitted untracked probes across all package subdirectories while preserving orchestrator-written artifacts (`isOrchestratorArtifactPattern`).
 
 ### 3. Premature Implementation Classification
-- If a modified file belongs to the `expected_files` of a *downstream* task in the same manifest, the runtime classifies the violation as `premature_implementation`.
-- The runner mechanically reverts the file to the baseline, reports the owning downstream task and schedule, and avoids widening the current task's declaration.
+- If a modified file belongs to the `expected_files` of a downstream task in the same manifest, the runtime classifies the violation as `premature_implementation`.
+- The runner mechanically reverts the file to the baseline via `RevertScopeFilesPort`, reports the owning downstream task, and avoids widening the current task's declaration.
 
 ### 4. Worktree Lifecycle and Phase-Boundary Hygiene
-- **Inbound to `implement`**: Mechanical worktree reset (`git checkout <baseline> -- .` and untracked probe sweep) runs at the phase transition to ensure probe artifacts from `plan-review` do not fail the inbound cleanliness check.
-- **On Run Resume**: `orchestrator runs resume` resets the worktree to `preStepHead` before executing inbound cleanliness checks, preventing false attribution of mid-step working files to prior phases.
+- **Inbound to `implement`**: Mechanical worktree reset restores tracked dirty files to current `HEAD` and purges untracked probe files.
+- **On Run Resume**: `orchestrator runs resume` resets the worktree to `initialPreStepHead` (falling back to `HEAD` if absent). Discarded paths are logged. If resumed from `needs_human_review`, human operator triage changes are classified before any destructive reset to preserve manual repairs.
 
 ### 5. Plan-Review Invariants for Monorepos
-- **Barrel Exports**: If a task introduces a new public module under a package, `packages/<pkg>/src/index.ts` must either be co-located in `expected_files` or explicitly deferred with a negative prompt constraint.
-- **Intermediate Monorepo Buildability**: Tasks introducing framework CLI commands (e.g. Next.js `"build": "next build"`) must co-locate minimal structural entrypoints (`app/` or `pages/` stubs) in the same task so intermediate step commits leave `pnpm -r build` green.
-- **RED/Implementation Validation Parity**: Plan-review rejects RED tasks whose validation command requires failing tests to pass, or RED/implementation task pairs sharing identical validation commands.
+- Structured manifest signals (`task_type`, `paired_with_task`, `public_symbols`, `deferred_exports`, `package_scripts`) provide deterministic validation inputs.
+- **Barrel Exports**: If a task introduces a new public module, `packages/<pkg>/src/index.ts` must either be co-located in `expected_files` or declared with an explicit deferred handoff constraint.
+- **Next.js Intermediate Buildability**: Tasks introducing Next.js build scripts (`"build": "next build"`) must co-locate minimal structural entrypoints (`app/layout.tsx` + `app/page.tsx` or `pages/_app.tsx` + `pages/index.tsx`) so intermediate commits leave `pnpm -r build` green.
+- **RED/Implementation Validation Parity**: Plan-review rejects manifests where a RED-first task and implementation task share identical validation commands or where RED validation requires failing tests to pass.
 
-### 6. Failure Taxonomy
-- Machine-readable outcome categories are recorded on step and run results: `infrastructure_failure`, `implementation_failure`, `recovered_scope_violation`, `fatal_scope_violation`, `premature_implementation`, `review_rejection`, `human_review_required`, `success`.
+### 6. Failure Taxonomy & Incident Telemetry
+- Incident telemetry is separated from terminal domain run lifecycle states (`pending`, `running`, `success`, `failed`, `needs_human_review`, `cancelled`).
+- Incident events (e.g. `step.recovered_scope_violation`, `infrastructure_failure`) are emitted and persisted in the SQLite event repository (`packages/infrastructure/src/sqlite/event-repository.ts`) and exposed via `/events` API.
 
 ## Consequences
 
 - False-positive boundary violations on sibling files and exports are eliminated.
 - LLM hallucinated commit rewrites during retries are replaced by deterministic runner git operations.
-- Interrupted or resumed runs recover cleanly without false phase attribution.
+- Interrupted or resumed runs recover cleanly without false phase attribution or erasing manual operator repairs.
 - Task manifest contracts remain strict on deliverables while allowing realistic engineering changes within bounded directory subtrees.
