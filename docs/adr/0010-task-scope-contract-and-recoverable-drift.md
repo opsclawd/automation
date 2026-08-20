@@ -42,12 +42,20 @@ Between 2026-08-16 and 2026-08-20, dozens of orchestrator runs across multiple r
 ### 4. Worktree Lifecycle and Phase-Boundary Hygiene
 - **Inbound to `implement`**: Mechanical worktree reset restores tracked dirty files to current `HEAD` and purges untracked probe files.
 - **On Run Resume**: `orchestrator runs resume` resets the worktree to `initialPreStepHead`. If `initialPreStepHead` is unresolvable, the engine preserves working tree state and transitions safely to `needs_human_review`.
-- **Operator Repair Preservation**: If resumed from `needs_human_review` with `resume_disposition: 'preserve_working_tree'` (handed off across the queued-job boundary), working tree diffs are classified using the boundary classifier and preserved across inbound cleanliness checks. Discarded paths are audited via the event stream.
+- **Operator Repair Preservation & Migration 0035**:
+  - SQLite migration `0035-add-job-resume-disposition.ts` adds `resume_disposition TEXT` to the `jobs` table, and `Job` in domain supports `resumeDisposition: 'preserve_working_tree' | 'reset_to_baseline'`.
+  - Disposition defaults: Ordinary resumes from `failed` or `blocked` default to `reset_to_baseline`. Resumes from `needs_human_review` with uncommitted changes require an explicit disposition (failing fast if omitted).
+  - When `preserve_working_tree` is active, working tree diffs are classified using the boundary classifier and preserved across inbound cleanliness checks. Discarded paths are audited via `EventRepository` before reset.
 
 ### 5. Plan-Review Invariants for Monorepos
-- Structured manifest signals (`task_type`, `paired_with_task`, `public_symbols`, `deferred_exports`, `planned_package_scripts`) provide deterministic validation inputs. Tasks are referenced by 1-based index `tasks[].n`.
-- **Barrel Exports**: If a task introduces public symbols under `packages/<pkg>/src/<sub>/`, `packages/<pkg>/src/index.ts` must either be in `expected_files` or in `deferred_exports` with an owning task index.
-- **Next.js Intermediate Buildability**: Tasks introducing Next.js build scripts (`planned_package_scripts: { "build": "next build" }`) must co-locate minimal structural entrypoints (`app/layout.tsx` + `app/page.tsx` or `pages/_app.tsx` + `pages/index.tsx`) in `expected_files`.
+- Structured manifest signals provide targeted, deterministic validation inputs with 1-based task references (`tasks[].n`):
+  - `public_symbols?: Array<{ barrel_file: string; symbols: string[] }>`
+  - `deferred_exports?: Array<{ symbol: string; barrel_file: string; owning_task: number }>`
+  - `planned_package_scripts?: Array<{ package_json: string; scripts: Record<string, string> }>`
+  - `task_type?: 'standard' | 'red' | 'implementation' | 'verification'`
+  - `paired_with_task?: number`
+- **Barrel Exports**: Declared `public_symbols` under `packages/<pkg>/src/<sub>/` must have `barrel_file` in `expected_files` or in `deferred_exports` with a valid downstream `owning_task`.
+- **Next.js Intermediate Buildability**: Tasks introducing Next.js build scripts via `planned_package_scripts` (`"build": "next build"`) must co-locate minimal structural entrypoints (`app/layout.tsx` + `app/page.tsx` or `pages/_app.tsx` + `pages/index.tsx`) in `expected_files`.
 - **RED Validation Parity**: Red tasks (`task_type: 'red'`) must declare failing commands (`! command`) and cannot share identical validation commands with their paired implementation task.
 
 ### 6. Failure Taxonomy & Incident Telemetry
