@@ -333,7 +333,7 @@ describe('PlanReviewLoop', () => {
     expect(out.outcome).toBe('success');
     expect(out.loop.iterations.length).toBeGreaterThanOrEqual(2);
     expect(reviewCalls).toBeGreaterThanOrEqual(2);
-    expect(fixCalls).toBe(1);
+    expect(fixCalls).toBe(2);
   });
 
   it('contradiction finding_invalid bypasses quote verification', async () => {
@@ -3689,6 +3689,99 @@ describe('Task 1: snapshot seam - post-reopen verification', () => {
         outcome: 'resolved',
         verification: 'post_reopen_final_full',
       });
+    });
+  });
+
+  describe('fast-track formal review rebuttals directly to Arbiter', () => {
+    it('routes done_no_fixes_needed directly to arbiter and advances on finding_invalid', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      let arbiterCalls = 0;
+
+      const { deps, events } = makeDeps({
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success',
+            verdict: 'p1_found',
+            findings: groundedP1Findings(),
+          };
+        },
+        runFix: async (): Promise<PlanFixResult> => {
+          fixCalls++;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success',
+            verdict: 'done_no_fixes_needed',
+            rebuttal: 'Code is already compliant',
+          };
+        },
+        runArbiter: async (): Promise<PlanReviewArbiterResult> => {
+          arbiterCalls++;
+          return arbiterResult({
+            outcome: 'finding_invalid',
+            evidence: '<quote>The plan prose is compliant in plan.md:42.</quote>',
+            rationale: 'Rebuttal accepted: plan prose satisfies requirements.',
+          });
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(arbiterCalls).toBe(1);
+      expect(reviewCalls).toBe(1);
+      expect(fixCalls).toBe(1);
+      expect(events.map((e) => e.type)).toContain('plan-review.review.contradiction.detected');
+      expect(events.map((e) => e.type)).toContain('plan-review.review.contradiction.escalated');
+      expect(events.map((e) => e.type)).toContain('plan-review.review.contradiction.resolved');
+    });
+
+    it('bypasses redundant re-review when arbiter rules finding_valid and passes rationale to fix step', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      let arbiterCalls = 0;
+      const fixOptionsList: PlanFixOptions[] = [];
+
+      const { deps, events } = makeDeps({
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success',
+            verdict: reviewCalls >= 2 ? 'pass' : 'p1_found',
+            findings: reviewCalls >= 2 ? [] : groundedP1Findings(),
+          };
+        },
+        runFix: async (_ctx, opts): Promise<PlanFixResult> => {
+          fixCalls++;
+          fixOptionsList.push(opts);
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success',
+            verdict: fixCalls === 1 ? 'done_no_fixes_needed' : 'done_with_fixes',
+            headBeforeFix: `fix-head-${fixCalls}`,
+          };
+        },
+        runArbiter: async (): Promise<PlanReviewArbiterResult> => {
+          arbiterCalls++;
+          return arbiterResult({
+            outcome: 'finding_valid',
+            evidence: '<quote>The defect is real and not addressed by prior fixes.</quote>',
+            rationale: 'Reviewer finding is valid: state transition handler missing',
+          });
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.outcome).toBe('success');
+      expect(arbiterCalls).toBe(1);
+      expect(fixCalls).toBe(2);
+      expect(reviewCalls).toBe(3); // 1 initial + 1 delta convergence + 1 final_full
+      expect(fixOptionsList[1]?.reconciliationContext).toBe(
+        'Reviewer finding is valid: state transition handler missing',
+      );
+      expect(events.map((e) => e.type)).toContain('plan-review.review.bypassed_for_arbitration');
     });
   });
 });
