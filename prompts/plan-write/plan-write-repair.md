@@ -49,7 +49,8 @@ scratch. For example:
 - TEST-FIRST COMMIT ORDER: Do not merge a regression-proof task into its implementation task. If the
   plan reproduces a bug with a failing test in an earlier numbered task and fixes it in a later one,
   preserve that separation while repairing — renumber them if required, but keep the proof ahead of
-  the fix and keep the implementation source change out of the proof task.
+  the fix and keep the implementation source change out of the proof task. For additive feature work,
+  preserve unit tests co-located within the same task as their implementation code.
 
 ## CRITICAL RULES
 
