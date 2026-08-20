@@ -12,6 +12,7 @@ import {
 import {
   parseTaskManifest,
   validatePlanTaskList,
+  checkTaskValidationCommandsDeclarationMismatch,
   checkTaskValidationCommandsSatisfiability,
 } from '@ai-sdlc/application';
 
@@ -147,29 +148,30 @@ export function createDeterministicPlanCheck(options: CreateDeterministicPlanChe
 
     const blastRadiusDiagnostic = renderSignatureBlastRadiusDiagnostic(blastRadiusFailures);
 
-    const validationCommandDiagnostic = await checkTaskValidationCommandsSatisfiability(
-      manifest,
-      {
-        worktreeRoot: ctx.cwd,
-        readWorktreeFile: (relativePath: string) => {
-          const fullPath = join(ctx.cwd, relativePath);
-          if (existsSync(fullPath)) {
-            try {
-              return readFileSync(fullPath, 'utf-8');
-            } catch {
-              return null;
-            }
+    const validationCommandDiagnostic = await checkTaskValidationCommandsSatisfiability(manifest, {
+      worktreeRoot: ctx.cwd,
+      readWorktreeFile: (relativePath: string) => {
+        const fullPath = join(ctx.cwd, relativePath);
+        if (existsSync(fullPath)) {
+          try {
+            return readFileSync(fullPath, 'utf-8');
+          } catch {
+            return null;
           }
-          return null;
-        },
+        }
+        return null;
       },
-    );
+    });
+
+    const validationCommandDeclarationDiagnostic =
+      checkTaskValidationCommandsDeclarationMismatch(manifest);
 
     const diagnostic = joinDiagnostics(
       structuralDiagnostic,
       forbiddenArtifactDiagnostic,
       blastRadiusDiagnostic,
       validationCommandDiagnostic,
+      validationCommandDeclarationDiagnostic,
     );
 
     return { diagnostic, signatureBlastRadiusFailures: blastRadiusFailures };

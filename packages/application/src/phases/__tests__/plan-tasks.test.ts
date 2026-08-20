@@ -804,4 +804,33 @@ Body of task 1.
       ]);
     });
   });
+
+  describe('validation_commands vs reference_files declaration mismatch (issue #961)', () => {
+    it('flags a task whose validation_command targets a file declared in its own reference_files', async () => {
+      const { checkTaskValidationCommandsDeclarationMismatch } =
+        await import('../../task-validation-commands.js');
+      const json = JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'task 1',
+            expected_files: ['packages/foo/src/a.ts'],
+            reference_files: ['packages/foo/src/__tests__/a.test.ts'],
+            validation_commands: ['pnpm vitest run packages/foo/src/__tests__/a.test.ts'],
+          },
+        ],
+      });
+      const parsed = parseTaskManifest(json);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) return;
+
+      const diagnostic = checkTaskValidationCommandsDeclarationMismatch(parsed.manifest);
+      expect(diagnostic).not.toBeNull();
+      expect(diagnostic).toContain('Task 1');
+      expect(diagnostic).toContain('reference_files');
+      expect(diagnostic).toContain('packages/foo/src/__tests__/a.test.ts');
+    });
+  });
 });

@@ -393,4 +393,130 @@ describe('createDeterministicPlanCheck', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('returns a diagnostic when a task validation_command targets a file in the same task reference_files', async () => {
+    const readPlanMd = vi.fn().mockResolvedValue('some plan markdown');
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          expected_files: ['packages/foo/src/a.ts'],
+          reference_files: ['packages/foo/src/__tests__/a.test.ts'],
+          validation_commands: ['pnpm vitest run packages/foo/src/__tests__/a.test.ts'],
+        },
+      ],
+    };
+    const readManifest = vi.fn().mockResolvedValue(JSON.stringify(manifest));
+    const validatePlanTaskList = vi.fn().mockReturnValue({ success: true });
+    const signatureAnalyzer: SignatureReferenceAnalyzerPort = {
+      analyze: vi.fn(),
+    };
+
+    const check = createDeterministicPlanCheck({
+      readPlanMd,
+      readManifest,
+      validatePlanTaskList,
+      signatureAnalyzer,
+    });
+
+    const result = await check(dummyCtx);
+
+    expect(result.diagnostic).not.toBeNull();
+    expect(result.diagnostic).toContain('Task 1');
+    expect(result.diagnostic).toContain('reference_files');
+    expect(result.diagnostic).toContain('expected_files');
+    expect(result.diagnostic).toContain('packages/foo/src/__tests__/a.test.ts');
+    expect(result.signatureBlastRadiusFailures).toEqual([]);
+  });
+
+  it('returns a diagnostic for cross-task conflict: validation_command targets a file declared as expected in an earlier task and as reference in the current task', async () => {
+    const readPlanMd = vi.fn().mockResolvedValue('some plan markdown');
+    const manifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          expected_files: [
+            'packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts',
+          ],
+        },
+        {
+          n: 2,
+          title: 'task 2',
+          reference_files: [
+            'packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts',
+          ],
+          validation_commands: [
+            'pnpm vitest run packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts',
+          ],
+        },
+      ],
+    };
+    const readManifest = vi.fn().mockResolvedValue(JSON.stringify(manifest));
+    const validatePlanTaskList = vi.fn().mockReturnValue({ success: true });
+    const signatureAnalyzer: SignatureReferenceAnalyzerPort = {
+      analyze: vi.fn(),
+    };
+
+    const check = createDeterministicPlanCheck({
+      readPlanMd,
+      readManifest,
+      validatePlanTaskList,
+      signatureAnalyzer,
+    });
+
+    const result = await check(dummyCtx);
+
+    expect(result.diagnostic).not.toBeNull();
+    expect(result.diagnostic).toContain('Task 2');
+    expect(result.diagnostic).toContain('reference_files');
+    expect(result.diagnostic).toContain('expected_files');
+    expect(result.diagnostic).toContain('review-fix-protected-files.test.ts');
+    expect(result.diagnostic).toContain('Task 1');
+  });
+
+  it('passes cleanly when validation_commands target only expected_files (regression guard)', async () => {
+    const readPlanMd = vi.fn().mockResolvedValue('some plan markdown');
+    const manifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          expected_files: ['packages/foo/src/a.ts'],
+        },
+        {
+          n: 2,
+          title: 'task 2',
+          expected_files: ['packages/foo/src/__tests__/b.test.ts'],
+          validation_commands: ['pnpm vitest run packages/foo/src/__tests__/b.test.ts'],
+        },
+      ],
+    };
+    const readManifest = vi.fn().mockResolvedValue(JSON.stringify(manifest));
+    const validatePlanTaskList = vi.fn().mockReturnValue({ success: true });
+    const signatureAnalyzer: SignatureReferenceAnalyzerPort = {
+      analyze: vi.fn(),
+    };
+
+    const check = createDeterministicPlanCheck({
+      readPlanMd,
+      readManifest,
+      validatePlanTaskList,
+      signatureAnalyzer,
+    });
+
+    const result = await check(dummyCtx);
+
+    expect(result).toEqual({
+      diagnostic: null,
+      signatureBlastRadiusFailures: [],
+    });
+  });
 });

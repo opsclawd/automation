@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildTaskValidationCommands,
+  checkTaskValidationCommandsDeclarationMismatch,
   checkTaskValidationCommandsSatisfiability,
   expandTaskValidationCommandsWithNewTests,
   globToRegex,
@@ -246,7 +247,9 @@ describe('buildTaskValidationCommands', () => {
 describe('checkTaskValidationCommandsSatisfiability', () => {
   it('globToRegex correctly converts glob patterns to RegExp, including brace expansion', () => {
     const re1 = globToRegex('**/*.integration.test.ts');
-    expect(re1.test('packages/infrastructure/src/postgres/baseline-schema.integration.test.ts')).toBe(true);
+    expect(
+      re1.test('packages/infrastructure/src/postgres/baseline-schema.integration.test.ts'),
+    ).toBe(true);
     expect(re1.test('src/foo.test.ts')).toBe(false);
 
     const re2 = globToRegex('packages/*/src/**/*.test.ts');
@@ -308,8 +311,8 @@ describe('checkTaskValidationCommandsSatisfiability', () => {
       });
     `;
     const { include, exclude } = parseRunnerConfigExclusions(config);
-    expect(include).toEqual(["packages/*/src/**/*.test.ts", "apps/*/src/**/*.test.ts"]);
-    expect(exclude).toEqual(["**/*.integration.test.ts", "**/node_modules/**", "**/dist/**"]);
+    expect(include).toEqual(['packages/*/src/**/*.test.ts', 'apps/*/src/**/*.test.ts']);
+    expect(exclude).toEqual(['**/*.integration.test.ts', '**/node_modules/**', '**/dist/**']);
   });
 
   it('rejects a task validation command targeting a path excluded by runner config', async () => {
@@ -355,7 +358,9 @@ describe('checkTaskValidationCommandsSatisfiability', () => {
         {
           n: 1,
           title: 'Task 1',
-          validation_commands: ['pnpm vitest run packages/infrastructure/src/postgres/baseline-schema.test.ts'],
+          validation_commands: [
+            'pnpm vitest run packages/infrastructure/src/postgres/baseline-schema.test.ts',
+          ],
         },
       ],
     };
@@ -385,10 +390,7 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
     ];
 
     expect(
-      isTestFileCoveredByCommands(
-        'packages/infrastructure/src/git/existing.test.ts',
-        commands,
-      ),
+      isTestFileCoveredByCommands('packages/infrastructure/src/git/existing.test.ts', commands),
     ).toBe(true);
 
     expect(
@@ -431,7 +433,7 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual(existingCommands[0]);
     expect(result[1]).toContain(
-      'pnpm vitest run \'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts\'',
+      "pnpm vitest run 'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts'",
     );
   });
 
@@ -440,9 +442,7 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
       'pnpm vitest run packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts --passWithNoTests=false',
     ];
 
-    const changedFiles = [
-      'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
-    ];
+    const changedFiles = ['packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts'];
 
     const existingFiles = new Set([
       'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
@@ -455,5 +455,203 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
     });
 
     expect(result).toEqual(existingCommands);
+  });
+});
+
+describe('checkTaskValidationCommandsDeclarationMismatch', () => {
+  it('returns null for a v1 manifest (v1 has no reference_files / validation_commands)', () => {
+    const manifest: TaskManifest = {
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'task 1', files: ['f.ts'], validation: ['vitest run f.test.ts'] }],
+    };
+
+    expect(checkTaskValidationCommandsDeclarationMismatch(manifest)).toBeNull();
+  });
+
+  it('returns null when no validation_commands reference files declared as reference_files', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          expected_files: ['packages/foo/src/a.ts'],
+          reference_files: ['packages/foo/src/existing.ts'],
+        },
+        {
+          n: 2,
+          title: 'task 2',
+          expected_files: ['packages/foo/src/b.ts'],
+          validation_commands: ['pnpm vitest run packages/foo/src/__tests__/b.test.ts'],
+        },
+      ],
+    };
+
+    expect(checkTaskValidationCommandsDeclarationMismatch(manifest)).toBeNull();
+  });
+
+  it('flags a task whose validation_command targets a file in the same task reference_files', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          expected_files: ['packages/foo/src/a.ts'],
+          reference_files: ['packages/foo/src/__tests__/a.test.ts'],
+          validation_commands: ['pnpm vitest run packages/foo/src/__tests__/a.test.ts'],
+        },
+      ],
+    };
+
+    const diagnostic = checkTaskValidationCommandsDeclarationMismatch(manifest);
+    expect(diagnostic).not.toBeNull();
+    expect(diagnostic).toContain('Task 1');
+    expect(diagnostic).toContain('reference_files');
+    expect(diagnostic).toContain('packages/foo/src/__tests__/a.test.ts');
+    expect(diagnostic).toContain('expected_files');
+  });
+
+  it('flags a cross-task conflict: validation_command targets a file declared as expected in an earlier task and as reference in the current task', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          expected_files: [
+            'packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts',
+          ],
+        },
+        {
+          n: 2,
+          title: 'task 2',
+          reference_files: [
+            'packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts',
+          ],
+          validation_commands: [
+            'pnpm vitest run packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts',
+          ],
+        },
+      ],
+    };
+
+    const diagnostic = checkTaskValidationCommandsDeclarationMismatch(manifest);
+    expect(diagnostic).not.toBeNull();
+    expect(diagnostic).toContain('Task 2');
+    expect(diagnostic).toContain('reference_files');
+    expect(diagnostic).toContain('expected_files');
+    expect(diagnostic).toContain('review-fix-protected-files.test.ts');
+    expect(diagnostic).toContain('Task 1');
+  });
+
+  it('does not flag a file that was created earlier when current task does not list it in reference_files', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          expected_files: ['packages/foo/src/__tests__/shared.test.ts'],
+        },
+        {
+          n: 2,
+          title: 'task 2',
+          expected_files: ['packages/foo/src/b.ts'],
+          validation_commands: ['pnpm vitest run packages/foo/src/__tests__/shared.test.ts'],
+        },
+      ],
+    };
+
+    expect(checkTaskValidationCommandsDeclarationMismatch(manifest)).toBeNull();
+  });
+
+  it('does not flag validation_commands that are general (e.g. "pnpm test") with no literal target', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          reference_files: ['packages/foo/src/__tests__/shared.test.ts'],
+          validation_commands: ['pnpm test'],
+        },
+      ],
+    };
+
+    expect(checkTaskValidationCommandsDeclarationMismatch(manifest)).toBeNull();
+  });
+
+  it('does not flag glob targets that happen to match a reference_file (cannot statically determine expansion)', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          reference_files: ['packages/foo/src/__tests__/a.test.ts'],
+          validation_commands: ['pnpm vitest run packages/foo/src/__tests__/*.test.ts'],
+        },
+      ],
+    };
+
+    expect(checkTaskValidationCommandsDeclarationMismatch(manifest)).toBeNull();
+  });
+
+  it('reports each violating (task, target) pair separately so multiple conflicts are visible in one run', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          expected_files: ['packages/foo/src/a.ts'],
+          reference_files: ['packages/foo/src/__tests__/a.test.ts'],
+          validation_commands: ['pnpm vitest run packages/foo/src/__tests__/a.test.ts'],
+        },
+        {
+          n: 2,
+          title: 'task 2',
+          expected_files: ['packages/foo/src/b.ts'],
+          reference_files: ['packages/foo/src/__tests__/b.test.ts'],
+          validation_commands: ['pnpm vitest run packages/foo/src/__tests__/b.test.ts'],
+        },
+      ],
+    };
+
+    const diagnostic = checkTaskValidationCommandsDeclarationMismatch(manifest);
+    expect(diagnostic).not.toBeNull();
+    expect(diagnostic).toContain('Task 1');
+    expect(diagnostic).toContain('Task 2');
+    expect(diagnostic).toContain('a.test.ts');
+    expect(diagnostic).toContain('b.test.ts');
+  });
+
+  it('accepts a validation_commands array form (argv-style)', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          reference_files: ['packages/foo/src/__tests__/a.test.ts'],
+          validation_commands: [['pnpm', 'vitest', 'run', 'packages/foo/src/__tests__/a.test.ts']],
+        },
+      ],
+    };
+
+    const diagnostic = checkTaskValidationCommandsDeclarationMismatch(manifest);
+    expect(diagnostic).not.toBeNull();
+    expect(diagnostic).toContain('Task 1');
+    expect(diagnostic).toContain('packages/foo/src/__tests__/a.test.ts');
   });
 });
