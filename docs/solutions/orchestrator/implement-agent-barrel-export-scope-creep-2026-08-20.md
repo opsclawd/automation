@@ -123,6 +123,18 @@ not see Task 3 from inside Task 2's prompt context.
     before the implement agent runs, rather than discovered at the
     boundary guard and paid for in a wasted retry.
 
+    **Status (in flight):** this rule has been proposed as an addition
+    to #936 §5 (plan-review dependency ordering) via
+    [a comment on #936](https://github.com/opsclawd/automation/issues/936#issuecomment-5352387704)
+    that cites this doc as the evidence base. The comment frames the
+    rule in the same co-located / explicit-deferred shape, and is
+    currently the bridging step between this doc and the structural
+    fix. Track #936 for the structural landing; this doc remains the
+    canonical writeup of the failure mode and the rule itself, and
+    §3b's "premature implementation" classification already covers the
+    implement-time recovery if the rule is not yet enforced at plan
+    time.
+
 ### For the implement-phase boundary guard
 
 8. **Do not trust `implementation-log.md` narratives about file
@@ -145,6 +157,20 @@ not see Task 3 from inside Task 2's prompt context.
     same two files modified. A targeted restore of only the flagged
     files leaves legitimately-declared modifications in the index
     intact, so it is safe to apply automatically.
+
+    **Status (in flight):** this recommendation is the tactical form
+    of #936 §2's revert-and-continue model.
+    [A comment on #936](https://github.com/opsclawd/automation/issues/936#issuecomment-5352387704)
+    explicitly endorses the runner-layer mechanism, calling it
+    essential and citing this doc as the detailed writeup — the
+    comment's framing ("the runner layer must mechanically execute
+    `git checkout <preStepHead> -- <undeclaredFiles>` rather than
+    relying on agent self-remediation in narrative form") matches
+    this section's guidance. Track #936 for the structural landing;
+    this doc remains the canonical writeup, and §3b's
+    "premature implementation" classification already gives an
+    implement-time recovery path even before the revert-and-continue
+    runner ships.
 
 10. **Increase the default `maxDeclaredFilesRetries` from 1 to at least
     2** for `expected_files`-style violations, or, better, switch to a
