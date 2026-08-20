@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { EvidenceResolver, PlanReviewFinding } from './types.js';
 
 const verdictSchema = z.enum(['pass', 'p1_found', 'p2_only', 'proceed_with_concerns']);
-const severitySchema = z.enum(['P0', 'P1', 'P2']);
+const severitySchema = z.enum(['P0', 'P1', 'P2', 'P3']);
 const evidenceSchema = z.enum(['grounded', 'ungrounded']);
 const dispositionSchema = z.enum(['addressed', 'rebutted', 'still_open', 'never_seen_again']);
 
@@ -334,17 +334,17 @@ function finalizeDocument(
 ): PlanReviewFindingsDocument {
   if (verdict === 'pass') {
     // A `pass` verdict may still list findings that were resolved earlier in
-    // this run (disposition addressed/rebutted/never_seen_again) — the
-    // prompt explicitly invites this as an audit trail on confirmation
-    // passes (see prompts/plan-review/plan-review.md, "DISPOSITION
-    // GUIDANCE"). Only an unresolved finding (no disposition, or
-    // still_open) contradicts a pass verdict.
-    const unresolved = findings.filter(
-      (f) => f.disposition === undefined || f.disposition === 'still_open',
+    // this run (disposition addressed/rebutted/never_seen_again) or non-blocking
+    // P3 findings. Only an unresolved blocking finding (P0, P1, P2 with no
+    // disposition or still_open) contradicts a pass verdict.
+    const unresolvedBlocking = findings.filter(
+      (f) =>
+        (f.severity === 'P0' || f.severity === 'P1' || f.severity === 'P2') &&
+        (f.disposition === undefined || f.disposition === 'still_open'),
     );
-    if (unresolved.length > 0) {
+    if (unresolvedBlocking.length > 0) {
       throw new PlanReviewFindingsParseError(
-        'pass verdict must not include unresolved findings (missing disposition or still_open)',
+        'pass verdict must not include unresolved blocking findings (missing disposition or still_open)',
       );
     }
   }

@@ -108,6 +108,74 @@ function makeDeps(over: Partial<ReviewFixLoopDeps>): ReviewFixLoopDeps {
 }
 
 describe('ReviewFixLoop', () => {
+  describe('P3 advisory thresholding', () => {
+    it('passes and converges on iteration 1 when review returns fail with only sub-threshold P3 findings', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const deps = makeDeps({
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+            overridden: true,
+            offendingFindings: [],
+          };
+        },
+        runFix: async () => {
+          fixCalls += 1;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute(baseInput());
+      expect(out.phaseOutcome).toBe('passed');
+      expect(out.loop.status).toBe('converged');
+      expect(out.loop.iterations).toHaveLength(1);
+      expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+      expect(fixCalls).toBe(0);
+    });
+
+    it('triggers fix cycle when review returns fail with blocking P2 finding', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const deps = makeDeps({
+        runReview: async () => {
+          reviewCalls += 1;
+          if (reviewCalls === 1) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success' as const,
+              verdict: 'fail' as const,
+              offendingFindings: [{ severity: 'P2', summary: 'blocking defect' }],
+            };
+          }
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+        runFix: async () => {
+          fixCalls += 1;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute(baseInput());
+      expect(out.phaseOutcome).toBe('passed');
+      expect(fixCalls).toBe(1);
+      expect(reviewCalls).toBe(2);
+    });
+  });
+
   it('converges on iteration 1 when review passes immediately', async () => {
     const deps = makeDeps({});
     const out = await new ReviewFixLoop(deps).execute(baseInput());

@@ -103,6 +103,86 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
 }
 
 describe('PlanReviewLoop', () => {
+  describe('P3 advisory thresholding', () => {
+    it('review result with only P3 findings passes on first review without fix iteration', async () => {
+      let fixCalls = 0;
+      const { deps } = makeDeps({
+        runReview: async (): Promise<PlanReviewResult> => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success',
+          verdict: 'p2_only',
+          findings: [
+            {
+              severity: 'P3',
+              citation: 'plan.md:10',
+              failureScenario: 'minor advisory wording note',
+              evidence: 'grounded',
+            },
+          ],
+        }),
+        runFix: async (): Promise<PlanFixResult> => {
+          fixCalls++;
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(out.loop.status).toBe('converged');
+      expect(out.loop.iterations).toHaveLength(1);
+      expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+      expect(fixCalls).toBe(0);
+    });
+
+    it('review result with P2 finding triggers fix iteration', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const { deps } = makeDeps({
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          if (reviewCalls === 1) {
+            return {
+              invocationId: 'rev-1',
+              agentOutcome: 'success',
+              verdict: 'p2_only',
+              findings: [
+                {
+                  severity: 'P2',
+                  citation: 'plan.md:10',
+                  failureScenario: 'blocking P2 defect',
+                  evidence: 'grounded',
+                },
+              ],
+            };
+          }
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success',
+            verdict: 'pass',
+            findings: [],
+          };
+        },
+        runFix: async (): Promise<PlanFixResult> => {
+          fixCalls++;
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(fixCalls).toBe(1);
+      expect(reviewCalls).toBeGreaterThanOrEqual(2);
+    });
+  });
+
   it('AC #5.1 — pass on first review', async () => {
     const { deps } = makeDeps({});
     const out = await new PlanReviewLoop(deps).execute(baseInput());

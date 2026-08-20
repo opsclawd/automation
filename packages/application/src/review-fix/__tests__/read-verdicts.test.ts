@@ -656,4 +656,52 @@ describe('readReviewVerdict severity gate', () => {
       ],
     });
   });
+
+  it('threshold "medium" or "p2" passes result with only P3 findings', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [{ severity: 'P3', summary: 'advisory nit' }],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'p2' },
+    );
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'pass',
+      overridden: true,
+      offendingFindings: [],
+    });
+  });
+
+  it('threshold "medium" or "p2" blocks P2 findings and triggers fail verdict', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'pass',
+        findings: [{ severity: 'P2', summary: 'blocking defect' }],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'p2' },
+    );
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'fail',
+      overridden: true,
+      offendingFindings: [{ severity: 'P2', summary: 'blocking defect', files: [] }],
+    });
+  });
 });

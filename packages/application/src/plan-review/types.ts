@@ -63,7 +63,7 @@ export interface PlanReviewResult {
  * resolved against the artifact store (#716, AC #3).
  */
 export interface PlanReviewFinding {
-  severity: 'P0' | 'P1' | 'P2';
+  severity: 'P0' | 'P1' | 'P2' | 'P3';
   /** Required: path:line OR section-anchor reference (e.g. `plan.md:42`). */
   citation: string;
   /** Required: one-sentence failure scenario. */
