@@ -108,7 +108,9 @@ describe('taskManifestV2Schema scope contract', () => {
       expect(v2Result.data.tasks[2].non_goals).toEqual([]);
       expect(v2Result.data.tasks[2].reference_files).toEqual([]);
     }
+  });
 
+  it('parses legacy V1 manifests without scope fields', () => {
     const v1Manifest = {
       version: 1,
       task_count: 1,
@@ -266,6 +268,60 @@ describe('taskManifestV2Schema scope contract', () => {
     }
   });
 
+  it('rejects may_extend overlap with expected_files', () => {
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Overlapping expected_files and may_extend',
+          expected_files: ['packages/core/src/service.ts'],
+          may_extend: ['packages/core/src/service.ts'],
+        },
+      ],
+    };
+
+    const result = taskManifestV2Schema.safeParse(manifest);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find(
+        (i) =>
+          i.path[0] === 'tasks' &&
+          i.path[1] === 0 &&
+          (i.path[2] === 'may_extend' || i.path[2] === 'expected_files'),
+      );
+      expect(issue).toBeDefined();
+      expect(['may_extend', 'expected_files']).toContain(issue?.path[2]);
+    }
+
+    const legacyManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Overlapping legacy files and may_extend',
+          files: ['packages/core/src/service.ts'],
+          may_extend: ['packages/core/src/service.ts'],
+        },
+      ],
+    };
+
+    const legacyResult = taskManifestV2Schema.safeParse(legacyManifest);
+    expect(legacyResult.success).toBe(false);
+    if (!legacyResult.success) {
+      const issue = legacyResult.error.issues.find(
+        (i) =>
+          i.path[0] === 'tasks' &&
+          i.path[1] === 0 &&
+          (i.path[2] === 'may_extend' || i.path[2] === 'files'),
+      );
+      expect(issue).toBeDefined();
+      expect(['may_extend', 'files']).toContain(issue?.path[2]);
+    }
+  });
+
   it('rejects non_goals overlap with expected_files or may_extend', () => {
     const expectedOverlapManifest = {
       version: 2,
@@ -345,6 +401,33 @@ describe('taskManifestV2Schema scope contract', () => {
       expect(issue).toBeDefined();
       expect(['non_goals', 'expected_files']).toContain(issue?.path[2]);
     }
+
+    const directoryPrefixMayExtendManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'non_goals directory prefix of may_extend',
+          expected_files: ['packages/core/src/service.ts'],
+          may_extend: ['packages/infrastructure/src/db.ts'],
+          non_goals: ['packages/infrastructure'],
+        },
+      ],
+    };
+
+    const prefixMayExtendResult = taskManifestV2Schema.safeParse(directoryPrefixMayExtendManifest);
+    expect(prefixMayExtendResult.success).toBe(false);
+    if (!prefixMayExtendResult.success) {
+      const issue = prefixMayExtendResult.error.issues.find(
+        (i) =>
+          i.path[0] === 'tasks' &&
+          i.path[1] === 0 &&
+          (i.path[2] === 'non_goals' || i.path[2] === 'may_extend'),
+      );
+      expect(issue).toBeDefined();
+      expect(['non_goals', 'may_extend']).toContain(issue?.path[2]);
+    }
   });
 
   it('rejects non_goals overlap with permitted_areas', () => {
@@ -404,6 +487,8 @@ describe('taskManifestV2Schema scope contract', () => {
   });
 
   it('allows sibling paths that share string prefixes but distinct path segments', () => {
+    // Note: permitted_areas provides additive directory permission and does not restrict
+    // expected_files or may_extend. Each field below exercises distinct sibling segments against non_goals.
     const manifest = {
       version: 2,
       task_count: 1,
