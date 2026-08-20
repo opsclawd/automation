@@ -15,7 +15,7 @@ import {
   buildReviewFixReviewPrompt,
   buildWholePrArbiterPrompt,
 } from '../review-fix-prompts.js';
-import { buildPlanReviewFixPrompt } from '../plan-review-prompts.js';
+import { buildPlanReviewFixPrompt, buildPlanReviewReviewPrompt } from '../plan-review-prompts.js';
 
 const SCRATCH_POLICY = [
   'Transient working files and scratch scripts MUST be written inside `.ai-tmp/`.',
@@ -86,6 +86,11 @@ describe('scratch workspace policy', () => {
       'ai/issue-894',
     );
 
+    expectScratchPolicy(prompt);
+  });
+
+  it('propagates the scratch-file policy to the plan-review review prompt (issue #959)', () => {
+    const prompt = buildPlanReviewReviewPrompt('# Base plan-review prompt');
     expectScratchPolicy(prompt);
   });
 

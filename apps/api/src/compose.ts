@@ -3479,6 +3479,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
         const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
         const startCommitSha = runRepository.findByUuid(run.uuid)?.startCommitSha;
+        const priorPhaseName = run.completedPhases[run.completedPhases.length - 1];
         return composeBuildPhaseHandlerContext(
           {
             runId: run.displayId,
@@ -3498,6 +3499,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             expectedBranch: `ai/issue-${run.issueNumber}`,
             baseBranch: run.baseBranch ?? opts.baseBranch ?? defaultBranch,
             ...(startCommitSha ? { startCommitSha } : {}),
+            ...(priorPhaseName ? { priorPhaseName } : {}),
           },
         );
       };

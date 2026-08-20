@@ -10,7 +10,10 @@ import type { TaskManifest, TaskManifestEntry } from '../plan-tasks.js';
 import type { ValidationPort } from '../../ports/validation-port.js';
 import type { RunWorkspaceTypecheckPort } from '../../ports/run-workspace-typecheck-port.js';
 import { buildTaskValidationCommands } from '../../task-validation-commands.js';
-import { uncommittedSourcePaths } from '../../artifacts/orchestrator-artifacts.js';
+import {
+  uncommittedSourcePaths,
+  formatDirtyPaths,
+} from '../../artifacts/orchestrator-artifacts.js';
 
 import {
   normalizeTaskPath,
@@ -192,6 +195,11 @@ export class ImplementHandler implements PhaseHandler {
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
     emit('implement.started', 'info', 'implement started');
+
+    const inboundDirty = await this.checkInboundWorktreeCleanliness(ctx, emit);
+    if (inboundDirty !== undefined) {
+      return inboundDirty;
+    }
 
     const planMd = await this.readPlan(ctx, emit);
     if (typeof planMd !== 'string') return planMd;
@@ -1019,7 +1027,10 @@ export class ImplementHandler implements PhaseHandler {
               const statusAfterAdd = await ctx.git.status(ctx.cwd);
               const hasStaged = statusAfterAdd
                 .split('\n')
-                .some((line) => line.length >= 2 && line[0] !== ' ' && line[0] !== '?' && line[0] !== '!');
+                .some(
+                  (line) =>
+                    line.length >= 2 && line[0] !== ' ' && line[0] !== '?' && line[0] !== '!',
+                );
               if (hasStaged) {
                 await ctx.git.commit(
                   ctx.cwd,
@@ -1047,6 +1058,38 @@ export class ImplementHandler implements PhaseHandler {
 
     emit('implement.completed', 'info', 'implement complete');
     return { outcome: 'passed' };
+  }
+
+  private async checkInboundWorktreeCleanliness(
+    ctx: PhaseHandlerContext,
+    emit: EventEmitter,
+  ): Promise<PhaseResult | undefined> {
+    if (ctx.priorPhaseName === undefined) {
+      return undefined;
+    }
+    let statusOutput: string;
+    try {
+      statusOutput = await ctx.git.status(ctx.cwd);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return this.fail(
+        ctx,
+        emit,
+        'unknown',
+        `inbound worktree cleanliness check failed: ${message}`,
+      );
+    }
+    const dirtyPaths = uncommittedSourcePaths(statusOutput);
+    if (dirtyPaths.length === 0) {
+      return undefined;
+    }
+    const fileList = formatDirtyPaths(dirtyPaths);
+    const message = `${ctx.priorPhaseName} left the worktree dirty: ${fileList}. implement aborted to surface the boundary violation; resolve the dirty worktree in ${ctx.priorPhaseName} before re-running implement.`;
+    emit('implement.phase_boundary_violation', 'error', message, {
+      priorPhaseName: ctx.priorPhaseName,
+      dirtyPaths,
+    });
+    return this.fail(ctx, emit, 'phase_boundary_violation', message);
   }
 
   private async readPlan(
