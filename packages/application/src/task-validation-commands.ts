@@ -1,5 +1,6 @@
 import type { TaskManifest } from './phases/plan-tasks.js';
 import type { ValidationCommand } from './ports/validation-port.js';
+import { normalizeTaskPath } from './task-file-boundaries.js';
 
 const DIRECT_VITEST_RUN =
   /^(?:(?:pnpm|npx)(?:\s+exec)?\s+)?vitest\s+run\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))((?:\s+.*)?)$/;
@@ -131,7 +132,10 @@ export function globToRegex(glob: string): RegExp {
     } else if (norm[i] === '{') {
       const endIdx = norm.indexOf('}', i);
       if (endIdx !== -1) {
-        const options = norm.slice(i + 1, endIdx).split(',').map((opt) => opt.trim());
+        const options = norm
+          .slice(i + 1, endIdx)
+          .split(',')
+          .map((opt) => opt.trim());
         const optionRegexes = options.map((opt) => globToRegex(opt).source.slice(1, -1));
         regexStr += `(?:${optionRegexes.join('|')})`;
         i = endIdx + 1;
@@ -272,6 +276,74 @@ function hasCustomConfigFlag(argv: string[]): boolean {
       arg.startsWith('--config=') ||
       (i > 0 && (argv[i - 1] === '-c' || argv[i - 1] === '--config')),
   );
+}
+
+export function checkTaskValidationCommandsDeclarationMismatch(
+  manifest: TaskManifest,
+): string | null {
+  if (manifest.version !== 2) return null;
+
+  const diagnostics: string[] = [];
+
+  const earlierExpectedFilesByPath = new Map<string, number[]>();
+  for (const task of manifest.tasks) {
+    const taskRecord = task as {
+      expected_files?: string[] | null;
+      files?: string[] | null;
+    };
+    const declared = [...(taskRecord.expected_files ?? []), ...(taskRecord.files ?? [])];
+    for (const f of declared) {
+      const norm = normalizeTaskPath(f);
+      if (!norm) continue;
+      const existing = earlierExpectedFilesByPath.get(norm) ?? [];
+      existing.push(task.n);
+      earlierExpectedFilesByPath.set(norm, existing);
+    }
+  }
+
+  for (const task of manifest.tasks) {
+    const taskRecord = task as {
+      validation_commands?: ValidationCommand[] | null;
+      reference_files?: string[] | null;
+    };
+    const validationCommands = taskRecord.validation_commands ?? [];
+    const referenceFiles = (taskRecord.reference_files ?? [])
+      .map(normalizeTaskPath)
+      .filter((p): p is string => Boolean(p));
+    if (referenceFiles.length === 0) continue;
+    const referenceSet = new Set(referenceFiles);
+
+    for (const cmd of validationCommands) {
+      const argv = parseCommandArgv(cmd);
+      if (argv.length === 0) continue;
+
+      const target = extractTargetTestFilePath(argv);
+      if (!target) continue;
+      const normTarget = normalizeTaskPath(target);
+      if (!normTarget) continue;
+
+      if (GLOB_METACHARACTERS.test(normTarget)) continue;
+      if (!referenceSet.has(normTarget)) continue;
+
+      const cmdDisplay = Array.isArray(cmd) ? JSON.stringify(cmd) : `"${cmd}"`;
+      const earlier = (earlierExpectedFilesByPath.get(normTarget) ?? []).filter((n) => n < task.n);
+
+      if (earlier.length > 0) {
+        const earlierTaskList =
+          earlier.length === 1 ? `Task ${earlier[0]!}` : `Tasks ${earlier.join(', ')}`;
+        diagnostics.push(
+          `Task ${task.n}: validation_command ${cmdDisplay} targets "${normTarget}", which was created in ${earlierTaskList} as an expected output and is listed here under reference_files. Files in reference_files must not be modified by the implementation; move "${normTarget}" from reference_files to expected_files (or files) so Task ${task.n} may maintain it.`,
+        );
+      } else {
+        diagnostics.push(
+          `Task ${task.n}: validation_command ${cmdDisplay} targets "${normTarget}", but that path is declared in this task's reference_files. Files in reference_files must not be modified by the implementation; move "${normTarget}" to expected_files (or files) so the implementation may update it as part of Task ${task.n}.`,
+        );
+      }
+    }
+  }
+
+  if (diagnostics.length === 0) return null;
+  return diagnostics.join('\n\n');
 }
 
 export async function checkTaskValidationCommandsSatisfiability(
@@ -417,7 +489,20 @@ export function isTestFileCoveredByCommands(
     // Check positional non-flag arguments for globs or directory prefixes
     const positionalArgs = argv.slice(1).filter((arg) => {
       if (arg.startsWith('-')) return false;
-      if (['run', 'exec', 'test', 'vitest', 'jest', 'playwright', 'pytest', 'pnpm', 'npx', 'npm'].includes(arg.toLowerCase())) {
+      if (
+        [
+          'run',
+          'exec',
+          'test',
+          'vitest',
+          'jest',
+          'playwright',
+          'pytest',
+          'pnpm',
+          'npx',
+          'npm',
+        ].includes(arg.toLowerCase())
+      ) {
         return false;
       }
       return true;
