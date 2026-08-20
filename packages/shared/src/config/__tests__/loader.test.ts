@@ -408,7 +408,7 @@ describe('DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS', () => {
 });
 
 describe('phases.reviewFix.blockOnSeverity', () => {
-  it('defaults to "high" when omitted', () => {
+  it('defaults to "medium" when omitted', () => {
     const dir = makeRepo(
       JSON.stringify({
         validation: { commands: ['pnpm build'], timeout: 300 },
@@ -421,7 +421,7 @@ describe('phases.reviewFix.blockOnSeverity', () => {
       }),
     );
     const cfg = loadConfig(dir);
-    expect(cfg.phases.reviewFix.blockOnSeverity).toBe('high');
+    expect(cfg.phases.reviewFix.blockOnSeverity).toBe('medium');
   });
 
   it('accepts "critical" as a valid threshold', () => {

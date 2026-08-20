@@ -2327,11 +2327,15 @@ export class PlanReviewLoop {
   ): NonNullable<PlanReviewResult['verdict']> {
     const hasP0 = eligible.some((f) => f.severity === 'P0');
     const hasP1 = eligible.some((f) => f.severity === 'P1');
-    if (hasP0) return 'p1_found';
-    if (hasP1) return 'p1_found';
+    const hasP2 = eligible.some((f) => f.severity === 'P2');
+    if (hasP0 || hasP1 || hasP2) return 'p1_found';
 
-    if (reviewerVerdict === 'p1_found' || reviewerVerdict === 'proceed_with_concerns') {
-      return 'p2_only';
+    if (
+      reviewerVerdict === 'p1_found' ||
+      reviewerVerdict === 'p2_only' ||
+      reviewerVerdict === 'proceed_with_concerns'
+    ) {
+      return 'pass';
     }
     return reviewerVerdict;
   }

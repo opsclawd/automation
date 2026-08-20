@@ -29,7 +29,7 @@ export function severityGate(
   findings: WholePrReviewResult['findings'],
   threshold: string,
 ): { blocked: boolean; offendingFindings: WholePrReviewResult['findings'] } {
-  const thresholdRank = severityRank(threshold) ?? SEVERITY_RANK['high']!;
+  const thresholdRank = severityRank(threshold) ?? SEVERITY_RANK['medium']!;
   const offending = findings.filter((f) => (severityRank(f.severity) ?? Infinity) <= thresholdRank);
   return { blocked: offending.length > 0, offendingFindings: offending };
 }
@@ -39,7 +39,7 @@ function allKnownSeveritiesBelowThreshold(
   threshold: string,
 ): boolean {
   if (findings.length === 0) return false;
-  const thresholdRank = severityRank(threshold) ?? SEVERITY_RANK['high']!;
+  const thresholdRank = severityRank(threshold) ?? SEVERITY_RANK['medium']!;
   return findings.every((f) => {
     const rank = severityRank(f.severity);
     if (rank === undefined) return false;

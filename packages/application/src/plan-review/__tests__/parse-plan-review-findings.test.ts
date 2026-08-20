@@ -73,7 +73,7 @@ describe('parsePlanReviewFindings', () => {
     });
   });
 
-  it('accepts a pass verdict that lists findings resolved on this pass', () => {
+  it('accepts a pass verdict that lists findings resolved on this pass or non-blocking P3 findings', () => {
     const markdown = buildMarkdown(
       '## verdict',
       'pass',
@@ -81,6 +81,7 @@ describe('parsePlanReviewFindings', () => {
       '## findings',
       '- [P1] `plan.md:28-34` | The migration ordering bug | grounded | addressed',
       '- [P2] `task-manifest.json:Task 9` | The error mapping mismatch | grounded | rebutted',
+      '- [P3] `plan.md:42` | Minor wording clarity note | grounded',
       '',
     );
 
@@ -100,6 +101,12 @@ describe('parsePlanReviewFindings', () => {
           failureScenario: 'The error mapping mismatch',
           evidence: 'grounded',
           disposition: 'rebutted',
+        },
+        {
+          severity: 'P3',
+          citation: 'plan.md:42',
+          failureScenario: 'Minor wording clarity note',
+          evidence: 'grounded',
         },
       ],
     });
@@ -121,7 +128,7 @@ describe('parsePlanReviewFindings', () => {
         '## verdict',
         'p1_found',
         '## findings',
-        '- [P3] `plan.md:1` | defect | grounded',
+        '- [P4] `plan.md:1` | defect | grounded',
       ),
     ],
     [
