@@ -261,7 +261,7 @@ export class ReviewFixLoop {
 
       const skippingRedundantReview =
         pendingReconciliationContext !== undefined && lastReviewResult !== undefined;
-      let review: ReviewStepResult;
+      let review: ReviewStepResult | undefined = undefined;
 
       let gateResult: PostFixGateResult | undefined;
 
@@ -951,16 +951,23 @@ export class ReviewFixLoop {
         lastReviewResult = review;
       }
 
-      if (review.agentOutcome !== 'success' || review.verdict === undefined) {
+      if (!review) {
+        thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(thisLoop);
+        return { loop: thisLoop, phaseOutcome: 'failed', loopStatus: 'failed' };
+      }
+      let activeReview: ReviewStepResult = review;
+
+      if (activeReview.agentOutcome !== 'success' || activeReview.verdict === undefined) {
         thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
-        await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
+        await this.appendHistoryEntry(ctx, activeReview, undefined, undefined, 'failed', input);
         await this.runCleanArtifacts(ctx);
         break;
       }
 
-      const rawFindings = review.offendingFindings ?? [];
+      const rawFindings = activeReview.offendingFindings ?? [];
       const recurrence = await detectFindingRecurrence({
         resolvedFindings: resolvedFindingFingerprints,
         rawFindings,
@@ -983,7 +990,7 @@ export class ReviewFixLoop {
         thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
-        await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
+        await this.appendHistoryEntry(ctx, activeReview, undefined, undefined, 'failed', input);
         await this.runCleanArtifacts(ctx);
 
         return {
@@ -996,11 +1003,11 @@ export class ReviewFixLoop {
         };
       }
 
-      if (review.verdict === 'pass') {
+      if (activeReview.verdict === 'pass') {
         if (deps.reviewStateRepository) {
           const snapshot: ReviewSnapshot = {
             kind: 'git',
-            identity: review.reviewedCommitSha || '',
+            identity: activeReview.reviewedCommitSha || '',
             capturedAt: deps.now().toISOString(),
           };
           const nextState = await computeNewState(
@@ -1011,14 +1018,14 @@ export class ReviewFixLoop {
             deps.now(),
           );
           deps.reviewStateRepository.appendAttempt({
-            attemptId: review.invocationId,
+            attemptId: activeReview.invocationId,
             runId: String(input.runId),
             scope: String(input.phaseId),
             step: String(input.phaseId),
             reviewMode,
             dimension: 'integration',
             snapshot,
-            verdict: review.verdict,
+            verdict: activeReview.verdict,
             createdAt: deps.now().toISOString(),
             artifacts: [],
           });
@@ -1040,7 +1047,7 @@ export class ReviewFixLoop {
             thisLoop = completeIteration(thisLoop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(thisLoop);
             this.emitIterationCompleted(input, iterationIndex, 'resolved');
-            await this.appendHistoryEntry(ctx, review, undefined, reval, 'resolved', input);
+            await this.appendHistoryEntry(ctx, activeReview, undefined, reval, 'resolved', input);
             break;
           }
           thisLoop = completeIteration(thisLoop, {
@@ -1050,19 +1057,19 @@ export class ReviewFixLoop {
           });
           deps.loops.update(thisLoop);
           this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-          await this.appendHistoryEntry(ctx, review, undefined, reval, 'unresolved', input);
+          await this.appendHistoryEntry(ctx, activeReview, undefined, reval, 'unresolved', input);
           continue;
         }
         thisLoop = completeIteration(thisLoop, { outcome: 'resolved', now: deps.now() });
         deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'resolved');
-        await this.appendHistoryEntry(ctx, review, undefined, undefined, 'resolved', input);
+        await this.appendHistoryEntry(ctx, activeReview, undefined, undefined, 'resolved', input);
         break;
       }
 
       // --- STRUCTURAL EVIDENCE CHECK & FILTERING (Step 2) ---
-      const originalFindings = review.offendingFindings ?? [];
-      const unfoundedList = await this.checkReviewerEvidence(input, review, iterationIndex);
+      const originalFindings = activeReview.offendingFindings ?? [];
+      const unfoundedList = await this.checkReviewerEvidence(input, activeReview, iterationIndex);
       const unfoundedFingerprints = fingerprintFindings(unfoundedList);
       const groundedFindings = originalFindings.filter(
         (finding) => !unfoundedFingerprints.has(fingerprintSingleFinding(finding)),
@@ -1087,8 +1094,8 @@ export class ReviewFixLoop {
         );
       }
 
-      review = {
-        ...review,
+      activeReview = {
+        ...activeReview,
         offendingFindings: groundedFindings,
       };
       lastOffendingFindings = groundedFindings;
@@ -1101,7 +1108,7 @@ export class ReviewFixLoop {
           thisLoop = completeIteration(thisLoop, { outcome: 'resolved', now: deps.now() });
           deps.loops.update(thisLoop);
           this.emitIterationCompleted(input, iterationIndex, 'resolved');
-          await this.appendHistoryEntry(ctx, review, undefined, reval, 'resolved', input);
+          await this.appendHistoryEntry(ctx, activeReview, undefined, reval, 'resolved', input);
           return await this.finalizeOutcome(input, baseline, {
             loop: thisLoop,
             phaseOutcome: 'passed',
@@ -1115,7 +1122,7 @@ export class ReviewFixLoop {
       if (deps.reviewStateRepository) {
         const snapshot: ReviewSnapshot = {
           kind: 'git',
-          identity: review.reviewedCommitSha || '',
+          identity: activeReview.reviewedCommitSha || '',
           capturedAt: deps.now().toISOString(),
         };
         const nextState = await computeNewState(
@@ -1126,14 +1133,14 @@ export class ReviewFixLoop {
           deps.now(),
         );
         deps.reviewStateRepository.appendAttempt({
-          attemptId: review.invocationId,
+          attemptId: activeReview.invocationId,
           runId: String(input.runId),
           scope: String(input.phaseId),
           step: String(input.phaseId),
           reviewMode,
           dimension: 'integration',
           snapshot,
-          verdict: review.verdict ?? 'fail',
+          verdict: activeReview.verdict ?? 'fail',
           createdAt: deps.now().toISOString(),
           artifacts: [],
         });
@@ -1214,7 +1221,7 @@ export class ReviewFixLoop {
             thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
             deps.loops.update(thisLoop);
             this.emitIterationCompleted(input, iterationIndex, 'failed');
-            await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
+            await this.appendHistoryEntry(ctx, activeReview, undefined, undefined, 'failed', input);
 
             return {
               loop: thisLoop,
@@ -1247,7 +1254,7 @@ export class ReviewFixLoop {
         thisLoop = completeIteration(thisLoop, { outcome: 'unresolved', now: deps.now() });
         deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-        await this.appendHistoryEntry(ctx, review, undefined, undefined, 'unresolved', input);
+        await this.appendHistoryEntry(ctx, activeReview, undefined, undefined, 'unresolved', input);
         break;
       }
 
