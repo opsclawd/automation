@@ -12,6 +12,10 @@ describe('plan-write test-first task ordering', () => {
     expect(prompt).toContain('earlier numbered task');
     expect(prompt).toContain('must not include the implementation source change');
     expect(prompt).toContain('later implementation task');
+    expect(prompt).toContain('prefix the validation command with `! `');
+    expect(prompt).toContain(
+      'For additive feature work, unit tests MUST be delivered in the same task as their corresponding implementation code',
+    );
   });
 
   it('preserves test-first task separation during plan repair', () => {
@@ -19,6 +23,9 @@ describe('plan-write test-first task ordering', () => {
     expect(repairPrompt).toContain('TEST-FIRST COMMIT ORDER');
     expect(repairPrompt).toContain(
       'Do not merge a regression-proof task into its implementation task',
+    );
+    expect(repairPrompt).toContain(
+      'For additive feature work,\n  preserve unit tests co-located within the same task as their implementation code',
     );
   });
 });
