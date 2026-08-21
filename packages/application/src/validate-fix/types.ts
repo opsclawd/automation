@@ -45,6 +45,7 @@ export interface ValidateFixLoopInput {
   fixProfile: AgentProfileName;
   fixFallbackProfile?: AgentProfileName;
   manifest?: TaskManifest;
+  scopeContractEnforcement?: boolean;
 }
 
 export interface ValidateFixLoopResult {

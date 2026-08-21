@@ -13,6 +13,7 @@ import { remediateScratchFiles } from '../../scratch-file-remediation.js';
 
 export interface CompoundHandlerOpts {
   exemptUndeclaredFiles?: string[];
+  scopeContractEnforcement?: boolean;
 }
 
 export class CompoundHandler extends SingleShotAgentHandler {
