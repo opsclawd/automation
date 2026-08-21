@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { PlanDesignHandler } from '../plan-design.js';
 import { PlanWriteHandler } from '../plan-write.js';
+import { loadManifest } from '../../../task-file-boundaries.js';
 import { FakeAgentPort } from '../../../test-doubles/fake-agent-port.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
@@ -252,6 +253,65 @@ describe('PlanWriteHandler', () => {
     expect(agent.invocations[0]!.expectedArtifacts).toContain('plan.md');
     expect(eventsOf(ctx, 'plan-write.started')).toHaveLength(1);
     expect(eventsOf(ctx, 'plan-write.completed')).toHaveLength(1);
+
+    const planArtifact = (await ctx.artifacts.list(ctx.runUuid)).find((a) => a.relativePath === 'plan.md');
+    expect(planArtifact).toBeDefined();
+    expect(planArtifact?.phaseId).toBe('plan-write');
+  });
+
+  it('persists task-manifest.json and plan.md to artifact store on completion', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan-design',
+      relativePath: 'design.md',
+      contents: '# Design\n\nContent.',
+    });
+
+    const manifestContent = JSON.stringify({
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'Implement feature', expected_files: ['src/feature.ts'] }],
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'task-manifest.json',
+      contents: manifestContent,
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: '# Plan\n\n## Task 1: Implement feature\nDescription\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult());
+
+    const handler = new PlanWriteHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+
+    const artifacts = await ctx.artifacts.list(ctx.runUuid);
+    const manifestArtifact = artifacts.find((a) => a.relativePath === 'task-manifest.json' && a.phaseId === 'plan-write');
+    const planArtifact = artifacts.find((a) => a.relativePath === 'plan.md' && a.phaseId === 'plan-write');
+    expect(manifestArtifact).toBeDefined();
+    expect(planArtifact).toBeDefined();
+
+    // Verify loadManifest retrieves task-manifest.json via artifactStore path when worktree does not have it
+    const fakeStore = ctx.artifacts as FakeArtifactStore;
+    fakeStore.deleteFromWorktree(ctx.runUuid, 'task-manifest.json');
+    expect(fakeStore.existsInWorktree(ctx.runUuid, 'task-manifest.json')).toBe(false);
+
+    const loadResult = await loadManifest(
+      {},
+      { cwd: ctx.cwd, runId: ctx.runUuid },
+      { artifactStore: ctx.artifacts },
+    );
+    expect(loadResult.status).toBe('found');
+    if (loadResult.status === 'found') {
+      expect(loadResult.manifest).toEqual(JSON.parse(manifestContent));
+    }
   });
 
   it('valid plan.md with no manifest still passes', async () => {
