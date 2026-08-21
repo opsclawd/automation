@@ -39,52 +39,50 @@ function manifestWithCommands(commands: ValidationCommand[]): TaskManifest {
 }
 
 describe('buildTaskValidationCommands', () => {
-  it('literal single-file vitest commands are made strict', () => {
+  it('drops bare workspace and package-wide commands as redundant with global validation', () => {
+    const commands = [
+      'pnpm test',
+      'pnpm --filter @ai-sdlc/application typecheck',
+      'typecheck',
+      'pnpm lint',
+      'eslint .',
+      'pnpm vitest run',
+      'vitest run',
+    ];
+
+    expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual([]);
+  });
+
+  it('preserves targeted per-file vitest, eslint, git diff, and custom commands', () => {
     const commands = [
       'vitest run "src/foo.test.ts"',
       "vitest run 'src/foo.spec.tsx' --reporter=verbose",
       'pnpm vitest run src/foo.test.mts',
       'pnpm exec vitest run src/foo.spec.cts',
-      'npx vitest run src/foo.test.js',
-    ];
-
-    expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual(
-      commands.map((command) => `${command} --passWithNoTests=false`),
-    );
-  });
-
-  it('broad and unsupported validation commands are preserved', () => {
-    const commands = [
-      'vitest run',
-      'vitest run "src/**/*.test.ts"',
-      'vitest run src',
-      'vitest run --project unit',
-      'vitest run src/a.test.ts src/b.test.ts',
+      'pnpm --filter @ai-sdlc/application exec vitest run src/foo.test.ts',
+      'pnpm exec eslint apps/app/app/position/[id].tsx --max-warnings=0',
+      'git diff --check -- src/foo.test.ts',
       'DATABASE_URL=x vitest run src/foo.test.ts',
-      'vitest run src/foo.test.ts && echo done',
-      'eslint src/foo.test.ts',
-    ];
-
-    expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual(commands);
-  });
-
-  it('an existing passWithNoTests flag is normalized without duplication', () => {
-    const commands = [
-      'vitest run src/a.test.ts --passWithNoTests=false',
-      'vitest run src/b.test.ts --passWithNoTests',
-      'vitest run src/c.test.ts --passWithNoTests=true',
+      '! pnpm vitest run src/foo.test.ts',
+      'pnpm check-custom',
     ];
 
     const result = buildTaskValidationCommands(manifestWithCommands(commands), 1);
     expect(result).toEqual([
-      'vitest run src/a.test.ts --passWithNoTests=false',
-      'vitest run src/b.test.ts --passWithNoTests=false',
-      'vitest run src/c.test.ts --passWithNoTests=false',
+      'vitest run "src/foo.test.ts" --passWithNoTests=false',
+      "vitest run 'src/foo.spec.tsx' --reporter=verbose --passWithNoTests=false",
+      'pnpm vitest run src/foo.test.mts --passWithNoTests=false',
+      'pnpm exec vitest run src/foo.spec.cts --passWithNoTests=false',
+      'pnpm --filter @ai-sdlc/application exec vitest run src/foo.test.ts',
+      'pnpm exec eslint apps/app/app/position/[id].tsx --max-warnings=0',
+      'git diff --check -- src/foo.test.ts',
+      'DATABASE_URL=x vitest run src/foo.test.ts',
+      '! pnpm vitest run src/foo.test.ts',
+      'pnpm check-custom',
     ]);
-    expect(result.every((command) => command.match(/--passWithNoTests/g)?.length === 1)).toBe(true);
   });
 
-  it('selects commands by manifest version and returns none for an absent task', () => {
+  it('selects non-redundant commands by manifest version and returns none for an absent task', () => {
     const v1Manifest: TaskManifest = {
       version: 1,
       tasks: [
@@ -93,7 +91,11 @@ describe('buildTaskValidationCommands', () => {
           title: 'V1 Task',
           description: 'Desc',
           files: [],
-          validation: ['vitest run src/v1.test.ts'],
+          validation: [
+            'git diff --check -- src/v1.test.ts',
+            'vitest run src/v1.test.ts',
+            'pnpm test',
+          ],
         },
       ],
     };
@@ -107,18 +109,38 @@ describe('buildTaskValidationCommands', () => {
           description: 'Desc',
           files: [],
           expected_files: [],
-          validation_commands: ['vitest run src/v2.test.ts'],
+          validation_commands: ['git diff --check -- src/v2.test.ts', 'pnpm typecheck'],
         },
       ],
     };
 
     expect(buildTaskValidationCommands(v1Manifest, 1)).toEqual([
+      'git diff --check -- src/v1.test.ts',
       'vitest run src/v1.test.ts --passWithNoTests=false',
     ]);
     expect(buildTaskValidationCommands(v2Manifest, 1)).toEqual([
-      'vitest run src/v2.test.ts --passWithNoTests=false',
+      'git diff --check -- src/v2.test.ts',
     ]);
     expect(buildTaskValidationCommands(v2Manifest, 999)).toEqual([]);
+  });
+
+  it('targeted per-file vitest validation commands survive deduplication with passWithNoTests flag', () => {
+    const manifest: TaskManifest = {
+      version: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Targeted Task',
+          description: 'Desc',
+          files: [],
+          validation: ['pnpm vitest run src/foo.test.ts'],
+        },
+      ],
+    };
+
+    expect(buildTaskValidationCommands(manifest, 1)).toEqual([
+      'pnpm vitest run src/foo.test.ts --passWithNoTests=false',
+    ]);
   });
 
   it('declared drizzle SQL migrations receive leading existence guards', () => {
@@ -127,14 +149,14 @@ describe('buildTaskValidationCommands', () => {
         'drizzle/0001_root.sql',
         'packages/adapters/drizzle/0002_execution_origin.sql',
       ],
-      commands: ['pnpm test'],
+      commands: ['git diff --check'],
     });
 
     const result = buildTaskValidationCommands(manifest, 1);
     expect(result).toEqual([
       "test -f 'drizzle/0001_root.sql' || { printf '%s\\n' 'Required migration file was never created: drizzle/0001_root.sql' >&2; exit 1; }",
       "test -f 'packages/adapters/drizzle/0002_execution_origin.sql' || { printf '%s\\n' 'Required migration file was never created: packages/adapters/drizzle/0002_execution_origin.sql' >&2; exit 1; }",
-      'pnpm test',
+      'git diff --check',
     ]);
   });
 
@@ -145,10 +167,10 @@ describe('buildTaskValidationCommands', () => {
         'packages/adapters/sql/0001_not_drizzle.sql',
         'packages/adapters/drizzle/meta.json',
       ],
-      commands: ['pnpm test'],
+      commands: ['git diff --check'],
     });
 
-    expect(buildTaskValidationCommands(manifest, 1)).toEqual(['pnpm test']);
+    expect(buildTaskValidationCommands(manifest, 1)).toEqual(['git diff --check']);
   });
 
   it('migration guards are deduplicated and shell quoted', () => {
@@ -176,7 +198,7 @@ describe('buildTaskValidationCommands', () => {
           title: 'V1 Task',
           description: 'Desc',
           files: ['drizzle/0001_v1.sql'],
-          validation: ['pnpm test'],
+          validation: ['git diff --check'],
         },
       ],
     };
@@ -184,19 +206,29 @@ describe('buildTaskValidationCommands', () => {
     const result = buildTaskValidationCommands(v1Manifest, 1);
     expect(result).toEqual([
       "test -f 'drizzle/0001_v1.sql' || { printf '%s\\n' 'Required migration file was never created: drizzle/0001_v1.sql' >&2; exit 1; }",
-      'pnpm test',
+      'git diff --check',
     ]);
   });
 
-  it('adds strict no-tests handling to literal argv vitest commands', () => {
-    const commands: ValidationCommand[] = [
+  it('drops bare argv validation commands but preserves targeted argv commands', () => {
+    const bareCommands: ValidationCommand[] = [
+      ['pnpm', 'test'],
+      ['pnpm', '--filter', '@ai-sdlc/application', 'typecheck'],
+      ['eslint', '.'],
+      ['vitest', 'run'],
+    ];
+
+    expect(buildTaskValidationCommands(manifestWithCommands(bareCommands), 1)).toEqual([]);
+
+    const targetedCommands: ValidationCommand[] = [
       ['vitest', 'run', 'src/foo.test.ts'],
       ['pnpm', 'vitest', 'run', 'src/foo.spec.tsx', '--reporter=verbose'],
       ['pnpm', 'exec', 'vitest', 'run', 'src/foo.test.mts', '--passWithNoTests'],
       ['npx', 'vitest', 'run', 'src/foo.test.js', '--passWithNoTests=true'],
+      ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
     ];
 
-    expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual([
+    expect(buildTaskValidationCommands(manifestWithCommands(targetedCommands), 1)).toEqual([
       ['vitest', 'run', 'src/foo.test.ts', '--passWithNoTests=false'],
       [
         'pnpm',
@@ -208,28 +240,26 @@ describe('buildTaskValidationCommands', () => {
       ],
       ['pnpm', 'exec', 'vitest', 'run', 'src/foo.test.mts', '--passWithNoTests=false'],
       ['npx', 'vitest', 'run', 'src/foo.test.js', '--passWithNoTests=false'],
+      ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
     ]);
   });
 
-  it('preserves broad and unsupported argv validation commands', () => {
+  it('preserves non-redundant argv validation commands', () => {
     const commands: ValidationCommand[] = [
-      ['vitest', 'run'],
-      ['vitest', 'run', 'src/*.test.ts'],
-      ['vitest', 'run', 'src'],
-      ['vitest', 'run', '--project', 'unit'],
-      ['vitest', 'run', 'src/a.test.ts', 'src/b.test.ts'],
-      ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
+      ['git', 'diff', '--check', '--', 'src/foo.test.ts'],
+      ['pnpm', 'custom-tool', 'src/foo.test.ts'],
     ];
 
     expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual(commands);
   });
 
-  it('preserves mixed validation command order and representation', () => {
+  it('preserves mixed validation command order while filtering redundant subset', () => {
     const manifest = manifestWith({
       expectedFiles: ['drizzle/0001_root.sql'],
       commands: [
-        'pnpm lint',
+        'git diff --check',
         ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
+        'pnpm typecheck',
         ['vitest', 'run', 'src/foo.test.ts'],
       ],
     });
@@ -237,7 +267,7 @@ describe('buildTaskValidationCommands', () => {
     const result = buildTaskValidationCommands(manifest, 1);
     expect(result).toEqual([
       "test -f 'drizzle/0001_root.sql' || { printf '%s\\n' 'Required migration file was never created: drizzle/0001_root.sql' >&2; exit 1; }",
-      'pnpm lint',
+      'git diff --check',
       ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
       ['vitest', 'run', 'src/foo.test.ts', '--passWithNoTests=false'],
     ]);
@@ -386,7 +416,7 @@ describe('checkTaskValidationCommandsSatisfiability', () => {
 describe('expandTaskValidationCommandsWithNewTests', () => {
   it('detects covered and uncovered test files accurately with isTestFileCoveredByCommands', () => {
     const commands: ValidationCommand[] = [
-      'pnpm vitest run packages/infrastructure/src/git/existing.test.ts --passWithNoTests=false',
+      'git diff --check -- packages/infrastructure/src/git/existing.test.ts',
     ];
 
     expect(
@@ -409,9 +439,12 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
     ).toBe(true);
   });
 
-  it('expands task validation commands when new source and co-located tests are added mid-task', () => {
+  it('filters bare redundant commands while expanding targeted test execution for new tests', () => {
     const existingCommands: ValidationCommand[] = [
+      'git diff --check -- packages/infrastructure/src/git/existing.test.ts',
       'pnpm vitest run packages/infrastructure/src/git/existing.test.ts --passWithNoTests=false',
+      'pnpm exec eslint packages/infrastructure/src/git/existing.test.ts',
+      'pnpm typecheck',
     ];
 
     const changedFiles = [
@@ -430,14 +463,15 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
       fileExists: (p) => existingFiles.has(p),
     });
 
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual(existingCommands[0]);
-    expect(result[1]).toContain(
-      "pnpm vitest run 'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts'",
-    );
+    expect(result).toEqual([
+      'git diff --check -- packages/infrastructure/src/git/existing.test.ts',
+      'pnpm vitest run packages/infrastructure/src/git/existing.test.ts --passWithNoTests=false',
+      'pnpm exec eslint packages/infrastructure/src/git/existing.test.ts',
+      "pnpm vitest run 'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts' --passWithNoTests=false",
+    ]);
   });
 
-  it('does not duplicate commands if the new test file is already covered', () => {
+  it('does not duplicate targeted commands if already covered', () => {
     const existingCommands: ValidationCommand[] = [
       'pnpm vitest run packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts --passWithNoTests=false',
     ];

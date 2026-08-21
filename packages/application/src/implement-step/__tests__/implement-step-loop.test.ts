@@ -4911,9 +4911,7 @@ describe('mid-task test discovery and validation command expansion', () => {
         });
 
         const hasNewTest = expanded.some(
-          (cmd) =>
-            typeof cmd === 'string' &&
-            cmd.includes('delete-worktree-file.test.ts'),
+          (cmd) => typeof cmd === 'string' && cmd.includes('delete-worktree-file.test.ts'),
         );
 
         if (hasNewTest) {

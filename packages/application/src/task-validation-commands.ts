@@ -107,6 +107,73 @@ function makeLiteralVitestCommandStrict(command: ValidationCommand): ValidationC
     : makeLiteralVitestStringStrict(command);
 }
 
+export function isRedundantValidationCommand(command: ValidationCommand): boolean {
+  const argv = parseCommandArgv(command);
+  if (argv.length === 0) return false;
+
+  // Never drop inverted commands (RED-first tests: `! ...`)
+  if (argv[0]?.startsWith('!')) return false;
+
+  // Never drop git checks or guard scripts
+  const first = argv[0]!;
+  if (first === 'git' || first === 'test' || first.startsWith('.')) {
+    return false;
+  }
+
+  // Strip leading pnpm / npx / exec / --filter <pkg>
+  let idx = 0;
+  if (argv[idx] === 'pnpm' || argv[idx] === 'npx') {
+    idx++;
+  }
+  while (idx < argv.length) {
+    if (argv[idx] === '--filter') {
+      idx += 2;
+    } else if (argv[idx] === 'exec' || argv[idx] === 'run') {
+      idx++;
+    } else if (argv[idx]?.startsWith('-')) {
+      idx++;
+    } else {
+      break;
+    }
+  }
+
+  if (idx >= argv.length) return false;
+  const sub = argv[idx]!;
+  const rest = argv.slice(idx + 1);
+
+  // `typecheck` / `tsc` without positional files is redundant with global typecheck
+  if (sub === 'typecheck' || sub === 'tsc') {
+    const positional = rest.filter((a) => !a.startsWith('-'));
+    return positional.length === 0;
+  }
+
+  // `test` without positional file targets is redundant with global `pnpm test`
+  if (sub === 'test') {
+    const positional = rest.filter((a) => !a.startsWith('-'));
+    return positional.length === 0;
+  }
+
+  // `lint` without positional file targets is redundant with global `pnpm lint`
+  if (sub === 'lint') {
+    const positional = rest.filter((a) => !a.startsWith('-') && a !== '.');
+    return positional.length === 0;
+  }
+
+  // `eslint` with only `.` or no files is redundant with global `pnpm lint`
+  if (sub === 'eslint') {
+    const positional = rest.filter((a) => !a.startsWith('-') && a !== '.');
+    return positional.length === 0;
+  }
+
+  // `vitest` without positional test files is redundant with global `pnpm test`
+  if (sub === 'vitest') {
+    const nonFlags = rest.filter((a) => !a.startsWith('-') && a !== 'run');
+    return nonFlags.length === 0;
+  }
+
+  return false;
+}
+
 export interface CheckTaskValidationCommandsOptions {
   worktreeRoot?: string;
   readWorktreeFile?: (path: string) => Promise<string | null> | string | null;
@@ -385,7 +452,13 @@ export async function checkTaskValidationCommandsSatisfiability(
   }
 
   for (const task of manifest.tasks) {
-    const rawCommands = buildTaskValidationCommands(manifest, task.n);
+    let rawCommands: ValidationCommand[];
+    if (manifest.version === 2) {
+      rawCommands =
+        (task as { validation_commands?: ValidationCommand[] }).validation_commands ?? [];
+    } else {
+      rawCommands = (task as { validation?: string[] }).validation ?? [];
+    }
     for (const rawCmd of rawCommands) {
       const argv = parseCommandArgv(rawCmd);
       if (argv.length === 0) continue;
@@ -564,8 +637,9 @@ export function expandTaskValidationCommandsWithNewTests(
   options: ExpandTaskValidationCommandsOptions,
 ): ValidationCommand[] {
   const { changedFiles, existingCommands, worktreeRoot: _worktreeRoot, fileExists } = options;
+  const filteredExisting = existingCommands.filter((cmd) => !isRedundantValidationCommand(cmd));
   if (!changedFiles || changedFiles.length === 0) {
-    return existingCommands;
+    return filteredExisting;
   }
 
   const checkExists = (relPath: string): boolean => {
@@ -614,20 +688,20 @@ export function expandTaskValidationCommandsWithNewTests(
 
   const uncoveredTestFiles: string[] = [];
   for (const testPath of discoveredTestFiles) {
-    if (!isTestFileCoveredByCommands(testPath, existingCommands)) {
+    if (!isTestFileCoveredByCommands(testPath, filteredExisting)) {
       uncoveredTestFiles.push(testPath);
     }
   }
 
   if (uncoveredTestFiles.length === 0) {
-    return existingCommands;
+    return filteredExisting;
   }
 
   const newCommands = uncoveredTestFiles.map((testPath) =>
-    buildTargetedTestCommand(testPath, existingCommands),
+    buildTargetedTestCommand(testPath, filteredExisting),
   );
 
-  return [...existingCommands, ...newCommands];
+  return [...filteredExisting, ...newCommands].filter((cmd) => !isRedundantValidationCommand(cmd));
 }
 
 export function buildTaskValidationCommands(
@@ -656,8 +730,10 @@ export function buildTaskValidationCommands(
     migrationPaths.push(...[...unique].filter((path) => DRIZZLE_MIGRATION.test(path)));
   }
 
-  return [
+  const allCommands = [
     ...migrationPaths.map(migrationExistenceGuard),
     ...commands.map(makeLiteralVitestCommandStrict),
   ];
+
+  return allCommands.filter((cmd) => !isRedundantValidationCommand(cmd));
 }
