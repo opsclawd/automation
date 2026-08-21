@@ -25,19 +25,27 @@ interface FixtureEntry {
     | 'none';
   recoverable: boolean;
   truncatedCount: number | null;
-  label: 'pending_human_review';
-  rationale: null;
+  label: 'false_positive' | 'true_positive';
+  rationale: string;
   taskManifest: null;
 }
 
+// ff2e91bc-eb8b-4eff-91c6-5b067f5d1e04 was in the original six-run candidate
+// list but is intentionally absent from the labeled corpus: both of its
+// failure rows (content oscillation, git-failed) are review-fix/PR-layer
+// failures with no scope-permission question for classifyTaskChanges to
+// answer. It's evidence for #978, not a scope-classifier fixture entry.
 const EXPECTED_RUN_IDS = [
   '09f73f6f-eede-42fe-aaf4-694abc8ab686',
   'e0c4dd03-da65-4a26-97dd-5a2a6e52520c',
-  'ff2e91bc-eb8b-4eff-91c6-5b067f5d1e04',
   '8ec8d952-21cc-423a-b8bf-025db1e2c7b2',
   '5dc78eb1-157a-4118-8894-631df496d448',
   '891a6fec-47b3-46b4-8983-cc954eabda6d',
 ];
+
+// Runs queried for grounding verification -- includes ff2e91bc so a future
+// change can't silently reintroduce it without the grounding test noticing.
+const QUERIED_RUN_IDS = [...EXPECTED_RUN_IDS, 'ff2e91bc-eb8b-4eff-91c6-5b067f5d1e04'];
 
 function loadEntries(): FixtureEntry[] {
   const path = join(__dirname, '../__fixtures__/scope-replay-corpus.json');
@@ -77,7 +85,7 @@ function loadDbRowsViaCli(sourceDb: 'automation' | 'comfy-content-orchestrator')
   const path = dbPathFor(sourceDb);
   if (!path || !existsSync(path)) return [];
   const sep = '\x1f';
-  const inList = EXPECTED_RUN_IDS.map((id) => `'${id}'`).join(',');
+  const inList = QUERIED_RUN_IDS.map((id) => `'${id}'`).join(',');
   const sql = `SELECT id, message FROM failures WHERE run_uuid IN (${inList})`;
   try {
     const out = execSync(
@@ -133,12 +141,24 @@ describe('scope-replay-corpus.json fixture', () => {
     }
   });
 
-  it('every entry has the contract label/rationale/taskManifest values', () => {
+  it('every entry has a human-approved label and rationale', () => {
     for (const e of entries) {
-      expect(e.label).toBe('pending_human_review');
-      expect(e.rationale).toBeNull();
+      expect(['false_positive', 'true_positive']).toContain(e.label);
+      expect(typeof e.rationale).toBe('string');
+      expect(e.rationale.length).toBeGreaterThan(10);
       expect(e.taskManifest).toBeNull();
     }
+  });
+
+  it('excludes pathSource values with no scope-permission question (oscillation, git_failed, none)', () => {
+    for (const e of entries) {
+      expect(['worktree_dirty', 'undeclared_files', 'reference_files']).toContain(e.pathSource);
+    }
+  });
+
+  it('deliberately omits ff2e91bc-eb8b-4eff-91c6-5b067f5d1e04 (no scope-classification-relevant failures)', () => {
+    const runIds = new Set(entries.map((e) => e.runId));
+    expect(runIds.has('ff2e91bc-eb8b-4eff-91c6-5b067f5d1e04')).toBe(false);
   });
 
   it('recoverable=false matches truncatedCount or absent path', () => {
