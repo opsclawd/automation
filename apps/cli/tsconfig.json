@@ -1,6 +1,18 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "outDir": "dist", "rootDir": "src" },
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./.tsbuildinfo",
+    "outDir": "dist",
+    "rootDir": "src"
+  },
   "include": ["src/**/*"],
-  "exclude": ["src/**/__tests__/**", "src/**/*.test.ts"]
+  "exclude": ["src/**/__tests__/**", "src/**/*.test.ts"],
+  "references": [
+    { "path": "../api" },
+    { "path": "../../packages/application" },
+    { "path": "../../packages/domain" },
+    { "path": "../../packages/infrastructure" },
+    { "path": "../../packages/shared" }
+  ]
 }
