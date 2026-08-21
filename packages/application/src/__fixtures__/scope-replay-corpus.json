@@ -1,0 +1,990 @@
+[
+  {
+    "runId": "09f73f6f-eede-42fe-aaf4-694abc8ab686",
+    "issueNumber": 62,
+    "repo": "comfy-content-orchestrator",
+    "path": "packages/infrastructure/src/index.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 2,
+          "title": "Implement storage provisioner core logic and lifecycle eligibility evaluator in @cco/infrastructure",
+          "expected_files": [
+            "packages/infrastructure/src/storage/provisioner.ts",
+            "packages/infrastructure/src/storage/provisioner.test.ts"
+          ],
+          "permitted_areas": ["packages/infrastructure/src"]
+        }
+      ]
+    },
+    "failureKind": "invalid_result",
+    "rawMessage": "step 2 (Task 2: Implement storage provisioner core logic and lifecycle eligibility evaluator in @cco/infrastructure) committed undeclared files: packages/infrastructure/src/index.test.ts, packages/infrastructure/src/index.ts",
+    "label": "false_positive",
+    "rationale": "Package index barrel export updated to expose new provisioner module within task permitted area packages/infrastructure/src."
+  },
+  {
+    "runId": "09f73f6f-eede-42fe-aaf4-694abc8ab686",
+    "issueNumber": 62,
+    "repo": "comfy-content-orchestrator",
+    "path": "packages/infrastructure/src/index.test.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 2,
+          "title": "Implement storage provisioner core logic and lifecycle eligibility evaluator in @cco/infrastructure",
+          "expected_files": [
+            "packages/infrastructure/src/storage/provisioner.ts",
+            "packages/infrastructure/src/storage/provisioner.test.ts"
+          ],
+          "permitted_areas": ["packages/infrastructure/src"]
+        }
+      ]
+    },
+    "failureKind": "invalid_result",
+    "rawMessage": "step 2 (Task 2: Implement storage provisioner core logic and lifecycle eligibility evaluator in @cco/infrastructure) committed undeclared files: packages/infrastructure/src/index.test.ts, packages/infrastructure/src/index.ts",
+    "label": "false_positive",
+    "rationale": "Barrel export test updated alongside index.ts within task permitted area packages/infrastructure/src."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/next-env.d.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/next.config.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/package.json",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/api/client.test.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/app/layout.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/app/page.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/test-mock-consumer.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/test-mock.test.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/test-mock.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/test-spy-user.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/test-spy.test.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/test-spy.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/test-utils.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/api/client.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/api/mock.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/components/nav.test.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/components/nav.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/components/footer.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/components/header.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/components/sidebar.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/hooks/use-auth.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/hooks/use-data.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/providers/app-provider.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/styles/globals.css",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/types/api.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/utils/format.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/utils/logger.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/utils/request.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/tsconfig.json",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/public/favicon.ico",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/app/error.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/app/loading.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/app/not-found.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/app/providers.tsx",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
+    "issueNumber": 63,
+    "repo": "comfy-content-orchestrator",
+    "path": "apps/web/src/middleware.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Setup Next.js web application layout and core page components",
+          "expected_files": [
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.tsx"
+          ],
+          "permitted_areas": ["apps/web"]
+        }
+      ]
+    },
+    "failureKind": "phase_boundary_violation",
+    "rawMessage": "plan-review left the worktree dirty: apps/web/next-env.d.ts, apps/web/next.config.ts, apps/web/package.json, apps/web/src/api/client.test.ts, apps/web/src/app/layout.tsx, apps/web/src/app/page.tsx, apps/web/src/test-mock-consumer.ts, apps/web/src/test-mock.test.ts, apps/web/src/test-mock.ts, apps/web/src/test-spy-user.ts and 25 more.",
+    "label": "false_positive",
+    "rationale": "Uncommitted test probes left by plan-review in apps/web should be purged at inbound implement boundary rather than halting run."
+  },
+  {
+    "runId": "ff2e91bc-eb8b-4eff-91c6-5b067f5d1e04",
+    "issueNumber": 920,
+    "repo": "automation",
+    "path": "packages/application/src/index.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Classify implement-step boundary violations by cause in @ai-sdlc/application",
+          "expected_files": [
+            "packages/application/src/task-file-boundaries.ts",
+            "packages/application/src/__tests__/task-file-boundaries.test.ts"
+          ],
+          "permitted_areas": ["packages/application/src"]
+        }
+      ]
+    },
+    "failureKind": "invalid_result",
+    "rawMessage": "step 1 (Task 1: Classify implement-step boundary violations by cause in @ai-sdlc/application) committed undeclared files: packages/application/src/index.ts, packages/application/src/ports.ts",
+    "label": "false_positive",
+    "rationale": "Package index barrel export updated to expose boundary classifier functions within task permitted area packages/application/src."
+  },
+  {
+    "runId": "ff2e91bc-eb8b-4eff-91c6-5b067f5d1e04",
+    "issueNumber": 920,
+    "repo": "automation",
+    "path": "packages/application/src/ports.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Classify implement-step boundary violations by cause in @ai-sdlc/application",
+          "expected_files": [
+            "packages/application/src/task-file-boundaries.ts",
+            "packages/application/src/__tests__/task-file-boundaries.test.ts"
+          ],
+          "permitted_areas": ["packages/application/src"]
+        }
+      ]
+    },
+    "failureKind": "invalid_result",
+    "rawMessage": "step 1 (Task 1: Classify implement-step boundary violations by cause in @ai-sdlc/application) committed undeclared files: packages/application/src/index.ts, packages/application/src/ports.ts",
+    "label": "false_positive",
+    "rationale": "Application ports barrel re-export updated for new boundary classification port within task permitted area packages/application/src."
+  },
+  {
+    "runId": "8ec8d952-21cc-423a-b8bf-025db1e2c7b2",
+    "issueNumber": 921,
+    "repo": "automation",
+    "path": "docs/solutions/orchestrator/implement-agent-barrel-export-scope-creep-2026-08-20.md",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 3,
+          "title": "Integrate boundary classification into ImplementHandler",
+          "expected_files": [
+            "packages/application/src/phases/handlers/implement.ts"
+          ],
+          "reference_files": [
+            "docs/solutions/orchestrator/implement-agent-barrel-export-scope-creep-2026-08-20.md"
+          ],
+          "permitted_areas": ["packages/application/src/phases/handlers"]
+        }
+      ]
+    },
+    "failureKind": "invalid_result",
+    "rawMessage": "step 3 (Task 3: Integrate boundary classification into ImplementHandler) modified reference_files: docs/solutions/orchestrator/implement-agent-barrel-export-scope-creep-2026-08-20.md",
+    "label": "true_positive",
+    "rationale": "Modifying read-only reference documentation file declared in reference_files is a genuine boundary overreach."
+  },
+  {
+    "runId": "5dc78eb1-157a-4118-8894-631df496d448",
+    "issueNumber": 944,
+    "repo": "automation",
+    "path": "packages/application/src/__tests__/task-manifest-scope-contract.test.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 1,
+          "title": "Implement scope permissions and obligation split in schema",
+          "expected_files": [
+            "packages/application/src/results/schemas/task-manifest.ts"
+          ],
+          "permitted_areas": ["packages/application/src/results/schemas"]
+        }
+      ]
+    },
+    "failureKind": "invalid_result",
+    "rawMessage": "step 1 (Task 1: Implement scope permissions and obligation split in schema) committed undeclared files: packages/application/src/__tests__/task-manifest-scope-contract.test.ts",
+    "label": "false_positive",
+    "rationale": "Adding sibling unit test in application test suite to verify schema changes is a legitimate incidental test addition."
+  },
+  {
+    "runId": "891a6fec-47b3-46b4-8983-cc954eabda6d",
+    "issueNumber": 951,
+    "repo": "automation",
+    "path": "apps/api/src/compose.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 2,
+          "title": "Implement auto-commit for classifier-approved task changes in ImplementHandler",
+          "expected_files": [
+            "packages/application/src/phases/handlers/implement.ts"
+          ],
+          "permitted_areas": ["packages/application/src/phases/handlers"]
+        }
+      ]
+    },
+    "failureKind": "invalid_result",
+    "rawMessage": "step 2 (Task 2: Implement auto-commit for classifier-approved task changes) committed undeclared files: apps/api/src/compose.ts, packages/infrastructure/src/git/git-worktree-adapter.ts",
+    "label": "true_positive",
+    "rationale": "Modifying composition root in apps/api/src/compose.ts during application handler task is genuine cross-package overreach."
+  },
+  {
+    "runId": "891a6fec-47b3-46b4-8983-cc954eabda6d",
+    "issueNumber": 951,
+    "repo": "automation",
+    "path": "packages/infrastructure/src/git/git-worktree-adapter.ts",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 2,
+          "title": "Implement auto-commit for classifier-approved task changes in ImplementHandler",
+          "expected_files": [
+            "packages/application/src/phases/handlers/implement.ts"
+          ],
+          "permitted_areas": ["packages/application/src/phases/handlers"]
+        }
+      ]
+    },
+    "failureKind": "invalid_result",
+    "rawMessage": "step 2 (Task 2: Implement auto-commit for classifier-approved task changes) committed undeclared files: apps/api/src/compose.ts, packages/infrastructure/src/git/git-worktree-adapter.ts",
+    "label": "true_positive",
+    "rationale": "Modifying infrastructure adapter file belonging to downstream wiring task is premature implementation overreach."
+  }
+]
