@@ -13,16 +13,19 @@ import { buildTaskValidationCommands } from '../../task-validation-commands.js';
 import {
   uncommittedSourcePaths,
   formatDirtyPaths,
+  unquoteGitPath,
+  isUntrackedOrAddedStatusLine,
 } from '../../artifacts/orchestrator-artifacts.js';
 
 import {
   normalizeTaskPath,
   declaredTaskFiles,
-  referenceTaskFiles,
   normalizedPathSet,
   hasDeclaredSurface,
-  classifyUndeclaredFiles,
+  resolveEffectiveTaskScope,
+  classifyTaskChanges,
 } from '../../task-file-boundaries.js';
+import type { TaskChangeCandidate } from '../../task-file-boundaries.js';
 import {
   findInheritedFormattingDebtFiles,
   isFormattingOnlyChange,
@@ -325,6 +328,12 @@ export class ImplementHandler implements PhaseHandler {
 
     const totalSteps = derived.length;
 
+    let statusPromise: Promise<string> | undefined;
+    const readStatus = (): Promise<string> => {
+      statusPromise ??= ctx.git.status(ctx.cwd);
+      return statusPromise;
+    };
+
     for (const d of derived) {
       if (doneIdx.has(d.index)) {
         emit('step.skipped', 'info', `step ${d.index}/${totalSteps} already complete`, {
@@ -435,6 +444,7 @@ export class ImplementHandler implements PhaseHandler {
       let result: StepRunResult;
 
       while (true) {
+        statusPromise = undefined;
         try {
           result = await this.opts.runStep({
             stepIndex: d.index,
@@ -470,16 +480,15 @@ export class ImplementHandler implements PhaseHandler {
         }
 
         if (result.outcome === 'success') {
-          const expectedFiles = declaredFiles;
-          const referenceFiles = referenceTaskFiles(task);
-          const writableSet = normalizedPathSet(expectedFiles);
+          const currentScope = resolveEffectiveTaskScope(task);
+          const expectedFiles = currentScope.requiredFiles;
+          const referenceFiles = currentScope.referenceFiles;
+          const writableSet = normalizedPathSet([
+            ...currentScope.requiredFiles,
+            ...currentScope.mayExtendFiles,
+          ]);
           const referenceSet = normalizedPathSet(referenceFiles);
           const exemptSet = normalizedPathSet(this.opts.exemptUndeclaredFiles);
-          let statusPromise: Promise<string> | undefined;
-          const readStatus = (): Promise<string> => {
-            statusPromise ??= ctx.git.status(ctx.cwd);
-            return statusPromise;
-          };
 
           try {
             const remediation = await remediateScratchFiles({
@@ -550,63 +559,22 @@ export class ImplementHandler implements PhaseHandler {
               );
             }
 
-            let committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);
-            let committedSet = new Set(committedNormalized);
-            let missingFiles = expectedFiles.filter((p) => !committedSet.has(normalizeTaskPath(p)));
-
-            if (missingFiles.length > 0) {
-              let statusProvedAllMissingDirty = false;
-              let uncommittedDeclared: string[] = [];
-
-              try {
-                const status = await readStatus();
-                const dirty = new Set(
-                  uncommittedSourcePaths(status).map(normalizeTaskPath).filter(Boolean),
-                );
-                uncommittedDeclared = missingFiles.filter((file) =>
-                  dirty.has(normalizeTaskPath(file)),
-                );
-                statusProvedAllMissingDirty =
-                  missingFiles.length > 0 && uncommittedDeclared.length === missingFiles.length;
-              } catch (error) {
-                verificationError = `git status failed before auto-commit: ${
-                  error instanceof Error ? error.message : String(error)
-                }`;
-              }
-
-              if (statusProvedAllMissingDirty) {
-                try {
-                  await ctx.git.add(ctx.cwd, uncommittedDeclared);
-                  await ctx.git.commit(ctx.cwd, task?.title ?? d.title, uncommittedDeclared);
-                  postStepHead = await ctx.git.headCommitSha(ctx.cwd);
-                  committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
-                  committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);
-                  committedSet = new Set(committedNormalized);
-                  missingFiles = expectedFiles.filter(
-                    (path) => !committedSet.has(normalizeTaskPath(path)),
-                  );
-                  verificationError = undefined;
-                } catch (error) {
-                  verificationError = `declared-file auto-commit failed: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`;
-                }
-              }
-            }
-
-            const initialClassification = classifyUndeclaredFiles(
-              committedFiles,
-              writableSet,
-              referenceSet,
-              exemptSet,
+            const initialCommittedNormalized = committedFiles
+              .map(normalizeTaskPath)
+              .filter(Boolean);
+            const initialCommittedSet = new Set(initialCommittedNormalized);
+            const requiredSet = normalizedPathSet(expectedFiles);
+            const preservedModifiedReferenceFiles = referenceFiles.filter(
+              (p) =>
+                !requiredSet.has(normalizeTaskPath(p)) &&
+                initialCommittedSet.has(normalizeTaskPath(p)),
             );
-            const preservedModifiedReferenceFiles = initialClassification.modifiedReferenceFiles;
 
             const undeclaredProtectedPaths = [
               ...new Set(
                 committedFiles
                   .map(normalizeTaskPath)
-                  .filter((p) => p.length > 0 && isProtectedFilePath(p) && !writableSet.has(p)),
+                  .filter((p) => p.length > 0 && isProtectedFilePath(p) && !requiredSet.has(p)),
               ),
             ].sort();
 
@@ -627,11 +595,6 @@ export class ImplementHandler implements PhaseHandler {
                   statusPromise = undefined;
                   postStepHead = await ctx.git.headCommitSha(ctx.cwd);
                   committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
-                  committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);
-                  committedSet = new Set(committedNormalized);
-                  missingFiles = expectedFiles.filter(
-                    (path) => !committedSet.has(normalizeTaskPath(path)),
-                  );
                   repairedProtectedRecord = {
                     revertedProtectedFiles: repairResult.revertedProtectedFiles,
                     removedNewlyIgnoredFilesCount: repairResult.removedNewlyIgnoredFiles.length,
@@ -673,22 +636,206 @@ export class ImplementHandler implements PhaseHandler {
               }
             }
 
-            let { undeclaredFiles } = classifyUndeclaredFiles(
-              committedFiles,
-              writableSet,
-              referenceSet,
-              exemptSet,
+            let statusOutput = '';
+            let statusFailedBeforeAutoCommit = false;
+            try {
+              statusOutput = await readStatus();
+            } catch (error) {
+              statusFailedBeforeAutoCommit = true;
+              verificationError = `git status failed before auto-commit: ${
+                error instanceof Error ? error.message : String(error)
+              }`;
+            }
+
+            if (!statusFailedBeforeAutoCommit) {
+              const untrackedPaths = new Set(
+                statusOutput
+                  .split('\n')
+                  .filter(isUntrackedOrAddedStatusLine)
+                  .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
+                  .map(normalizeTaskPath)
+                  .filter(Boolean),
+              );
+
+              const dirtySourcePaths = uncommittedSourcePaths(statusOutput)
+                .map(normalizeTaskPath)
+                .filter(Boolean);
+
+              let hasCreatedFilesSnapshot = false;
+              let createdSet = new Set<string>();
+
+              if (typeof ctx.git?.createdFiles === 'function') {
+                try {
+                  const createdFilesList = await ctx.git.createdFiles(
+                    ctx.cwd,
+                    preStepHead!,
+                    postStepHead,
+                  );
+                  if (createdFilesList !== undefined) {
+                    hasCreatedFilesSnapshot = true;
+                    createdSet = new Set(createdFilesList.map(normalizeTaskPath).filter(Boolean));
+                  }
+                } catch {
+                  hasCreatedFilesSnapshot = false;
+                }
+              }
+
+              const preCommitCandidates: TaskChangeCandidate[] = [];
+              for (const p of dirtySourcePaths) {
+                preCommitCandidates.push({
+                  path: p,
+                  tracked: !untrackedPaths.has(p) && !createdSet.has(p),
+                });
+              }
+              for (const p of committedFiles) {
+                const normP = normalizeTaskPath(p);
+                if (!normP) continue;
+                const isTracked = hasCreatedFilesSnapshot ? !createdSet.has(normP) : false;
+                preCommitCandidates.push({ path: normP, tracked: isTracked });
+              }
+
+              const preCommitClassification = classifyTaskChanges({
+                candidates: preCommitCandidates,
+                currentScope,
+                ...(manifest?.tasks ? { manifestTasks: manifest.tasks } : {}),
+                ...(manifest ? { manifest } : {}),
+                currentTaskNumber: d.index,
+                ...(this.opts.exemptUndeclaredFiles !== undefined
+                  ? { exemptFiles: this.opts.exemptUndeclaredFiles }
+                  : {}),
+              });
+
+              const permittedSet = new Set(preCommitClassification.permittedPaths);
+              const dirtyApprovedPaths = [
+                ...new Set(dirtySourcePaths.filter((p) => permittedSet.has(p))),
+              ].sort();
+
+              const preCommitCommittedSet = new Set(
+                committedFiles.map(normalizeTaskPath).filter(Boolean),
+              );
+              const missingRequired = expectedFiles.filter(
+                (p) => !preCommitCommittedSet.has(normalizeTaskPath(p)),
+              );
+              const dirtySourcePathSet = new Set(dirtySourcePaths);
+              const allMissingRequiredAreDirty =
+                missingRequired.length === 0 ||
+                missingRequired.every((p) => dirtySourcePathSet.has(normalizeTaskPath(p)));
+
+              if (dirtyApprovedPaths.length > 0 && allMissingRequiredAreDirty) {
+                try {
+                  await ctx.git.add(ctx.cwd, dirtyApprovedPaths);
+                  await ctx.git.commit(ctx.cwd, task?.title ?? d.title, dirtyApprovedPaths);
+                  postStepHead = await ctx.git.headCommitSha(ctx.cwd);
+                  committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
+                  statusPromise = undefined;
+                  verificationError = undefined;
+                } catch (error) {
+                  verificationError = `declared-file auto-commit failed: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`;
+                }
+              }
+            }
+
+            let hasPostCommitCreatedSnapshot = false;
+            let postCommitCreatedSet = new Set<string>();
+
+            if (typeof ctx.git?.createdFiles === 'function') {
+              try {
+                const postCommitCreatedFilesList = await ctx.git.createdFiles(
+                  ctx.cwd,
+                  preStepHead!,
+                  postStepHead,
+                );
+                if (postCommitCreatedFilesList !== undefined) {
+                  hasPostCommitCreatedSnapshot = true;
+                  postCommitCreatedSet = new Set(
+                    postCommitCreatedFilesList.map(normalizeTaskPath).filter(Boolean),
+                  );
+                }
+              } catch {
+                hasPostCommitCreatedSnapshot = false;
+              }
+            }
+
+            let postCommitStatusOutput = '';
+            let postCommitDirtySourcePaths: string[] = [];
+            let postCommitUntrackedPaths = new Set<string>();
+            try {
+              postCommitStatusOutput = await readStatus();
+              postCommitUntrackedPaths = new Set(
+                postCommitStatusOutput
+                  .split('\n')
+                  .filter(isUntrackedOrAddedStatusLine)
+                  .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
+                  .map(normalizeTaskPath)
+                  .filter(Boolean),
+              );
+              postCommitDirtySourcePaths = uncommittedSourcePaths(postCommitStatusOutput)
+                .map(normalizeTaskPath)
+                .filter(Boolean);
+            } catch {
+              // Status read failure is best-effort here; existing verificationError handling applies
+            }
+
+            const postCommitCandidates: TaskChangeCandidate[] = [];
+            for (const p of postCommitDirtySourcePaths) {
+              postCommitCandidates.push({
+                path: p,
+                tracked: !postCommitUntrackedPaths.has(p) && !postCommitCreatedSet.has(p),
+              });
+            }
+            for (const p of committedFiles) {
+              const normP = normalizeTaskPath(p);
+              if (!normP) continue;
+              const isTracked = hasPostCommitCreatedSnapshot
+                ? !postCommitCreatedSet.has(normP)
+                : false;
+              postCommitCandidates.push({ path: normP, tracked: isTracked });
+            }
+
+            const freshClassification = classifyTaskChanges({
+              candidates: postCommitCandidates,
+              currentScope,
+              ...(manifest?.tasks ? { manifestTasks: manifest.tasks } : {}),
+              ...(manifest ? { manifest } : {}),
+              currentTaskNumber: d.index,
+              ...(this.opts.exemptUndeclaredFiles !== undefined
+                ? { exemptFiles: this.opts.exemptUndeclaredFiles }
+                : {}),
+            });
+
+            let committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);
+            let committedSet = new Set(committedNormalized);
+            let missingFiles = expectedFiles.filter(
+              (path) => !committedSet.has(normalizeTaskPath(path)),
             );
-            let modifiedReferenceFiles = preservedModifiedReferenceFiles;
+
+            let modifiedReferenceFiles =
+              preservedModifiedReferenceFiles.length > 0
+                ? preservedModifiedReferenceFiles
+                : freshClassification.modifiedReferenceFiles;
+            let nonGoalFiles = freshClassification.nonGoalFiles;
+            let prematureImplementation = freshClassification.prematureImplementation;
+            let driftFiles = freshClassification.driftFiles;
+            let protectedFiles = freshClassification.protectedFiles ?? [];
+
+            const candidateFilesForDebt = [
+              ...new Set([
+                ...modifiedReferenceFiles,
+                ...driftFiles,
+                ...prematureImplementation.map((p) => p.path),
+                ...nonGoalFiles,
+                ...protectedFiles,
+              ]),
+            ].filter((path) => !isProtectedFilePath(path));
 
             const inheritedFormattingDebtFiles = await findInheritedFormattingDebtFiles({
               cwd: ctx.cwd,
               manifest,
               currentTaskNumber: d.index,
               completedTaskNumbers: doneIdx,
-              candidateFiles: [...new Set([...modifiedReferenceFiles, ...undeclaredFiles])].filter(
-                (path) => !isProtectedFilePath(path),
-              ),
+              candidateFiles: candidateFilesForDebt,
               preStepHead: preStepHead!,
               postStepHead: postStepHead!,
               git: ctx.git,
@@ -698,7 +845,12 @@ export class ImplementHandler implements PhaseHandler {
             modifiedReferenceFiles = modifiedReferenceFiles.filter(
               (path) => !inheritedSet.has(path),
             );
-            undeclaredFiles = undeclaredFiles.filter((path) => !inheritedSet.has(path));
+            driftFiles = driftFiles.filter((path) => !inheritedSet.has(path));
+            prematureImplementation = prematureImplementation.filter(
+              (p) => !inheritedSet.has(p.path),
+            );
+            nonGoalFiles = nonGoalFiles.filter((path) => !inheritedSet.has(path));
+            protectedFiles = protectedFiles.filter((path) => !inheritedSet.has(path));
 
             if (inheritedFormattingDebtFiles.length > 0) {
               emit(
@@ -742,8 +894,8 @@ export class ImplementHandler implements PhaseHandler {
                 },
               );
               const suggestedAction = protectedRepairError
-                ? `Repair the protected path changes (${undeclaredProtectedPaths.join(', ')}) and update task-manifest.json to add ${modifiedReferenceFiles.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`
-                : `Update task-manifest.json to add ${modifiedReferenceFiles.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`;
+                ? `Repair the protected path changes (${undeclaredProtectedPaths.join(', ')}) and update task-manifest.json to move ${modifiedReferenceFiles.join(', ')} from task ${d.index} reference_files to expected_files (a file cannot appear in both), or regenerate the manifest, then resume the run.`
+                : `Update task-manifest.json to move ${modifiedReferenceFiles.join(', ')} from task ${d.index} reference_files to expected_files (a file cannot appear in both), or regenerate the manifest, then resume the run.`;
               return this.needsHumanReview(
                 ctx,
                 emit,
@@ -819,8 +971,17 @@ export class ImplementHandler implements PhaseHandler {
               }
             }
 
+            const blockingUndeclaredFiles = [
+              ...new Set([
+                ...driftFiles,
+                ...nonGoalFiles,
+                ...prematureImplementation.map((p) => p.path),
+                ...protectedFiles,
+              ]),
+            ].sort();
+
             const hasMissingViolation = missingFiles.length > 0 && !verifiedUnaffected;
-            const hasUndeclaredViolation = undeclaredFiles.length > 0;
+            const hasUndeclaredViolation = blockingUndeclaredFiles.length > 0;
             const hasProtectedViolation = repairedProtectedRecord !== undefined;
             const hasBoundaryViolation =
               hasMissingViolation || hasUndeclaredViolation || hasProtectedViolation;
@@ -830,7 +991,7 @@ export class ImplementHandler implements PhaseHandler {
                 declaredFilesRetryCount += 1;
                 priorAttemptMissingFiles = hasMissingViolation ? missingFiles : undefined;
                 priorAttemptUndeclaredFiles =
-                  undeclaredFiles.length > 0 ? undeclaredFiles : undefined;
+                  blockingUndeclaredFiles.length > 0 ? blockingUndeclaredFiles : undefined;
                 priorAttemptRepairedProtectedFiles =
                   repairedProtectedRecord?.revertedProtectedFiles;
 
@@ -850,7 +1011,7 @@ export class ImplementHandler implements PhaseHandler {
                     committedFiles,
                     ...(hasMissingViolation ? { missingFiles } : {}),
                     modifiedReferenceFiles,
-                    undeclaredFiles,
+                    undeclaredFiles: blockingUndeclaredFiles,
                     ...(repairedProtectedRecord !== undefined
                       ? {
                           repairedProtectedFiles: repairedProtectedRecord.revertedProtectedFiles,
@@ -891,8 +1052,10 @@ export class ImplementHandler implements PhaseHandler {
                 if (hasMissingViolation) {
                   violationParts.push(`did not commit declared files: ${missingFiles.join(', ')}`);
                 }
-                if (undeclaredFiles.length > 0) {
-                  violationParts.push(`committed undeclared files: ${undeclaredFiles.join(', ')}`);
+                if (blockingUndeclaredFiles.length > 0) {
+                  violationParts.push(
+                    `committed undeclared files: ${blockingUndeclaredFiles.join(', ')}`,
+                  );
                 }
 
                 const failureMessage = `step ${d.index} (${d.title}) ${violationParts.join('; ')}`;
@@ -938,7 +1101,7 @@ export class ImplementHandler implements PhaseHandler {
           const isManifestFault =
             result.modifiedReferenceFiles && result.modifiedReferenceFiles.length > 0;
           const suggestedAction = isManifestFault
-            ? `Update task-manifest.json to add ${result.modifiedReferenceFiles!.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`
+            ? `Update task-manifest.json to move ${result.modifiedReferenceFiles!.join(', ')} from task ${d.index} reference_files to expected_files (a file cannot appear in both), or regenerate the manifest, then resume the run.`
             : undefined;
           const artifacts = isManifestFault ? ['task-manifest.json'] : [];
           return this.needsHumanReview(

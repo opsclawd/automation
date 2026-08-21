@@ -59,7 +59,7 @@ describe('ValidateFixLoop task boundary enforcement (regression)', () => {
           {
             n: 1,
             title: 'Task 1',
-            expected_files: ['src/declared.ts'],
+            expected_files: ['src/feature/declared.ts'],
           },
         ],
       },
@@ -123,7 +123,7 @@ describe('ValidateFixLoop task boundary enforcement (regression)', () => {
       .mockImplementationOnce(async (_ctx, opts) => {
         fixCalls.push(opts);
         git.headByCwd.set('/tmp/wt', 'head-2');
-        git.changedFilesResults.set('head-0|head-2', ['src/declared.ts']);
+        git.changedFilesResults.set('head-0|head-2', ['src/feature/declared.ts']);
         return {
           invocationId: 'fix-2',
           agentOutcome: 'success',
@@ -138,16 +138,16 @@ describe('ValidateFixLoop task boundary enforcement (regression)', () => {
     expect(result.phaseOutcome).toBe('passed');
     expect(fixCalls).toHaveLength(2);
     expect(fixCalls[0]?.deterministicDiagnostic).toBeUndefined();
-    expect(fixCalls[0]?.allowedFiles).toEqual(['src/declared.ts']);
+    expect(fixCalls[0]?.allowedFiles).toEqual(['src/feature/declared.ts']);
     expect(fixCalls[1]?.deterministicDiagnostic).toContain(
       'fix-validate modified undeclared files: src/undeclared.ts',
     );
-    expect(fixCalls[1]?.allowedFiles).toEqual(['src/declared.ts']);
+    expect(fixCalls[1]?.allowedFiles).toEqual(['src/feature/declared.ts']);
   });
 
   it('allows fix commits touching only declared files to pass revalidation directly', async () => {
     git.headByCwd.set('/tmp/wt', 'head-1');
-    git.changedFilesResults.set('head-0|head-1', ['src/declared.ts']);
+    git.changedFilesResults.set('head-0|head-1', ['src/feature/declared.ts']);
 
     vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
       invocationId: 'fix-1',
@@ -409,7 +409,7 @@ describe('ValidateFixLoop task boundary enforcement (regression)', () => {
     let worktreeManifestContent = JSON.stringify({
       version: 2,
       task_count: 1,
-      tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+      tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
     });
 
     const depsWithWorktreeFile: ValidateFixLoopDeps = {
@@ -436,7 +436,11 @@ describe('ValidateFixLoop task boundary enforcement (regression)', () => {
         version: 2,
         task_count: 1,
         tasks: [
-          { n: 1, title: 'Task 1', expected_files: ['src/declared.ts', 'src/undeclared.ts'] },
+          {
+            n: 1,
+            title: 'Task 1',
+            expected_files: ['src/feature/declared.ts', 'src/undeclared.ts'],
+          },
         ],
       });
       return {

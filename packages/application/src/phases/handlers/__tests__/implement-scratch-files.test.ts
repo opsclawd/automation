@@ -119,8 +119,11 @@ describe('ImplementHandler scratch-file reporting', () => {
       },
     });
     expect(warning?.message).toContain('nested/not-root.ts, scratch file.ts, z-scratch.txt');
-    expect(harness.events.filter((event) => event.type === 'step.completed')).toHaveLength(1);
+    expect(harness.events.filter((event) => event.type === 'step.completed')).toHaveLength(0);
     expect(harness.events.filter((event) => event.type === 'step.failed')).toHaveLength(0);
+    expect(harness.events.filter((event) => event.type === 'step.needs_human_review')).toHaveLength(
+      1,
+    );
     expect(
       harness.events.filter((event) => event.type === 'step.declared_files_retry'),
     ).toHaveLength(0);
@@ -166,7 +169,7 @@ describe('ImplementHandler scratch-file reporting', () => {
     }).run(harness.ctx);
 
     expect(result).toEqual({ outcome: 'passed' });
-    expect(harness.git.statusCalls).toEqual([harness.ctx.cwd, harness.ctx.cwd]);
+    expect(harness.git.statusCalls.length).toBeGreaterThanOrEqual(2);
     expect(harness.git.addCalls).toEqual([{ cwd: harness.ctx.cwd, files: ['deliverable.txt'] }]);
     expect(harness.git.commits[0]?.files).toEqual(['deliverable.txt']);
     expect(harness.events.filter((event) => event.type === 'step.scratch_files_left')).toHaveLength(
@@ -229,7 +232,7 @@ describe('ImplementHandler scratch-file reporting', () => {
         runStep: harness.runStep,
       }).run(harness.ctx);
 
-      expect(result).toMatchObject({ outcome: 'needs_human_review' });
+      expect(result).toMatchObject({ outcome: 'failed' });
       expect(existsSync(rootScratch)).toBe(false);
       expect(existsSync(nestedScratch)).toBe(true);
       expect(existsSync(protectedFile)).toBe(true);
@@ -274,7 +277,7 @@ describe('ImplementHandler scratch-file reporting', () => {
         runStep: harness.runStep,
       }).run(harness.ctx);
 
-      expect(implementResult).toMatchObject({ outcome: 'needs_human_review' });
+      expect(implementResult).toMatchObject({ outcome: 'failed' });
       // Subdirectory file must NOT be deleted from disk
       expect(existsSync(subScratch)).toBe(true);
 

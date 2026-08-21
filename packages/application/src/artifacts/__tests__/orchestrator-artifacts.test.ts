@@ -10,6 +10,7 @@ import {
   uncommittedSourcePaths,
   unquoteGitPath,
   formatDirtyPaths,
+  isUntrackedOrAddedStatusLine,
 } from '../orchestrator-artifacts.js';
 
 describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => {
@@ -207,5 +208,30 @@ describe('formatDirtyPaths', () => {
   it('supports custom limit parameter', () => {
     const paths = ['a.ts', 'b.ts', 'c.ts', 'd.ts'];
     expect(formatDirtyPaths(paths, 2)).toBe('a.ts, b.ts and 2 more');
+  });
+});
+
+describe('isUntrackedOrAddedStatusLine', () => {
+  it('identifies untracked and staged new file indicators', () => {
+    expect(isUntrackedOrAddedStatusLine('?? src/new.ts')).toBe(true);
+    expect(isUntrackedOrAddedStatusLine('A  src/staged.ts')).toBe(true);
+    expect(isUntrackedOrAddedStatusLine('AM src/staged-mod.ts')).toBe(true);
+    expect(isUntrackedOrAddedStatusLine('AD src/staged-del.ts')).toBe(true);
+    expect(isUntrackedOrAddedStatusLine(' A src/worktree-add.ts')).toBe(true);
+    expect(isUntrackedOrAddedStatusLine('AA src/both-added.ts')).toBe(true);
+    expect(isUntrackedOrAddedStatusLine('AU src/added-by-us.ts')).toBe(true);
+    expect(isUntrackedOrAddedStatusLine('UA src/added-by-them.ts')).toBe(true);
+  });
+
+  it('rejects tracked modified, deleted, and rename indicators', () => {
+    expect(isUntrackedOrAddedStatusLine(' M src/modified.ts')).toBe(false);
+    expect(isUntrackedOrAddedStatusLine('M  src/staged-mod.ts')).toBe(false);
+    expect(isUntrackedOrAddedStatusLine('MM src/both-mod.ts')).toBe(false);
+    expect(isUntrackedOrAddedStatusLine(' D src/deleted.ts')).toBe(false);
+    expect(isUntrackedOrAddedStatusLine('D  src/staged-del.ts')).toBe(false);
+    expect(isUntrackedOrAddedStatusLine('R  src/old.ts -> src/new.ts')).toBe(false);
+    expect(isUntrackedOrAddedStatusLine('RM src/old.ts -> src/new.ts')).toBe(false);
+    expect(isUntrackedOrAddedStatusLine('')).toBe(false);
+    expect(isUntrackedOrAddedStatusLine('??')).toBe(false);
   });
 });

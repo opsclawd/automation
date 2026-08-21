@@ -59,7 +59,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
           {
             n: 1,
             title: 'Task 1',
-            expected_files: ['src/declared.ts'],
+            expected_files: ['src/feature/declared.ts'],
           },
         ],
       },
@@ -73,7 +73,9 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       invocationId: 'rev-1',
       agentOutcome: 'success',
       verdict: 'fail',
-      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+      ],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
@@ -118,7 +120,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
         agentOutcome: 'success',
         verdict: 'fail',
         offendingFindings: [
-          { severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] },
+          { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
         ],
       })
       .mockResolvedValueOnce({
@@ -126,7 +128,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
         agentOutcome: 'success',
         verdict: 'fail',
         offendingFindings: [
-          { severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] },
+          { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
         ],
       })
       .mockResolvedValueOnce({
@@ -140,7 +142,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     git.changedFilesResults.set('head-0|head-1', ['src/undeclared.ts']);
 
     // Iteration 2 fixer touches declared file -> success
-    git.changedFilesResults.set('head-0|head-2', ['src/declared.ts']);
+    git.changedFilesResults.set('head-0|head-2', ['src/feature/declared.ts']);
 
     vi.mocked(baseDeps.runFix)
       .mockImplementationOnce(async () => {
@@ -182,7 +184,9 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       invocationId: 'rev-1',
       agentOutcome: 'success',
       verdict: 'fail',
-      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+      ],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
@@ -224,7 +228,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
         agentOutcome: 'success',
         verdict: 'fail',
         offendingFindings: [
-          { severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] },
+          { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
         ],
       })
       .mockResolvedValueOnce({
@@ -235,7 +239,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
-    git.changedFilesResults.set('head-0|head-1', ['src/declared.ts']);
+    git.changedFilesResults.set('head-0|head-1', ['src/feature/declared.ts']);
 
     vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
       invocationId: 'fix-1',
@@ -261,7 +265,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
         agentOutcome: 'success',
         verdict: 'fail',
         offendingFindings: [
-          { severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] },
+          { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
         ],
       })
       .mockResolvedValueOnce({
@@ -269,7 +273,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
         agentOutcome: 'success',
         verdict: 'fail',
         offendingFindings: [
-          { severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] },
+          { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
         ],
       });
 
@@ -291,7 +295,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       .mockImplementationOnce(async (_ctx, opts) => {
         fixCalls.push(opts);
         git.headByCwd.set('/tmp/wt', 'head-2');
-        git.changedFilesResults.set('head-0|head-2', ['src/declared.ts']);
+        git.changedFilesResults.set('head-0|head-2', ['src/feature/declared.ts']);
         return {
           invocationId: 'fix-2',
           agentOutcome: 'success',
@@ -316,7 +320,9 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       invocationId: 'rev-1',
       agentOutcome: 'success',
       verdict: 'fail',
-      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+      ],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-0');
@@ -357,12 +363,12 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       agentOutcome: 'success',
       verdict: 'fail',
       offendingFindings: [
-        { severity: 'P1', summary: 'initial review finding', files: ['src/declared.ts'] },
+        { severity: 'P1', summary: 'initial review finding', files: ['src/feature/declared.ts'] },
       ],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
-    git.changedFilesResults.set('head-0|head-1', ['src/declared.ts']);
+    git.changedFilesResults.set('head-0|head-1', ['src/feature/declared.ts']);
 
     // Fix 1 commits declared file, advances head to head-1
     vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
@@ -413,7 +419,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
         agentOutcome: 'success',
         verdict: 'fail',
         offendingFindings: [
-          { severity: 'P1', summary: 'initial review finding', files: ['src/declared.ts'] },
+          { severity: 'P1', summary: 'initial review finding', files: ['src/feature/declared.ts'] },
         ],
       })
       .mockResolvedValueOnce({
@@ -424,7 +430,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
-    git.changedFilesResults.set('head-0|head-1', ['src/declared.ts']);
+    git.changedFilesResults.set('head-0|head-1', ['src/feature/declared.ts']);
 
     const fixCalls: import('../types.js').FixStepOptions[] = [];
     vi.mocked(baseDeps.runFix)
@@ -453,7 +459,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       .mockImplementationOnce(async (_ctx, opts) => {
         fixCalls.push(opts);
         git.headByCwd.set('/tmp/wt', 'head-3');
-        git.changedFilesResults.set('head-1|head-3', ['src/declared.ts']);
+        git.changedFilesResults.set('head-1|head-3', ['src/feature/declared.ts']);
         return {
           invocationId: 'fix-3',
           agentOutcome: 'success',
@@ -477,13 +483,13 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     expect(fixCalls).toHaveLength(3);
     expect(fixCalls[1]?.attemptKind).toBe('deterministic');
     expect(fixCalls[1]?.deterministicDiagnostic).toBe('typecheck failed');
-    expect(fixCalls[1]?.allowedFiles).toEqual(['src/declared.ts']);
+    expect(fixCalls[1]?.allowedFiles).toEqual(['src/feature/declared.ts']);
     expect(fixCalls[2]?.attemptKind).toBe('deterministic');
     expect(fixCalls[2]?.deterministicDiagnostic).toContain('typecheck failed');
     expect(fixCalls[2]?.deterministicDiagnostic).toContain(
       'review-fix modified undeclared files: src/undeclared.ts',
     );
-    expect(fixCalls[2]?.allowedFiles).toEqual(['src/declared.ts']);
+    expect(fixCalls[2]?.allowedFiles).toEqual(['src/feature/declared.ts']);
   });
 
   it('treats malformed manifest in artifactStore as synthetic check failure', async () => {
@@ -503,11 +509,13 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       invocationId: 'rev-1',
       agentOutcome: 'success',
       verdict: 'fail',
-      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+      ],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
-    git.changedFilesResults.set('head-0|head-1', ['src/declared.ts']);
+    git.changedFilesResults.set('head-0|head-1', ['src/feature/declared.ts']);
 
     vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
       invocationId: 'fix-1',
@@ -541,11 +549,13 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       invocationId: 'rev-1',
       agentOutcome: 'success',
       verdict: 'fail',
-      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+      ],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
-    git.changedFilesResults.set('head-0|head-1', ['src/declared.ts']);
+    git.changedFilesResults.set('head-0|head-1', ['src/feature/declared.ts']);
 
     vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
       invocationId: 'fix-1',
@@ -579,7 +589,9 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       invocationId: 'rev-1',
       agentOutcome: 'success',
       verdict: 'fail',
-      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+      ],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
@@ -612,7 +624,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 
@@ -626,7 +638,9 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       invocationId: 'rev-1',
       agentOutcome: 'success',
       verdict: 'fail',
-      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+      ],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
@@ -669,7 +683,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
         JSON.stringify({
           version: 2,
           task_count: 1,
-          tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
         }),
       ),
     };
@@ -678,7 +692,9 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       invocationId: 'rev-1',
       agentOutcome: 'success',
       verdict: 'fail',
-      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+      ],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
@@ -715,19 +731,25 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
         invocationId: 'rev-1',
         agentOutcome: 'success',
         verdict: 'fail',
-        offendingFindings: [{ severity: 'P1', summary: 'bug 1', files: ['src/declared.ts'] }],
+        offendingFindings: [
+          { severity: 'P1', summary: 'bug 1', files: ['src/feature/declared.ts'] },
+        ],
       })
       .mockResolvedValueOnce({
         invocationId: 'rev-2',
         agentOutcome: 'success',
         verdict: 'fail',
-        offendingFindings: [{ severity: 'P1', summary: 'bug 2', files: ['src/declared.ts'] }],
+        offendingFindings: [
+          { severity: 'P1', summary: 'bug 2', files: ['src/feature/declared.ts'] },
+        ],
       })
       .mockResolvedValueOnce({
         invocationId: 'rev-3',
         agentOutcome: 'success',
         verdict: 'fail',
-        offendingFindings: [{ severity: 'P1', summary: 'bug 3', files: ['src/declared.ts'] }],
+        offendingFindings: [
+          { severity: 'P1', summary: 'bug 3', files: ['src/feature/declared.ts'] },
+        ],
       });
 
     vi.mocked(baseDeps.runFix)
@@ -782,7 +804,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     let worktreeManifestContent = JSON.stringify({
       version: 2,
       task_count: 1,
-      tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+      tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
     });
 
     const depsWithWorktreeFile: ReviewFixLoopDeps = {
@@ -804,7 +826,9 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       invocationId: 'rev-1',
       agentOutcome: 'success',
       verdict: 'fail',
-      offendingFindings: [{ severity: 'P1', summary: 'bug in logic', files: ['src/declared.ts'] }],
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+      ],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
@@ -816,7 +840,11 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
         version: 2,
         task_count: 1,
         tasks: [
-          { n: 1, title: 'Task 1', expected_files: ['src/declared.ts', 'src/undeclared.ts'] },
+          {
+            n: 1,
+            title: 'Task 1',
+            expected_files: ['src/feature/declared.ts', 'src/undeclared.ts'],
+          },
         ],
       });
       return {

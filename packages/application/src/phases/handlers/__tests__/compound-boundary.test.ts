@@ -104,7 +104,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 
@@ -149,7 +149,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 
@@ -171,7 +171,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: '# Learnings\n',
     });
 
-    git.changedFilesResults.set('sha-before|sha-after', ['src/declared.ts']);
+    git.changedFilesResults.set('sha-before|sha-after', ['src/feature/declared.ts']);
 
     const handler = new CompoundHandler();
     const result = await handler.run(ctx);
@@ -192,7 +192,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
           {
             n: 1,
             title: 'Task 1',
-            expected_files: ['src/declared.ts'],
+            expected_files: ['src/feature/declared.ts'],
             reference_files: ['docs/ref.md'],
           },
         ],
@@ -368,7 +368,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 
@@ -423,7 +423,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 
@@ -472,7 +472,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
           {
             n: 1,
             title: 'Task 1',
-            expected_files: ['src/declared.ts'],
+            expected_files: ['src/feature/declared.ts'],
             reference_files: ['docs/ref.md'],
           },
         ],
@@ -519,7 +519,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 
@@ -542,7 +542,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: '# Learnings\n',
     });
 
-    git.changedFilesResults.set('sha-before|sha-after', ['src/declared.ts']);
+    git.changedFilesResults.set('sha-before|sha-after', ['src/feature/declared.ts']);
 
     const handler = new CompoundHandler();
     const result = await handler.run(ctx);
@@ -566,14 +566,14 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 
     const git = ctx.git as FakeGitPort;
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('pi-qwen-local', () => {
-      git.statusByCwd.set(ctx.cwd, ' M src/declared.ts');
+      git.statusByCwd.set(ctx.cwd, ' M src/feature/declared.ts');
       return successResult();
     });
 
@@ -603,7 +603,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 
@@ -677,7 +677,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 
@@ -701,10 +701,10 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     // If diffed against sha-initial, it would have earlier phase files that would falsely fail
     git.changedFilesResults.set('sha-initial|sha-after', [
       'src/earlier-phase-file.ts',
-      'src/declared.ts',
+      'src/feature/declared.ts',
     ]);
     // Diff against sha-interim (compound phase start) only has declared file
-    git.changedFilesResults.set('sha-interim|sha-after', ['src/declared.ts']);
+    git.changedFilesResults.set('sha-interim|sha-after', ['src/feature/declared.ts']);
 
     const handler = new CompoundHandler();
     const result = await handler.run(ctx);
@@ -775,7 +775,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 
@@ -856,7 +856,7 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
         return JSON.stringify({
           version: 2,
           task_count: 1,
-          tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/worktree-declared.ts'] }],
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/worktree-declared.ts'] }],
         });
       }
       return undefined;

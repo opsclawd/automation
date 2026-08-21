@@ -37,6 +37,7 @@ const baseManifest: TaskManifest = {
 interface HarnessOptions {
   manifest?: TaskManifest;
   changedFiles?: string[];
+  createdFiles?: string[];
   revalidationResult?: RevalidationResult;
   initialPreStepHead?: string;
   exemptUndeclaredFiles?: string[];
@@ -60,6 +61,11 @@ function createHarness(options: HarnessOptions = {}) {
   if (options.changedFiles) {
     git.changedFilesResults.set('before-step|after-implement', [...options.changedFiles]);
     git.changedFilesResults.set('before-step|HEAD', [...options.changedFiles]);
+  }
+  const created = options.createdFiles ?? options.changedFiles;
+  if (created) {
+    git.createdFilesResults.set('before-step|after-implement', [...created]);
+    git.createdFilesResults.set('before-step|HEAD', [...created]);
   }
 
   const loops = new FakeLoopRepository();

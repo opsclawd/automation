@@ -114,7 +114,7 @@ describe('CompoundHandler scratch file remediation (regression #948)', () => {
       contents: JSON.stringify({
         version: 2,
         task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/declared.ts'] }],
+        tasks: [{ n: 1, title: 'Task 1', expected_files: ['src/feature/declared.ts'] }],
       }),
     });
 

@@ -17,6 +17,7 @@ describe('deterministic plan review forbidden artifact checks', () => {
     forbiddenArtifactPaths?: string[];
     tasks?: Array<Record<string, unknown>>;
     structuralError?: string | null;
+    version?: number;
   }) {
     const tasks = options.tasks ?? [
       {
@@ -27,7 +28,7 @@ describe('deterministic plan review forbidden artifact checks', () => {
     ];
 
     const manifest = {
-      version: 2,
+      version: options.version ?? 2,
       task_count: tasks.length,
       tasks,
     };
@@ -107,12 +108,13 @@ describe('deterministic plan review forbidden artifact checks', () => {
     });
 
     const backslashCheck = makeCheck({
+      version: 1,
       forbiddenArtifactPaths: ['certification/'],
       tasks: [
         {
           n: 1,
           title: 'Run backslash soak',
-          expected_files: ['./certification\\transition-soak\\result.json'],
+          files: ['./certification\\transition-soak\\result.json'],
         },
       ],
     });

@@ -9,7 +9,11 @@ import {
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { ReadWorktreeFilePort } from '../ports.js';
-import { uncommittedSourcePaths, unquoteGitPath } from '../artifacts/orchestrator-artifacts.js';
+import {
+  uncommittedSourcePaths,
+  unquoteGitPath,
+  isUntrackedOrAddedStatusLine,
+} from '../artifacts/orchestrator-artifacts.js';
 import type {
   ImplementStepLoopDeps,
   ImplementStepLoopInput,
@@ -38,18 +42,12 @@ import { verifyFixCommit, type FixCommitVerification } from '../fix-commit-verif
 import type { RevalidationResult } from '../review-fix/types.js';
 import { buildTaskValidationCommands } from '../task-validation-commands.js';
 import {
-  declaredTaskFiles,
-  referenceTaskFiles,
-  normalizedPathSet,
-  classifyUndeclaredFiles,
+  resolveEffectiveTaskScope,
+  classifyTaskChanges,
   normalizeTaskPath,
+  type TaskChangeCandidate,
 } from '../task-file-boundaries.js';
 import { findInheritedFormattingDebtFiles } from '../inherited-formatting-debt.js';
-
-function isProtectedFilePath(path: string): boolean {
-  const norm = normalizeTaskPath(path);
-  return norm === '.gitignore' || norm === '.ai-orchestrator.json' || norm.startsWith('.github/');
-}
 
 function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -881,21 +879,82 @@ export class ImplementStepLoop {
         input.initialPreStepHead,
         currentHead,
       );
-      const task = input.manifest?.tasks?.find((t) => t.n === input.stepIndex);
-      const expectedFiles = declaredTaskFiles(task);
-      const referenceFiles = referenceTaskFiles(task);
-      const writableSet = normalizedPathSet(expectedFiles);
-      const referenceSet = normalizedPathSet(referenceFiles);
-      const exemptSet = normalizedPathSet(input.exemptUndeclaredFiles);
 
-      let { modifiedReferenceFiles, undeclaredFiles } = classifyUndeclaredFiles(
-        committedFiles,
-        writableSet,
-        referenceSet,
-        exemptSet,
+      let createdFilesList: string[] | undefined = undefined;
+      if (typeof deps.git.createdFiles === 'function') {
+        try {
+          createdFilesList = await deps.git.createdFiles(
+            input.cwd,
+            input.initialPreStepHead,
+            currentHead,
+          );
+        } catch {
+          createdFilesList = undefined;
+        }
+      }
+      const createdFilesSnapshot = createdFilesList;
+      const hasCreatedFilesSnapshot = createdFilesSnapshot !== undefined;
+      const createdSet = new Set(
+        hasCreatedFilesSnapshot ? createdFilesSnapshot.map(normalizeTaskPath).filter(Boolean) : [],
       );
 
+      let statusOutput = '';
+      if (typeof deps.git.status === 'function') {
+        try {
+          statusOutput = await deps.git.status(input.cwd);
+        } catch {
+          statusOutput = '';
+        }
+      }
+
+      const untrackedPaths = new Set(
+        statusOutput
+          .split('\n')
+          .filter(isUntrackedOrAddedStatusLine)
+          .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
+          .map(normalizeTaskPath)
+          .filter(Boolean),
+      );
+
+      const dirtySourcePaths = uncommittedSourcePaths(statusOutput)
+        .map(normalizeTaskPath)
+        .filter(Boolean);
+
+      const task =
+        input.manifest?.tasks?.find((t) => (t as { n?: number }).n === input.stepIndex) ??
+        input.manifest?.tasks?.[input.stepIndex - 1];
+      const currentScope = resolveEffectiveTaskScope(task);
+
+      const candidates: TaskChangeCandidate[] = [];
+      for (const p of dirtySourcePaths) {
+        candidates.push({ path: p, tracked: !untrackedPaths.has(p) && !createdSet.has(p) });
+      }
+      for (const p of committedFiles) {
+        const normP = normalizeTaskPath(p);
+        const isTracked = hasCreatedFilesSnapshot ? !createdSet.has(normP) : false;
+        candidates.push({ path: normP, tracked: isTracked });
+      }
+
+      const classification = classifyTaskChanges({
+        candidates,
+        currentScope,
+        ...(input.manifest?.tasks ? { manifestTasks: input.manifest.tasks } : {}),
+        ...(input.manifest ? { manifest: input.manifest } : {}),
+        currentTaskNumber: input.stepIndex,
+        ...(input.exemptUndeclaredFiles ? { exemptFiles: input.exemptUndeclaredFiles } : {}),
+      });
+
       const completedTaskNumbers = new Set(input.completedStepIndexes ?? []);
+      const candidateFilesForDebt = [
+        ...new Set([
+          ...classification.modifiedReferenceFiles,
+          ...classification.driftFiles,
+          ...classification.prematureImplementation.map((p) => p.path),
+          ...(classification.nonGoalFiles ?? []),
+          ...(classification.protectedFiles ?? []),
+        ]),
+      ];
+
       const inheritedFormattingDebtFiles =
         input.manifest && input.initialPreStepHead
           ? await findInheritedFormattingDebtFiles({
@@ -903,9 +962,7 @@ export class ImplementStepLoop {
               manifest: input.manifest,
               currentTaskNumber: input.stepIndex,
               completedTaskNumbers,
-              candidateFiles: [...new Set([...modifiedReferenceFiles, ...undeclaredFiles])].filter(
-                (path) => !isProtectedFilePath(path),
-              ),
+              candidateFiles: candidateFilesForDebt,
               preStepHead: input.initialPreStepHead,
               postStepHead: currentHead,
               git: deps.git,
@@ -914,11 +971,34 @@ export class ImplementStepLoop {
 
       if (inheritedFormattingDebtFiles.length > 0) {
         const inheritedSet = new Set(inheritedFormattingDebtFiles);
-        modifiedReferenceFiles = modifiedReferenceFiles.filter((path) => !inheritedSet.has(path));
-        undeclaredFiles = undeclaredFiles.filter((path) => !inheritedSet.has(path));
+        classification.modifiedReferenceFiles = classification.modifiedReferenceFiles.filter(
+          (path) => !inheritedSet.has(path),
+        );
+        classification.driftFiles = classification.driftFiles.filter(
+          (path) => !inheritedSet.has(path),
+        );
+        classification.prematureImplementation = classification.prematureImplementation.filter(
+          (item) => !inheritedSet.has(item.path),
+        );
+        classification.nonGoalFiles = classification.nonGoalFiles.filter(
+          (path) => !inheritedSet.has(path),
+        );
+        if (classification.protectedFiles) {
+          classification.protectedFiles = classification.protectedFiles.filter(
+            (path) => !inheritedSet.has(path),
+          );
+        }
       }
 
-      const outOfScopeFiles = [...modifiedReferenceFiles, ...undeclaredFiles];
+      const outOfScopeFiles = [
+        ...new Set([
+          ...classification.modifiedReferenceFiles,
+          ...classification.driftFiles,
+          ...classification.prematureImplementation.map((p) => p.path),
+          ...(classification.nonGoalFiles ?? []),
+          ...(classification.protectedFiles ?? []),
+        ]),
+      ].sort();
 
       if (outOfScopeFiles.length > 0) {
         const revalidation = await deps.runRevalidation(baseCtx);
@@ -927,15 +1007,19 @@ export class ImplementStepLoop {
         );
 
         if (failedInvertedCommands.length > 0) {
-          if (modifiedReferenceFiles.length > 0) {
-            const failureMessage = `step ${input.stepIndex} (${input.stepTitle}) modified reference_files ${modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
+          if (classification.modifiedReferenceFiles.length > 0) {
+            const failureMessage = `step ${input.stepIndex} (${input.stepTitle}) modified reference_files ${classification.modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
 
             this.emit(input, 'step.red_first_violation', 'error', failureMessage, {
               index: input.stepIndex,
               taskTitle: input.stepTitle,
               failedInvertedCommands,
-              modifiedReferenceFiles,
-              undeclaredFiles,
+              modifiedReferenceFiles: classification.modifiedReferenceFiles,
+              undeclaredFiles: classification.driftFiles,
+              driftFiles: classification.driftFiles,
+              nonGoalFiles: classification.nonGoalFiles,
+              protectedFiles: classification.protectedFiles,
+              prematureImplementation: classification.prematureImplementation,
               preStepHead: input.initialPreStepHead,
               postStepHead: currentHead,
               ...(inheritedFormattingDebtFiles.length > 0 ? { inheritedFormattingDebtFiles } : {}),
@@ -963,22 +1047,56 @@ export class ImplementStepLoop {
               loop,
               failureMessage,
               failureKind: 'needs_human_review',
-              modifiedReferenceFiles,
+              modifiedReferenceFiles: classification.modifiedReferenceFiles,
             };
           }
 
-          const failureMessage =
-            `RED-first violation: Task ${input.stepIndex} (${input.stepTitle}) requires ` +
-            `inverted validation command(s) ${failedInvertedCommands.map((command) => JSON.stringify(command)).join(', ')} ` +
-            `to pass, but the commit included out-of-scope files: ${outOfScopeFiles.join(', ')}. ` +
-            'Separate the regression proof from its implementation.';
+          const prematurePaths = new Set(classification.prematureImplementation.map((p) => p.path));
+          const otherOutOfScopeFiles = outOfScopeFiles.filter((p) => !prematurePaths.has(p));
+
+          let failureMessage: string;
+          if (
+            classification.prematureImplementation.length > 0 &&
+            otherOutOfScopeFiles.length === 0
+          ) {
+            const prematureDetails = classification.prematureImplementation
+              .map((p) => `${p.path} (owned by task ${p.taskNumber})`)
+              .join(', ');
+            failureMessage =
+              `RED-first violation: Task ${input.stepIndex} (${input.stepTitle}) requires ` +
+              `inverted validation command(s) ${failedInvertedCommands.map((command) => JSON.stringify(command)).join(', ')} ` +
+              `to pass, but the commit included premature implementation: ${prematureDetails}. ` +
+              'Separate the regression proof from its implementation.';
+          } else if (
+            classification.prematureImplementation.length > 0 &&
+            otherOutOfScopeFiles.length > 0
+          ) {
+            const prematureDetails = classification.prematureImplementation
+              .map((p) => `${p.path} (owned by task ${p.taskNumber})`)
+              .join(', ');
+            failureMessage =
+              `RED-first violation: Task ${input.stepIndex} (${input.stepTitle}) requires ` +
+              `inverted validation command(s) ${failedInvertedCommands.map((command) => JSON.stringify(command)).join(', ')} ` +
+              `to pass, but the commit included out-of-scope files (${otherOutOfScopeFiles.join(', ')}) and premature implementation (${prematureDetails}). ` +
+              'Separate the regression proof from its implementation.';
+          } else {
+            failureMessage =
+              `RED-first violation: Task ${input.stepIndex} (${input.stepTitle}) requires ` +
+              `inverted validation command(s) ${failedInvertedCommands.map((command) => JSON.stringify(command)).join(', ')} ` +
+              `to pass, but the commit included out-of-scope files: ${outOfScopeFiles.join(', ')}. ` +
+              'Separate the regression proof from its implementation.';
+          }
 
           this.emit(input, 'step.red_first_violation', 'error', failureMessage, {
             index: input.stepIndex,
             taskTitle: input.stepTitle,
             failedInvertedCommands,
-            modifiedReferenceFiles,
-            undeclaredFiles,
+            modifiedReferenceFiles: classification.modifiedReferenceFiles,
+            undeclaredFiles: classification.driftFiles,
+            driftFiles: classification.driftFiles,
+            nonGoalFiles: classification.nonGoalFiles,
+            protectedFiles: classification.protectedFiles,
+            prematureImplementation: classification.prematureImplementation,
             preStepHead: input.initialPreStepHead,
             postStepHead: currentHead,
             ...(inheritedFormattingDebtFiles.length > 0 ? { inheritedFormattingDebtFiles } : {}),
