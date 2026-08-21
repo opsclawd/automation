@@ -72,33 +72,33 @@ function main(): void {
     falsePositives,
   } = report;
 
-  console.log('Scope-replay corpus false-positive rate');
-  console.log('========================================');
-  console.log(`Total corpus entries:        ${totalEntries}`);
-  console.log(
+  console.warn('Scope-replay corpus false-positive rate');
+  console.warn('========================================');
+  console.warn(`Total corpus entries:        ${totalEntries}`);
+  console.warn(
     `Excluded (no manifest to classify against, taskManifestSource=unrecoverable): ${excludedUnrecoverable}`,
   );
-  console.log(`Classifiable entries:         ${classifiableEntries}`);
-  console.log(`  false_positive:             ${falsePositiveCount}`);
-  console.log(`  true_positive:               ${truePositiveCount}`);
-  console.log(`False-positive rate:          ${falsePositiveRatePercent.toFixed(2)}%`);
-  console.log('');
-  console.log(
+  console.warn(`Classifiable entries:         ${classifiableEntries}`);
+  console.warn(`  false_positive:             ${falsePositiveCount}`);
+  console.warn(`  true_positive:               ${truePositiveCount}`);
+  console.warn(`False-positive rate:          ${falsePositiveRatePercent.toFixed(2)}%`);
+  console.warn('');
+  console.warn(
     'ADR-0010 baseline: 75%+ of file-exact-classifier boundary halts were false positives.',
   );
-  console.log(
+  console.warn(
     "This corpus is six illustrative runs picked for #936's issue bodies (distinct failure",
   );
-  console.log(
+  console.warn(
     'shapes), not a random sample of that baseline population -- see ADR-0010 and #997/#998',
   );
-  console.log('for why this number should not be read as validating or refuting the 75%+ figure.');
+  console.warn('for why this number should not be read as validating or refuting the 75%+ figure.');
 
   if (falsePositives.length > 0) {
-    console.log('');
-    console.log('false_positive entries:');
+    console.warn('');
+    console.warn('false_positive entries:');
     for (const e of falsePositives) {
-      console.log(`  ${e.runId.slice(0, 8)}  ${e.path}`);
+      console.warn(`  ${e.runId.slice(0, 8)}  ${e.path}`);
     }
   }
 }
