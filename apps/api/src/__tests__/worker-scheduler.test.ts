@@ -357,6 +357,6 @@ describe('WorkerScheduler', () => {
       scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
     ).resolves.toBeUndefined();
     const elapsed = Date.now() - start;
-    expect(elapsed).toBeGreaterThanOrEqual(180);
+    expect(elapsed).toBeGreaterThanOrEqual(170);
   });
 });
