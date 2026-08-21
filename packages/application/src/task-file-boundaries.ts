@@ -129,6 +129,10 @@ export function isPathPermittedByScope(filePath: string, scope: EffectiveTaskSco
   return false;
 }
 
+/**
+ * @deprecated Legacy V1 boundary classifier. Ignores V2 permitted_areas and non_goals.
+ * Use {@link checkTaskBoundaries} instead to validate file changes against full V1/V2 scopes.
+ */
 export function classifyUndeclaredFiles(
   committedFiles: readonly string[],
   writableFiles: ReadonlySet<string>,
@@ -147,6 +151,10 @@ export function classifyUndeclaredFiles(
   };
 }
 
+/**
+ * @deprecated Legacy V1 boundary helper. Ignores V2 permitted_areas and non_goals.
+ * Use {@link checkTaskBoundaries} or {@link resolveEffectiveTaskScope} instead.
+ */
 export function getManifestBoundaries(manifest: unknown): {
   writableSet: Set<string>;
   referenceSet: Set<string>;
@@ -315,8 +323,10 @@ export async function loadManifest(
           };
         }
       }
-    } catch {
-      // not found in worktree
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        throw err;
+      }
     }
   }
 

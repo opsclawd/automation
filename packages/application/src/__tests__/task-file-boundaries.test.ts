@@ -240,6 +240,17 @@ describe('task-file-boundaries helpers', () => {
       ).rejects.toThrow('permission denied');
     });
 
+    it('propagates non-not-found errors from readWorktreeFile', async () => {
+      const mockReadWorktree = vi.fn().mockRejectedValue(new Error('EACCES: permission denied'));
+      await expect(
+        loadManifest(
+          { runId: 'run-1' },
+          { cwd: '/repo', runId: 'run-1' },
+          { readWorktreeFile: mockReadWorktree },
+        ),
+      ).rejects.toThrow('EACCES: permission denied');
+    });
+
     it('returns malformed when input.manifest is an empty object', async () => {
       const result = await loadManifest({ manifest: {} }, { cwd: '/repo', runId: 'run-1' });
       expect(result.status).toBe('malformed');

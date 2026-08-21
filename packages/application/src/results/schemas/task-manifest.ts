@@ -177,9 +177,8 @@ export const taskManifestV2Schema = z
         const writableSet = new Set(writableExact);
         const refSet = new Set(referenceFiles);
         for (const [scIndex, sc] of task.signature_changes.entries()) {
-          const declFileNormalized = sc.declaration_file.replace(/\\/g, '/');
-          const isWritable = writableSet.has(declFileNormalized);
-          const isReference = refSet.has(declFileNormalized);
+          const isWritable = writableSet.has(sc.declaration_file);
+          const isReference = refSet.has(sc.declaration_file);
           const change = sc.change ?? 'modified';
 
           if (change === 'not_modified') {
