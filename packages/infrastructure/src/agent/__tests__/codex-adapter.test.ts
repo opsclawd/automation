@@ -114,6 +114,25 @@ describe('CodexAgentAdapter', () => {
     expect(args).toContain('--json');
   });
 
+  it('passes --add-dir for git metadata when running in a git worktree', async () => {
+    const mainRepo = makeWorktree();
+    const worktreeDir = join(mainRepo, 'worktree-1');
+    execSync(`git worktree add -b wt-branch "${worktreeDir}" HEAD`, { cwd: mainRepo });
+    dirs.push(worktreeDir);
+
+    const argLog = join(worktreeDir, 'args.txt');
+    const shim = join(worktreeDir, 'shim.sh');
+    writeFileSync(shim, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argLog}"\nexit 0\n`);
+    execSync(`chmod +x ${shim}`);
+
+    const adapter = new CodexAgentAdapter({ binaryPath: shim, artifactsDir: worktreeDir });
+    await adapter.invoke(req(worktreeDir));
+    const args = readFileSync(argLog, 'utf-8');
+    expect(args).toContain('--add-dir');
+    expect(args).toContain(join(mainRepo, '.git', 'worktrees', 'worktree-1'));
+    expect(args).toContain(join(mainRepo, '.git'));
+  });
+
   it('passes --color never for clean parseable output', async () => {
     const cwd = makeWorktree();
     const argLog = join(cwd, 'args.txt');
