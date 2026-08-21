@@ -15,10 +15,13 @@ export interface EffectiveTaskScope {
 
 export function normalizeTaskPath(path: unknown): string {
   if (typeof path !== 'string') return '';
-  return path
-    .trim()
+  const trimmed = path.trim();
+  if (!trimmed) return '';
+  return trimmed
     .replace(/\\/g, '/')
-    .replace(/^(\.\/|\/)+/, '');
+    .replace(/^(\.\/|\/)+/, '')
+    .replace(/\/+/g, '/')
+    .replace(/\/+$/, '');
 }
 
 export function resolveEffectiveTaskScope(task: unknown): EffectiveTaskScope {

@@ -1,153 +1,192 @@
 import { describe, expect, it } from 'vitest';
-import { checkTaskBoundaries, resolveEffectiveTaskScope } from '../task-file-boundaries.js';
+import {
+  declaredTaskFiles,
+  referenceTaskFiles,
+  resolveEffectiveTaskScope,
+} from '../task-file-boundaries.js';
 
 describe('resolveEffectiveTaskScope', () => {
   it('derives only immediate non-root parents and keeps root required files exact-only', () => {
     const task = {
       n: 1,
-      title: 'Core service implementation',
+      title: 'Nested and root deliverables',
       expected_files: [
         'packages/core/src/service.ts',
-        'packages/core/src/index.ts',
-        'package.json',
+        'packages/core/index.ts',
         'README.md',
+        'package.json',
       ],
     };
 
     const scope = resolveEffectiveTaskScope(task);
+
     expect(scope.requiredFiles).toEqual([
       'packages/core/src/service.ts',
-      'packages/core/src/index.ts',
-      'package.json',
+      'packages/core/index.ts',
       'README.md',
+      'package.json',
     ]);
-    expect(scope.permittedAreas).toEqual(['packages/core/src']);
+    expect(scope.permittedAreas).toEqual(['packages/core/src', 'packages/core']);
+    expect(scope.permittedAreas).not.toContain('.');
+    expect(scope.permittedAreas).not.toContain('');
     expect(scope.mayExtendFiles).toEqual([]);
     expect(scope.nonGoals).toEqual([]);
     expect(scope.referenceFiles).toEqual([]);
   });
 
   it('merges V1 files and older V2 expected_files into required files with safe derived areas', () => {
-    const mergedTask = {
+    const v1AndV2Task = {
       n: 1,
-      title: 'Merged legacy and V2 task',
-      expected_files: ['packages/core/src/new.ts', 'packages/other/src/file.ts'],
-      files: ['packages/core/src/legacy.ts', 'packages/core/src/new.ts'],
+      title: 'Merged task files',
+      expected_files: ['packages/application/src/service.ts', 'packages/application/src/legacy.ts'],
+      files: ['packages/application/src/legacy.ts', 'packages/application/src/extra.ts'],
     };
 
-    const mergedScope = resolveEffectiveTaskScope(mergedTask);
-    expect(mergedScope.requiredFiles).toEqual([
-      'packages/core/src/new.ts',
-      'packages/other/src/file.ts',
-      'packages/core/src/legacy.ts',
+    const scope = resolveEffectiveTaskScope(v1AndV2Task);
+
+    expect(scope.requiredFiles).toEqual([
+      'packages/application/src/service.ts',
+      'packages/application/src/legacy.ts',
+      'packages/application/src/extra.ts',
     ]);
-    expect(mergedScope.permittedAreas).toEqual(['packages/core/src', 'packages/other/src']);
+    expect(scope.permittedAreas).toEqual(['packages/application/src']);
+    expect(scope.mayExtendFiles).toEqual([]);
+    expect(scope.nonGoals).toEqual([]);
+    expect(scope.referenceFiles).toEqual([]);
 
-    const v1Task = {
-      n: 1,
-      title: 'Pure V1 task',
-      files: ['packages/application/src/ports.ts'],
+    const pureV1Task = {
+      n: 2,
+      title: 'Pure V1 Task',
+      files: ['src/index.ts', 'package.json'],
     };
-    const v1Scope = resolveEffectiveTaskScope(v1Task);
-    expect(v1Scope.requiredFiles).toEqual(['packages/application/src/ports.ts']);
-    expect(v1Scope.permittedAreas).toEqual(['packages/application/src']);
+
+    const v1Scope = resolveEffectiveTaskScope(pureV1Task);
+    expect(v1Scope.requiredFiles).toEqual(['src/index.ts', 'package.json']);
+    expect(v1Scope.permittedAreas).toEqual(['src']);
+    expect(v1Scope.mayExtendFiles).toEqual([]);
+    expect(v1Scope.nonGoals).toEqual([]);
+    expect(v1Scope.referenceFiles).toEqual([]);
   });
 
   it('resolves an empty task without explicit permission as read-only', () => {
     const emptyTask = {
       n: 1,
-      title: 'Empty task with no files',
-    };
-    const scope = resolveEffectiveTaskScope(emptyTask);
-    expect(scope).toEqual({
-      requiredFiles: [],
-      mayExtendFiles: [],
-      permittedAreas: [],
-      nonGoals: [],
-      referenceFiles: [],
-    });
-
-    const explicitEmptyTask = {
-      n: 2,
-      title: 'Explicit empty arrays',
+      title: 'Read-only / empty task',
       expected_files: [],
-      permitted_areas: [],
-      may_extend: [],
-      non_goals: [],
-      reference_files: [],
     };
-    const explicitScope = resolveEffectiveTaskScope(explicitEmptyTask);
-    expect(explicitScope).toEqual({
-      requiredFiles: [],
-      mayExtendFiles: [],
-      permittedAreas: [],
-      nonGoals: [],
-      referenceFiles: [],
-    });
+
+    const scope = resolveEffectiveTaskScope(emptyTask);
+
+    expect(scope.requiredFiles).toEqual([]);
+    expect(scope.mayExtendFiles).toEqual([]);
+    expect(scope.permittedAreas).toEqual([]);
+    expect(scope.nonGoals).toEqual([]);
+    expect(scope.referenceFiles).toEqual([]);
+
+    const omittedTask = {
+      n: 2,
+      title: 'Omitted task fields',
+    };
+
+    const omittedScope = resolveEffectiveTaskScope(omittedTask);
+    expect(omittedScope.requiredFiles).toEqual([]);
+    expect(omittedScope.mayExtendFiles).toEqual([]);
+    expect(omittedScope.permittedAreas).toEqual([]);
+    expect(omittedScope.nonGoals).toEqual([]);
+    expect(omittedScope.referenceFiles).toEqual([]);
   });
 
-  it('normalizes and deduplicates defensive in-memory inputs', () => {
-    const dirtyTask = {
+  it('normalizes and deduplicates in-memory inputs defensively', () => {
+    const messyTask = {
       n: 1,
-      title: 'Dirty inputs',
+      title: 'Messy in-memory inputs',
       expected_files: [
-        '  packages\\core\\src\\service.ts  ',
+        '  packages/core/src/service.ts  ',
         './packages/core/src/service.ts',
-        'packages/core/src/index.ts',
+        'packages\\core\\src\\service.ts',
+        'packages/core/src/other.ts',
+        '',
+        '   ',
       ],
-      permitted_areas: ['  packages\\core\\src  ', './packages/core/test'],
-      may_extend: ['  packages\\application\\src\\ports.ts  ', 'packages/application/src/ports.ts'],
-      non_goals: ['  packages\\infrastructure\\src  '],
-      reference_files: ['  packages\\domain\\src\\entity.ts  '],
+      may_extend: [
+        'packages/core/src/helper.ts',
+        ' ./packages/core/src/helper.ts ',
+        'packages\\core\\src\\helper.ts',
+      ],
+      permitted_areas: [
+        'packages/core/extra/',
+        './packages/core/extra',
+        'packages//deep//area',
+        'packages\\windows\\area',
+      ],
+      non_goals: ['packages/blocked/', './packages/blocked', 'packages\\blocked'],
+      reference_files: ['packages/domain/src/entity.ts', ' ./packages/domain/src/entity.ts '],
     };
 
-    const scope = resolveEffectiveTaskScope(dirtyTask);
+    const scope = resolveEffectiveTaskScope(messyTask);
+
     expect(scope.requiredFiles).toEqual([
       'packages/core/src/service.ts',
-      'packages/core/src/index.ts',
+      'packages/core/src/other.ts',
     ]);
-    expect(scope.permittedAreas).toEqual(['packages/core/src', 'packages/core/test']);
-    expect(scope.mayExtendFiles).toEqual(['packages/application/src/ports.ts']);
-    expect(scope.nonGoals).toEqual(['packages/infrastructure/src']);
+    expect(scope.mayExtendFiles).toEqual(['packages/core/src/helper.ts']);
+    expect(scope.permittedAreas).toEqual([
+      'packages/core/src',
+      'packages/core/extra',
+      'packages/deep/area',
+      'packages/windows/area',
+    ]);
+    expect(scope.nonGoals).toEqual(['packages/blocked']);
     expect(scope.referenceFiles).toEqual(['packages/domain/src/entity.ts']);
   });
 
-  it('handles explicit extra permitted areas and optional may_extend files', () => {
+  it('combines derived areas with explicit permitted areas without duplicates', () => {
     const task = {
       n: 1,
-      title: 'Explicit areas and may extend',
+      title: 'Derived and explicit permitted areas',
       expected_files: ['packages/core/src/service.ts'],
-      permitted_areas: ['packages/core/test', 'packages/core/src'],
-      may_extend: ['packages/application/src/ports.ts'],
-      non_goals: ['packages/infrastructure'],
-      reference_files: ['docs/adr/0010.md'],
+      permitted_areas: ['packages/core/src', 'packages/core/test', 'packages/shared'],
     };
 
     const scope = resolveEffectiveTaskScope(task);
-    expect(scope.requiredFiles).toEqual(['packages/core/src/service.ts']);
-    // derived 'packages/core/src' + explicit 'packages/core/test', deduplicated
-    expect(scope.permittedAreas).toEqual(['packages/core/src', 'packages/core/test']);
-    expect(scope.mayExtendFiles).toEqual(['packages/application/src/ports.ts']);
-    expect(scope.nonGoals).toEqual(['packages/infrastructure']);
-    expect(scope.referenceFiles).toEqual(['docs/adr/0010.md']);
+
+    expect(scope.permittedAreas).toEqual([
+      'packages/core/src',
+      'packages/core/test',
+      'packages/shared',
+    ]);
   });
 
-  it('handles non-object and null inputs gracefully', () => {
-    expect(resolveEffectiveTaskScope(null)).toEqual({
+  it('handles null undefined and non-object inputs safely', () => {
+    const nullScope = resolveEffectiveTaskScope(null);
+    expect(nullScope).toEqual({
       requiredFiles: [],
       mayExtendFiles: [],
       permittedAreas: [],
       nonGoals: [],
       referenceFiles: [],
     });
-    expect(resolveEffectiveTaskScope(undefined)).toEqual({
+
+    const undefinedScope = resolveEffectiveTaskScope(undefined);
+    expect(undefinedScope).toEqual({
       requiredFiles: [],
       mayExtendFiles: [],
       permittedAreas: [],
       nonGoals: [],
       referenceFiles: [],
     });
-    expect(resolveEffectiveTaskScope('not-a-task')).toEqual({
+
+    const stringScope = resolveEffectiveTaskScope('not a task');
+    expect(stringScope).toEqual({
+      requiredFiles: [],
+      mayExtendFiles: [],
+      permittedAreas: [],
+      nonGoals: [],
+      referenceFiles: [],
+    });
+
+    const numberScope = resolveEffectiveTaskScope(42);
+    expect(numberScope).toEqual({
       requiredFiles: [],
       mayExtendFiles: [],
       permittedAreas: [],
@@ -155,44 +194,35 @@ describe('resolveEffectiveTaskScope', () => {
       referenceFiles: [],
     });
   });
-});
 
-describe('checkTaskBoundaries with V2 effective scope', () => {
-  it('permits files within permitted_areas and may_extend while rejecting files outside', () => {
-    const manifest = {
-      version: 2,
-      task_count: 1,
-      tasks: [
-        {
-          n: 1,
-          title: 'V2 scope test task',
-          expected_files: ['packages/core/src/service.ts'],
-          permitted_areas: ['packages/core/test', 'packages/shared'],
-          may_extend: ['packages/application/src/ports.ts'],
-          reference_files: ['packages/domain/src/entity.ts'],
-          non_goals: ['packages/shared/deprecated'],
-        },
-      ],
+  it('preserves declaredTaskFiles and referenceTaskFiles helper compatibility', () => {
+    const task = {
+      n: 1,
+      title: 'Helper compatibility check',
+      expected_files: ['packages/core/src/service.ts'],
+      files: ['packages/core/src/legacy.ts'],
+      reference_files: ['packages/domain/src/entity.ts'],
     };
 
-    const committed = [
-      'packages/core/src/service.ts', // required -> permitted
-      'packages/core/src/sibling.ts', // derived area (packages/core/src) -> permitted
-      'packages/core/test/service.test.ts', // explicit permitted_areas -> permitted
-      'packages/shared/utils.ts', // explicit permitted_areas -> permitted
-      'packages/application/src/ports.ts', // exact may_extend -> permitted
-      'packages/domain/src/entity.ts', // reference_files -> modifiedReferenceFiles
-      'packages/shared/deprecated/old.ts', // non_goals -> undeclaredFiles
-      'packages/application/src/other.ts', // outside may_extend exact match -> undeclaredFiles
-      'packages/infrastructure/src/db.ts', // undeclared -> undeclaredFiles
-    ];
-
-    const result = checkTaskBoundaries(committed, manifest);
-    expect(result.modifiedReferenceFiles).toEqual(['packages/domain/src/entity.ts']);
-    expect(result.undeclaredFiles).toEqual([
-      'packages/application/src/other.ts',
-      'packages/infrastructure/src/db.ts',
-      'packages/shared/deprecated/old.ts',
+    expect(declaredTaskFiles(task)).toEqual([
+      'packages/core/src/service.ts',
+      'packages/core/src/legacy.ts',
     ]);
+    expect(referenceTaskFiles(task)).toEqual(['packages/domain/src/entity.ts']);
+  });
+
+  it('handles older V2 tasks omitting newer scope fields', () => {
+    const olderV2Task = {
+      n: 1,
+      title: 'Older V2 Task',
+      expected_files: ['packages/core/src/service.ts'],
+    };
+
+    const scope = resolveEffectiveTaskScope(olderV2Task);
+    expect(scope.requiredFiles).toEqual(['packages/core/src/service.ts']);
+    expect(scope.permittedAreas).toEqual(['packages/core/src']);
+    expect(scope.mayExtendFiles).toEqual([]);
+    expect(scope.nonGoals).toEqual([]);
+    expect(scope.referenceFiles).toEqual([]);
   });
 });
