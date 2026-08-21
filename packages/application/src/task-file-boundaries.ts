@@ -13,6 +13,248 @@ export interface EffectiveTaskScope {
   referenceFiles: string[];
 }
 
+export interface TaskChangeCandidate {
+  path: string;
+  tracked?: boolean;
+}
+
+export interface PrematureImplementationRecord {
+  path: string;
+  taskNumber: number;
+}
+
+export interface TaskScopeClassification {
+  permittedPaths: string[];
+  modifiedReferenceFiles: string[];
+  nonGoalFiles: string[];
+  prematureImplementation: PrematureImplementationRecord[];
+  driftFiles: string[];
+  protectedFiles?: string[];
+}
+
+export interface ClassifyTaskChangesOptions {
+  candidates: readonly (string | TaskChangeCandidate)[];
+  currentScope: EffectiveTaskScope;
+  manifestTasks?: readonly unknown[];
+  tasks?: readonly unknown[];
+  downstreamTasks?: readonly unknown[];
+  manifest?: unknown;
+  currentTaskNumber?: number;
+  exemptFiles?: readonly string[];
+  isProtected?: (path: string) => boolean;
+}
+
+function isNormalizedSegmentPrefixMatch(normPrefix: string, normPath: string): boolean {
+  if (!normPrefix || !normPath) return false;
+  return normPath === normPrefix || normPath.startsWith(normPrefix + '/');
+}
+
+export function isSegmentPrefixMatch(prefix: string, path: string): boolean {
+  const normPrefix = normalizeTaskPath(prefix);
+  const normPath = normalizeTaskPath(path);
+  return isNormalizedSegmentPrefixMatch(normPrefix, normPath);
+}
+
+export function isProtectedTaskPath(path: string): boolean {
+  const norm = normalizeTaskPath(path);
+  if (!norm) return false;
+  if (
+    norm === '.gitignore' ||
+    norm === '.ai-orchestrator.json' ||
+    norm === '.github' ||
+    norm.startsWith('.github/')
+  ) {
+    return true;
+  }
+  return isOrchestratorArtifactPattern(norm);
+}
+
+function getTaskNumber(task: unknown, fallbackIndex: number): number {
+  if (task && typeof task === 'object') {
+    const record = task as Record<string, unknown>;
+    if (typeof record.n === 'number' && Number.isFinite(record.n)) {
+      return record.n;
+    }
+    if (typeof record.task_number === 'number' && Number.isFinite(record.task_number)) {
+      return record.task_number;
+    }
+  }
+  return fallbackIndex + 1;
+}
+
+export function classifyTaskChanges(options: ClassifyTaskChangesOptions): TaskScopeClassification;
+export function classifyTaskChanges(
+  candidates: readonly (string | TaskChangeCandidate)[],
+  currentScope: EffectiveTaskScope,
+  options?: Partial<Omit<ClassifyTaskChangesOptions, 'candidates' | 'currentScope'>>,
+): TaskScopeClassification;
+export function classifyTaskChanges(
+  first: ClassifyTaskChangesOptions | readonly (string | TaskChangeCandidate)[],
+  second?: EffectiveTaskScope,
+  third?: Partial<Omit<ClassifyTaskChangesOptions, 'candidates' | 'currentScope'>>,
+): TaskScopeClassification {
+  let opts: ClassifyTaskChangesOptions;
+  if (Array.isArray(first)) {
+    opts = {
+      candidates: first,
+      currentScope: second ?? {
+        requiredFiles: [],
+        mayExtendFiles: [],
+        permittedAreas: [],
+        nonGoals: [],
+        referenceFiles: [],
+      },
+      ...third,
+    };
+  } else {
+    opts = first as ClassifyTaskChangesOptions;
+  }
+
+  const rawScope = opts.currentScope ?? {
+    requiredFiles: [],
+    mayExtendFiles: [],
+    permittedAreas: [],
+    nonGoals: [],
+    referenceFiles: [],
+  };
+
+  const normNonGoals = (rawScope.nonGoals ?? []).map(normalizeTaskPath).filter(Boolean);
+  const normPermittedAreas = (rawScope.permittedAreas ?? []).map(normalizeTaskPath).filter(Boolean);
+  const requiredFilesSet = normalizedPathSet(rawScope.requiredFiles);
+  const mayExtendFilesSet = normalizedPathSet(rawScope.mayExtendFiles);
+  const referenceFilesSet = normalizedPathSet(rawScope.referenceFiles);
+
+  const exemptSet = normalizedPathSet(opts.exemptFiles);
+  const isProtectedFn = opts.isProtected ?? isProtectedTaskPath;
+
+  const downstreamRequiredMap = new Map<string, number>();
+
+  if (opts.downstreamTasks) {
+    for (let i = 0; i < opts.downstreamTasks.length; i++) {
+      const task = opts.downstreamTasks[i];
+      const taskNum = getTaskNumber(task, i);
+      const scope = resolveEffectiveTaskScope(task);
+      for (const reqFile of scope.requiredFiles) {
+        if (!downstreamRequiredMap.has(reqFile)) {
+          downstreamRequiredMap.set(reqFile, taskNum);
+        }
+      }
+    }
+  } else {
+    let allTasks: readonly unknown[] = [];
+    if (Array.isArray(opts.manifestTasks)) {
+      allTasks = opts.manifestTasks;
+    } else if (Array.isArray(opts.tasks)) {
+      allTasks = opts.tasks;
+    } else if (opts.manifest && typeof opts.manifest === 'object') {
+      const manifestRecord = opts.manifest as Record<string, unknown>;
+      if (Array.isArray(manifestRecord.tasks)) {
+        allTasks = manifestRecord.tasks;
+      }
+    }
+
+    for (let i = 0; i < allTasks.length; i++) {
+      const task = allTasks[i];
+      const taskNum = getTaskNumber(task, i);
+      if (opts.currentTaskNumber !== undefined && taskNum <= opts.currentTaskNumber) {
+        continue;
+      }
+      const scope = resolveEffectiveTaskScope(task);
+      for (const reqFile of scope.requiredFiles) {
+        if (!downstreamRequiredMap.has(reqFile)) {
+          downstreamRequiredMap.set(reqFile, taskNum);
+        }
+      }
+    }
+  }
+
+  const normalizedCandidateMap = new Map<string, boolean>();
+  for (const rawCandidate of opts.candidates ?? []) {
+    const rawPath = typeof rawCandidate === 'string' ? rawCandidate : rawCandidate?.path;
+    const norm = normalizeTaskPath(rawPath);
+    if (!norm) continue;
+
+    const isTracked = typeof rawCandidate === 'string' ? true : rawCandidate.tracked !== false;
+    if (!normalizedCandidateMap.has(norm)) {
+      normalizedCandidateMap.set(norm, isTracked);
+    } else if (isTracked) {
+      normalizedCandidateMap.set(norm, true);
+    }
+  }
+
+  const protectedFiles: string[] = [];
+  const nonGoalFiles: string[] = [];
+  const prematureImplementation: PrematureImplementationRecord[] = [];
+  const modifiedReferenceFiles: string[] = [];
+  const permittedPaths: string[] = [];
+  const driftFiles: string[] = [];
+
+  for (const [normPath, tracked] of normalizedCandidateMap.entries()) {
+    // 1. Protected check
+    if (isProtectedFn(normPath) || isProtectedTaskPath(normPath)) {
+      protectedFiles.push(normPath);
+      continue;
+    }
+
+    // 2. Non-goal check
+    if (normNonGoals.some((ng) => isNormalizedSegmentPrefixMatch(ng, normPath))) {
+      nonGoalFiles.push(normPath);
+      continue;
+    }
+
+    // 3. Downstream required file check
+    if (downstreamRequiredMap.has(normPath)) {
+      prematureImplementation.push({
+        path: normPath,
+        taskNumber: downstreamRequiredMap.get(normPath)!,
+      });
+      continue;
+    }
+
+    // 4. Reference file check
+    if (referenceFilesSet.has(normPath)) {
+      if (exemptSet.has(normPath)) {
+        continue;
+      }
+      modifiedReferenceFiles.push(normPath);
+      continue;
+    }
+
+    // 5. Current required or may_extend check (exact match)
+    if (requiredFilesSet.has(normPath) || mayExtendFilesSet.has(normPath)) {
+      permittedPaths.push(normPath);
+      continue;
+    }
+
+    // 6. Permitted area check (tracked only)
+    if (normPermittedAreas.some((area) => isNormalizedSegmentPrefixMatch(area, normPath))) {
+      if (tracked) {
+        permittedPaths.push(normPath);
+      } else {
+        driftFiles.push(normPath);
+      }
+      continue;
+    }
+
+    // 7. Drift check
+    if (exemptSet.has(normPath)) {
+      continue;
+    }
+    driftFiles.push(normPath);
+  }
+
+  return {
+    permittedPaths: [...new Set(permittedPaths)].sort(),
+    modifiedReferenceFiles: [...new Set(modifiedReferenceFiles)].sort(),
+    nonGoalFiles: [...new Set(nonGoalFiles)].sort(),
+    prematureImplementation: prematureImplementation.sort(
+      (a, b) => a.path.localeCompare(b.path) || a.taskNumber - b.taskNumber,
+    ),
+    driftFiles: [...new Set(driftFiles)].sort(),
+    protectedFiles: [...new Set(protectedFiles)].sort(),
+  };
+}
+
 export function normalizeTaskPath(path: unknown): string {
   if (typeof path !== 'string') return '';
   const trimmed = path.trim();
@@ -113,7 +355,7 @@ export function isPathPermittedByScope(filePath: string, scope: EffectiveTaskSco
   const norm = normalizeTaskPath(filePath);
   if (!norm) return false;
 
-  if (scope.nonGoals.some((ng) => norm === ng || norm.startsWith(ng + '/'))) {
+  if (scope.nonGoals.some((ng) => isSegmentPrefixMatch(ng, norm))) {
     return false;
   }
 
@@ -125,7 +367,7 @@ export function isPathPermittedByScope(filePath: string, scope: EffectiveTaskSco
     return true;
   }
 
-  if (scope.permittedAreas.some((area) => norm === area || norm.startsWith(area + '/'))) {
+  if (scope.permittedAreas.some((area) => isSegmentPrefixMatch(area, norm))) {
     return true;
   }
 
