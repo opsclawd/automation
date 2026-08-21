@@ -202,7 +202,13 @@ export function classifyTaskChanges(
       continue;
     }
 
-    // 3. Downstream required file check
+    // 3. Current required file check (exact match)
+    if (requiredFilesSet.has(normPath)) {
+      permittedPaths.push(normPath);
+      continue;
+    }
+
+    // 4. Downstream required file check
     if (downstreamRequiredMap.has(normPath)) {
       prematureImplementation.push({
         path: normPath,
@@ -211,7 +217,7 @@ export function classifyTaskChanges(
       continue;
     }
 
-    // 4. Reference file check
+    // 5. Reference file check
     if (referenceFilesSet.has(normPath)) {
       if (exemptSet.has(normPath)) {
         continue;
@@ -220,13 +226,13 @@ export function classifyTaskChanges(
       continue;
     }
 
-    // 5. Current required or may_extend check (exact match)
-    if (requiredFilesSet.has(normPath) || mayExtendFilesSet.has(normPath)) {
+    // 6. Current may_extend check (exact match)
+    if (mayExtendFilesSet.has(normPath)) {
       permittedPaths.push(normPath);
       continue;
     }
 
-    // 6. Permitted area check (tracked only)
+    // 7. Permitted area check (tracked only)
     if (normPermittedAreas.some((area) => isNormalizedSegmentPrefixMatch(area, normPath))) {
       if (tracked) {
         permittedPaths.push(normPath);
@@ -236,7 +242,7 @@ export function classifyTaskChanges(
       continue;
     }
 
-    // 7. Drift check
+    // 8. Drift check
     if (exemptSet.has(normPath)) {
       continue;
     }
@@ -259,11 +265,20 @@ export function normalizeTaskPath(path: unknown): string {
   if (typeof path !== 'string') return '';
   const trimmed = path.trim();
   if (!trimmed) return '';
-  return trimmed
-    .replace(/\\/g, '/')
-    .replace(/^(\.\/|\/)+/, '')
-    .replace(/\/+/g, '/')
-    .replace(/\/+$/, '');
+  const posixPath = trimmed.replace(/\\/g, '/');
+  const segments = posixPath.split('/');
+  const stack: string[] = [];
+  for (const seg of segments) {
+    if (!seg || seg === '.') {
+      continue;
+    }
+    if (seg === '..') {
+      stack.pop();
+    } else {
+      stack.push(seg);
+    }
+  }
+  return stack.join('/');
 }
 
 export function resolveEffectiveTaskScope(task: unknown): EffectiveTaskScope {

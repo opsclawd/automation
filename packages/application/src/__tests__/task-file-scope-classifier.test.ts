@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyTaskChanges,
+  normalizeTaskPath,
   type TaskScopeClassification,
   type TaskChangeCandidate,
   type EffectiveTaskScope,
@@ -435,6 +436,76 @@ describe('classifyTaskChanges', () => {
         { path: 'src/task3.ts', taskNumber: 3 },
       ]);
       expect(result.permittedPaths).toEqual(['src/task1.ts']);
+    });
+
+    it('permits current task requiredFiles even if downstream tasks also expect the same files', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: ['src/shared.ts'],
+        mayExtendFiles: ['src/extend-downstream.ts'],
+        permittedAreas: ['src'],
+        nonGoals: [],
+        referenceFiles: [],
+      };
+
+      const manifestTasks = [
+        { n: 1, expected_files: ['src/shared.ts'] },
+        { n: 2, expected_files: ['src/shared.ts', 'src/extend-downstream.ts'] },
+      ];
+
+      const candidates: TaskChangeCandidate[] = [
+        { path: 'src/shared.ts', tracked: true },
+        { path: 'src/extend-downstream.ts', tracked: true },
+      ];
+
+      const result = classifyTaskChanges({
+        candidates,
+        currentScope,
+        manifestTasks,
+        currentTaskNumber: 1,
+      });
+
+      // src/shared.ts is expected by current task, so permitted despite being in task 2 expected_files
+      // src/extend-downstream.ts is only may_extend for current task, so downstream ownership takes precedence
+      expect(result.permittedPaths).toEqual(['src/shared.ts']);
+      expect(result.prematureImplementation).toEqual([
+        { path: 'src/extend-downstream.ts', taskNumber: 2 },
+      ]);
+    });
+
+    it('resolves .. and . path traversal segments to prevent bypassing protected file checks', () => {
+      expect(normalizeTaskPath('src/../.github/workflows/ci.yml')).toBe('.github/workflows/ci.yml');
+      expect(normalizeTaskPath('../../.github/workflows/ci.yml')).toBe('.github/workflows/ci.yml');
+      expect(normalizeTaskPath('src/./foo//bar/../baz.ts')).toBe('src/foo/baz.ts');
+      expect(normalizeTaskPath('packages/application/src/../../domain/src/index.ts')).toBe(
+        'packages/domain/src/index.ts',
+      );
+
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: [],
+        mayExtendFiles: [],
+        permittedAreas: ['src'],
+        nonGoals: [],
+        referenceFiles: [],
+      };
+
+      const candidates: (string | TaskChangeCandidate)[] = [
+        'src/../.github/workflows/ci.yml',
+        'src/../.gitignore',
+        'src/../task-manifest.json',
+      ];
+
+      const result = classifyTaskChanges({
+        candidates,
+        currentScope,
+      });
+
+      expect(result.protectedFiles).toEqual([
+        '.github/workflows/ci.yml',
+        '.gitignore',
+        'task-manifest.json',
+      ]);
+      expect(result.permittedPaths).toEqual([]);
+      expect(result.driftFiles).toEqual([]);
     });
   });
 });
