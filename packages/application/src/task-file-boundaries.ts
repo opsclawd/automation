@@ -125,14 +125,14 @@ export function classifyTaskChanges(
   const referenceFilesSet = normalizedPathSet(rawScope.referenceFiles);
 
   const exemptSet = normalizedPathSet(opts.exemptFiles);
-  const isProtectedFn = opts.isProtected ?? isProtectedTaskPath;
 
   const downstreamRequiredMap = new Map<string, number>();
 
   if (opts.downstreamTasks) {
+    const baseOffset = opts.currentTaskNumber ?? 0;
     for (let i = 0; i < opts.downstreamTasks.length; i++) {
       const task = opts.downstreamTasks[i];
-      const taskNum = getTaskNumber(task, i);
+      const taskNum = getTaskNumber(task, baseOffset + i);
       const scope = resolveEffectiveTaskScope(task);
       for (const reqFile of scope.requiredFiles) {
         if (!downstreamRequiredMap.has(reqFile)) {
@@ -190,9 +190,18 @@ export function classifyTaskChanges(
   const driftFiles: string[] = [];
 
   for (const [normPath, tracked] of normalizedCandidateMap.entries()) {
-    // 1. Protected check
-    if (isProtectedFn(normPath) || isProtectedTaskPath(normPath)) {
+    // 1. Immutable protected files (orchestrator artifacts, orchestrator config, custom isProtected)
+    if (
+      isOrchestratorArtifactPattern(normPath) ||
+      normPath === '.ai-orchestrator.json' ||
+      opts.isProtected?.(normPath)
+    ) {
       protectedFiles.push(normPath);
+      continue;
+    }
+
+    // Exempt files check (ignored across all remaining checks)
+    if (exemptSet.has(normPath)) {
       continue;
     }
 
@@ -208,7 +217,13 @@ export function classifyTaskChanges(
       continue;
     }
 
-    // 4. Downstream required file check
+    // 4. Protected system files (.gitignore, .github) when not explicitly in requiredFiles
+    if (isProtectedTaskPath(normPath)) {
+      protectedFiles.push(normPath);
+      continue;
+    }
+
+    // 5. Downstream required file check
     if (downstreamRequiredMap.has(normPath)) {
       prematureImplementation.push({
         path: normPath,
@@ -217,22 +232,19 @@ export function classifyTaskChanges(
       continue;
     }
 
-    // 5. Reference file check
+    // 6. Reference file check
     if (referenceFilesSet.has(normPath)) {
-      if (exemptSet.has(normPath)) {
-        continue;
-      }
       modifiedReferenceFiles.push(normPath);
       continue;
     }
 
-    // 6. Current may_extend check (exact match)
+    // 7. Current may_extend check (exact match)
     if (mayExtendFilesSet.has(normPath)) {
       permittedPaths.push(normPath);
       continue;
     }
 
-    // 7. Permitted area check (tracked only)
+    // 8. Permitted area check (tracked only)
     if (normPermittedAreas.some((area) => isNormalizedSegmentPrefixMatch(area, normPath))) {
       if (tracked) {
         permittedPaths.push(normPath);
@@ -242,10 +254,7 @@ export function classifyTaskChanges(
       continue;
     }
 
-    // 8. Drift check
-    if (exemptSet.has(normPath)) {
-      continue;
-    }
+    // 9. Drift check
     driftFiles.push(normPath);
   }
 
@@ -370,23 +379,12 @@ export function isPathPermittedByScope(filePath: string, scope: EffectiveTaskSco
   const norm = normalizeTaskPath(filePath);
   if (!norm) return false;
 
-  if (scope.nonGoals.some((ng) => isSegmentPrefixMatch(ng, norm))) {
-    return false;
-  }
+  const classification = classifyTaskChanges({
+    candidates: [{ path: norm, tracked: true }],
+    currentScope: scope,
+  });
 
-  if (scope.referenceFiles.includes(norm)) {
-    return false;
-  }
-
-  if (scope.requiredFiles.includes(norm) || scope.mayExtendFiles.includes(norm)) {
-    return true;
-  }
-
-  if (scope.permittedAreas.some((area) => isSegmentPrefixMatch(area, norm))) {
-    return true;
-  }
-
-  return false;
+  return classification.permittedPaths.includes(norm);
 }
 
 /**

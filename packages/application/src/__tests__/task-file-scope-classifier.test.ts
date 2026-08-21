@@ -507,5 +507,65 @@ describe('classifyTaskChanges', () => {
       expect(result.permittedPaths).toEqual([]);
       expect(result.driftFiles).toEqual([]);
     });
+
+    it('ignores exemptFiles within non-goal directories across all checks without flagging nonGoalFiles violations', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: ['src/main.ts'],
+        mayExtendFiles: [],
+        permittedAreas: ['src'],
+        nonGoals: ['src/blocked', 'vendor'],
+        referenceFiles: ['vendor/ref.ts'],
+      };
+
+      const candidates: TaskChangeCandidate[] = [
+        { path: 'src/main.ts', tracked: true },
+        { path: 'src/blocked/package-lock.json', tracked: true },
+        { path: 'vendor/pnpm-lock.yaml', tracked: true },
+        { path: 'src/blocked/malicious.ts', tracked: true },
+      ];
+
+      const result = classifyTaskChanges({
+        candidates,
+        currentScope,
+        exemptFiles: ['src/blocked/package-lock.json', 'vendor/pnpm-lock.yaml'],
+      });
+
+      expect(result.permittedPaths).toEqual(['src/main.ts']);
+      expect(result.nonGoalFiles).toEqual(['src/blocked/malicious.ts']);
+      expect(result.modifiedReferenceFiles).toEqual([]);
+      expect(result.driftFiles).toEqual([]);
+    });
+
+    it('offsets implicit task numbers when downstreamTasks is used with currentTaskNumber > 0', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: ['src/task2.ts'],
+        mayExtendFiles: [],
+        permittedAreas: [],
+        nonGoals: [],
+        referenceFiles: [],
+      };
+
+      const downstreamTasks = [
+        { expected_files: ['src/task3.ts'] },
+        { expected_files: ['src/task4.ts'] },
+      ];
+
+      const candidates: TaskChangeCandidate[] = [
+        { path: 'src/task3.ts', tracked: true },
+        { path: 'src/task4.ts', tracked: true },
+      ];
+
+      const result = classifyTaskChanges({
+        candidates,
+        currentScope,
+        downstreamTasks,
+        currentTaskNumber: 2,
+      });
+
+      expect(result.prematureImplementation).toEqual([
+        { path: 'src/task3.ts', taskNumber: 3 },
+        { path: 'src/task4.ts', taskNumber: 4 },
+      ]);
+    });
   });
 });

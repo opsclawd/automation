@@ -3,6 +3,7 @@ import {
   getManifestBoundaries,
   checkTaskBoundaries,
   loadManifest,
+  isPathPermittedByScope,
 } from '../task-file-boundaries.js';
 
 describe('task-file-boundaries helpers', () => {
@@ -151,6 +152,57 @@ describe('task-file-boundaries helpers', () => {
     const result = checkTaskBoundaries(['src/foo.ts'], undefined);
     expect(result.modifiedReferenceFiles).toEqual([]);
     expect(result.undeclaredFiles).toEqual(['src/foo.ts']);
+  });
+
+  describe('isPathPermittedByScope', () => {
+    it('gives requiredFiles precedence over referenceFiles', () => {
+      const scope = {
+        requiredFiles: ['src/shared.ts'],
+        mayExtendFiles: [],
+        permittedAreas: [],
+        nonGoals: [],
+        referenceFiles: ['src/shared.ts'],
+      };
+      expect(isPathPermittedByScope('src/shared.ts', scope)).toBe(true);
+    });
+
+    it('rejects protected paths even when enclosed in permitted_areas', () => {
+      const scope = {
+        requiredFiles: [],
+        mayExtendFiles: [],
+        permittedAreas: ['.github', '.'],
+        nonGoals: [],
+        referenceFiles: [],
+      };
+      expect(isPathPermittedByScope('.github/workflows/ci.yml', scope)).toBe(false);
+      expect(isPathPermittedByScope('.gitignore', scope)).toBe(false);
+      expect(isPathPermittedByScope('task-manifest.json', scope)).toBe(false);
+    });
+
+    it('rejects non-goal paths even if explicitly declared in requiredFiles or permittedAreas', () => {
+      const scope = {
+        requiredFiles: ['src/blocked/req.ts'],
+        mayExtendFiles: [],
+        permittedAreas: ['src/blocked'],
+        nonGoals: ['src/blocked'],
+        referenceFiles: [],
+      };
+      expect(isPathPermittedByScope('src/blocked/req.ts', scope)).toBe(false);
+      expect(isPathPermittedByScope('src/blocked/other.ts', scope)).toBe(false);
+    });
+
+    it('rejects referenceFiles when colliding with mayExtendFiles or permittedAreas', () => {
+      const scope = {
+        requiredFiles: [],
+        mayExtendFiles: ['src/ref-ext.ts'],
+        permittedAreas: ['src/area'],
+        nonGoals: [],
+        referenceFiles: ['src/ref-ext.ts', 'src/area/ref-area.ts'],
+      };
+      expect(isPathPermittedByScope('src/ref-ext.ts', scope)).toBe(false);
+      expect(isPathPermittedByScope('src/area/ref-area.ts', scope)).toBe(false);
+      expect(isPathPermittedByScope('src/area/allowed.ts', scope)).toBe(true);
+    });
   });
 
   describe('loadManifest', () => {
