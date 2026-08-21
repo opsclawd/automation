@@ -2,7 +2,6 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
-    "tsBuildInfoFile": "./.tsbuildinfo",
     "jsx": "preserve",
     "module": "ESNext",
     "moduleResolution": "Bundler",
@@ -17,7 +16,8 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    "incremental": true
+    "incremental": true,
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo"
   },
   "include": ["next-env.d.ts", "src/**/*", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]

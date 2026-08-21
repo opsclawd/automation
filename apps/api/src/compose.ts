@@ -2951,6 +2951,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           cwd: ctx.cwd,
           logDir: revalidateLogDir,
           commands: config.validation.commands,
+          ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
           timeoutSeconds: config.validation.timeout,
           env: {
             GITHUB_REPOSITORY: ctx.repoId,
@@ -4792,6 +4793,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             cwd: ctx.cwd,
             logDir: revalidateLogDir,
             commands: [...config.validation.commands, ...taskValidationCommands],
+            ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
             timeoutSeconds: config.validation.timeout,
             env: {
               GITHUB_REPOSITORY: (ctx as StepLoopContext).repoId,
@@ -5742,6 +5744,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         new ValidateHandler({
           runValidation,
           commands: config.validation.commands,
+          ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
           timeoutSeconds: config.validation.timeout,
           logDir: join(runsDir, 'validate'),
           fixValidateEnabled: config.phases.fixValidate?.enabled !== false,
@@ -6544,6 +6547,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             logDir,
             logPathPrefix: buildCheckId,
             commands: config.validation.commands,
+            ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
             timeoutSeconds: config.validation.timeout,
             env: {
               GITHUB_REPOSITORY: repoFullName,

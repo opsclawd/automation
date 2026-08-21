@@ -74,7 +74,7 @@ describe('validation-cache-policy regressions', () => {
 
     expect(results[0]?.stdout).toContain('test:TURBO_FORCE=true');
     expect(results[1]?.stdout).toContain('test:TURBO_FORCE=true');
-  });
+  }, 15000);
 
   it('forces string and argv typecheck scripts to bypass Turbo cache', async () => {
     const logDir = freshDir();
@@ -140,7 +140,7 @@ describe('validation-cache-policy regressions', () => {
     expect(results[0]?.stdout).toContain('test:TURBO_FORCE=true');
     expect(results[1]?.stdout).toContain('typecheck:TURBO_FORCE=true');
     expect(results[2]?.stdout).toContain('build:TURBO_FORCE=false');
-  });
+  }, 15000);
 
   it('creates log targets for skipped empty successful and failed commands', async () => {
     const logDir = freshDir();

@@ -48,6 +48,7 @@ export function formatValidationBlockedMessage(
 export interface ValidateHandlerOpts {
   runValidation: RunValidation;
   commands: string[];
+  tiers?: string[][];
   timeoutSeconds: number;
   logDir: string;
   /** When true, validation failures return 'deferred' so the pipeline continues
@@ -142,6 +143,7 @@ export class ValidateHandler implements PhaseHandler {
         cwd: ctx.cwd,
         logDir: this.opts.logDir,
         commands: this.opts.commands,
+        ...(this.opts.tiers ? { tiers: this.opts.tiers } : {}),
         timeoutSeconds: this.opts.timeoutSeconds,
         env: {
           GITHUB_REPOSITORY: ctx.repoFullName,

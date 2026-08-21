@@ -13,6 +13,7 @@ export type ValidationCommand = string | string[];
 export interface RunValidationInput {
   cwd: string;
   commands: ValidationCommand[];
+  tiers?: string[][];
   timeoutSeconds: number;
   logDir: string;
   logPathPrefix?: string;

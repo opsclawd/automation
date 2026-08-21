@@ -8,6 +8,16 @@
       "pnpm test:bash",
       "pnpm boundaries"
     ],
+    "tiers": [
+      [
+        "pnpm build",
+        "pnpm lint",
+        "pnpm typecheck",
+        "pnpm test",
+        "pnpm test:bash",
+        "pnpm boundaries"
+      ]
+    ],
     "timeout": 300,
     "forbiddenArtifactPaths": ["certification/"]
   },

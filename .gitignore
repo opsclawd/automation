@@ -3,6 +3,8 @@ dist/
 .next/
 coverage/
 *.tsbuildinfo
+.tsbuildinfo
+.cache/eslint/
 .ai-runs/
 .ai-tmp/
 .ai-worktrees/
