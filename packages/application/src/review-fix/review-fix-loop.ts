@@ -21,6 +21,7 @@ import { appendRebuttalToCodeReview } from './append-rebuttal.js';
 import { verifyFixCommit } from '../fix-commit-verifier.js';
 import {
   checkTaskBoundaries,
+  classifyUndeclaredFiles,
   getManifestBoundaries,
   loadManifest,
   normalizeTaskPath,
@@ -1940,7 +1941,6 @@ export class ReviewFixLoop {
         lastFailingCategory = reval.category;
       }
 
-
       // Default path: complete the iteration as fixed or unresolved.
       const iterationOutcome = reval.passed ? 'fixed' : 'unresolved';
       if (iterationOutcome === 'fixed') {
@@ -2804,7 +2804,21 @@ export class ReviewFixLoop {
       return { ok: false, message: `task boundary check failed: ${errorMsg}` };
     }
 
-    const classification = checkTaskBoundaries(committedFiles, manifestResult.manifest);
+    const scopeContractEnforcement = loopInput.scopeContractEnforcement ?? true;
+
+    let classification;
+    if (scopeContractEnforcement) {
+      classification = checkTaskBoundaries(committedFiles, manifestResult.manifest);
+    } else {
+      const { writableSet, referenceSet } = getManifestBoundaries(manifestResult.manifest);
+      classification = classifyUndeclaredFiles(
+        committedFiles,
+        writableSet,
+        referenceSet,
+        new Set(), // legacy path did not support exemptFiles here
+      );
+    }
+
     const violatingFiles = [
       ...classification.modifiedReferenceFiles,
       ...classification.undeclaredFiles,
