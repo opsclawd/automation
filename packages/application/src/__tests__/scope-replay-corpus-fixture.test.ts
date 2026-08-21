@@ -3,6 +3,14 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
+import { classifyTaskChanges, resolveEffectiveTaskScope } from '../task-file-boundaries.js';
+
+interface ReconstructedTask {
+  n: number;
+  title: string;
+  expected_files: string[];
+  reference_files?: string[];
+}
 
 interface FixtureEntry {
   runId: string;
@@ -27,7 +35,10 @@ interface FixtureEntry {
   truncatedCount: number | null;
   label: 'false_positive' | 'true_positive';
   rationale: string;
-  taskManifest: null;
+  taskManifest: { tasks: ReconstructedTask[] } | null;
+  taskManifestSource: 'reconstructed_from_merged_pr' | 'not_applicable_untracked' | 'unrecoverable';
+  taskManifestSourcePr?: string;
+  taskManifestNote: string | null;
 }
 
 // ff2e91bc-eb8b-4eff-91c6-5b067f5d1e04 was in the original six-run candidate
@@ -146,7 +157,88 @@ describe('scope-replay-corpus.json fixture', () => {
       expect(['false_positive', 'true_positive']).toContain(e.label);
       expect(typeof e.rationale).toBe('string');
       expect(e.rationale.length).toBeGreaterThan(10);
-      expect(e.taskManifest).toBeNull();
+    }
+  });
+
+  it('every entry has a taskManifestSource, consistent with its taskManifest', () => {
+    for (const e of entries) {
+      expect([
+        'reconstructed_from_merged_pr',
+        'not_applicable_untracked',
+        'unrecoverable',
+      ]).toContain(e.taskManifestSource);
+      if (e.taskManifestSource === 'reconstructed_from_merged_pr') {
+        expect(e.taskManifest).not.toBeNull();
+        expect(typeof e.taskManifestSourcePr).toBe('string');
+        expect(e.taskManifest!.tasks.length).toBeGreaterThan(0);
+      }
+      if (e.taskManifestSource === 'unrecoverable') {
+        expect(e.taskManifest).toBeNull();
+        expect(typeof e.taskManifestNote).toBe('string');
+      }
+    }
+  });
+
+  it('reconstructed taskManifest never includes the violating path in its own task expected_files', () => {
+    // A reconstruction that put the violating path back into the current task's
+    // expected_files would erase the violation it's supposed to represent --
+    // the whole reason the entry is in the corpus. See PR review discussion on
+    // the manifest-reconstruction issue for the failure mode this guards against.
+    for (const e of entries) {
+      if (e.taskManifestSource !== 'reconstructed_from_merged_pr' || !e.path) continue;
+      const m = e.rawMessage.match(/[Tt]ask (\d+)/);
+      if (!m) continue;
+      const currentN = Number(m[1]);
+      const currentTask = e.taskManifest!.tasks.find((t) => t.n === currentN);
+      expect(currentTask, `task ${currentN} missing from reconstructed manifest`).toBeDefined();
+      expect(currentTask!.expected_files).not.toContain(e.path);
+    }
+  });
+
+  it('every reconstructed entry classifies through the real classifier consistent with its label', () => {
+    for (const e of entries) {
+      if (e.taskManifestSource !== 'reconstructed_from_merged_pr' || !e.path || !e.taskManifest)
+        continue;
+      const m = e.rawMessage.match(/[Tt]ask (\d+)/);
+      if (!m) continue;
+      const currentN = Number(m[1]);
+      const currentTask = e.taskManifest.tasks.find((t) => t.n === currentN);
+      const downstreamTasks = e.taskManifest.tasks.filter((t) => t.n !== currentN);
+      if (!currentTask) continue;
+
+      const currentScope = resolveEffectiveTaskScope(currentTask);
+      const result = classifyTaskChanges({
+        candidates: [{ path: e.path, tracked: true }],
+        currentScope,
+        downstreamTasks,
+        currentTaskNumber: currentN,
+      });
+      const permitted = result.permittedPaths.includes(e.path);
+
+      if (e.label === 'false_positive') {
+        expect(permitted, `${e.runId} ${e.path} expected permitted (false_positive)`).toBe(true);
+      } else {
+        expect(permitted, `${e.runId} ${e.path} expected NOT permitted (true_positive)`).toBe(
+          false,
+        );
+      }
+    }
+  });
+
+  it('every untracked worktree_dirty path is drift under even a maximally permissive scope', () => {
+    const maximalScope = resolveEffectiveTaskScope({
+      n: 1,
+      title: 'maximal',
+      expected_files: [],
+      permitted_areas: ['apps', 'packages', 'apps/web', 'packages/application/src'],
+    });
+    for (const e of entries) {
+      if (e.pathSource !== 'worktree_dirty' || !e.path) continue;
+      const result = classifyTaskChanges({
+        candidates: [{ path: e.path, tracked: false }],
+        currentScope: maximalScope,
+      });
+      expect(result.permittedPaths).not.toContain(e.path);
     }
   });
 
