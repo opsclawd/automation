@@ -4842,7 +4842,7 @@ describe('mid-task test discovery and validation command expansion', () => {
     let reviewAttempts = 0;
     let gitHead = 'sha-1';
     const initialCommands: ValidationCommand[] = [
-      'git diff --check -- src/existing.test.ts',
+      'pnpm vitest run src/existing.test.ts --passWithNoTests=false',
     ];
 
     const manifest: TaskManifest = {
@@ -4911,9 +4911,7 @@ describe('mid-task test discovery and validation command expansion', () => {
         });
 
         const hasNewTest = expanded.some(
-          (cmd) =>
-            typeof cmd === 'string' &&
-            cmd.includes('delete-worktree-file.test.ts'),
+          (cmd) => typeof cmd === 'string' && cmd.includes('delete-worktree-file.test.ts'),
         );
 
         if (hasNewTest) {

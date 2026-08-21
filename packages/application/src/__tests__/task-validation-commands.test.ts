@@ -39,7 +39,21 @@ function manifestWithCommands(commands: ValidationCommand[]): TaskManifest {
 }
 
 describe('buildTaskValidationCommands', () => {
-  it('drops vitest, eslint, and typecheck commands as redundant with global validation', () => {
+  it('drops bare workspace and package-wide commands as redundant with global validation', () => {
+    const commands = [
+      'pnpm test',
+      'pnpm --filter @ai-sdlc/application typecheck',
+      'typecheck',
+      'pnpm lint',
+      'eslint .',
+      'pnpm vitest run',
+      'vitest run',
+    ];
+
+    expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual([]);
+  });
+
+  it('preserves targeted per-file vitest, eslint, git diff, and custom commands', () => {
     const commands = [
       'vitest run "src/foo.test.ts"',
       "vitest run 'src/foo.spec.tsx' --reporter=verbose",
@@ -47,22 +61,25 @@ describe('buildTaskValidationCommands', () => {
       'pnpm exec vitest run src/foo.spec.cts',
       'pnpm --filter @ai-sdlc/application exec vitest run src/foo.test.ts',
       'pnpm exec eslint apps/app/app/position/[id].tsx --max-warnings=0',
-      'pnpm --filter @ai-sdlc/application typecheck',
-      'typecheck',
-      'eslint src/foo.test.ts',
-    ];
-
-    expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual([]);
-  });
-
-  it('preserves non-redundant commands such as git diff --check and environment-prefixed commands', () => {
-    const commands = [
       'git diff --check -- src/foo.test.ts',
       'DATABASE_URL=x vitest run src/foo.test.ts',
+      '! pnpm vitest run src/foo.test.ts',
       'pnpm check-custom',
     ];
 
-    expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual(commands);
+    const result = buildTaskValidationCommands(manifestWithCommands(commands), 1);
+    expect(result).toEqual([
+      'vitest run "src/foo.test.ts" --passWithNoTests=false',
+      "vitest run 'src/foo.spec.tsx' --reporter=verbose --passWithNoTests=false",
+      'pnpm vitest run src/foo.test.mts --passWithNoTests=false',
+      'pnpm exec vitest run src/foo.spec.cts --passWithNoTests=false',
+      'pnpm --filter @ai-sdlc/application exec vitest run src/foo.test.ts',
+      'pnpm exec eslint apps/app/app/position/[id].tsx --max-warnings=0',
+      'git diff --check -- src/foo.test.ts',
+      'DATABASE_URL=x vitest run src/foo.test.ts',
+      '! pnpm vitest run src/foo.test.ts',
+      'pnpm check-custom',
+    ]);
   });
 
   it('selects non-redundant commands by manifest version and returns none for an absent task', () => {
@@ -74,7 +91,11 @@ describe('buildTaskValidationCommands', () => {
           title: 'V1 Task',
           description: 'Desc',
           files: [],
-          validation: ['git diff --check -- src/v1.test.ts', 'vitest run src/v1.test.ts'],
+          validation: [
+            'git diff --check -- src/v1.test.ts',
+            'vitest run src/v1.test.ts',
+            'pnpm test',
+          ],
         },
       ],
     };
@@ -95,11 +116,31 @@ describe('buildTaskValidationCommands', () => {
 
     expect(buildTaskValidationCommands(v1Manifest, 1)).toEqual([
       'git diff --check -- src/v1.test.ts',
+      'vitest run src/v1.test.ts --passWithNoTests=false',
     ]);
     expect(buildTaskValidationCommands(v2Manifest, 1)).toEqual([
       'git diff --check -- src/v2.test.ts',
     ]);
     expect(buildTaskValidationCommands(v2Manifest, 999)).toEqual([]);
+  });
+
+  it('targeted per-file vitest validation commands survive deduplication with passWithNoTests flag', () => {
+    const manifest: TaskManifest = {
+      version: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Targeted Task',
+          description: 'Desc',
+          files: [],
+          validation: ['pnpm vitest run src/foo.test.ts'],
+        },
+      ],
+    };
+
+    expect(buildTaskValidationCommands(manifest, 1)).toEqual([
+      'pnpm vitest run src/foo.test.ts --passWithNoTests=false',
+    ]);
   });
 
   it('declared drizzle SQL migrations receive leading existence guards', () => {
@@ -169,8 +210,17 @@ describe('buildTaskValidationCommands', () => {
     ]);
   });
 
-  it('drops vitest and eslint argv validation commands', () => {
-    const commands: ValidationCommand[] = [
+  it('drops bare argv validation commands but preserves targeted argv commands', () => {
+    const bareCommands: ValidationCommand[] = [
+      ['pnpm', 'test'],
+      ['pnpm', '--filter', '@ai-sdlc/application', 'typecheck'],
+      ['eslint', '.'],
+      ['vitest', 'run'],
+    ];
+
+    expect(buildTaskValidationCommands(manifestWithCommands(bareCommands), 1)).toEqual([]);
+
+    const targetedCommands: ValidationCommand[] = [
       ['vitest', 'run', 'src/foo.test.ts'],
       ['pnpm', 'vitest', 'run', 'src/foo.spec.tsx', '--reporter=verbose'],
       ['pnpm', 'exec', 'vitest', 'run', 'src/foo.test.mts', '--passWithNoTests'],
@@ -178,7 +228,20 @@ describe('buildTaskValidationCommands', () => {
       ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
     ];
 
-    expect(buildTaskValidationCommands(manifestWithCommands(commands), 1)).toEqual([]);
+    expect(buildTaskValidationCommands(manifestWithCommands(targetedCommands), 1)).toEqual([
+      ['vitest', 'run', 'src/foo.test.ts', '--passWithNoTests=false'],
+      [
+        'pnpm',
+        'vitest',
+        'run',
+        'src/foo.spec.tsx',
+        '--reporter=verbose',
+        '--passWithNoTests=false',
+      ],
+      ['pnpm', 'exec', 'vitest', 'run', 'src/foo.test.mts', '--passWithNoTests=false'],
+      ['npx', 'vitest', 'run', 'src/foo.test.js', '--passWithNoTests=false'],
+      ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
+    ]);
   });
 
   it('preserves non-redundant argv validation commands', () => {
@@ -205,6 +268,8 @@ describe('buildTaskValidationCommands', () => {
     expect(result).toEqual([
       "test -f 'drizzle/0001_root.sql' || { printf '%s\\n' 'Required migration file was never created: drizzle/0001_root.sql' >&2; exit 1; }",
       'git diff --check',
+      ['pnpm', 'exec', 'eslint', 'apps/app/app/position/[id].tsx'],
+      ['vitest', 'run', 'src/foo.test.ts', '--passWithNoTests=false'],
     ]);
   });
 });
@@ -374,7 +439,7 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
     ).toBe(true);
   });
 
-  it('filters redundant vitest/eslint/typecheck commands while preserving git diff --check', () => {
+  it('filters bare redundant commands while expanding targeted test execution for new tests', () => {
     const existingCommands: ValidationCommand[] = [
       'git diff --check -- packages/infrastructure/src/git/existing.test.ts',
       'pnpm vitest run packages/infrastructure/src/git/existing.test.ts --passWithNoTests=false',
@@ -400,13 +465,15 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
 
     expect(result).toEqual([
       'git diff --check -- packages/infrastructure/src/git/existing.test.ts',
-      "git diff --check -- 'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts'",
+      'pnpm vitest run packages/infrastructure/src/git/existing.test.ts --passWithNoTests=false',
+      'pnpm exec eslint packages/infrastructure/src/git/existing.test.ts',
+      "pnpm vitest run 'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts' --passWithNoTests=false",
     ]);
   });
 
-  it('does not duplicate non-redundant commands if already covered', () => {
+  it('does not duplicate targeted commands if already covered', () => {
     const existingCommands: ValidationCommand[] = [
-      'git diff --check -- packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
+      'pnpm vitest run packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts --passWithNoTests=false',
     ];
 
     const changedFiles = ['packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts'];

@@ -108,13 +108,70 @@ function makeLiteralVitestCommandStrict(command: ValidationCommand): ValidationC
 }
 
 export function isRedundantValidationCommand(command: ValidationCommand): boolean {
-  const str = (Array.isArray(command) ? command.join(' ') : String(command)).trim();
-  if (str.startsWith('!')) {
+  const argv = parseCommandArgv(command);
+  if (argv.length === 0) return false;
+
+  // Never drop inverted commands (RED-first tests: `! ...`)
+  if (argv[0]?.startsWith('!')) return false;
+
+  // Never drop git checks or guard scripts
+  const first = argv[0]!;
+  if (first === 'git' || first === 'test' || first.startsWith('.')) {
     return false;
   }
-  return /^(?:(?:pnpm|npx)(?:\s+--filter\s+\S+)?(?:\s+exec)?\s+)?(?:vitest|eslint|typecheck)(?:\s+|$)/i.test(
-    str,
-  );
+
+  // Strip leading pnpm / npx / exec / --filter <pkg>
+  let idx = 0;
+  if (argv[idx] === 'pnpm' || argv[idx] === 'npx') {
+    idx++;
+  }
+  while (idx < argv.length) {
+    if (argv[idx] === '--filter') {
+      idx += 2;
+    } else if (argv[idx] === 'exec' || argv[idx] === 'run') {
+      idx++;
+    } else if (argv[idx]?.startsWith('-')) {
+      idx++;
+    } else {
+      break;
+    }
+  }
+
+  if (idx >= argv.length) return false;
+  const sub = argv[idx]!;
+  const rest = argv.slice(idx + 1);
+
+  // `typecheck` / `tsc` without positional files is redundant with global typecheck
+  if (sub === 'typecheck' || sub === 'tsc') {
+    const positional = rest.filter((a) => !a.startsWith('-'));
+    return positional.length === 0;
+  }
+
+  // `test` without positional file targets is redundant with global `pnpm test`
+  if (sub === 'test') {
+    const positional = rest.filter((a) => !a.startsWith('-'));
+    return positional.length === 0;
+  }
+
+  // `lint` without positional file targets is redundant with global `pnpm lint`
+  if (sub === 'lint') {
+    const positional = rest.filter((a) => !a.startsWith('-') && a !== '.');
+    return positional.length === 0;
+  }
+
+  // `eslint` with only `.` or no files is redundant with global `pnpm lint`
+  if (sub === 'eslint') {
+    const positional = rest.filter((a) => !a.startsWith('-') && a !== '.');
+    return positional.length === 0;
+  }
+
+  // `vitest` without positional test files is redundant with global `pnpm test`
+  if (sub === 'vitest') {
+    const nonFlags = rest.filter((a) => !a.startsWith('-') && a !== 'run');
+    return nonFlags.length === 0;
+  }
+
+  return false;
 }
 
 export interface CheckTaskValidationCommandsOptions {
@@ -553,23 +610,14 @@ export function buildTargetedTestCommand(
 ): ValidationCommand {
   const normTestPath = testPath.replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '');
   let detectedRunner: TestRunnerKind | null = null;
-  let hasGitDiffCheck = false;
 
   for (const cmd of existingCommands) {
-    const cmdStr = Array.isArray(cmd) ? cmd.join(' ') : String(cmd);
-    if (cmdStr.includes('git diff --check')) {
-      hasGitDiffCheck = true;
-    }
     const argv = parseCommandArgv(cmd);
     const runner = detectTestRunnerKind(argv);
     if (runner) {
       detectedRunner = runner;
       break;
     }
-  }
-
-  if (hasGitDiffCheck) {
-    return `git diff --check -- ${shellQuote(normTestPath)}`;
   }
 
   switch (detectedRunner) {
@@ -653,9 +701,7 @@ export function expandTaskValidationCommandsWithNewTests(
     buildTargetedTestCommand(testPath, filteredExisting),
   );
 
-  return [...filteredExisting, ...newCommands].filter(
-    (cmd) => !isRedundantValidationCommand(cmd),
-  );
+  return [...filteredExisting, ...newCommands].filter((cmd) => !isRedundantValidationCommand(cmd));
 }
 
 export function buildTaskValidationCommands(
