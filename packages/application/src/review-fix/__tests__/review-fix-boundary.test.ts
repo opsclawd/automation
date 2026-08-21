@@ -870,4 +870,111 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     );
     expect(result.phaseOutcome).toBe('failed');
   });
+
+  it('falls back to legacy classifyUndeclaredFiles when scopeContractEnforcement is false', async () => {
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['src/feature/declared.ts'],
+          permitted_areas: ['src/permitted'],
+        },
+      ],
+    };
+
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+      ],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/permitted/extra.ts']);
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'addressed finding in permitted area',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({
+      ...baseInput,
+      manifest,
+      scopeContractEnforcement: false,
+      maxIterations: 1,
+    });
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.message).toContain(
+      'review-fix modified undeclared files: src/permitted/extra.ts',
+    );
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+  });
+
+  it('enforces V2 checkTaskBoundaries by default when scopeContractEnforcement is true or omitted', async () => {
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['src/feature/declared.ts'],
+          permitted_areas: ['src/permitted'],
+        },
+      ],
+    };
+
+    vi.mocked(baseDeps.runReview)
+      .mockResolvedValueOnce({
+        invocationId: 'rev-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [
+          { severity: 'P1', summary: 'bug in logic', files: ['src/feature/declared.ts'] },
+        ],
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'rev-2',
+        agentOutcome: 'success',
+        verdict: 'pass',
+        offendingFindings: [],
+      });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/permitted/extra.ts']);
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'addressed finding in permitted area',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({
+      ...baseInput,
+      manifest,
+      maxIterations: 2,
+    });
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(0);
+    expect(result.phaseOutcome).toBe('passed');
+  });
 });

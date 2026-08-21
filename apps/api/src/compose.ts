@@ -5635,6 +5635,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(
         new CompoundHandler({
           exemptUndeclaredFiles: config.phases.implement.exemptUndeclaredFiles,
+          scopeContractEnforcement: config.features?.scopeContractEnforcement ?? true,
         }),
       );
 
@@ -5765,6 +5766,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 ...(fixValidateFallbackProfileName
                   ? { fixFallbackProfile: AgentProfileName(fixValidateFallbackProfileName) }
                   : {}),
+                scopeContractEnforcement: config.features?.scopeContractEnforcement ?? true,
               });
               return {
                 phaseOutcome: result.phaseOutcome,
@@ -6105,6 +6107,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 },
               },
               ...(architectPlan ? { architectPlan } : {}),
+              scopeContractEnforcement: config.features?.scopeContractEnforcement ?? true,
             });
             return {
               phaseOutcome: result.phaseOutcome,

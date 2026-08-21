@@ -18,7 +18,10 @@ const phasesSchema = z.object({
   skip: z.array(z.string()).default([]),
   reviewFix: z.object({
     maxIterations: z.number().int().positive(),
-    blockOnSeverity: z.enum(['critical', 'high', 'medium', 'low', 'p0', 'p1', 'p2', 'p3']).optional().default('medium'),
+    blockOnSeverity: z
+      .enum(['critical', 'high', 'medium', 'low', 'p0', 'p1', 'p2', 'p3'])
+      .optional()
+      .default('medium'),
     /**
      * Threshold for the `unfounded_pingpong` short-circuit (#623). When the
      * last N iterations all have findings whose evidence fails the
@@ -437,6 +440,11 @@ export const orchestratorConfigSchema = z
         sweepIntervalSeconds: z.number().int().nonnegative().default(0),
       })
       .default({ sweepIntervalSeconds: 0 }),
+    features: z
+      .object({
+        scopeContractEnforcement: z.boolean().default(true),
+      })
+      .default({}),
     scheduler: schedulerConfigSchema,
   })
   .superRefine((config, ctx) => {

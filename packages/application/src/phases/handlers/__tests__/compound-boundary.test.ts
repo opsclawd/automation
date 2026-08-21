@@ -895,4 +895,103 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     expect(ctx.readWorktreeFile).toHaveBeenCalledWith(ctx.cwd, 'task-manifest.json');
     expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
   });
+
+  it('falls back to legacy classifyUndeclaredFiles when scopeContractEnforcement is false', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task 1',
+            expected_files: ['src/feature/declared.ts'],
+            permitted_areas: ['src/permitted'],
+          },
+        ],
+      }),
+    });
+
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      git.headByCwd.set(ctx.cwd, 'sha-after');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    git.changedFilesResults.set('sha-before|sha-after', ['src/permitted/extra.ts']);
+
+    const handler = new CompoundHandler({ scopeContractEnforcement: false });
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.message).toContain(
+        'compound phase modified undeclared files: src/permitted/extra.ts',
+      );
+    }
+    expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(0);
+  });
+
+  it('enforces V2 checkTaskBoundaries by default when scopeContractEnforcement is true or omitted', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task 1',
+            expected_files: ['src/feature/declared.ts'],
+            permitted_areas: ['src/permitted'],
+          },
+        ],
+      }),
+    });
+
+    const git = ctx.git as FakeGitPort;
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', () => {
+      git.headByCwd.set(ctx.cwd, 'sha-after');
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n',
+    });
+
+    git.changedFilesResults.set('sha-before|sha-after', ['src/permitted/extra.ts']);
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(0);
+  });
 });

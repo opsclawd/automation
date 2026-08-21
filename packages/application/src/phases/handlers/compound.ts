@@ -4,6 +4,7 @@ import { createEventEmitter } from '../handler.js';
 import { SingleShotAgentHandler } from './single-shot-agent-handler.js';
 import {
   checkTaskBoundaries,
+  classifyUndeclaredFiles,
   getManifestBoundaries,
   loadManifest,
   normalizedPathSet,
@@ -13,6 +14,7 @@ import { remediateScratchFiles } from '../../scratch-file-remediation.js';
 
 export interface CompoundHandlerOpts {
   exemptUndeclaredFiles?: string[];
+  scopeContractEnforcement?: boolean;
 }
 
 export class CompoundHandler extends SingleShotAgentHandler {
@@ -178,11 +180,26 @@ export class CompoundHandler extends SingleShotAgentHandler {
 
       const changedFiles = [...new Set([...committedFiles, ...uncommittedFiles])];
       if (changedFiles.length > 0) {
-        const classification = checkTaskBoundaries(
-          changedFiles,
-          manifestResult.manifest,
-          this.opts?.exemptUndeclaredFiles,
-        );
+        const scopeContractEnforcement = this.opts?.scopeContractEnforcement ?? true;
+        let classification;
+
+        if (scopeContractEnforcement) {
+          classification = checkTaskBoundaries(
+            changedFiles,
+            manifestResult.manifest,
+            this.opts?.exemptUndeclaredFiles,
+          );
+        } else {
+          const exemptSet = normalizedPathSet(this.opts?.exemptUndeclaredFiles);
+          const { writableSet, referenceSet } = getManifestBoundaries(manifestResult.manifest);
+          classification = classifyUndeclaredFiles(
+            changedFiles,
+            writableSet,
+            referenceSet,
+            exemptSet,
+          );
+        }
+
         const violatingFiles = [
           ...classification.modifiedReferenceFiles,
           ...classification.undeclaredFiles,
