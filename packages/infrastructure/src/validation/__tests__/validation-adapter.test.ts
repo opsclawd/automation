@@ -386,4 +386,74 @@ describe('ProcessValidationAdapter', () => {
       expect(results[0].outcome).toBe('timed_out');
     },
   );
+
+  describe('tiers execution', () => {
+    it('runs commands in parallel via Promise.all when a single tier is provided', async () => {
+      const logDir = freshDir();
+      const adapter = new ProcessValidationAdapter();
+      const results = await adapter.run({
+        cwd: process.cwd(),
+        commands: ['echo cmd1', 'echo cmd2', 'echo cmd3'],
+        tiers: [['echo cmd1', 'echo cmd2', 'echo cmd3']],
+        timeoutSeconds: 30,
+        logDir,
+      });
+
+      expect(results).toHaveLength(3);
+      expect(results[0].command).toBe('echo cmd1');
+      expect(results[1].command).toBe('echo cmd2');
+      expect(results[2].command).toBe('echo cmd3');
+      expect(results[0].outcome).toBe('passed');
+      expect(results[1].outcome).toBe('passed');
+      expect(results[2].outcome).toBe('passed');
+
+      const summary = JSON.parse(readFileSync(join(logDir, 'validation-result.json'), 'utf-8'));
+      expect(summary.passed).toBe(true);
+      expect(summary.commands).toHaveLength(3);
+      expect(summary.commands[0].stdoutPath).toMatch(/^validate\/0-/);
+      expect(summary.commands[1].stdoutPath).toMatch(/^validate\/1-/);
+      expect(summary.commands[2].stdoutPath).toMatch(/^validate\/2-/);
+    });
+
+    it('runs tiers sequentially and commands within each tier in parallel when multiple tiers are provided', async () => {
+      const logDir = freshDir();
+      const adapter = new ProcessValidationAdapter();
+      const results = await adapter.run({
+        cwd: process.cwd(),
+        commands: ['echo tier1-cmd1', 'echo tier1-cmd2', 'echo tier2-cmd1'],
+        tiers: [
+          ['echo tier1-cmd1', 'echo tier1-cmd2'],
+          ['echo tier2-cmd1'],
+        ],
+        timeoutSeconds: 30,
+        logDir,
+      });
+
+      expect(results).toHaveLength(3);
+      expect(results[0].command).toBe('echo tier1-cmd1');
+      expect(results[1].command).toBe('echo tier1-cmd2');
+      expect(results[2].command).toBe('echo tier2-cmd1');
+      expect(results[0].outcome).toBe('passed');
+      expect(results[1].outcome).toBe('passed');
+      expect(results[2].outcome).toBe('passed');
+    });
+
+    it('appends undeclared extra commands from commands array as a final tier', async () => {
+      const logDir = freshDir();
+      const adapter = new ProcessValidationAdapter();
+      const results = await adapter.run({
+        cwd: process.cwd(),
+        commands: ['echo tier1-cmd1', 'echo extra-cmd'],
+        tiers: [['echo tier1-cmd1']],
+        timeoutSeconds: 30,
+        logDir,
+      });
+
+      expect(results).toHaveLength(2);
+      expect(results[0].command).toBe('echo tier1-cmd1');
+      expect(results[1].command).toBe('echo extra-cmd');
+      expect(results[0].outcome).toBe('passed');
+      expect(results[1].outcome).toBe('passed');
+    });
+  });
 });

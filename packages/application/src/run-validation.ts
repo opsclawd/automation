@@ -27,6 +27,7 @@ export interface RunValidationInputUC {
   cwd: string;
   logDir: string;
   commands: ValidationCommand[];
+  tiers?: string[][];
   timeoutSeconds: number;
   logPathPrefix?: string;
   env?: Record<string, string>;
@@ -67,6 +68,7 @@ export class RunValidation {
     const results = await this.deps.validation.run({
       cwd: input.cwd,
       commands: input.commands,
+      ...(input.tiers ? { tiers: input.tiers } : {}),
       timeoutSeconds: input.timeoutSeconds,
       logDir: input.logDir,
       ...(input.logPathPrefix ? { logPathPrefix: input.logPathPrefix } : {}),

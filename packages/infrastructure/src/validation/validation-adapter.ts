@@ -100,120 +100,166 @@ function isShellParseError(command: ValidationCommand, exitCode: number, stderr:
 }
 
 export class ProcessValidationAdapter implements ValidationPort {
-  async run(input: RunValidationInput): Promise<ValidationCommandResult[]> {
+  private async executeSingleCommand(
+    command: ValidationCommand,
+    index: number,
+    input: RunValidationInput,
+  ): Promise<ValidationCommandResult> {
     const prefix = input.logPathPrefix ?? 'validate';
-    mkdirSync(input.logDir, { recursive: true });
+    const commandText = Array.isArray(command) ? command.join(' ') : command;
+    const slug = commandSlug(commandText);
+    const stdoutRel = `${prefix}/${index}-${slug}.stdout.log`;
+    const stderrRel = `${prefix}/${index}-${slug}.stderr.log`;
+    const stdoutAbs = join(input.logDir, `${index}-${slug}.stdout.log`);
+    const stderrAbs = join(input.logDir, `${index}-${slug}.stderr.log`);
 
-    const results: ValidationCommandResult[] = [];
-    for (let i = 0; i < input.commands.length; i++) {
-      const command = input.commands[i]!;
-      const commandText = Array.isArray(command) ? command.join(' ') : command;
-      const slug = commandSlug(commandText);
-      const stdoutRel = `${prefix}/${i}-${slug}.stdout.log`;
-      const stderrRel = `${prefix}/${i}-${slug}.stderr.log`;
-      const stdoutAbs = join(input.logDir, `${i}-${slug}.stdout.log`);
-      const stderrAbs = join(input.logDir, `${i}-${slug}.stderr.log`);
+    writeFileSync(stdoutAbs, '');
+    writeFileSync(stderrAbs, '');
 
-      writeFileSync(stdoutAbs, '');
-      writeFileSync(stderrAbs, '');
+    const started = Date.now();
+    let stdout = '';
+    let stderr = '';
+    let exitCode = 0;
+    let outcome: ValidationCommandResult['outcome'] = 'passed';
+    let isTimedOut = false;
+    let timeoutId: NodeJS.Timeout | undefined;
 
-      const started = Date.now();
-      let stdout = '';
-      let stderr = '';
-      let exitCode = 0;
-      let outcome: ValidationCommandResult['outcome'] = 'passed';
-      let isTimedOut = false;
-      let timeoutId: NodeJS.Timeout | undefined;
-
-      const scriptName = bareScriptName(commandText);
-      if (scriptName !== undefined && !packageHasScript(input.cwd, scriptName)) {
-        stderr = `Skipped: no "${scriptName}" script in package.json at ${input.cwd}\n`;
-        outcome = 'skipped';
-        const durationMs = Date.now() - started;
-        writeFileSync(stdoutAbs, stdout);
-        writeFileSync(stderrAbs, stderr);
-        results.push({
-          command: commandText,
-          exitCode: 0,
-          durationMs,
-          stdout,
-          stderr,
-          stdoutPath: stdoutRel,
-          stderrPath: stderrRel,
-          outcome,
-        });
-        continue;
-      }
-
-      try {
-        const forceTurbo = mustBypassTurboCache(commandText);
-        const options: Options = {
-          cwd: input.cwd,
-          reject: false,
-          all: false,
-          detached: true,
-          env: {
-            ...process.env,
-            ...(input.env ?? {}),
-            ...(forceTurbo ? { TURBO_FORCE: 'true' } : {}),
-          },
-        };
-
-        // POSIX-only: `detached` makes the shell/process a group leader so we
-        // can kill the whole group on timeout.
-        const subprocess = Array.isArray(command)
-          ? execa(command[0]!, command.slice(1) as readonly string[], { ...options, shell: false })
-          : execa(command, { ...options, shell: true });
-
-        timeoutId = setTimeout(() => {
-          isTimedOut = true;
-          try {
-            if (subprocess.pid) {
-              // Negative PID targets the whole process group.
-              process.kill(-subprocess.pid, 'SIGKILL');
-            }
-          } catch {
-            // ignore
-          }
-        }, input.timeoutSeconds * 1000);
-
-        const r = await subprocess;
-        if (timeoutId) clearTimeout(timeoutId);
-
-        stdout = typeof r.stdout === 'string' ? r.stdout : r.stdout ? String(r.stdout) : '';
-        stderr = typeof r.stderr === 'string' ? r.stderr : r.stderr ? String(r.stderr) : '';
-        exitCode = r.exitCode ?? 0;
-
-        if (isTimedOut) {
-          outcome = 'timed_out';
-          exitCode = r.exitCode ?? 124;
-        } else if (isShellParseError(command, exitCode, stderr)) {
-          outcome = 'parse_error';
-        } else if (r.failed) {
-          outcome = 'failed';
-          exitCode = r.exitCode ?? 1;
-        }
-      } catch (e) {
-        if (timeoutId) clearTimeout(timeoutId);
-        outcome = 'failed';
-        exitCode = 1;
-        stderr = String((e as Error).message);
-      }
+    const scriptName = bareScriptName(commandText);
+    if (scriptName !== undefined && !packageHasScript(input.cwd, scriptName)) {
+      stderr = `Skipped: no "${scriptName}" script in package.json at ${input.cwd}\n`;
+      outcome = 'skipped';
       const durationMs = Date.now() - started;
-
       writeFileSync(stdoutAbs, stdout);
       writeFileSync(stderrAbs, stderr);
-
-      results.push({
+      return {
         command: commandText,
-        exitCode,
+        exitCode: 0,
         durationMs,
         stdout,
         stderr,
         stdoutPath: stdoutRel,
         stderrPath: stderrRel,
         outcome,
-      });
+      };
+    }
+
+    try {
+      const forceTurbo = mustBypassTurboCache(commandText);
+      const options: Options = {
+        cwd: input.cwd,
+        reject: false,
+        all: false,
+        detached: true,
+        env: {
+          ...process.env,
+          ...(input.env ?? {}),
+          ...(forceTurbo ? { TURBO_FORCE: 'true' } : {}),
+        },
+      };
+
+      // POSIX-only: `detached` makes the shell/process a group leader so we
+      // can kill the whole group on timeout.
+      const subprocess = Array.isArray(command)
+        ? execa(command[0]!, command.slice(1) as readonly string[], { ...options, shell: false })
+        : execa(command, { ...options, shell: true });
+
+      timeoutId = setTimeout(() => {
+        isTimedOut = true;
+        try {
+          if (subprocess.pid) {
+            // Negative PID targets the whole process group.
+            process.kill(-subprocess.pid, 'SIGKILL');
+          }
+        } catch {
+          // ignore
+        }
+      }, input.timeoutSeconds * 1000);
+
+      const r = await subprocess;
+      if (timeoutId) clearTimeout(timeoutId);
+
+      stdout = typeof r.stdout === 'string' ? r.stdout : r.stdout ? String(r.stdout) : '';
+      stderr = typeof r.stderr === 'string' ? r.stderr : r.stderr ? String(r.stderr) : '';
+      exitCode = r.exitCode ?? 0;
+
+      if (isTimedOut) {
+        outcome = 'timed_out';
+        exitCode = r.exitCode ?? 124;
+      } else if (isShellParseError(command, exitCode, stderr)) {
+        outcome = 'parse_error';
+      } else if (r.failed) {
+        outcome = 'failed';
+        exitCode = r.exitCode ?? 1;
+      }
+    } catch (e) {
+      if (timeoutId) clearTimeout(timeoutId);
+      outcome = 'failed';
+      exitCode = 1;
+      stderr = String((e as Error).message);
+    }
+    const durationMs = Date.now() - started;
+
+    writeFileSync(stdoutAbs, stdout);
+    writeFileSync(stderrAbs, stderr);
+
+    return {
+      command: commandText,
+      exitCode,
+      durationMs,
+      stdout,
+      stderr,
+      stdoutPath: stdoutRel,
+      stderrPath: stderrRel,
+      outcome,
+    };
+  }
+
+  async run(input: RunValidationInput): Promise<ValidationCommandResult[]> {
+    mkdirSync(input.logDir, { recursive: true });
+
+    const results: ValidationCommandResult[] = [];
+
+    if (!input.tiers) {
+      for (let i = 0; i < input.commands.length; i++) {
+        const command = input.commands[i]!;
+        const res = await this.executeSingleCommand(command, i, input);
+        results.push(res);
+      }
+    } else {
+      // Build effective tiers structure
+      const effectiveTiers: ValidationCommand[][] = input.tiers.map((tier) => [...tier]);
+      const existingInTiers = new Set(
+        effectiveTiers.flatMap((t) => t.map((c) => (Array.isArray(c) ? c.join(' ') : c))),
+      );
+      const extraCommands: ValidationCommand[] = [];
+      for (const cmd of input.commands) {
+        const cmdStr = Array.isArray(cmd) ? cmd.join(' ') : cmd;
+        if (!existingInTiers.has(cmdStr)) {
+          extraCommands.push(cmd);
+        }
+      }
+      if (extraCommands.length > 0) {
+        effectiveTiers.push(extraCommands);
+      }
+
+      let globalIndex = 0;
+      for (const tier of effectiveTiers) {
+        const tierIndexed = tier.map((command) => ({
+          command,
+          index: globalIndex++,
+        }));
+
+        const tierResults = await Promise.all(
+          tierIndexed.map(({ command, index }) =>
+            this.executeSingleCommand(command, index, input),
+          ),
+        );
+
+        for (let t = 0; t < tierIndexed.length; t++) {
+          const idx = tierIndexed[t]!.index;
+          results[idx] = tierResults[t]!;
+        }
+      }
     }
 
     const executed = results.filter((r) => r.outcome !== 'skipped');

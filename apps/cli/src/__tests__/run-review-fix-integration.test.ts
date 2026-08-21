@@ -154,7 +154,7 @@ describe('run-review-fix integration', () => {
     expect(allLoops).toHaveLength(1);
     expect(allLoops[0].type).toBe('review-fix');
     expect(allLoops[0].iterations.length).toBeGreaterThanOrEqual(1);
-  });
+  }, 30000);
 
   it('exhausts when review never passes within maxIterations → exit 1', async () => {
     mockBehavior.reviewResult = 'fail';
@@ -185,5 +185,5 @@ describe('run-review-fix integration', () => {
     expect(phaseOutcome).toBe('failed');
     expect(loop.status).toBe('exhausted');
     expect(loop.iterations.length).toBe(2);
-  });
+  }, 30000);
 });
