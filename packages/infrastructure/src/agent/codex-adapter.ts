@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
@@ -8,6 +9,41 @@ export interface CodexAdapterOptions {
   binaryPath?: string;
   artifactsDir: string;
   timeoutMsDefault?: number;
+}
+
+/**
+ * Resolves external Git metadata directories for a worktree so that Codex's
+ * Landlock/bubblewrap sandbox (--sandbox workspace-write) permits writing to
+ * worktree index locks and git objects located in the shared repository.
+ */
+export function resolveWorktreeGitDirs(cwd: string): string[] {
+  try {
+    const gitPath = join(cwd, '.git');
+    if (!existsSync(gitPath) || !statSync(gitPath).isFile()) {
+      return [];
+    }
+    const content = readFileSync(gitPath, 'utf-8').trim();
+    if (!content.startsWith('gitdir:')) {
+      return [];
+    }
+    const rawGitDir = content.slice('gitdir:'.length).trim();
+    const gitDir = isAbsolute(rawGitDir) ? rawGitDir : resolve(cwd, rawGitDir);
+    const dirs = new Set<string>();
+    if (existsSync(gitDir)) {
+      dirs.add(gitDir);
+      const commonPath = join(gitDir, 'commondir');
+      if (existsSync(commonPath)) {
+        const rawCommon = readFileSync(commonPath, 'utf-8').trim();
+        const commonDir = isAbsolute(rawCommon) ? rawCommon : resolve(gitDir, rawCommon);
+        if (existsSync(commonDir)) {
+          dirs.add(commonDir);
+        }
+      }
+    }
+    return Array.from(dirs);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -28,6 +64,10 @@ export class CodexAgentAdapter implements AgentPort {
     const bin = this.opts.binaryPath ?? 'codex';
     const prompt = readFileSync(request.promptPath, 'utf-8');
     const args = ['exec', '--sandbox', 'workspace-write', '--color', 'never', '--json', '-'];
+    const worktreeGitDirs = resolveWorktreeGitDirs(request.cwd);
+    for (const dir of worktreeGitDirs) {
+      args.push('--add-dir', dir);
+    }
     if (request.model && request.model !== 'default') {
       args.push('--model', request.model);
     }
@@ -116,7 +156,11 @@ export class CodexAgentAdapter implements AgentPort {
         const errorMessage = String(errorData.error?.message || errorData.message || detectedError);
 
         let marker = 'PROVIDER_ERROR';
-        if (status !== undefined && status === 429 || errorType === 'insufficient_quota' || errorType === 'quota_exceeded') {
+        if (
+          (status !== undefined && status === 429) ||
+          errorType === 'insufficient_quota' ||
+          errorType === 'quota_exceeded'
+        ) {
           marker = 'QUOTA_EXCEEDED';
         } else if (
           errorType === 'context_length_exceeded' ||

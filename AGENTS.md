@@ -75,3 +75,5 @@ touching imports across `packages/`/`apps/` boundaries.
 **Shell tests** for `scripts/` belong in `scripts/lib/__tests__/*.bats` — anything
 else is silently ignored by `pnpm test:bash`. See
 `docs/solutions/orchestrator/shell-test-location-2026-05-19.md`.
+
+**Test Parallelism Cap:** `pnpm test:bash` runs `bats` with `--jobs 4` to parallelize execution across `.bats` files. This fixed cap matches Vitest's `maxForks: 4` ceiling (`vitest.config.ts`) to avoid host memory/CPU pressure on 16GB CI runners. The `test:bash` parallelism cap should track the Vitest fork cap to keep host pressure predictable.
