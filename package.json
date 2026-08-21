@@ -11,6 +11,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r --parallel test",
+    "test:coverage": "TMPDIR=/var/tmp vitest run --coverage",
     "test:bash": "TMPDIR=/tmp bats --jobs 4 scripts/lib/__tests__",
     "test:watch": "TMPDIR=/var/tmp vitest",
     "lint": "eslint . --max-warnings=0 --cache --cache-location .cache/eslint/",
@@ -30,19 +31,20 @@
     "*.{json,yml,yaml}": "prettier --write"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.9.0",
     "@typescript-eslint/eslint-plugin": "^8.13.0",
     "@typescript-eslint/parser": "^8.13.0",
+    "@vitest/coverage-v8": "^2.1.4",
+    "bats": "^1.13.0",
+    "better-sqlite3": "^11.5.0",
+    "dependency-cruiser": "^16.0.0",
     "eslint": "^9.14.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "prettier": "^3.3.3",
-    "typescript": "^5.6.3",
-    "vitest": "^2.1.4",
-    "dependency-cruiser": "^16.0.0",
-    "bats": "^1.13.0",
     "tsx": "^4.19.2",
-    "better-sqlite3": "^11.5.0",
-    "@types/better-sqlite3": "^7.6.11"
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
   }
 }

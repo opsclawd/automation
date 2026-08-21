@@ -12,10 +12,6 @@ export default defineConfig({
         maxForks: 4,
       },
     },
-    coverage: {
-      reporter: ['text', 'lcov'],
-      include: ['packages/*/src/**/*.ts', 'apps/*/src/**/*.ts'],
-    },
   },
   resolve: {
     conditions: ['development'],
