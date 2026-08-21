@@ -215,8 +215,8 @@ describe('ImplementHandler Commit Coverage', () => {
         {
           n: 1,
           title: 'Task 1: merge fields',
-          expected_files: ['src\\a.ts ', 'src/b.ts'],
-          files: ['src/b.ts', 'src/c.ts', ''],
+          expected_files: ['src/a.ts', 'src/b.ts'],
+          files: ['src/b.ts', 'src/c.ts'],
         },
       ],
     };

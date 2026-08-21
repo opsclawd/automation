@@ -5,6 +5,14 @@ export interface TaskBoundaryClassification {
   undeclaredFiles: string[];
 }
 
+export interface EffectiveTaskScope {
+  requiredFiles: string[];
+  mayExtendFiles: string[];
+  permittedAreas: string[];
+  nonGoals: string[];
+  referenceFiles: string[];
+}
+
 export function normalizeTaskPath(path: unknown): string {
   if (typeof path !== 'string') return '';
   return path
@@ -13,22 +21,62 @@ export function normalizeTaskPath(path: unknown): string {
     .replace(/^(\.\/|\/)+/, '');
 }
 
-export function declaredTaskFiles(task: unknown): string[] {
-  if (!task || typeof task !== 'object') return [];
+export function resolveEffectiveTaskScope(task: unknown): EffectiveTaskScope {
+  if (!task || typeof task !== 'object') {
+    return {
+      requiredFiles: [],
+      mayExtendFiles: [],
+      permittedAreas: [],
+      nonGoals: [],
+      referenceFiles: [],
+    };
+  }
   const record = task as Record<string, unknown>;
   const expectedFiles = Array.isArray(record.expected_files) ? record.expected_files : [];
   const files = Array.isArray(record.files) ? record.files : [];
+  const mayExtend = Array.isArray(record.may_extend) ? record.may_extend : [];
+  const permittedAreas = Array.isArray(record.permitted_areas) ? record.permitted_areas : [];
+  const nonGoals = Array.isArray(record.non_goals) ? record.non_goals : [];
+  const referenceFiles = Array.isArray(record.reference_files) ? record.reference_files : [];
 
-  const requiredExpectedFiles = expectedFiles.map(normalizeTaskPath).filter(Boolean);
-  const requiredLegacyFiles = files.map(normalizeTaskPath).filter(Boolean);
-  return [...new Set([...requiredExpectedFiles, ...requiredLegacyFiles])];
+  const required = [
+    ...new Set(
+      [...expectedFiles.map(normalizeTaskPath), ...files.map(normalizeTaskPath)].filter(Boolean),
+    ),
+  ];
+  const mayExtendList = [...new Set(mayExtend.map(normalizeTaskPath).filter(Boolean))];
+  const nonGoalsList = [...new Set(nonGoals.map(normalizeTaskPath).filter(Boolean))];
+  const referenceList = [...new Set(referenceFiles.map(normalizeTaskPath).filter(Boolean))];
+
+  const derivedAreas: string[] = [];
+  for (const file of required) {
+    const lastSlash = file.lastIndexOf('/');
+    if (lastSlash > 0) {
+      const parent = file.slice(0, lastSlash);
+      if (parent.length > 0 && parent !== '.') {
+        derivedAreas.push(parent);
+      }
+    }
+  }
+
+  const explicitAreas = permittedAreas.map(normalizeTaskPath).filter(Boolean);
+  const permitted = [...new Set([...derivedAreas, ...explicitAreas])];
+
+  return {
+    requiredFiles: required,
+    mayExtendFiles: mayExtendList,
+    permittedAreas: permitted,
+    nonGoals: nonGoalsList,
+    referenceFiles: referenceList,
+  };
+}
+
+export function declaredTaskFiles(task: unknown): string[] {
+  return resolveEffectiveTaskScope(task).requiredFiles;
 }
 
 export function referenceTaskFiles(task: unknown): string[] {
-  if (!task || typeof task !== 'object') return [];
-  const referenceFiles = (task as Record<string, unknown>).reference_files;
-  if (!Array.isArray(referenceFiles)) return [];
-  return [...new Set(referenceFiles.map(normalizeTaskPath).filter(Boolean))];
+  return resolveEffectiveTaskScope(task).referenceFiles;
 }
 
 export function normalizedPathSet(paths: readonly string[] | undefined): Set<string> {
@@ -41,13 +89,44 @@ export function hasDeclaredSurface(task: unknown, manifestVersion?: number): boo
   const expectedFiles = Array.isArray(record.expected_files) ? record.expected_files : undefined;
   const referenceFiles = Array.isArray(record.reference_files) ? record.reference_files : undefined;
   const files = Array.isArray(record.files) ? record.files : undefined;
+  const mayExtend = Array.isArray(record.may_extend) ? record.may_extend : undefined;
+  const permittedAreas = Array.isArray(record.permitted_areas) ? record.permitted_areas : undefined;
   if (manifestVersion === 2) {
-    return expectedFiles !== undefined || referenceFiles !== undefined || files !== undefined;
+    return (
+      expectedFiles !== undefined ||
+      (referenceFiles !== undefined && referenceFiles.length > 0) ||
+      (files !== undefined && files.length > 0) ||
+      (mayExtend !== undefined && mayExtend.length > 0) ||
+      (permittedAreas !== undefined && permittedAreas.length > 0)
+    );
   }
   return (
     (expectedFiles !== undefined && expectedFiles.length > 0) ||
     (files !== undefined && files.length > 0)
   );
+}
+
+export function isPathPermittedByScope(filePath: string, scope: EffectiveTaskScope): boolean {
+  const norm = normalizeTaskPath(filePath);
+  if (!norm) return false;
+
+  if (scope.nonGoals.some((ng) => norm === ng || norm.startsWith(ng + '/'))) {
+    return false;
+  }
+
+  if (scope.referenceFiles.includes(norm)) {
+    return false;
+  }
+
+  if (scope.requiredFiles.includes(norm) || scope.mayExtendFiles.includes(norm)) {
+    return true;
+  }
+
+  if (scope.permittedAreas.some((area) => norm === area || norm.startsWith(area + '/'))) {
+    return true;
+  }
+
+  return false;
 }
 
 export function classifyUndeclaredFiles(
@@ -59,9 +138,7 @@ export function classifyUndeclaredFiles(
   const undeclared = [...new Set(committedFiles.map(normalizeTaskPath).filter(Boolean))]
     .filter(
       (file) =>
-        !writableFiles.has(file) &&
-        !exemptFiles.has(file) &&
-        !isOrchestratorArtifactPattern(file),
+        !writableFiles.has(file) && !exemptFiles.has(file) && !isOrchestratorArtifactPattern(file),
     )
     .sort();
   return {
@@ -79,8 +156,13 @@ export function getManifestBoundaries(manifest: unknown): {
   }
   const record = manifest as Record<string, unknown>;
   const tasks = Array.isArray(record.tasks) ? record.tasks : [];
-  const writableFiles = tasks.flatMap((t) => declaredTaskFiles(t));
-  const referenceFiles = tasks.flatMap((t) => referenceTaskFiles(t));
+  const writableFiles: string[] = [];
+  const referenceFiles: string[] = [];
+  for (const task of tasks) {
+    const scope = resolveEffectiveTaskScope(task);
+    writableFiles.push(...scope.requiredFiles, ...scope.mayExtendFiles);
+    referenceFiles.push(...scope.referenceFiles);
+  }
   return {
     writableSet: normalizedPathSet(writableFiles),
     referenceSet: normalizedPathSet(referenceFiles),
@@ -92,9 +174,41 @@ export function checkTaskBoundaries(
   manifest: unknown,
   exemptFiles?: readonly string[],
 ): TaskBoundaryClassification {
-  const { writableSet, referenceSet } = getManifestBoundaries(manifest);
   const exemptSet = normalizedPathSet(exemptFiles);
-  return classifyUndeclaredFiles(committedFiles, writableSet, referenceSet, exemptSet);
+  const normalizedCandidates = [
+    ...new Set(committedFiles.map(normalizeTaskPath).filter(Boolean)),
+  ].filter((file) => !exemptSet.has(file) && !isOrchestratorArtifactPattern(file));
+
+  if (!manifest || typeof manifest !== 'object') {
+    return {
+      modifiedReferenceFiles: [],
+      undeclaredFiles: normalizedCandidates.sort(),
+    };
+  }
+
+  const record = manifest as Record<string, unknown>;
+  const tasks = Array.isArray(record.tasks) ? record.tasks : [];
+  const scopes = tasks.map((t) => resolveEffectiveTaskScope(t));
+  const referenceFilesSet = new Set(scopes.flatMap((s) => s.referenceFiles));
+
+  const modifiedReferenceFiles: string[] = [];
+  const undeclaredFiles: string[] = [];
+
+  for (const file of normalizedCandidates) {
+    const isPermitted = scopes.some((scope) => isPathPermittedByScope(file, scope));
+    if (!isPermitted) {
+      if (referenceFilesSet.has(file)) {
+        modifiedReferenceFiles.push(file);
+      } else {
+        undeclaredFiles.push(file);
+      }
+    }
+  }
+
+  return {
+    modifiedReferenceFiles: [...new Set(modifiedReferenceFiles)].sort(),
+    undeclaredFiles: [...new Set(undeclaredFiles)].sort(),
+  };
 }
 
 export type ManifestLoadResult =

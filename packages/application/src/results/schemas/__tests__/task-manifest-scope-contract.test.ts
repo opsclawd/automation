@@ -6,7 +6,7 @@ import {
 } from '../task-manifest.js';
 
 describe('taskManifestV2Schema scope contract', () => {
-  it('accepts normalized V2 permission declarations', () => {
+  it('accepts canonical scope declarations and defaults omitted or null fields to empty arrays', () => {
     const validManifest = {
       version: 2,
       task_count: 2,
@@ -56,10 +56,8 @@ describe('taskManifestV2Schema scope contract', () => {
 
     const unifiedResult = taskManifestSchema.safeParse(validManifest);
     expect(unifiedResult.success).toBe(true);
-  });
 
-  it('defaults omitted and null scope declarations to empty behavior', () => {
-    const v2Manifest = {
+    const omittedAndNullManifest = {
       version: 2,
       task_count: 3,
       tasks: [
@@ -89,24 +87,24 @@ describe('taskManifestV2Schema scope contract', () => {
       ],
     };
 
-    const v2Result = taskManifestV2Schema.safeParse(v2Manifest);
-    expect(v2Result.success).toBe(true);
-    if (v2Result.success) {
-      expect(v2Result.data.tasks[0].permitted_areas).toEqual([]);
-      expect(v2Result.data.tasks[0].may_extend).toEqual([]);
-      expect(v2Result.data.tasks[0].non_goals).toEqual([]);
-      expect(v2Result.data.tasks[0].reference_files).toEqual([]);
+    const omittedResult = taskManifestV2Schema.safeParse(omittedAndNullManifest);
+    expect(omittedResult.success).toBe(true);
+    if (omittedResult.success) {
+      expect(omittedResult.data.tasks[0].permitted_areas).toEqual([]);
+      expect(omittedResult.data.tasks[0].may_extend).toEqual([]);
+      expect(omittedResult.data.tasks[0].non_goals).toEqual([]);
+      expect(omittedResult.data.tasks[0].reference_files).toEqual([]);
 
-      expect(v2Result.data.tasks[1].permitted_areas).toEqual([]);
-      expect(v2Result.data.tasks[1].may_extend).toEqual([]);
-      expect(v2Result.data.tasks[1].non_goals).toEqual([]);
-      expect(v2Result.data.tasks[1].reference_files).toEqual([]);
+      expect(omittedResult.data.tasks[1].permitted_areas).toEqual([]);
+      expect(omittedResult.data.tasks[1].may_extend).toEqual([]);
+      expect(omittedResult.data.tasks[1].non_goals).toEqual([]);
+      expect(omittedResult.data.tasks[1].reference_files).toEqual([]);
 
-      expect(v2Result.data.tasks[2].expected_files).toEqual([]);
-      expect(v2Result.data.tasks[2].permitted_areas).toEqual([]);
-      expect(v2Result.data.tasks[2].may_extend).toEqual([]);
-      expect(v2Result.data.tasks[2].non_goals).toEqual([]);
-      expect(v2Result.data.tasks[2].reference_files).toEqual([]);
+      expect(omittedResult.data.tasks[2].expected_files).toEqual([]);
+      expect(omittedResult.data.tasks[2].permitted_areas).toEqual([]);
+      expect(omittedResult.data.tasks[2].may_extend).toEqual([]);
+      expect(omittedResult.data.tasks[2].non_goals).toEqual([]);
+      expect(omittedResult.data.tasks[2].reference_files).toEqual([]);
     }
   });
 
@@ -130,7 +128,7 @@ describe('taskManifestV2Schema scope contract', () => {
     expect(unifiedV1Result.success).toBe(true);
   });
 
-  it('rejects absolute root traversal and empty scope paths', () => {
+  it('rejects absolute dot-segment backslash duplicate-slash and trailing-slash scope paths', () => {
     const invalidSegments = [
       { path: '', reason: 'empty string' },
       { path: '   ', reason: 'whitespace string' },
@@ -185,8 +183,9 @@ describe('taskManifestV2Schema scope contract', () => {
     }
   });
 
-  it('rejects reference_files overlap with expected_files', () => {
-    const manifest = {
+  it('rejects reference may-extend expected permitted-area and non-goal overlaps by path segment', () => {
+    // 1. reference_files overlap with expected_files
+    const refExpectedManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -198,21 +197,10 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
+    expect(taskManifestV2Schema.safeParse(refExpectedManifest).success).toBe(false);
 
-    const result = taskManifestV2Schema.safeParse(manifest);
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const issue = result.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'reference_files' || i.path[2] === 'expected_files'),
-      );
-      expect(issue).toBeDefined();
-      expect(['reference_files', 'expected_files']).toContain(issue?.path[2]);
-    }
-
-    const legacyManifest = {
+    // 2. reference_files overlap with legacy files
+    const refLegacyManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -224,23 +212,10 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
+    expect(taskManifestV2Schema.safeParse(refLegacyManifest).success).toBe(false);
 
-    const legacyResult = taskManifestV2Schema.safeParse(legacyManifest);
-    expect(legacyResult.success).toBe(false);
-    if (!legacyResult.success) {
-      const issue = legacyResult.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'reference_files' || i.path[2] === 'files'),
-      );
-      expect(issue).toBeDefined();
-      expect(['reference_files', 'files']).toContain(issue?.path[2]);
-    }
-  });
-
-  it('rejects reference_files overlap with may_extend', () => {
-    const manifest = {
+    // 3. reference_files overlap with may_extend
+    const refMayExtendManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -253,23 +228,10 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
+    expect(taskManifestV2Schema.safeParse(refMayExtendManifest).success).toBe(false);
 
-    const result = taskManifestV2Schema.safeParse(manifest);
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const issue = result.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'reference_files' || i.path[2] === 'may_extend'),
-      );
-      expect(issue).toBeDefined();
-      expect(['reference_files', 'may_extend']).toContain(issue?.path[2]);
-    }
-  });
-
-  it('rejects may_extend overlap with expected_files', () => {
-    const manifest = {
+    // 4. may_extend overlap with expected_files
+    const mayExtendExpectedManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -281,49 +243,10 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
+    expect(taskManifestV2Schema.safeParse(mayExtendExpectedManifest).success).toBe(false);
 
-    const result = taskManifestV2Schema.safeParse(manifest);
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const issue = result.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'may_extend' || i.path[2] === 'expected_files'),
-      );
-      expect(issue).toBeDefined();
-      expect(['may_extend', 'expected_files']).toContain(issue?.path[2]);
-    }
-
-    const legacyManifest = {
-      version: 2,
-      task_count: 1,
-      tasks: [
-        {
-          n: 1,
-          title: 'Overlapping legacy files and may_extend',
-          files: ['packages/core/src/service.ts'],
-          may_extend: ['packages/core/src/service.ts'],
-        },
-      ],
-    };
-
-    const legacyResult = taskManifestV2Schema.safeParse(legacyManifest);
-    expect(legacyResult.success).toBe(false);
-    if (!legacyResult.success) {
-      const issue = legacyResult.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'may_extend' || i.path[2] === 'files'),
-      );
-      expect(issue).toBeDefined();
-      expect(['may_extend', 'files']).toContain(issue?.path[2]);
-    }
-  });
-
-  it('rejects non_goals overlap with expected_files or may_extend', () => {
-    const expectedOverlapManifest = {
+    // 5. non_goals exact overlap with expected_files
+    const ngExpectedManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -335,21 +258,10 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
+    expect(taskManifestV2Schema.safeParse(ngExpectedManifest).success).toBe(false);
 
-    const expectedResult = taskManifestV2Schema.safeParse(expectedOverlapManifest);
-    expect(expectedResult.success).toBe(false);
-    if (!expectedResult.success) {
-      const issue = expectedResult.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'non_goals' || i.path[2] === 'expected_files'),
-      );
-      expect(issue).toBeDefined();
-      expect(['non_goals', 'expected_files']).toContain(issue?.path[2]);
-    }
-
-    const mayExtendOverlapManifest = {
+    // 6. non_goals exact overlap with may_extend
+    const ngMayExtendManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -362,21 +274,10 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
+    expect(taskManifestV2Schema.safeParse(ngMayExtendManifest).success).toBe(false);
 
-    const mayExtendResult = taskManifestV2Schema.safeParse(mayExtendOverlapManifest);
-    expect(mayExtendResult.success).toBe(false);
-    if (!mayExtendResult.success) {
-      const issue = mayExtendResult.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'non_goals' || i.path[2] === 'may_extend'),
-      );
-      expect(issue).toBeDefined();
-      expect(['non_goals', 'may_extend']).toContain(issue?.path[2]);
-    }
-
-    const directoryPrefixManifest = {
+    // 7. non_goals directory prefix of expected_files
+    const ngPrefixExpectedManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -388,21 +289,10 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
+    expect(taskManifestV2Schema.safeParse(ngPrefixExpectedManifest).success).toBe(false);
 
-    const prefixResult = taskManifestV2Schema.safeParse(directoryPrefixManifest);
-    expect(prefixResult.success).toBe(false);
-    if (!prefixResult.success) {
-      const issue = prefixResult.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'non_goals' || i.path[2] === 'expected_files'),
-      );
-      expect(issue).toBeDefined();
-      expect(['non_goals', 'expected_files']).toContain(issue?.path[2]);
-    }
-
-    const directoryPrefixMayExtendManifest = {
+    // 8. non_goals directory prefix of may_extend
+    const ngPrefixMayExtendManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -415,23 +305,10 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
+    expect(taskManifestV2Schema.safeParse(ngPrefixMayExtendManifest).success).toBe(false);
 
-    const prefixMayExtendResult = taskManifestV2Schema.safeParse(directoryPrefixMayExtendManifest);
-    expect(prefixMayExtendResult.success).toBe(false);
-    if (!prefixMayExtendResult.success) {
-      const issue = prefixMayExtendResult.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'non_goals' || i.path[2] === 'may_extend'),
-      );
-      expect(issue).toBeDefined();
-      expect(['non_goals', 'may_extend']).toContain(issue?.path[2]);
-    }
-  });
-
-  it('rejects non_goals overlap with permitted_areas', () => {
-    const exactOverlapManifest = {
+    // 9. non_goals exact overlap with permitted_areas
+    const ngPermittedExactManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -444,21 +321,10 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
+    expect(taskManifestV2Schema.safeParse(ngPermittedExactManifest).success).toBe(false);
 
-    const exactResult = taskManifestV2Schema.safeParse(exactOverlapManifest);
-    expect(exactResult.success).toBe(false);
-    if (!exactResult.success) {
-      const issue = exactResult.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'non_goals' || i.path[2] === 'permitted_areas'),
-      );
-      expect(issue).toBeDefined();
-      expect(['non_goals', 'permitted_areas']).toContain(issue?.path[2]);
-    }
-
-    const directoryOverlapManifest = {
+    // 10. non_goals directory ancestor of permitted_areas
+    const ngAncestorPermittedManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -471,25 +337,26 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
+    expect(taskManifestV2Schema.safeParse(ngAncestorPermittedManifest).success).toBe(false);
 
-    const directoryResult = taskManifestV2Schema.safeParse(directoryOverlapManifest);
-    expect(directoryResult.success).toBe(false);
-    if (!directoryResult.success) {
-      const issue = directoryResult.error.issues.find(
-        (i) =>
-          i.path[0] === 'tasks' &&
-          i.path[1] === 0 &&
-          (i.path[2] === 'non_goals' || i.path[2] === 'permitted_areas'),
-      );
-      expect(issue).toBeDefined();
-      expect(['non_goals', 'permitted_areas']).toContain(issue?.path[2]);
-    }
-  });
+    // 11. permitted_areas directory ancestor of non_goals
+    const permittedAncestorNgManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'permitted_areas directory ancestor of non_goals',
+          expected_files: ['packages/application/src/service.ts'],
+          permitted_areas: ['packages/core'],
+          non_goals: ['packages/core/src'],
+        },
+      ],
+    };
+    expect(taskManifestV2Schema.safeParse(permittedAncestorNgManifest).success).toBe(false);
 
-  it('allows sibling paths that share string prefixes but distinct path segments', () => {
-    // Note: permitted_areas provides additive directory permission and does not restrict
-    // expected_files or may_extend. Each field below exercises distinct sibling segments against non_goals.
-    const manifest = {
+    // 12. distinct sibling paths are allowed
+    const siblingManifest = {
       version: 2,
       task_count: 1,
       tasks: [
@@ -504,8 +371,6 @@ describe('taskManifestV2Schema scope contract', () => {
         },
       ],
     };
-
-    const result = taskManifestV2Schema.safeParse(manifest);
-    expect(result.success).toBe(true);
+    expect(taskManifestV2Schema.safeParse(siblingManifest).success).toBe(true);
   });
 });

@@ -6,7 +6,7 @@ import {
 } from '../task-file-boundaries.js';
 
 describe('task-file-boundaries helpers', () => {
-  it('extracts all declared writable and reference files across all tasks in a manifest', () => {
+  it('extracts all declared writable (expected_files + may_extend) and reference files across all tasks in a manifest', () => {
     const manifest = {
       version: 2,
       task_count: 2,
@@ -15,12 +15,14 @@ describe('task-file-boundaries helpers', () => {
           n: 1,
           title: 'Task 1',
           expected_files: ['src/a.ts', 'src/common.ts'],
+          may_extend: ['src/ext1.ts'],
           reference_files: ['src/ref1.ts'],
         },
         {
           n: 2,
           title: 'Task 2',
           expected_files: ['src/b.ts'],
+          may_extend: ['src/ext2.ts'],
           reference_files: ['src/ref2.ts'],
         },
       ],
@@ -31,29 +33,114 @@ describe('task-file-boundaries helpers', () => {
       'src/a.ts',
       'src/b.ts',
       'src/common.ts',
+      'src/ext1.ts',
+      'src/ext2.ts',
     ]);
     expect(Array.from(boundaries.referenceSet).sort()).toEqual(['src/ref1.ts', 'src/ref2.ts']);
   });
 
-  it('classifies committed files using manifest boundaries', () => {
+  it('classifies committed files using manifest boundaries and V2 scope rules', () => {
     const manifest = {
       version: 2,
-      task_count: 2,
+      task_count: 1,
       tasks: [
         {
           n: 1,
           title: 'Task 1',
-          expected_files: ['src/declared.ts'],
-          reference_files: ['src/read-only.ts'],
+          expected_files: ['src/core/declared.ts'],
+          permitted_areas: ['src/core/extra', 'src/common'],
+          may_extend: ['src/utils/helper.ts'],
+          reference_files: ['src/core/read-only.ts'],
+          non_goals: ['src/core/extra/blocked'],
         },
       ],
     };
 
-    const committed = ['src/declared.ts', 'src/read-only.ts', 'src/rogue.ts'];
+    const committed = [
+      'src/core/declared.ts', // required file -> permitted
+      'src/core/sibling.ts', // derived parent area (src/core) -> permitted
+      'src/core/extra/file.ts', // explicit permitted area -> permitted
+      'src/common/shared.ts', // explicit permitted area -> permitted
+      'src/utils/helper.ts', // exact may_extend -> permitted
+      'src/core/read-only.ts', // reference file -> modifiedReferenceFiles
+      'src/core/extra/blocked/file.ts', // non-goal -> undeclaredFiles
+      'src/utils/other.ts', // outside may_extend exact match -> undeclaredFiles
+      'other/rogue.ts', // outside all permitted scopes -> undeclaredFiles
+    ];
     const result = checkTaskBoundaries(committed, manifest);
 
-    expect(result.modifiedReferenceFiles).toEqual(['src/read-only.ts']);
-    expect(result.undeclaredFiles).toEqual(['src/rogue.ts']);
+    expect(result.modifiedReferenceFiles).toEqual(['src/core/read-only.ts']);
+    expect(result.undeclaredFiles).toEqual([
+      'other/rogue.ts',
+      'src/core/extra/blocked/file.ts',
+      'src/utils/other.ts',
+    ]);
+  });
+
+  it('enforces that root-level expected files do not derive repository-root permission', () => {
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['package.json'],
+        },
+      ],
+    };
+
+    const committed = ['package.json', 'README.md', 'src/foo.ts'];
+    const result = checkTaskBoundaries(committed, manifest);
+
+    expect(result.modifiedReferenceFiles).toEqual([]);
+    expect(result.undeclaredFiles).toEqual(['README.md', 'src/foo.ts']);
+  });
+
+  it('enforces that empty/read-only tasks reject all non-exempt file changes', () => {
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: [],
+        },
+      ],
+    };
+
+    const committed = ['src/foo.ts', 'package.json'];
+    const result = checkTaskBoundaries(committed, manifest);
+
+    expect(result.modifiedReferenceFiles).toEqual([]);
+    expect(result.undeclaredFiles).toEqual(['package.json', 'src/foo.ts']);
+  });
+
+  it('respects exemptFiles and orchestrator artifact exemptions in checkTaskBoundaries', () => {
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['src/core/declared.ts'],
+        },
+      ],
+    };
+
+    const committed = [
+      'src/core/declared.ts',
+      'exempt/file.ts',
+      'task-manifest.json',
+      'result.json',
+      'other/rogue.ts',
+    ];
+    const result = checkTaskBoundaries(committed, manifest, ['exempt/file.ts']);
+
+    expect(result.modifiedReferenceFiles).toEqual([]);
+    expect(result.undeclaredFiles).toEqual(['other/rogue.ts']);
   });
 
   it('handles empty or missing manifest gracefully', () => {

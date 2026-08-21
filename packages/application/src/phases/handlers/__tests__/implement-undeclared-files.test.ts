@@ -355,13 +355,13 @@ describe('ImplementHandler undeclared files regression proof', () => {
     const { ctx, events } = makeCtx(artifacts, git);
 
     await writePlanAndManifest(artifacts, {
-      version: 2,
+      version: 1,
       task_count: 1,
       tasks: [
         {
           n: 1,
           title: 'Task 1: overlapping expected and reference',
-          expected_files: ['src/shared.ts'],
+          files: ['src/shared.ts'],
           reference_files: ['src/shared.ts'],
         },
       ],
