@@ -10,6 +10,7 @@ import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { RevalidationResult, FixStepOptions } from '../review-fix/types.js';
 import {
   checkTaskBoundaries,
+  classifyUndeclaredFiles,
   getManifestBoundaries,
   loadManifest,
   type ManifestLoadResult,
@@ -141,7 +142,23 @@ export class ValidateFixLoop {
               );
               boundaryFailure = { message: `task boundary check failed: ${errorMsg}` };
             } else {
-              const classification = checkTaskBoundaries(changedFiles, manifestResult.manifest);
+              const scopeContractEnforcement = input.scopeContractEnforcement ?? true;
+              let classification;
+
+              if (scopeContractEnforcement) {
+                classification = checkTaskBoundaries(changedFiles, manifestResult.manifest);
+              } else {
+                const { writableSet, referenceSet } = getManifestBoundaries(
+                  manifestResult.manifest,
+                );
+                classification = classifyUndeclaredFiles(
+                  changedFiles,
+                  writableSet,
+                  referenceSet,
+                  new Set(),
+                );
+              }
+
               const violatingFiles = [
                 ...classification.modifiedReferenceFiles,
                 ...classification.undeclaredFiles,
