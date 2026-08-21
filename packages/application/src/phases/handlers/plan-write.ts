@@ -178,6 +178,60 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
       };
     }
 
+    try {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'plan-write',
+        relativePath: 'plan.md',
+        contents: planMd,
+      });
+      emit('artifact.created', 'info', 'wrote plan.md', { path: 'plan.md' });
+    } catch (e) {
+      const message = `Failed to write plan.md artifact: ${e instanceof Error ? e.message : String(e)}`;
+      emit('plan-write.failed', 'error', message);
+      return {
+        outcome: 'failed',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'unknown',
+          message,
+          canRetry: false,
+          suggestedAction: 'Check disk space or artifact store integrity.',
+          artifacts: [],
+          detectedAt: ctx.now(),
+        },
+      };
+    }
+
+    if (manifestJson !== undefined) {
+      try {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: 'plan-write',
+          relativePath: 'task-manifest.json',
+          contents: manifestJson,
+        });
+        emit('artifact.created', 'info', 'wrote task-manifest.json', { path: 'task-manifest.json' });
+      } catch (e) {
+        const message = `Failed to write task-manifest.json artifact: ${e instanceof Error ? e.message : String(e)}`;
+        emit('plan-write.failed', 'error', message);
+        return {
+          outcome: 'failed',
+          failure: {
+            runUuid: ctx.runUuid,
+            phase: this.phase,
+            kind: 'unknown',
+            message,
+            canRetry: false,
+            suggestedAction: 'Check disk space or artifact store integrity.',
+            artifacts: [],
+            detectedAt: ctx.now(),
+          },
+        };
+      }
+    }
+
     if (completedRef.event) {
       ctx.events.publish(completedRef.event.runUuid, completedRef.event.event);
     } else {
