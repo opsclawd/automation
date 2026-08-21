@@ -2815,7 +2815,11 @@ export class ReviewFixLoop {
         committedFiles,
         writableSet,
         referenceSet,
-        new Set(), // legacy path did not support exemptFiles here
+        // ReviewFixLoopInput has no exempt-files concept in either enforcement
+        // path (V2's checkTaskBoundaries call above also passes none) --
+        // unlike CompoundHandlerOpts.exemptUndeclaredFiles, this was never a
+        // feature of this loop, so there's nothing to thread through here.
+        new Set(),
       );
     }
 

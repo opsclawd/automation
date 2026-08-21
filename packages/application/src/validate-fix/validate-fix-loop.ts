@@ -155,6 +155,10 @@ export class ValidateFixLoop {
                   changedFiles,
                   writableSet,
                   referenceSet,
+                  // ValidateFixLoopInput has no exempt-files concept in either
+                  // enforcement path (V2's checkTaskBoundaries call above also
+                  // passes none) -- unlike CompoundHandlerOpts.exemptUndeclaredFiles,
+                  // this was never a feature of this loop.
                   new Set(),
                 );
               }
