@@ -16,7 +16,9 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Same as index.ts: sibling barrel test, also owned by downstream Task 3 per the verified solution doc. Correctly caught as premature_implementation.",
-    "taskManifest": null
+    "taskManifest": null,
+    "taskManifestSource": "unrecoverable",
+    "taskManifestNote": "Checked comfy-content-orchestrator PR #75 (the closing PR): no barrel test file appears in any of its commits at all -- the successful rebuild didn't produce this file, so downstream ownership can't be confirmed the way index.ts's (Task 3, fd8c8c3b) can."
   },
   {
     "runId": "09f73f6f-eede-42fe-aaf4-694abc8ab686",
@@ -35,7 +37,40 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Corrected after review: verified solution doc docs/solutions/orchestrator/implement-agent-barrel-export-scope-creep-2026-08-20.md confirms Task 3 ('wiring/exports') already declared this file as its own expected_files deliverable. This is the canonical premature_implementation case #975 exists to handle -- correctly caught, not a classifier false positive.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 2,
+          "title": "Implement storage provisioner core logic and lifecycle eligibility evaluator in @cco/infrastructure",
+          "expected_files": [
+            "packages/infrastructure/src/storage/provisioner.ts",
+            "packages/infrastructure/src/storage/provisioner.test.ts"
+          ]
+        },
+        {
+          "n": 3,
+          "title": "Implement storage provisioning CLI, package scripts wiring, and exports",
+          "expected_files": [
+            "package.json",
+            "packages/infrastructure/package.json",
+            "packages/infrastructure/src/index.ts",
+            "packages/infrastructure/src/storage/provision.ts",
+            "packages/infrastructure/src/storage/provision.test.ts"
+          ]
+        },
+        {
+          "n": 4,
+          "title": "Implement storage provisioning MinIO integration tests",
+          "expected_files": [
+            "packages/infrastructure/src/storage/provision.integration.test.ts",
+            "packages/infrastructure/src/storage/provisioner.ts"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "comfy-content-orchestrator#75",
+    "taskManifestNote": "Task 2's scope reconstructed to match the failed run's own violation (pathSource=undeclared_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (comfy-content-orchestrator#75)."
   },
   {
     "runId": "09f73f6f-eede-42fe-aaf4-694abc8ab686",
@@ -54,7 +89,19 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Modified as a reference_files entry by a later task (MinIO integration tests) that should have owned it via expected_files instead -- a manifest-authoring defect, not something the runtime scope model should permit.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 4,
+          "title": "Implement storage provisioning MinIO integration tests",
+          "expected_files": ["packages/infrastructure/src/storage/provision.integration.test.ts"],
+          "reference_files": ["packages/infrastructure/src/storage/provisioner.ts"]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "comfy-content-orchestrator#75",
+    "taskManifestNote": "Task 4's scope reconstructed to match the failed run's own violation (pathSource=reference_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (comfy-content-orchestrator#75)."
   },
   {
     "runId": "5dc78eb1-157a-4118-8894-631df496d448",
@@ -73,7 +120,9 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": null,
+    "taskManifestSource": "unrecoverable",
+    "taskManifestNote": "Checked automation PR #949 (the closing PR): neither this file nor implement-scratch-files.test.ts appears in any of its commits -- the successful rebuild restructured this work under different filenames entirely."
   },
   {
     "runId": "5dc78eb1-157a-4118-8894-631df496d448",
@@ -92,7 +141,9 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": null,
+    "taskManifestSource": "unrecoverable",
+    "taskManifestNote": "Same as implement-auto-commit-declared-files.test.ts: file does not appear in PR #949's commit history under this name."
   },
   {
     "runId": "5dc78eb1-157a-4118-8894-631df496d448",
@@ -111,7 +162,9 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": null,
+    "taskManifestSource": "unrecoverable",
+    "taskManifestNote": "Checked automation PR #949 (the closing PR): neither this file nor implement-scratch-files.test.ts appears in any of its commits -- the successful rebuild restructured this work under different filenames entirely."
   },
   {
     "runId": "5dc78eb1-157a-4118-8894-631df496d448",
@@ -130,7 +183,9 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": null,
+    "taskManifestSource": "unrecoverable",
+    "taskManifestNote": "Same as implement-auto-commit-declared-files.test.ts: file does not appear in PR #949's commit history under this name."
   },
   {
     "runId": "891a6fec-47b3-46b4-8983-cc954eabda6d",
@@ -149,7 +204,9 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": null,
+    "taskManifestSource": "unrecoverable",
+    "taskManifestNote": "Checked automation PR #966 (the closing PR): this file is touched at commit e175ec27, which isn't Task-prefixed and doesn't clearly map to a single task number."
   },
   {
     "runId": "891a6fec-47b3-46b4-8983-cc954eabda6d",
@@ -168,7 +225,32 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 3,
+          "title": "Add failing regression tests for ReviewFixLoop protected file detection and restoration",
+          "expected_files": [
+            "packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts"
+          ],
+          "reference_files": ["packages/application/src/review-fix/review-fix-loop.ts"]
+        },
+        {
+          "n": 4,
+          "title": "Implement protected file guard in ReviewFixLoop and wire in composeRoot",
+          "expected_files": [
+            "apps/api/src/__tests__/compose-boundary-wiring.test.ts",
+            "apps/api/src/compose.ts",
+            "packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts",
+            "packages/application/src/review-fix/review-fix-loop.ts",
+            "packages/application/src/review-fix/types.ts"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "automation#966",
+    "taskManifestNote": "Task 3's scope reconstructed to match the failed run's own violation (pathSource=reference_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (automation#966)."
   },
   {
     "runId": "891a6fec-47b3-46b4-8983-cc954eabda6d",
@@ -187,7 +269,32 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 3,
+          "title": "Add failing regression tests for ReviewFixLoop protected file detection and restoration",
+          "expected_files": [
+            "packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts"
+          ],
+          "reference_files": ["packages/application/src/review-fix/types.ts"]
+        },
+        {
+          "n": 4,
+          "title": "Implement protected file guard in ReviewFixLoop and wire in composeRoot",
+          "expected_files": [
+            "apps/api/src/__tests__/compose-boundary-wiring.test.ts",
+            "apps/api/src/compose.ts",
+            "packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts",
+            "packages/application/src/review-fix/review-fix-loop.ts",
+            "packages/application/src/review-fix/types.ts"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "automation#966",
+    "taskManifestNote": "Task 3's scope reconstructed to match the failed run's own violation (pathSource=reference_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (automation#966)."
   },
   {
     "runId": "891a6fec-47b3-46b4-8983-cc954eabda6d",
@@ -206,7 +313,26 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 4,
+          "title": "Implement protected file guard in ReviewFixLoop and wire in composeRoot",
+          "expected_files": [
+            "apps/api/src/__tests__/compose-boundary-wiring.test.ts",
+            "apps/api/src/compose.ts",
+            "packages/application/src/review-fix/review-fix-loop.ts",
+            "packages/application/src/review-fix/types.ts"
+          ],
+          "reference_files": [
+            "packages/application/src/review-fix/__tests__/review-fix-protected-files.test.ts"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "automation#966",
+    "taskManifestNote": "Task 4's scope reconstructed to match the failed run's own violation (pathSource=reference_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (automation#966)."
   },
   {
     "runId": "8ec8d952-21cc-423a-b8bf-025db1e2c7b2",
@@ -225,7 +351,39 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 3,
+          "title": "Implementation of Compound Phase Task Boundary Enforcement",
+          "expected_files": ["packages/application/src/phases/handlers/compound.ts"],
+          "reference_files": [
+            "packages/application/src/phases/handlers/__tests__/compound-boundary.test.ts"
+          ]
+        },
+        {
+          "n": 5,
+          "title": "Implementation of ValidateFixLoop Task Boundary Enforcement",
+          "expected_files": [
+            "apps/api/src/compose.ts",
+            "apps/cli/src/__tests__/run-fix-validate-integration.test.ts",
+            "packages/application/src/validate-fix/__tests__/validate-fix-boundary.test.ts",
+            "packages/application/src/validate-fix/validate-fix-loop.ts"
+          ]
+        },
+        {
+          "n": 6,
+          "title": "Failing Regression Tests for ReviewFixLoop (and whole-pr-fix-review) Task Boundary Enforcement",
+          "expected_files": [
+            "packages/application/src/review-fix/__tests__/review-fix-boundary.test.ts",
+            "packages/application/src/review-fix/review-fix-loop.ts"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "automation#940",
+    "taskManifestNote": "Task 3's scope reconstructed to match the failed run's own violation (pathSource=reference_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (automation#940)."
   },
   {
     "runId": "8ec8d952-21cc-423a-b8bf-025db1e2c7b2",
@@ -244,7 +402,39 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 3,
+          "title": "Implementation of Compound Phase Task Boundary Enforcement",
+          "expected_files": ["packages/application/src/phases/handlers/compound.ts"],
+          "reference_files": [
+            "packages/application/src/phases/handlers/__tests__/compound-boundary.test.ts"
+          ]
+        },
+        {
+          "n": 5,
+          "title": "Implementation of ValidateFixLoop Task Boundary Enforcement",
+          "expected_files": [
+            "apps/api/src/compose.ts",
+            "apps/cli/src/__tests__/run-fix-validate-integration.test.ts",
+            "packages/application/src/validate-fix/__tests__/validate-fix-boundary.test.ts",
+            "packages/application/src/validate-fix/validate-fix-loop.ts"
+          ]
+        },
+        {
+          "n": 6,
+          "title": "Failing Regression Tests for ReviewFixLoop (and whole-pr-fix-review) Task Boundary Enforcement",
+          "expected_files": [
+            "packages/application/src/review-fix/__tests__/review-fix-boundary.test.ts",
+            "packages/application/src/review-fix/review-fix-loop.ts"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "automation#940",
+    "taskManifestNote": "Task 3's scope reconstructed to match the failed run's own violation (pathSource=reference_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (automation#940)."
   },
   {
     "runId": "8ec8d952-21cc-423a-b8bf-025db1e2c7b2",
@@ -263,7 +453,33 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 5,
+          "title": "Implementation of ValidateFixLoop Task Boundary Enforcement",
+          "expected_files": [
+            "apps/api/src/compose.ts",
+            "apps/cli/src/__tests__/run-fix-validate-integration.test.ts",
+            "packages/application/src/validate-fix/validate-fix-loop.ts"
+          ],
+          "reference_files": [
+            "packages/application/src/validate-fix/__tests__/validate-fix-boundary.test.ts"
+          ]
+        },
+        {
+          "n": 6,
+          "title": "Failing Regression Tests for ReviewFixLoop (and whole-pr-fix-review) Task Boundary Enforcement",
+          "expected_files": [
+            "packages/application/src/review-fix/__tests__/review-fix-boundary.test.ts",
+            "packages/application/src/review-fix/review-fix-loop.ts"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "automation#940",
+    "taskManifestNote": "Task 5's scope reconstructed to match the failed run's own violation (pathSource=reference_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (automation#940)."
   },
   {
     "runId": "8ec8d952-21cc-423a-b8bf-025db1e2c7b2",
@@ -282,7 +498,30 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 5,
+          "title": "Implementation of ValidateFixLoop Task Boundary Enforcement",
+          "expected_files": [
+            "apps/cli/src/__tests__/run-fix-validate-integration.test.ts",
+            "packages/application/src/validate-fix/__tests__/validate-fix-boundary.test.ts",
+            "packages/application/src/validate-fix/validate-fix-loop.ts"
+          ]
+        },
+        {
+          "n": 6,
+          "title": "Failing Regression Tests for ReviewFixLoop (and whole-pr-fix-review) Task Boundary Enforcement",
+          "expected_files": [
+            "packages/application/src/review-fix/__tests__/review-fix-boundary.test.ts",
+            "packages/application/src/review-fix/review-fix-loop.ts"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "automation#940",
+    "taskManifestNote": "Task 5's scope reconstructed to match the failed run's own violation (pathSource=undeclared_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (automation#940)."
   },
   {
     "runId": "8ec8d952-21cc-423a-b8bf-025db1e2c7b2",
@@ -301,7 +540,30 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 5,
+          "title": "Implementation of ValidateFixLoop Task Boundary Enforcement",
+          "expected_files": [
+            "apps/api/src/compose.ts",
+            "packages/application/src/validate-fix/__tests__/validate-fix-boundary.test.ts",
+            "packages/application/src/validate-fix/validate-fix-loop.ts"
+          ]
+        },
+        {
+          "n": 6,
+          "title": "Failing Regression Tests for ReviewFixLoop (and whole-pr-fix-review) Task Boundary Enforcement",
+          "expected_files": [
+            "packages/application/src/review-fix/__tests__/review-fix-boundary.test.ts",
+            "packages/application/src/review-fix/review-fix-loop.ts"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "automation#940",
+    "taskManifestNote": "Task 5's scope reconstructed to match the failed run's own violation (pathSource=undeclared_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (automation#940)."
   },
   {
     "runId": "8ec8d952-21cc-423a-b8bf-025db1e2c7b2",
@@ -320,7 +582,21 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Cross-task ownership conflict matching #975's verified evidence (runs 8ec8d952/891a6fec): an earlier task touched a file a later task's expected_files/reference_files declared. Correctly caught -- expected to land in referenceFiles or prematureImplementation, not permittedPaths.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 6,
+          "title": "Failing Regression Tests for ReviewFixLoop (and whole-pr-fix-review) Task Boundary Enforcement",
+          "expected_files": [
+            "packages/application/src/review-fix/__tests__/review-fix-boundary.test.ts"
+          ],
+          "reference_files": ["packages/application/src/review-fix/review-fix-loop.ts"]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "automation#940",
+    "taskManifestNote": "Task 6's scope reconstructed to match the failed run's own violation (pathSource=reference_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (automation#940)."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -339,7 +615,11 @@
     "truncatedCount": 25,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -358,7 +638,11 @@
     "truncatedCount": 25,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -377,7 +661,11 @@
     "truncatedCount": 25,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -396,7 +684,11 @@
     "truncatedCount": 25,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -415,7 +707,11 @@
     "truncatedCount": 25,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -434,7 +730,11 @@
     "truncatedCount": 25,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -453,7 +753,11 @@
     "truncatedCount": 25,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -472,7 +776,11 @@
     "truncatedCount": 25,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -491,7 +799,11 @@
     "truncatedCount": 25,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -510,7 +822,11 @@
     "truncatedCount": 25,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -529,7 +845,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -548,7 +868,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -567,7 +891,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -586,7 +914,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -605,7 +937,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -624,7 +960,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -643,7 +983,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -662,7 +1006,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -681,7 +1029,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -700,7 +1052,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -719,7 +1075,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -738,7 +1098,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -757,7 +1121,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -776,7 +1144,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -795,7 +1167,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -814,7 +1190,26 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 6,
+          "title": "Implement Next.js Layout, Health Proof Page, and Verify Next.js Build",
+          "expected_files": [
+            "apps/web/next-env.d.ts",
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.test.ts",
+            "apps/web/src/app/page.tsx",
+            "apps/web/tsconfig.json",
+            "eslint.config.js"
+          ],
+          "reference_files": ["apps/web/src/api/client.ts"]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "comfy-content-orchestrator#76",
+    "taskManifestNote": "Task 6's scope reconstructed to match the failed run's own violation (pathSource=reference_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (comfy-content-orchestrator#76)."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -831,9 +1226,26 @@
     "pathSource": "undeclared_files",
     "recoverable": true,
     "truncatedCount": null,
-    "label": "true_positive",
-    "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "label": "false_positive",
+    "rationale": "Corrected after manifest reconstruction and running the actual classifier: Task 6's own other declared files (apps/web/next-env.d.ts) derive a permitted_areas of 'apps/web' (tier 6's directory-prefix rule). tsconfig.json is a tracked sibling within that same directory -- classifyTaskChanges genuinely returns permittedPaths for it, not drift. Originally hand-labeled true_positive before reconstruction existed to check against.",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 6,
+          "title": "Implement Next.js Layout, Health Proof Page, and Verify Next.js Build",
+          "expected_files": [
+            "apps/web/next-env.d.ts",
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.test.ts",
+            "apps/web/src/app/page.tsx",
+            "eslint.config.js"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "comfy-content-orchestrator#76",
+    "taskManifestNote": "Task 6's scope reconstructed to match the failed run's own violation (pathSource=undeclared_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (comfy-content-orchestrator#76)."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -852,7 +1264,24 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 6,
+          "title": "Implement Next.js Layout, Health Proof Page, and Verify Next.js Build",
+          "expected_files": [
+            "apps/web/next-env.d.ts",
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.test.ts",
+            "apps/web/src/app/page.tsx",
+            "apps/web/tsconfig.json"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "comfy-content-orchestrator#76",
+    "taskManifestNote": "Task 6's scope reconstructed to match the failed run's own violation (pathSource=undeclared_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (comfy-content-orchestrator#76)."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -869,9 +1298,26 @@
     "pathSource": "undeclared_files",
     "recoverable": true,
     "truncatedCount": null,
-    "label": "true_positive",
-    "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "label": "false_positive",
+    "rationale": "Corrected after manifest reconstruction and running the actual classifier: Task 6's own other declared files (apps/web/next-env.d.ts) derive a permitted_areas of 'apps/web' (tier 6's directory-prefix rule). tsconfig.json is a tracked sibling within that same directory -- classifyTaskChanges genuinely returns permittedPaths for it, not drift. Originally hand-labeled true_positive before reconstruction existed to check against.",
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 6,
+          "title": "Implement Next.js Layout, Health Proof Page, and Verify Next.js Build",
+          "expected_files": [
+            "apps/web/next-env.d.ts",
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.test.ts",
+            "apps/web/src/app/page.tsx",
+            "eslint.config.js"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "comfy-content-orchestrator#76",
+    "taskManifestNote": "Task 6's scope reconstructed to match the failed run's own violation (pathSource=undeclared_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (comfy-content-orchestrator#76)."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -890,7 +1336,24 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": [
+        {
+          "n": 6,
+          "title": "Implement Next.js Layout, Health Proof Page, and Verify Next.js Build",
+          "expected_files": [
+            "apps/web/next-env.d.ts",
+            "apps/web/src/app/layout.tsx",
+            "apps/web/src/app/page.test.ts",
+            "apps/web/src/app/page.tsx",
+            "apps/web/tsconfig.json"
+          ]
+        }
+      ]
+    },
+    "taskManifestSource": "reconstructed_from_merged_pr",
+    "taskManifestSourcePr": "comfy-content-orchestrator#76",
+    "taskManifestNote": "Task 6's scope reconstructed to match the failed run's own violation (pathSource=undeclared_files) -- expected_files excludes the violating path since the violation proves it wasn't declared there; downstream tasks' expected_files come from the successful rebuild (comfy-content-orchestrator#76)."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -909,7 +1372,11 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   },
   {
     "runId": "e0c4dd03-da65-4a26-97dd-5a2a6e52520c",
@@ -928,6 +1395,10 @@
     "truncatedCount": null,
     "label": "true_positive",
     "rationale": "Untracked file left dirty by plan-review's own verification probes/build; under permitted_areas tier 8 an untracked create is still drift regardless of directory -- the fix is #977's mechanical worktree purge before implement, not scope permission. Correctly caught.",
-    "taskManifest": null
+    "taskManifest": {
+      "tasks": []
+    },
+    "taskManifestSource": "not_applicable_untracked",
+    "taskManifestNote": "Untracked file, never committed. Classification is independent of declared scope -- an untracked create is drift under any permitted_areas content (tier 8: \"tracked only\"). No manifest reconstruction needed."
   }
 ]
