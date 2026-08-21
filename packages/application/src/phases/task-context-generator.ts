@@ -125,19 +125,45 @@ export class TaskContextGenerator {
     // 6. Repository Targets (Files & Symbols)
     if (input.manifest.version === 2) {
       const t2 = task as TaskManifestEntryV2;
+      const expectedFiles =
+        t2.expected_files && t2.expected_files.length > 0
+          ? t2.expected_files
+          : t2.files && t2.files.length > 0
+            ? t2.files
+            : undefined;
+
+      const hasExpectedFiles = Boolean(expectedFiles && expectedFiles.length > 0);
+      const hasPermittedAreas = Boolean(t2.permitted_areas && t2.permitted_areas.length > 0);
+      const hasMayExtend = Boolean(t2.may_extend && t2.may_extend.length > 0);
+      const hasNonGoals = Boolean(t2.non_goals && t2.non_goals.length > 0);
+      const hasReferenceFiles = Boolean(t2.reference_files && t2.reference_files.length > 0);
+      const hasRelevantSymbols = Boolean(t2.relevant_symbols && t2.relevant_symbols.length > 0);
+
       if (
-        (t2.expected_files && t2.expected_files.length > 0) ||
-        (t2.reference_files && t2.reference_files.length > 0) ||
-        (t2.relevant_symbols && t2.relevant_symbols.length > 0)
+        hasExpectedFiles ||
+        hasPermittedAreas ||
+        hasMayExtend ||
+        hasNonGoals ||
+        hasReferenceFiles ||
+        hasRelevantSymbols
       ) {
         let targetContent = '## Repository Targets\n\n';
-        if (t2.expected_files && t2.expected_files.length > 0) {
-          targetContent += `### Expected Files\n${t2.expected_files.map((f) => `- ${f}`).join('\n')}\n\n`;
+        if (hasExpectedFiles && expectedFiles) {
+          targetContent += `### Expected Files (must modify and commit)\n${expectedFiles.map((f) => `- ${f}`).join('\n')}\n\n`;
         }
-        if (t2.reference_files && t2.reference_files.length > 0) {
-          targetContent += `### Reference Files\n${t2.reference_files.map((f) => `- ${f}`).join('\n')}\n\n`;
+        if (hasPermittedAreas && t2.permitted_areas) {
+          targetContent += `### Permitted Areas (may modify tracked files)\n${t2.permitted_areas.map((f) => `- ${f}`).join('\n')}\n\n`;
         }
-        if (t2.relevant_symbols && t2.relevant_symbols.length > 0) {
+        if (hasMayExtend && t2.may_extend) {
+          targetContent += `### May Extend (may modify exact files)\n${t2.may_extend.map((f) => `- ${f}`).join('\n')}\n\n`;
+        }
+        if (hasNonGoals && t2.non_goals) {
+          targetContent += `### Non-Goals (must not modify)\n${t2.non_goals.map((f) => `- ${f}`).join('\n')}\n\n`;
+        }
+        if (hasReferenceFiles && t2.reference_files) {
+          targetContent += `### Reference Files (read-only)\n${t2.reference_files.map((f) => `- ${f}`).join('\n')}\n\n`;
+        }
+        if (hasRelevantSymbols && t2.relevant_symbols) {
           targetContent += `### Relevant Symbols\n${t2.relevant_symbols.map((s) => `- ${s}`).join('\n')}\n\n`;
         }
         sections.push(targetContent);

@@ -47,6 +47,9 @@ Write `task-manifest.json` as a JSON file with this exact structure:
       "n": 1,
       "title": "Short task title",
       "expected_files": ["path/to/file1", "path/to/file2"],
+      "permitted_areas": ["path/to/dir"],
+      "may_extend": ["path/to/optional-edit.ts"],
+      "non_goals": ["path/to/do-not-touch"],
       "reference_files": ["path/to/read-only.ts"],
       "validation_commands": ["command to verify", ["pnpm", "exec", "eslint", "apps/app/app/position/[id].tsx"]],
       "signature_changes": [
@@ -75,8 +78,11 @@ Fields:
 - `task_count`: must equal `tasks.length`
 - `tasks[].n`: sequential 1-indexed task number
 - `tasks[].title`: one-line summary matching the prose task header
-- `tasks[].expected_files`: files the implementer must modify and commit (optional but encouraged). Any file actually modified during the task MUST be listed in `expected_files`; `reference_files` is not an exemption for planned edits.
-- `tasks[].reference_files`: read-only files the task reads or consults for context, but does not modify or commit (optional). Traceability-only declarations marked `change: "not_modified"` belong in `reference_files`. Inspected consumers of `breaking: false` changes that structurally require no update (for example, a pass-through adapter using an imported widened type) also belong in `reference_files` when inspected for blast-radius coverage. `reference_files` does not bypass review for a file that actually changes.
+- `tasks[].expected_files`: files the implementer must modify and commit (optional but encouraged). Keep `expected_files` minimal and obligatory: each file listed here is a required deliverable that must appear in the task's committed diff before completion. Root-level expected files (e.g. `package.json` or `README.md`) grant permission only to that exact file and do NOT derive repository-root area permissions.
+- `tasks[].permitted_areas`: repository-relative directory roots for bounded incidental tracked edits or for explicitly write-capable empty tasks (optional, default `[]`). Authorizes editing existing tracked files within the specified directory roots; untracked file creations under permitted areas are considered drift and will be rejected. Never declare the repository root `""` or `.` as a permitted area.
+- `tasks[].may_extend`: exact repository-relative files for known optional integration touchpoints that may be edited if needed, but are not required deliverables (optional, default `[]`). Cannot duplicate files already listed in `expected_files`.
+- `tasks[].non_goals`: exact paths or directory roots that the task must not modify (optional, default `[]`). Excludes the path and any descendants from modifications; overrides permissions. Must not overlap with writable exact paths or permitted areas.
+- `tasks[].reference_files`: read-only files the task reads or consults for context, but does not modify or commit (optional, default `[]`). Must remain strictly read-only and cannot overlap with writable declarations (`expected_files`, `may_extend`). Traceability-only declarations marked `change: "not_modified"` belong in `reference_files`. Inspected consumers of `breaking: false` changes that structurally require no update (for example, a pass-through adapter using an imported widened type) also belong in `reference_files` when inspected for blast-radius coverage.
 - `tasks[].validation_commands`: commands to verify task completion (optional but encouraged). Entries may be shell command strings (e.g. `"pnpm lint"`) or argv arrays of non-empty strings (e.g. `["pnpm", "exec", "eslint", "apps/app/app/position/[id].tsx"]`) to execute without shell expansion when paths contain brackets or special characters.
 - `tasks[].signature_changes`: REQUIRED when the task changes the surface of an exported API (parameter-list, return-type, overload-set, required-generic parameter, or required-member-shape). Each entry names a repository-relative declaration file and the exact symbol being changed. Declaration files MUST be in expected_files (or legacy files), or reference_files (when change is "not_modified"). This field is nullish (optional) when no exported-API signatures change. Each `signature_changes` entry supports the following fields:
   - `declaration_file` (required): repository-relative path to the declaration file
@@ -86,6 +92,14 @@ Fields:
   - `note` (optional): explanatory text describing why this declaration is listed
   - Unknown fields in a `signature_changes` entry are rejected.
 - `tasks[].invariants`: behavioral invariants to be implemented as tests first (REQUIRED for stateful/logic-heavy tasks)
+
+Scope Rules & Planning Guidance:
+
+- Distinguish obligatory deliverables from bounded permissions: Keep `expected_files` minimal and strictly obligatory. Use `may_extend` for known optional integration files and `permitted_areas` for bounded incidental tracked edits.
+- Empty tasks require explicit write permissions: A task with no `expected_files` (such as a refactor or test-verification task) is read-only by default. If it needs to make writes, it must explicitly declare `permitted_areas` or `may_extend`.
+- Root-level expected files grant exact-only permission: A root file never derives repository-root area permission, and planners must never derive or declare repository-root write access.
+- Co-locate additive feature tests: For purely additive feature work with no pre-existing bug to reproduce, co-locate test files with the implementing task rather than creating standalone failing test tasks. (Preserve test-first commit order for bug and regression reproductions).
+- No raw directory sweeps: Auto-commit stages only specific classifier-approved paths, never raw directory expansions.
 
 The manifest is the machine-readable source of truth for task boundaries. `plan.md` remains the human-readable document with full prose.
 

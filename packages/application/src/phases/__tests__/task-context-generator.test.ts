@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { TaskContextGenerator } from '../task-context-generator.js';
-import { TaskManifest, TaskManifestEntry } from '../results/schemas/task-manifest.js';
+import { TaskManifest, TaskManifestEntry } from '../../results/schemas/task-manifest.js';
 
 describe('TaskContextGenerator', () => {
   const generator = new TaskContextGenerator();
@@ -83,8 +83,8 @@ Something else.
     expect(result.content).toContain('### Data Model\n\nDefinition of Data Model.');
     expect(result.content).not.toContain('Other Section');
     expect(result.content).toContain('### Task 1 Summary\n\nImplemented the base class.');
-    expect(result.content).toContain('### Expected Files\n- src/index.ts');
-    expect(result.content).toContain('### Reference Files\n- src/read-only.ts');
+    expect(result.content).toContain('### Expected Files (must modify and commit)\n- src/index.ts');
+    expect(result.content).toContain('### Reference Files (read-only)\n- src/read-only.ts');
     expect(result.content).toContain('### Relevant Symbols\n- MyClass');
     expect(result.content).toContain('## Validation Commands\n\n```bash\nnpm test\n```');
     expect(result.content).toContain(
@@ -222,8 +222,10 @@ Something else.
       branchName: 'branch',
     });
 
-    expect(result.content).toContain('### Expected Files\n- src/change.ts');
-    expect(result.content).toContain('### Reference Files\n- src/read-only.ts');
+    expect(result.content).toContain(
+      '### Expected Files (must modify and commit)\n- src/change.ts',
+    );
+    expect(result.content).toContain('### Reference Files (read-only)\n- src/read-only.ts');
   });
 
   it('renders repository targets when only reference_files are declared', () => {
@@ -249,7 +251,102 @@ Something else.
     });
 
     expect(result.content).toContain('## Repository Targets');
-    expect(result.content).toContain('### Reference Files\n- src/read-only.ts');
+    expect(result.content).toContain('### Reference Files (read-only)\n- src/read-only.ts');
     expect(result.content).not.toContain('### Expected Files');
+  });
+
+  it('renders expected permitted may-extend non-goal and reference sections with must-versus-may language', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Full Scope Task',
+          expected_files: ['src/deliverable.ts'],
+          permitted_areas: ['src/components'],
+          may_extend: ['src/integration.ts'],
+          non_goals: ['src/legacy'],
+          reference_files: ['src/types.ts'],
+        } as TaskManifestEntry,
+        {
+          n: 2,
+          title: 'Permission-Only Task',
+          permitted_areas: ['src/tests'],
+        } as TaskManifestEntry,
+      ],
+    };
+
+    const result1 = generator.generate({
+      task: manifest.tasks[0]!,
+      manifest,
+      planMd: '## Task 1: Full Scope Task\nBody 1',
+      workspaceConstraints: '',
+      cwd: '/app',
+      repoId: 'repo',
+      branchName: 'branch',
+    });
+
+    expect(result1.content).toContain('## Repository Targets');
+    expect(result1.content).toContain(
+      '### Expected Files (must modify and commit)\n- src/deliverable.ts',
+    );
+    expect(result1.content).toContain(
+      '### Permitted Areas (may modify tracked files)\n- src/components',
+    );
+    expect(result1.content).toContain(
+      '### May Extend (may modify exact files)\n- src/integration.ts',
+    );
+    expect(result1.content).toContain('### Non-Goals (must not modify)\n- src/legacy');
+    expect(result1.content).toContain('### Reference Files (read-only)\n- src/types.ts');
+
+    const result2 = generator.generate({
+      task: manifest.tasks[1]!,
+      manifest,
+      planMd: '## Task 2: Permission-Only Task\nBody 2',
+      workspaceConstraints: '',
+      cwd: '/app',
+      repoId: 'repo',
+      branchName: 'branch',
+    });
+
+    expect(result2.content).toContain('## Repository Targets');
+    expect(result2.content).toContain(
+      '### Permitted Areas (may modify tracked files)\n- src/tests',
+    );
+    expect(result2.content).not.toContain('### Expected Files');
+    expect(result2.content).not.toContain('### May Extend');
+    expect(result2.content).not.toContain('### Non-Goals');
+    expect(result2.content).not.toContain('### Reference Files');
+  });
+
+  it('task context renders authored V2 declarations without serializing derived areas', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Authored Declarations Task',
+          expected_files: ['packages/app/src/index.ts'],
+        } as TaskManifestEntry,
+      ],
+    };
+
+    const result = generator.generate({
+      task: manifest.tasks[0]!,
+      manifest,
+      planMd: '## Task 1: Authored Declarations Task\nBody',
+      workspaceConstraints: '',
+      cwd: '/app',
+      repoId: 'repo',
+      branchName: 'branch',
+    });
+
+    expect(result.content).toContain(
+      '### Expected Files (must modify and commit)\n- packages/app/src/index.ts',
+    );
+    expect(result.content).not.toContain('### Permitted Areas');
+    expect(result.content).not.toContain('packages/app/src\n');
   });
 });
