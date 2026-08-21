@@ -130,3 +130,28 @@ describe('serve config', () => {
     ).toThrow();
   });
 });
+
+describe('features.scopeContractEnforcement', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: {
+      skip: [],
+      reviewFix: { maxIterations: 5 },
+      implement: { maxIterations: 1 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
+
+  it('defaults to true when omitted', () => {
+    const parsed = orchestratorConfigSchema.parse(baseConfig);
+    expect(parsed.features.scopeContractEnforcement).toBe(true);
+  });
+
+  it('accepts false to disable', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      features: { scopeContractEnforcement: false },
+    });
+    expect(parsed.features.scopeContractEnforcement).toBe(false);
+  });
+});
