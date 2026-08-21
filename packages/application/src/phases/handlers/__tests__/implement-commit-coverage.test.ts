@@ -528,7 +528,7 @@ describe('ImplementHandler Commit Coverage', () => {
           n: 1,
           title: 'Task 1: validation passes but files missing',
           expected_files: ['src/a.ts', 'src/b.ts'],
-          validation_commands: ['pnpm vitest run src/test.spec.ts'],
+          validation_commands: ['git diff --check -- src/test.spec.ts'],
         },
       ],
     };
@@ -551,7 +551,7 @@ describe('ImplementHandler Commit Coverage', () => {
 
     validationPort.result = [
       {
-        command: 'pnpm vitest run src/test.spec.ts',
+        command: 'git diff --check -- src/test.spec.ts',
         exitCode: 0,
         durationMs: 100,
         stdout: '',
@@ -603,7 +603,7 @@ describe('ImplementHandler Commit Coverage', () => {
           n: 1,
           title: 'Task 1: validation fails',
           expected_files: ['src/a.ts', 'src/b.ts'],
-          validation_commands: ['pnpm vitest run src/test.spec.ts'],
+          validation_commands: ['git diff --check -- src/test.spec.ts'],
         },
       ],
     };
@@ -626,7 +626,7 @@ describe('ImplementHandler Commit Coverage', () => {
 
     validationPort.result = [
       {
-        command: 'pnpm vitest run src/test.spec.ts',
+        command: 'git diff --check -- src/test.spec.ts',
         exitCode: 1,
         durationMs: 100,
         stdout: '',
@@ -674,7 +674,7 @@ describe('ImplementHandler Commit Coverage', () => {
           n: 1,
           title: 'Task 1: typecheck fails',
           expected_files: ['src/a.ts', 'src/b.ts'],
-          validation_commands: ['pnpm vitest run src/test.spec.ts'],
+          validation_commands: ['git diff --check -- src/test.spec.ts'],
         },
       ],
     };
@@ -697,7 +697,7 @@ describe('ImplementHandler Commit Coverage', () => {
 
     validationPort.result = [
       {
-        command: 'pnpm vitest run src/test.spec.ts',
+        command: 'git diff --check -- src/test.spec.ts',
         exitCode: 0,
         durationMs: 100,
         stdout: '',

@@ -107,6 +107,16 @@ function makeLiteralVitestCommandStrict(command: ValidationCommand): ValidationC
     : makeLiteralVitestStringStrict(command);
 }
 
+export function isRedundantValidationCommand(command: ValidationCommand): boolean {
+  const str = (Array.isArray(command) ? command.join(' ') : String(command)).trim();
+  if (str.startsWith('!')) {
+    return false;
+  }
+  return /^(?:(?:pnpm|npx)(?:\s+--filter\s+\S+)?(?:\s+exec)?\s+)?(?:vitest|eslint|typecheck)(?:\s+|$)/i.test(
+    str,
+  );
+}
+
 export interface CheckTaskValidationCommandsOptions {
   worktreeRoot?: string;
   readWorktreeFile?: (path: string) => Promise<string | null> | string | null;
@@ -385,7 +395,13 @@ export async function checkTaskValidationCommandsSatisfiability(
   }
 
   for (const task of manifest.tasks) {
-    const rawCommands = buildTaskValidationCommands(manifest, task.n);
+    let rawCommands: ValidationCommand[];
+    if (manifest.version === 2) {
+      rawCommands =
+        (task as { validation_commands?: ValidationCommand[] }).validation_commands ?? [];
+    } else {
+      rawCommands = (task as { validation?: string[] }).validation ?? [];
+    }
     for (const rawCmd of rawCommands) {
       const argv = parseCommandArgv(rawCmd);
       if (argv.length === 0) continue;
@@ -537,14 +553,23 @@ export function buildTargetedTestCommand(
 ): ValidationCommand {
   const normTestPath = testPath.replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '');
   let detectedRunner: TestRunnerKind | null = null;
+  let hasGitDiffCheck = false;
 
   for (const cmd of existingCommands) {
+    const cmdStr = Array.isArray(cmd) ? cmd.join(' ') : String(cmd);
+    if (cmdStr.includes('git diff --check')) {
+      hasGitDiffCheck = true;
+    }
     const argv = parseCommandArgv(cmd);
     const runner = detectTestRunnerKind(argv);
     if (runner) {
       detectedRunner = runner;
       break;
     }
+  }
+
+  if (hasGitDiffCheck) {
+    return `git diff --check -- ${shellQuote(normTestPath)}`;
   }
 
   switch (detectedRunner) {
@@ -564,8 +589,9 @@ export function expandTaskValidationCommandsWithNewTests(
   options: ExpandTaskValidationCommandsOptions,
 ): ValidationCommand[] {
   const { changedFiles, existingCommands, worktreeRoot: _worktreeRoot, fileExists } = options;
+  const filteredExisting = existingCommands.filter((cmd) => !isRedundantValidationCommand(cmd));
   if (!changedFiles || changedFiles.length === 0) {
-    return existingCommands;
+    return filteredExisting;
   }
 
   const checkExists = (relPath: string): boolean => {
@@ -614,20 +640,22 @@ export function expandTaskValidationCommandsWithNewTests(
 
   const uncoveredTestFiles: string[] = [];
   for (const testPath of discoveredTestFiles) {
-    if (!isTestFileCoveredByCommands(testPath, existingCommands)) {
+    if (!isTestFileCoveredByCommands(testPath, filteredExisting)) {
       uncoveredTestFiles.push(testPath);
     }
   }
 
   if (uncoveredTestFiles.length === 0) {
-    return existingCommands;
+    return filteredExisting;
   }
 
   const newCommands = uncoveredTestFiles.map((testPath) =>
-    buildTargetedTestCommand(testPath, existingCommands),
+    buildTargetedTestCommand(testPath, filteredExisting),
   );
 
-  return [...existingCommands, ...newCommands];
+  return [...filteredExisting, ...newCommands].filter(
+    (cmd) => !isRedundantValidationCommand(cmd),
+  );
 }
 
 export function buildTaskValidationCommands(
@@ -656,8 +684,10 @@ export function buildTaskValidationCommands(
     migrationPaths.push(...[...unique].filter((path) => DRIZZLE_MIGRATION.test(path)));
   }
 
-  return [
+  const allCommands = [
     ...migrationPaths.map(migrationExistenceGuard),
     ...commands.map(makeLiteralVitestCommandStrict),
   ];
+
+  return allCommands.filter((cmd) => !isRedundantValidationCommand(cmd));
 }

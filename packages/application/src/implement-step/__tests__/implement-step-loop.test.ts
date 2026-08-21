@@ -4842,7 +4842,7 @@ describe('mid-task test discovery and validation command expansion', () => {
     let reviewAttempts = 0;
     let gitHead = 'sha-1';
     const initialCommands: ValidationCommand[] = [
-      'pnpm vitest run src/existing.test.ts --passWithNoTests=false',
+      'git diff --check -- src/existing.test.ts',
     ];
 
     const manifest: TaskManifest = {
