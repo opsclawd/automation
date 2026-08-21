@@ -170,14 +170,25 @@ describe('task-file-boundaries helpers', () => {
       expect(result.status).toBe('malformed');
     });
 
-    it('loads from artifactStore when available', async () => {
+    it('loads from artifactStore when available with input.runId', async () => {
       const mockRead = vi.fn().mockResolvedValue(JSON.stringify({ version: 2, tasks: [] }));
       const result = await loadManifest(
         { runId: 'run-1' },
-        { cwd: '/repo', runId: 'run-1' },
+        { cwd: '/repo', runId: 'ctx-run-id' },
         { artifactStore: { read: mockRead } },
       );
       expect(mockRead).toHaveBeenCalledWith('run-1', 'task-manifest.json');
+      expect(result).toEqual({ status: 'found', manifest: { version: 2, tasks: [] } });
+    });
+
+    it('falls back to ctx.runId when input.runId is missing', async () => {
+      const mockRead = vi.fn().mockResolvedValue(JSON.stringify({ version: 2, tasks: [] }));
+      const result = await loadManifest(
+        {},
+        { cwd: '/repo', runId: 'ctx-run-id' },
+        { artifactStore: { read: mockRead } },
+      );
+      expect(mockRead).toHaveBeenCalledWith('ctx-run-id', 'task-manifest.json');
       expect(result).toEqual({ status: 'found', manifest: { version: 2, tasks: [] } });
     });
 

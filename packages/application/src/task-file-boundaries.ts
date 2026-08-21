@@ -270,7 +270,8 @@ export async function loadManifest(
     };
   }
 
-  const runId = input.runId !== undefined && input.runId !== null ? String(input.runId) : undefined;
+  const runIdVal = input.runId ?? ctx.runId;
+  const runId = runIdVal !== undefined && runIdVal !== null ? String(runIdVal) : undefined;
 
   if (deps?.artifactStore && runId !== undefined) {
     try {
