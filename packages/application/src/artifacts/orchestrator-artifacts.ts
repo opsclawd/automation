@@ -59,9 +59,7 @@ let cachedCompiledRegexes: readonly RegExp[] | undefined;
 
 function getOrchestratorRegexes(): readonly RegExp[] {
   if (!cachedCompiledRegexes) {
-    cachedCompiledRegexes = Object.freeze(
-      orchestratorExcludePatterns().map(patternToRegExp),
-    );
+    cachedCompiledRegexes = Object.freeze(orchestratorExcludePatterns().map(patternToRegExp));
   }
   return cachedCompiledRegexes;
 }
@@ -122,6 +120,11 @@ export function uncommittedSourcePaths(status: string): string[] {
     .filter((path) => !compiledRegexes.some((regex) => regex.test(path)));
 
   return [...new Set(sourcePaths)].sort();
+}
+
+export function isUntrackedOrAddedStatusLine(line: string): boolean {
+  if (!line || line.length < 3) return false;
+  return line.startsWith('?? ') || line[0] === 'A' || line[1] === 'A';
 }
 
 export function formatDirtyPaths(paths: readonly string[], max = 10): string {

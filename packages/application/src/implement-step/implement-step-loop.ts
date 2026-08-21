@@ -9,7 +9,11 @@ import {
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { ReadWorktreeFilePort } from '../ports.js';
-import { uncommittedSourcePaths, unquoteGitPath } from '../artifacts/orchestrator-artifacts.js';
+import {
+  uncommittedSourcePaths,
+  unquoteGitPath,
+  isUntrackedOrAddedStatusLine,
+} from '../artifacts/orchestrator-artifacts.js';
 import type {
   ImplementStepLoopDeps,
   ImplementStepLoopInput,
@@ -906,7 +910,7 @@ export class ImplementStepLoop {
       const untrackedPaths = new Set(
         statusOutput
           .split('\n')
-          .filter((line) => line.startsWith('?? ') || line.startsWith('A'))
+          .filter(isUntrackedOrAddedStatusLine)
           .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
           .map(normalizeTaskPath)
           .filter(Boolean),
@@ -921,23 +925,13 @@ export class ImplementStepLoop {
         input.manifest?.tasks?.[input.stepIndex - 1];
       const currentScope = resolveEffectiveTaskScope(task);
 
-      const isExplicitPermitted = (normPath: string): boolean => {
-        if (currentScope.requiredFiles.includes(normPath)) return true;
-        if (currentScope.mayExtendFiles.includes(normPath)) return true;
-        return currentScope.permittedAreas.some(
-          (area) => normPath === area || normPath.startsWith(area + '/'),
-        );
-      };
-
       const candidates: TaskChangeCandidate[] = [];
       for (const p of dirtySourcePaths) {
         candidates.push({ path: p, tracked: !untrackedPaths.has(p) && !createdSet.has(p) });
       }
       for (const p of committedFiles) {
         const normP = normalizeTaskPath(p);
-        const isTracked = hasCreatedFilesSnapshot
-          ? !createdSet.has(normP)
-          : isExplicitPermitted(normP);
+        const isTracked = hasCreatedFilesSnapshot ? !createdSet.has(normP) : false;
         candidates.push({ path: normP, tracked: isTracked });
       }
 

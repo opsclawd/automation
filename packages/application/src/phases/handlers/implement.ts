@@ -14,6 +14,7 @@ import {
   uncommittedSourcePaths,
   formatDirtyPaths,
   unquoteGitPath,
+  isUntrackedOrAddedStatusLine,
 } from '../../artifacts/orchestrator-artifacts.js';
 
 import {
@@ -635,21 +636,6 @@ export class ImplementHandler implements PhaseHandler {
               }
             }
 
-            const explicitAreas = (Array.isArray(task?.permitted_areas) ? task.permitted_areas : [])
-              .map(normalizeTaskPath)
-              .filter(Boolean);
-
-            const isExplicitPermitted = (normPath: string): boolean => {
-              if (currentScope.requiredFiles.includes(normPath)) return true;
-              if (currentScope.mayExtendFiles.includes(normPath)) return true;
-              if (
-                explicitAreas.some((area) => normPath === area || normPath.startsWith(area + '/'))
-              ) {
-                return true;
-              }
-              return false;
-            };
-
             let statusOutput = '';
             let statusFailedBeforeAutoCommit = false;
             try {
@@ -665,7 +651,7 @@ export class ImplementHandler implements PhaseHandler {
               const untrackedPaths = new Set(
                 statusOutput
                   .split('\n')
-                  .filter((line) => line.startsWith('?? '))
+                  .filter(isUntrackedOrAddedStatusLine)
                   .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
                   .map(normalizeTaskPath)
                   .filter(Boolean),
@@ -704,10 +690,7 @@ export class ImplementHandler implements PhaseHandler {
               for (const p of committedFiles) {
                 const normP = normalizeTaskPath(p);
                 if (!normP) continue;
-                const isTracked =
-                  hasCreatedFilesSnapshot && createdSet.size > 0
-                    ? !createdSet.has(normP)
-                    : isExplicitPermitted(normP);
+                const isTracked = hasCreatedFilesSnapshot ? !createdSet.has(normP) : false;
                 preCommitCandidates.push({ path: normP, tracked: isTracked });
               }
 
@@ -783,7 +766,7 @@ export class ImplementHandler implements PhaseHandler {
               postCommitUntrackedPaths = new Set(
                 postCommitStatusOutput
                   .split('\n')
-                  .filter((line) => line.startsWith('?? '))
+                  .filter(isUntrackedOrAddedStatusLine)
                   .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
                   .map(normalizeTaskPath)
                   .filter(Boolean),
@@ -805,10 +788,9 @@ export class ImplementHandler implements PhaseHandler {
             for (const p of committedFiles) {
               const normP = normalizeTaskPath(p);
               if (!normP) continue;
-              const isTracked =
-                hasPostCommitCreatedSnapshot && postCommitCreatedSet.size > 0
-                  ? !postCommitCreatedSet.has(normP)
-                  : isExplicitPermitted(normP);
+              const isTracked = hasPostCommitCreatedSnapshot
+                ? !postCommitCreatedSet.has(normP)
+                : false;
               postCommitCandidates.push({ path: normP, tracked: isTracked });
             }
 

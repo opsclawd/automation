@@ -128,6 +128,8 @@ describe('ImplementHandler Scope-Aware Auto-Commit', () => {
       'src/feature.ts',
       'src/helpers/util.ts',
     ]);
+    git.createdFilesResults.set('pre-step|pre-step', []);
+    git.createdFilesResults.set('pre-step|fake-sha-1', []);
 
     const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
       return { outcome: 'success' };
@@ -170,6 +172,8 @@ describe('ImplementHandler Scope-Aware Auto-Commit', () => {
     });
     git.changedFilesResults.set('pre-step|pre-step', []);
     git.changedFilesResults.set('pre-step|fake-sha-1', ['src/core/extra.ts', 'src/core/main.ts']);
+    git.createdFilesResults.set('pre-step|pre-step', []);
+    git.createdFilesResults.set('pre-step|fake-sha-1', []);
 
     const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
       return { outcome: 'success' };
@@ -264,6 +268,9 @@ describe('ImplementHandler Scope-Aware Auto-Commit', () => {
     git.changedFilesResults.set('pre-step|pre-step', []);
     git.changedFilesResults.set('pre-step|fake-sha-1', ['src/task1.ts']);
     git.changedFilesResults.set('fake-sha-1|fake-sha-2', ['src/task2.ts']);
+    git.createdFilesResults.set('pre-step|pre-step', []);
+    git.createdFilesResults.set('pre-step|fake-sha-1', []);
+    git.createdFilesResults.set('fake-sha-1|fake-sha-2', []);
 
     const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
       currentStep = _sctx.stepIndex;
@@ -446,5 +453,77 @@ describe('ImplementHandler Scope-Aware Auto-Commit', () => {
       expect(result.failure.artifacts).toEqual(['task-manifest.json']);
       expect(result.failure.message).toContain('modified reference_files src/readonly-ref.ts');
     }
+  });
+
+  it('does not auto-commit staged newly added files (A, AM,  A) in permitted areas', async () => {
+    const { git, steps, ctx, events } = await setupHarness({
+      expectedFiles: ['src/feature.ts'],
+      permittedAreas: ['src/helpers'],
+    });
+
+    git.status = vi.fn(async () => {
+      const featureCommitted = git.commits.some((c) => c.files?.includes('src/feature.ts'));
+      return featureCommitted
+        ? 'A  src/helpers/new-helper.ts'
+        : ' M src/feature.ts\nA  src/helpers/new-helper.ts';
+    });
+    git.changedFilesResults.set('pre-step|pre-step', []);
+    git.changedFilesResults.set('pre-step|fake-sha-1', ['src/feature.ts']);
+
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 0,
+    }).run(ctx);
+
+    expect(git.addCalls[0]?.files).toEqual(['src/feature.ts']);
+    expect(git.commits[0]?.files).toEqual(['src/feature.ts']);
+    for (const call of git.addCalls) {
+      expect(call.files).not.toContain('src/helpers/new-helper.ts');
+    }
+    for (const commit of git.commits) {
+      expect(commit.files).not.toContain('src/helpers/new-helper.ts');
+    }
+    expect(events.filter((e) => e.type === 'step.completed')).toHaveLength(0);
+    expect(events.filter((e) => e.type === 'step.failed')).toHaveLength(1);
+    expect(result.outcome).toBe('failed');
+  });
+
+  it('safely treats committed files in permitted_areas as untracked drift when createdFiles fails', async () => {
+    const { git, steps, ctx, events } = await setupHarness({
+      expectedFiles: ['src/feature.ts'],
+      permittedAreas: ['src/helpers'],
+    });
+
+    git.status = vi.fn(async () => '');
+    git.changedFilesResults.set('pre-step|fake-sha-1', [
+      'src/feature.ts',
+      'src/helpers/undeclared.ts',
+    ]);
+    git.headByCwd.set(ctx.cwd, 'fake-sha-1');
+
+    // Simulate createdFiles throwing / being unavailable
+    git.createdFiles = vi.fn(async () => {
+      throw new Error('git created-files failed');
+    });
+
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 0,
+    }).run(ctx);
+
+    // Because createdFiles threw, undeclared.ts in permitted_areas is not assumed tracked, so it is drift
+    expect(events.filter((e) => e.type === 'step.completed')).toHaveLength(0);
+    expect(events.filter((e) => e.type === 'step.failed')).toHaveLength(1);
+    expect(result.outcome).toBe('failed');
   });
 });

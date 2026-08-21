@@ -162,7 +162,11 @@ export class FakeGitPort implements GitPort {
 
   async createdFiles(cwd: string, base: string, head?: string): Promise<string[]> {
     this.createdFilesCalls.push({ cwd, base, ...(head ? { head } : {}) });
-    return [...(this.createdFilesResults.get(`${base}|${head ?? 'HEAD'}`) ?? [])];
+    const key = `${base}|${head ?? 'HEAD'}`;
+    if (this.createdFilesResults.has(key)) {
+      return [...(this.createdFilesResults.get(key) ?? [])];
+    }
+    return [...(this.changedFilesResults.get(key) ?? [])];
   }
 
   async fileContent(cwd: string, ref: string, path: string): Promise<string> {
