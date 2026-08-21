@@ -164,7 +164,7 @@ describe('ImplementHandler undeclared files regression proof', () => {
       );
       expect(result.failure.artifacts).toEqual(['task-manifest.json']);
       expect(result.failure.suggestedAction).toContain(
-        'Update task-manifest.json to add src/ref-b.ts to task 1 expected_files',
+        'Update task-manifest.json to move src/ref-b.ts from task 1 reference_files to expected_files',
       );
     }
 

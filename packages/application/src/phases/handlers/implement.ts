@@ -894,8 +894,8 @@ export class ImplementHandler implements PhaseHandler {
                 },
               );
               const suggestedAction = protectedRepairError
-                ? `Repair the protected path changes (${undeclaredProtectedPaths.join(', ')}) and update task-manifest.json to add ${modifiedReferenceFiles.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`
-                : `Update task-manifest.json to add ${modifiedReferenceFiles.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`;
+                ? `Repair the protected path changes (${undeclaredProtectedPaths.join(', ')}) and update task-manifest.json to move ${modifiedReferenceFiles.join(', ')} from task ${d.index} reference_files to expected_files (a file cannot appear in both), or regenerate the manifest, then resume the run.`
+                : `Update task-manifest.json to move ${modifiedReferenceFiles.join(', ')} from task ${d.index} reference_files to expected_files (a file cannot appear in both), or regenerate the manifest, then resume the run.`;
               return this.needsHumanReview(
                 ctx,
                 emit,
@@ -1101,7 +1101,7 @@ export class ImplementHandler implements PhaseHandler {
           const isManifestFault =
             result.modifiedReferenceFiles && result.modifiedReferenceFiles.length > 0;
           const suggestedAction = isManifestFault
-            ? `Update task-manifest.json to add ${result.modifiedReferenceFiles!.join(', ')} to task ${d.index} expected_files (or regenerate the manifest), then resume the run.`
+            ? `Update task-manifest.json to move ${result.modifiedReferenceFiles!.join(', ')} from task ${d.index} reference_files to expected_files (a file cannot appear in both), or regenerate the manifest, then resume the run.`
             : undefined;
           const artifacts = isManifestFault ? ['task-manifest.json'] : [];
           return this.needsHumanReview(
