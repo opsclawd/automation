@@ -944,6 +944,7 @@ exit 1
       status: 'success',
       startedAt: new Date('2026-06-01T00:00:00Z'),
       completedAt: new Date('2026-06-01T01:00:00Z'),
+      revertCounts: {},
     };
 
     c.stepRepository.upsert(step);

@@ -109,6 +109,7 @@ describe('ImplementHandler', () => {
       status: 'success',
       startedAt: new Date('2026-06-16T00:00:00Z'),
       completedAt: new Date('2026-06-16T00:00:00Z'),
+      revertCounts: {},
     });
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -151,6 +152,7 @@ describe('ImplementHandler', () => {
       status: 'failed',
       startedAt: new Date('2026-06-16T00:00:00Z'),
       completedAt: new Date('2026-06-16T00:00:00Z'),
+      revertCounts: {},
     });
     steps.upsert({
       id: 'step-seeded-2',
@@ -161,6 +163,7 @@ describe('ImplementHandler', () => {
       status: 'success',
       startedAt: new Date('2026-06-16T00:00:00Z'),
       completedAt: new Date('2026-06-16T00:00:00Z'),
+      revertCounts: {},
     });
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -364,6 +367,7 @@ describe('ImplementHandler', () => {
       status: 'success',
       startedAt: new Date('2026-06-16T00:00:00Z'),
       completedAt: new Date('2026-06-16T00:00:00Z'),
+      revertCounts: {},
     });
     const order: string[] = [];
     const setup = vi.fn(async (_cwd: string) => {
@@ -412,6 +416,7 @@ describe('ImplementHandler', () => {
       status: 'success',
       startedAt: new Date('2026-06-16T00:00:00Z'),
       completedAt: new Date('2026-06-16T00:00:00Z'),
+      revertCounts: {},
     });
     const setup = vi.fn(async (_cwd: string) => {
       return { ok: true };
@@ -851,6 +856,7 @@ describe('ImplementHandler', () => {
         status: 'success',
         startedAt: new Date('2026-06-16T00:00:00Z'),
         completedAt: new Date('2026-06-16T00:00:00Z'),
+        revertCounts: {},
       });
       const runStep = vi
         .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -935,6 +941,7 @@ describe('ImplementHandler', () => {
         status: 'failed',
         startedAt: new Date('2026-06-16T00:00:00Z'),
         completedAt: new Date('2026-06-16T00:00:00Z'),
+        revertCounts: {},
       });
       const runStep = vi
         .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -973,6 +980,7 @@ describe('ImplementHandler', () => {
         status: 'needs_human_review',
         startedAt: new Date('2026-06-16T00:00:00Z'),
         completedAt: new Date('2026-06-16T00:00:00Z'),
+        revertCounts: {},
       });
       const upsertCalls: string[] = [];
       const originalUpsert = steps.upsert.bind(steps);

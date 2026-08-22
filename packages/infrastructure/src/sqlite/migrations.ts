@@ -33,6 +33,7 @@ import * as fenceWorkerLeases from './migrations/0030-fence-worker-leases.js';
 import * as fenceJobClaims from './migrations/0031-fence-job-claims.js';
 import * as addInitialPreStepHead from './migrations/0032-add-initial-pre-step-head.js';
 import * as indexProfileStartedAt from './migrations/0033-index-agent-invocations-profile-started-at.js';
+import * as addStepRevertCounts from './migrations/0034-add-step-revert-counts.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -68,6 +69,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: fenceJobClaims.version, sql: fenceJobClaims.sql },
   { version: addInitialPreStepHead.version, sql: addInitialPreStepHead.sql },
   { version: indexProfileStartedAt.version, sql: indexProfileStartedAt.sql },
+  { version: addStepRevertCounts.version, sql: addStepRevertCounts.sql },
 ];
 
 export function registerCustomFunctions(db: Db): void {

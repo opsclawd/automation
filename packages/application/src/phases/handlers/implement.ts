@@ -370,6 +370,7 @@ export class ImplementHandler implements PhaseHandler {
             status: 'failed',
             startedAt,
             completedAt: ctx.now(),
+            revertCounts: {},
           };
           emit('step.started', 'info', `step ${d.index}/${totalSteps}: ${d.title}`, {
             index: d.index,
@@ -412,6 +413,7 @@ export class ImplementHandler implements PhaseHandler {
               ...existingStep,
               initialPreStepHead: preStepHead,
               title: d.title,
+              revertCounts: {},
             });
           }
         } catch {
@@ -429,6 +431,7 @@ export class ImplementHandler implements PhaseHandler {
         status: 'running',
         startedAt,
         ...(preStepHead !== undefined ? { initialPreStepHead: preStepHead } : {}),
+        revertCounts: {},
       };
       this.opts.steps.upsert(step);
       emit('step.started', 'info', `step ${d.index}/${totalSteps}: ${d.title}`, {
