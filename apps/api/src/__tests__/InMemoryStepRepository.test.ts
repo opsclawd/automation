@@ -10,6 +10,7 @@ function makeStep(overrides: Partial<Step> = {}): Step {
     index: 0,
     title: 'Design step',
     status: 'pending',
+    revertCounts: {},
     ...overrides,
   };
 }
@@ -83,5 +84,46 @@ describe('InMemoryStepRepository', () => {
 
     const again = repo.listForRun(RunId('run-1'))[0]!;
     expect(again.title).toBe('Design step');
+  });
+
+  it('preserves revert counts when upserting with empty revertCounts', () => {
+    const repo = new InMemoryStepRepository();
+    repo.upsert(
+      makeStep({
+        revertCounts: { 'src/foo.ts': 2 },
+      }),
+    );
+
+    // Update title and status with empty revertCounts (e.g. from an unrelated update)
+    repo.upsert(
+      makeStep({
+        title: 'Updated Title',
+        status: 'success',
+        revertCounts: {},
+      }),
+    );
+
+    const found = repo.findByIndex(RunId('run-1'), PhaseName('design'), 0)!;
+    expect(found.title).toBe('Updated Title');
+    expect(found.status).toBe('success');
+    expect(found.revertCounts).toEqual({ 'src/foo.ts': 2 });
+
+    // Now supply an explicit newer map
+    repo.upsert(
+      makeStep({
+        title: 'Updated Title 2',
+        status: 'running',
+        revertCounts: {
+          'src/foo.ts': 3,
+          'src/bar.ts': 1,
+        },
+      }),
+    );
+
+    const found2 = repo.findByIndex(RunId('run-1'), PhaseName('design'), 0)!;
+    expect(found2.revertCounts).toEqual({
+      'src/foo.ts': 3,
+      'src/bar.ts': 1,
+    });
   });
 });

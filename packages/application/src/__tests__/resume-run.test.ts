@@ -326,6 +326,7 @@ describe('ResumeRun', () => {
       status: 'failed',
       startedAt: new Date(),
       completedAt: new Date(),
+      revertCounts: {},
     });
     const usecase = new ResumeRun({
       runRepository: runRepo,
@@ -375,6 +376,7 @@ describe('ResumeRun', () => {
       status: 'failed',
       startedAt: stepStartedAt,
       completedAt: stepCompletedAt,
+      revertCounts: {},
     });
     const phaseRepo = new FakePhaseRepository();
     const phaseStartedAt = new Date();
@@ -472,6 +474,7 @@ describe('ResumeRun', () => {
       status: 'success',
       startedAt: new Date('2026-06-01T00:00:00Z'),
       completedAt: new Date('2026-06-01T00:05:00Z'),
+      revertCounts: {},
     });
     stepRepo.upsert({
       id: 's2',
@@ -482,6 +485,7 @@ describe('ResumeRun', () => {
       status: 'failed',
       startedAt: new Date('2026-06-01T00:06:00Z'),
       completedAt: new Date('2026-06-01T00:10:00Z'),
+      revertCounts: {},
     });
     const usecase = new ResumeRun({
       runRepository: runRepo,

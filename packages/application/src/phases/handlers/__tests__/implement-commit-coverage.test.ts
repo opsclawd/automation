@@ -383,6 +383,7 @@ describe('ImplementHandler Commit Coverage', () => {
       status: 'success',
       startedAt: new Date(),
       completedAt: new Date(),
+      revertCounts: {},
     });
     steps.upsert({
       id: 'step-2',
@@ -394,6 +395,7 @@ describe('ImplementHandler Commit Coverage', () => {
       initialPreStepHead: 'head-before-first-attempt',
       startedAt: new Date(),
       completedAt: new Date(),
+      revertCounts: {},
     });
 
     const { ctx } = makeCtx(artifacts, git);

@@ -9,7 +9,17 @@ export class FakeStepRepository implements StepRepositoryPort {
   }
 
   upsert(step: Step): void {
-    this.store.set(this.key(step.runId, step.phaseId, step.index), { ...step });
+    const existing = this.store.get(this.key(step.runId, step.phaseId, step.index));
+    const revertCounts =
+      step.revertCounts && Object.keys(step.revertCounts).length > 0
+        ? { ...step.revertCounts }
+        : existing?.revertCounts
+          ? { ...existing.revertCounts }
+          : { ...(step.revertCounts ?? {}) };
+    this.store.set(this.key(step.runId, step.phaseId, step.index), {
+      ...step,
+      revertCounts,
+    });
   }
 
   listForRun(runId: RunId): Step[] {
@@ -22,11 +32,11 @@ export class FakeStepRepository implements StepRepositoryPort {
         if (pa > pb) return 1;
         return a.index - b.index;
       })
-      .map((s) => ({ ...s }));
+      .map((s) => ({ ...s, revertCounts: { ...s.revertCounts } }));
   }
 
   findByIndex(runId: RunId, phaseId: PhaseName, index: number): Step | undefined {
     const found = this.store.get(this.key(runId, String(phaseId), index));
-    return found ? { ...found } : undefined;
+    return found ? { ...found, revertCounts: { ...found.revertCounts } } : undefined;
   }
 }

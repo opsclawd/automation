@@ -4,12 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { ImplementHandler } from '@ai-sdlc/application';
-import type {
-  StepRunContext,
-  StepRunResult,
-  PhaseHandlerContext,
-  ImplementHandlerOpts,
-} from '@ai-sdlc/application';
+import type { StepRunContext, StepRunResult, PhaseHandlerContext } from '@ai-sdlc/application';
 import { FakeArtifactStore, FakeStepRepository } from '@ai-sdlc/application/test-doubles';
 import { GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
@@ -213,15 +208,17 @@ describe('ImplementHandler protected files integration', () => {
       return { outcome: 'failed', failureMessage: 'unexpected attempt' };
     });
 
-    // Test-local repair function supplied through a typed compatibility cast
-    const testRepairProtectedFiles = async (input: {
+    // Test-local repair function
+    const testRepairScopeFiles = async (input: {
       cwd: string;
       baseline: string;
-      protectedFiles: string[];
+      expectedHeadSha: string;
+      rewriteSafety: 'unpublished';
+      scopeFiles: readonly string[];
     }) => {
       execFileSync(
         'git',
-        ['-C', input.cwd, 'checkout', input.baseline, '--', ...input.protectedFiles],
+        ['-C', input.cwd, 'checkout', input.baseline, '--', ...input.scopeFiles],
         {
           stdio: 'pipe',
         },
@@ -245,7 +242,7 @@ describe('ImplementHandler protected files integration', () => {
         encoding: 'utf8',
       }).trim();
       return {
-        revertedProtectedFiles: input.protectedFiles,
+        revertedScopeFiles: [...input.scopeFiles],
         removedNewlyIgnoredFiles: ignored,
         amendedHeadSha,
       };
@@ -255,10 +252,8 @@ describe('ImplementHandler protected files integration', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 1,
-      ...({
-        revertProtectedFiles: testRepairProtectedFiles,
-      } as unknown as Record<string, unknown>),
-    } as ImplementHandlerOpts);
+      revertScopeFiles: testRepairScopeFiles,
+    });
 
     const result = await handler.run(ctx);
 

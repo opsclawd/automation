@@ -3,7 +3,7 @@ import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { GitPort } from '../../ports/git-port.js';
 import type { LoopRepositoryPort } from '../../ports/loop-repository-port.js';
-import type { RevertProtectedFilesPort } from '../../ports/protected-file-reverter-port.js';
+import type { RevertScopeFilesPort } from '../../ports/revert-scope-files-port.js';
 import { ReviewFixLoop } from '../review-fix-loop.js';
 import type {
   ReviewFixLoopDeps,
@@ -92,7 +92,7 @@ function baseInput() {
 }
 
 function makeDeps(
-  over: Partial<ReviewFixLoopDeps> & { revertProtectedFiles?: RevertProtectedFilesPort },
+  over: Partial<ReviewFixLoopDeps> & { revertScopeFiles?: RevertScopeFilesPort },
 ): ReviewFixLoopDeps {
   let n = 0;
   let reviewCallCount = 0;
@@ -133,15 +133,15 @@ function makeDeps(
 }
 
 describe('ReviewFixLoop protected file policy', () => {
-  it('reverts .gitignore modification and advances with amended SHA when revertProtectedFiles is provided', async () => {
+  it('reverts .gitignore modification and advances with amended SHA when revertScopeFiles is provided', async () => {
     const { events, bus } = collectEvents();
     const git = makeFakeGit({
       headSha: 'sha-fix-1',
       changedFilesList: ['.gitignore', 'packages/application/src/fix.ts'],
     });
-    const revertProtectedFiles = vi.fn<RevertProtectedFilesPort>(
-      async ({ cwd: _cwd, baseline: _baseline, protectedFiles }) => ({
-        revertedProtectedFiles: [...protectedFiles],
+    const revertScopeFiles = vi.fn<RevertScopeFilesPort>(
+      async ({ cwd: _cwd, baseline: _baseline, scopeFiles }) => ({
+        revertedScopeFiles: [...scopeFiles],
         removedNewlyIgnoredFiles: [],
         amendedHeadSha: 'sha-amended-1',
       }),
@@ -150,7 +150,7 @@ describe('ReviewFixLoop protected file policy', () => {
     const deps = makeDeps({
       events: bus,
       git,
-      revertProtectedFiles,
+      revertScopeFiles,
       runFix: async () => ({
         invocationId: 'fix-1',
         agentOutcome: 'success',
@@ -162,20 +162,22 @@ describe('ReviewFixLoop protected file policy', () => {
     const loop = new ReviewFixLoop(deps);
     await loop.execute(baseInput());
 
-    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
-    expect(revertProtectedFiles).toHaveBeenCalledWith({
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).toHaveBeenCalledWith({
       cwd: '/wt',
       baseline: 'sha-pre',
-      protectedFiles: ['.gitignore'],
+      expectedHeadSha: 'sha-fix-1',
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.gitignore'],
     });
 
     const revertedEvent = events.find((e) => e.type === 'fix.protected_file_reverted');
     expect(revertedEvent).toBeDefined();
-    expect(revertedEvent?.metadata.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(revertedEvent?.metadata.revertedScopeFiles).toEqual(['.gitignore']);
     expect(revertedEvent?.metadata.amendedHeadSha).toBe('sha-amended-1');
   });
 
-  it('reverts .ai-orchestrator.json and .github/ files and advances with amended SHA when revertProtectedFiles is provided', async () => {
+  it('reverts .ai-orchestrator.json and .github/ files and advances with amended SHA when revertScopeFiles is provided', async () => {
     const { events, bus } = collectEvents();
     const git = makeFakeGit({
       headSha: 'sha-fix-1',
@@ -185,9 +187,9 @@ describe('ReviewFixLoop protected file policy', () => {
         'packages/application/src/fix.ts',
       ],
     });
-    const revertProtectedFiles = vi.fn<RevertProtectedFilesPort>(
-      async ({ cwd: _cwd, baseline: _baseline, protectedFiles }) => ({
-        revertedProtectedFiles: [...protectedFiles],
+    const revertScopeFiles = vi.fn<RevertScopeFilesPort>(
+      async ({ cwd: _cwd, baseline: _baseline, scopeFiles }) => ({
+        revertedScopeFiles: [...scopeFiles],
         removedNewlyIgnoredFiles: [],
         amendedHeadSha: 'sha-amended-2',
       }),
@@ -196,7 +198,7 @@ describe('ReviewFixLoop protected file policy', () => {
     const deps = makeDeps({
       events: bus,
       git,
-      revertProtectedFiles,
+      revertScopeFiles,
       runFix: async () => ({
         invocationId: 'fix-1',
         agentOutcome: 'success',
@@ -208,23 +210,25 @@ describe('ReviewFixLoop protected file policy', () => {
     const loop = new ReviewFixLoop(deps);
     await loop.execute(baseInput());
 
-    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
-    expect(revertProtectedFiles).toHaveBeenCalledWith({
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).toHaveBeenCalledWith({
       cwd: '/wt',
       baseline: 'sha-pre',
-      protectedFiles: ['.ai-orchestrator.json', '.github/workflows/ci.yml'],
+      expectedHeadSha: 'sha-fix-1',
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.ai-orchestrator.json', '.github/workflows/ci.yml'],
     });
 
     const revertedEvent = events.find((e) => e.type === 'fix.protected_file_reverted');
     expect(revertedEvent).toBeDefined();
-    expect(revertedEvent?.metadata.revertedProtectedFiles).toEqual([
+    expect(revertedEvent?.metadata.revertedScopeFiles).toEqual([
       '.ai-orchestrator.json',
       '.github/workflows/ci.yml',
     ]);
     expect(revertedEvent?.metadata.amendedHeadSha).toBe('sha-amended-2');
   });
 
-  it('fails task boundary and rolls back when protected files are modified and revertProtectedFiles is not provided', async () => {
+  it('fails task boundary and rolls back when protected files are modified and revertScopeFiles is not provided', async () => {
     const { events, bus } = collectEvents();
     const rollbackCalls: string[] = [];
     const git = makeFakeGit({
@@ -254,21 +258,21 @@ describe('ReviewFixLoop protected file policy', () => {
     expect(events.find((e) => e.type === 'task_boundary.violated')).toBeDefined();
   });
 
-  it('fails task boundary and rolls back when revertProtectedFiles throws an error', async () => {
+  it('fails task boundary and rolls back when revertScopeFiles throws an error', async () => {
     const { events, bus } = collectEvents();
     const rollbackCalls: string[] = [];
     const git = makeFakeGit({
       headSha: 'sha-fix-1',
       changedFilesList: ['.gitignore', 'packages/application/src/fix.ts'],
     });
-    const revertProtectedFiles = vi.fn<RevertProtectedFilesPort>(async () => {
-      throw new Error('git revert-protected-files error');
+    const revertScopeFiles = vi.fn<RevertScopeFilesPort>(async () => {
+      throw new Error('git revert-scope-files error');
     });
 
     const deps = makeDeps({
       events: bus,
       git,
-      revertProtectedFiles,
+      revertScopeFiles,
       rollbackFix: async (_ctx, targetSha) => {
         rollbackCalls.push(targetSha);
         return true;
@@ -296,9 +300,9 @@ describe('ReviewFixLoop protected file policy', () => {
       commitSha: 'sha-auto-1',
       changedFilesList: ['.gitignore', 'packages/application/src/fix.ts'],
     });
-    const revertProtectedFiles = vi.fn<RevertProtectedFilesPort>(
-      async ({ cwd: _cwd, baseline: _baseline, protectedFiles }) => ({
-        revertedProtectedFiles: [...protectedFiles],
+    const revertScopeFiles = vi.fn<RevertScopeFilesPort>(
+      async ({ cwd: _cwd, baseline: _baseline, scopeFiles }) => ({
+        revertedScopeFiles: [...scopeFiles],
         removedNewlyIgnoredFiles: [],
         amendedHeadSha: 'sha-amended-auto-1',
       }),
@@ -307,7 +311,7 @@ describe('ReviewFixLoop protected file policy', () => {
     const deps = makeDeps({
       events: bus,
       git,
-      revertProtectedFiles,
+      revertScopeFiles,
       runFix: async () => ({
         invocationId: 'fix-1',
         agentOutcome: 'success',
@@ -319,16 +323,18 @@ describe('ReviewFixLoop protected file policy', () => {
     const loop = new ReviewFixLoop(deps);
     const result = await loop.execute(baseInput());
 
-    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
-    expect(revertProtectedFiles).toHaveBeenCalledWith({
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).toHaveBeenCalledWith({
       cwd: '/wt',
       baseline: 'sha-pre',
-      protectedFiles: ['.gitignore'],
+      expectedHeadSha: 'sha-auto-1',
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.gitignore'],
     });
 
     const revertedEvent = events.find((e) => e.type === 'fix.protected_file_reverted');
     expect(revertedEvent).toBeDefined();
-    expect(revertedEvent?.metadata.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(revertedEvent?.metadata.revertedScopeFiles).toEqual(['.gitignore']);
     expect(revertedEvent?.metadata.amendedHeadSha).toBe('sha-amended-auto-1');
 
     const autoCommitEvent = events.find((e) => e.type === 'fix.auto_commit.succeeded');
@@ -375,9 +381,9 @@ describe('ReviewFixLoop protected file policy', () => {
         return ['packages/application/src/fix.ts'];
       },
     };
-    const revertProtectedFiles = vi.fn<RevertProtectedFilesPort>(
-      async ({ cwd: _cwd, baseline: _baseline, protectedFiles }) => ({
-        revertedProtectedFiles: [...protectedFiles],
+    const revertScopeFiles = vi.fn<RevertScopeFilesPort>(
+      async ({ cwd: _cwd, baseline: _baseline, scopeFiles }) => ({
+        revertedScopeFiles: [...scopeFiles],
         removedNewlyIgnoredFiles: [],
         amendedHeadSha: 'sha-amended-gate-1',
       }),
@@ -386,7 +392,7 @@ describe('ReviewFixLoop protected file policy', () => {
     const deps = makeDeps({
       events: bus,
       git: fakeGit,
-      revertProtectedFiles,
+      revertScopeFiles,
       runPostFixGate: async (): Promise<PostFixGateResult> => {
         gateCalls += 1;
         // Fail on iteration 2 (post-fix gate) first time, then pass next
@@ -418,16 +424,18 @@ describe('ReviewFixLoop protected file policy', () => {
     const loop = new ReviewFixLoop(deps);
     const result = await loop.execute(baseInput());
 
-    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
-    expect(revertProtectedFiles).toHaveBeenCalledWith({
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).toHaveBeenCalledWith({
       cwd: '/wt',
       baseline: 'sha-fix-1',
-      protectedFiles: ['.gitignore'],
+      expectedHeadSha: 'sha-auto-gate-1',
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.gitignore'],
     });
 
     const revertedEvent = events.find((e) => e.type === 'fix.protected_file_reverted');
     expect(revertedEvent).toBeDefined();
-    expect(revertedEvent?.metadata.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(revertedEvent?.metadata.revertedScopeFiles).toEqual(['.gitignore']);
     expect(revertedEvent?.metadata.amendedHeadSha).toBe('sha-amended-gate-1');
     expect(result.phaseOutcome).toBe('passed');
   });

@@ -133,9 +133,9 @@ export type {
   PrReviewContextSourcePort,
 } from './pr-review-context-source-port.js';
 export type {
-  RevertProtectedFilesInput,
-  RevertProtectedFilesResult,
-  RevertProtectedFilesPort,
-} from './protected-file-reverter-port.js';
+  RevertScopeFilesInput,
+  RevertScopeFilesResult,
+  RevertScopeFilesPort,
+} from './revert-scope-files-port.js';
 export type { ReadWorktreeFilePort } from './read-worktree-file-port.js';
 export type { DeleteWorktreeFilePort } from './delete-worktree-file-port.js';

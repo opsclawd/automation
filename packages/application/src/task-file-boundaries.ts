@@ -1,4 +1,7 @@
+import { normalizeTaskPath } from '@ai-sdlc/domain';
 import { isOrchestratorArtifactPattern } from './artifacts/orchestrator-artifacts.js';
+
+export { normalizeTaskPath };
 
 export interface TaskBoundaryClassification {
   modifiedReferenceFiles: string[];
@@ -268,26 +271,6 @@ export function classifyTaskChanges(
     driftFiles: [...new Set(driftFiles)].sort(),
     protectedFiles: [...new Set(protectedFiles)].sort(),
   };
-}
-
-export function normalizeTaskPath(path: unknown): string {
-  if (typeof path !== 'string') return '';
-  const trimmed = path.trim();
-  if (!trimmed) return '';
-  const posixPath = trimmed.replace(/\\/g, '/');
-  const segments = posixPath.split('/');
-  const stack: string[] = [];
-  for (const seg of segments) {
-    if (!seg || seg === '.') {
-      continue;
-    }
-    if (seg === '..') {
-      stack.pop();
-    } else {
-      stack.push(seg);
-    }
-  }
-  return stack.join('/');
 }
 
 export function resolveEffectiveTaskScope(task: unknown): EffectiveTaskScope {

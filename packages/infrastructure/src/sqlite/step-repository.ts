@@ -1,4 +1,4 @@
-import type { Step, StepStatus } from '@ai-sdlc/domain';
+import { normalizeTaskPath, type Step, type StepStatus } from '@ai-sdlc/domain';
 import type { StepRepositoryPort } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
@@ -12,6 +12,7 @@ interface StepRow {
   started_at: string | null;
   completed_at: string | null;
   initial_pre_step_head: string | null;
+  revert_counts: string | null;
 }
 
 const PHASE_ORDER: Record<string, number> = {
@@ -26,15 +27,44 @@ const PHASE_ORDER: Record<string, number> = {
   'post-pr-review': 8,
 };
 
+export function normalizeRevertCounts(raw: unknown): Record<string, number> {
+  if (!raw) return {};
+  let parsed: unknown = raw;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === '{}') return {};
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return {};
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {};
+  }
+  const result: Record<string, number> = {};
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    const normKey = normalizeTaskPath(key);
+    if (!normKey) continue;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+      continue;
+    }
+    const current = result[normKey];
+    result[normKey] = current !== undefined ? Math.max(current, value) : value;
+  }
+  return result;
+}
+
 /** Used directly by compose.ts — implements @ai-sdlc/application StepRepositoryPort. */
 export class SqliteStepRepository implements StepRepositoryPort {
   constructor(private readonly db: Db) {}
 
   upsert(step: Step): void {
+    const revertCounts = JSON.stringify(normalizeRevertCounts(step.revertCounts));
     this.db
       .prepare(
-        `INSERT INTO steps (id, run_id, phase_id, idx, title, status, started_at, completed_at, initial_pre_step_head)
-         VALUES (@id, @run_id, @phase_id, @idx, @title, @status, @started_at, @completed_at, @initial_pre_step_head)
+        `INSERT INTO steps (id, run_id, phase_id, idx, title, status, started_at, completed_at, initial_pre_step_head, revert_counts)
+         VALUES (@id, @run_id, @phase_id, @idx, @title, @status, @started_at, @completed_at, @initial_pre_step_head, @revert_counts)
          ON CONFLICT(run_id, phase_id, idx) DO UPDATE SET
            id = excluded.id,
            title = excluded.title,
@@ -42,7 +72,12 @@ export class SqliteStepRepository implements StepRepositoryPort {
            started_at = excluded.started_at,
            completed_at = excluded.completed_at,
            initial_pre_step_head =
-             COALESCE(steps.initial_pre_step_head, excluded.initial_pre_step_head)`,
+             COALESCE(steps.initial_pre_step_head, excluded.initial_pre_step_head),
+           revert_counts =
+             CASE
+               WHEN excluded.revert_counts != '{}' THEN excluded.revert_counts
+               ELSE steps.revert_counts
+             END`,
       )
       .run({
         id: step.id,
@@ -54,6 +89,7 @@ export class SqliteStepRepository implements StepRepositoryPort {
         started_at: step.startedAt?.toISOString() ?? null,
         completed_at: step.completedAt?.toISOString() ?? null,
         initial_pre_step_head: step.initialPreStepHead ?? null,
+        revert_counts: revertCounts,
       });
   }
 
@@ -85,6 +121,7 @@ function rowToStep(r: StepRow): Step {
     index: r.idx,
     title: r.title,
     status: r.status as StepStatus,
+    revertCounts: normalizeRevertCounts(r.revert_counts),
     ...(r.started_at !== null ? { startedAt: new Date(r.started_at) } : {}),
     ...(r.completed_at !== null ? { completedAt: new Date(r.completed_at) } : {}),
     ...(r.initial_pre_step_head !== null ? { initialPreStepHead: r.initial_pre_step_head } : {}),

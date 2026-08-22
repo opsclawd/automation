@@ -373,4 +373,13 @@ describe('migrations', () => {
     expect(names).toEqual(['profile', 'started_at', 'id']);
     db.close();
   });
+
+  it('0034 is the migration immediately after 0033', () => {
+    const versions = MIGRATIONS.map((m) => m.version);
+    const lastThree = versions.slice(-3);
+    expect(lastThree).toEqual([32, 33, 34]);
+
+    const uniqueVersions = new Set(versions);
+    expect(uniqueVersions.size).toBe(versions.length);
+  });
 });

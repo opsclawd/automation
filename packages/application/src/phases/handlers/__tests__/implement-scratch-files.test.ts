@@ -202,7 +202,7 @@ describe('ImplementHandler scratch-file reporting', () => {
     expect(harness.events.filter((event) => event.type === 'step.failed')).toHaveLength(0);
   });
 
-  it('removes undeclared untracked root files from disk and records .ai-tmp/scratch-files.json artifact', async () => {
+  it('removes undeclared untracked root and nested files from disk and records .ai-tmp/scratch-files.json artifact', async () => {
     const tmpCwd = mkdtempSync(join(tmpdir(), 'scratch-test-'));
     try {
       const rootScratch = join(tmpCwd, 'test-ast.js');
@@ -221,20 +221,23 @@ describe('ImplementHandler scratch-file reporting', () => {
       );
       harness.ctx.cwd = tmpCwd;
       harness.git.headByCwd.set(tmpCwd, 'pre-step');
-      harness.git.statusByCwd.set(
-        tmpCwd,
-        '?? test-ast.js\n?? nested/deep-scratch.js\n?? .gitignore',
-      );
+      harness.git.status = vi.fn(async () => {
+        const files = ['test-ast.js', 'nested/deep-scratch.js', '.gitignore'].filter((f) =>
+          existsSync(join(tmpCwd, f)),
+        );
+        return files.map((f) => `?? ${f}`).join('\n');
+      });
       harness.git.changedFilesResults.set('pre-step|post-step', ['src/declared.ts']);
 
       const result = await new ImplementHandler({
         steps: harness.steps,
         runStep: harness.runStep,
+        maxDeclaredFilesRetries: 0,
       }).run(harness.ctx);
 
       expect(result).toMatchObject({ outcome: 'failed' });
       expect(existsSync(rootScratch)).toBe(false);
-      expect(existsSync(nestedScratch)).toBe(true);
+      expect(existsSync(nestedScratch)).toBe(false);
       expect(existsSync(protectedFile)).toBe(true);
 
       const artifactContent = await harness.artifacts.read(RUN_UUID, '.ai-tmp/scratch-files.json');
@@ -255,7 +258,7 @@ describe('ImplementHandler scratch-file reporting', () => {
     }
   });
 
-  it('records subdirectory untracked files in .ai-tmp/scratch-files.json without deleting them from disk', async () => {
+  it('removes subdirectory untracked files from disk and records .ai-tmp/scratch-files.json artifact', async () => {
     const tmpCwd = mkdtempSync(join(tmpdir(), 'subdir-scratch-'));
     try {
       const pkgDir = join(tmpCwd, 'packages', 'contracts');
@@ -269,7 +272,9 @@ describe('ImplementHandler scratch-file reporting', () => {
       );
       harness.ctx.cwd = tmpCwd;
       harness.git.headByCwd.set(tmpCwd, 'pre-step');
-      harness.git.statusByCwd.set(tmpCwd, '?? packages/contracts/scratch.ts');
+      harness.git.status = vi.fn(async () => {
+        return existsSync(subScratch) ? '?? packages/contracts/scratch.ts' : '';
+      });
       harness.git.changedFilesResults.set('pre-step|post-step', ['src/declared.ts']);
 
       const implementResult = await new ImplementHandler({
@@ -277,9 +282,9 @@ describe('ImplementHandler scratch-file reporting', () => {
         runStep: harness.runStep,
       }).run(harness.ctx);
 
-      expect(implementResult).toMatchObject({ outcome: 'failed' });
-      // Subdirectory file must NOT be deleted from disk
-      expect(existsSync(subScratch)).toBe(true);
+      expect(implementResult).toMatchObject({ outcome: 'passed' });
+      // Subdirectory file must be deleted from disk
+      expect(existsSync(subScratch)).toBe(false);
 
       // Artifact in .ai-tmp must contain the subdirectory file
       const artifactContent = await harness.artifacts.read(RUN_UUID, '.ai-tmp/scratch-files.json');

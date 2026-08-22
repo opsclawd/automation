@@ -81,6 +81,7 @@ describe('ImplementHandler stale baseline recovery (issue #960)', () => {
       status: 'success',
       startedAt: new Date(),
       completedAt: new Date(),
+      revertCounts: {},
     });
     steps.upsert({
       id: 'step-2',
@@ -92,6 +93,7 @@ describe('ImplementHandler stale baseline recovery (issue #960)', () => {
       initialPreStepHead: 'step-1-original-sha',
       startedAt: new Date(),
       completedAt: new Date(),
+      revertCounts: {},
     });
 
     const { ctx, events } = makeCtx(artifacts, git);
@@ -164,6 +166,7 @@ describe('ImplementHandler stale baseline recovery (issue #960)', () => {
       status: 'success',
       startedAt: new Date(),
       completedAt: new Date(),
+      revertCounts: {},
     });
     steps.upsert({
       id: 'step-2',
@@ -175,6 +178,7 @@ describe('ImplementHandler stale baseline recovery (issue #960)', () => {
       initialPreStepHead: 'head-before-first-attempt',
       startedAt: new Date(),
       completedAt: new Date(),
+      revertCounts: {},
     });
 
     const { ctx } = makeCtx(artifacts, git);

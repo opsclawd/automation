@@ -337,8 +337,8 @@ export type {
   RunWorkspaceTypecheckResult,
 } from './ports/run-workspace-typecheck-port.js';
 export type {
-  RevertProtectedFilesInput,
-  RevertProtectedFilesResult,
-  RevertProtectedFilesPort,
-} from './ports/protected-file-reverter-port.js';
+  RevertScopeFilesInput,
+  RevertScopeFilesResult,
+  RevertScopeFilesPort,
+} from './ports/revert-scope-files-port.js';
 export type { DeleteWorktreeFilePort } from './ports/delete-worktree-file-port.js';
