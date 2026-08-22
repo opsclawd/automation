@@ -58,6 +58,16 @@ scratch. For example:
   preserve that separation while repairing — renumber them if required, but keep the proof ahead of
   the fix and keep the implementation source change out of the proof task. For additive feature work,
   preserve unit tests co-located within the same task as their implementation code.
+- MISAPPLIED TEST-FIRST SPLIT ON NEW CAPABILITY: If you find a RED-only task (or a chain of them) whose
+  tests assert a new outcome, port, or capability that does not exist anywhere in the current codebase —
+  not a defect in something that already exists — this is a misapplication of TEST-FIRST COMMIT ORDER,
+  not a plan to preserve. Merge the RED task(s) and their implementation task back into one task per
+  natural unit of work, with tests co-located. Do not "fix" this by patching validation commands or
+  compiler traps around the split; the split itself is the defect. Mid-plan revalidation runs the full
+  workspace test suite with no awareness of `!`-prefixed inversion in `task-manifest.json`, so a
+  multi-task gap between a new capability's RED proof and its implementation will be misread as a
+  failing build the moment any review-fix iteration fires on the RED task — collapsing the split fixes
+  the root cause rather than the symptom.
 - DEFERRED SIGNATURE CHANGES IN RED TASKS: When a RED or regression-proof task asserts against a field,
   property, or shape whose signature change lands in a later task, check which compiler trap actually
   applies and fix the right side:
