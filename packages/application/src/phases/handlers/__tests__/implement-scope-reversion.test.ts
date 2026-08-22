@@ -610,4 +610,172 @@ describe('ImplementHandler scope reversion and classify-repair-reclassify loop',
     expect(runStep2).toHaveBeenCalledTimes(2);
     expect(revertScopeFiles2).not.toHaveBeenCalled();
   });
+
+  it('repairs a recoverable scope result from the immutable baseline and retries', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: primary task',
+          expected_files: ['src/task.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2: downstream task',
+          expected_files: ['src/downstream.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.statusByCwd.set(ctx.cwd, '');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/task.ts', 'src/downstream.ts']);
+    git.createdFilesResults.set('pre-step|attempt-1', ['src/task.ts', 'src/downstream.ts']);
+
+    git.changedFilesResults.set('pre-step|amended-1', ['src/task.ts']);
+    git.createdFilesResults.set('pre-step|amended-1', ['src/task.ts']);
+
+    git.changedFilesResults.set('pre-step|attempt-2', ['src/task.ts']);
+    git.createdFilesResults.set('pre-step|attempt-2', ['src/task.ts']);
+
+    git.changedFilesResults.set('attempt-2|attempt-3', ['src/downstream.ts']);
+    git.createdFilesResults.set('attempt-2|attempt-3', ['src/downstream.ts']);
+
+    const revertScopeFiles = vi.fn(
+      async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
+        git.headByCwd.set(input.cwd, 'amended-1');
+        git.statusByCwd.set(input.cwd, '');
+        return {
+          revertedScopeFiles: ['src/downstream.ts'],
+          removedNewlyIgnoredFiles: [],
+          amendedHeadSha: 'amended-1',
+        };
+      },
+    );
+
+    let attempt = 0;
+    const runStep = vi.fn(async (sctx: StepRunContext): Promise<StepRunResult> => {
+      attempt += 1;
+      if (attempt === 1) {
+        git.headByCwd.set(ctx.cwd, 'attempt-1');
+        return {
+          outcome: 'recoverable_scope_violation',
+          failureMessage: 'premature implementation of downstream file',
+        };
+      }
+      if (attempt === 2) {
+        expect(sctx.priorAttemptRepairedScopeFiles).toEqual(['src/downstream.ts']);
+        git.headByCwd.set(ctx.cwd, 'attempt-2');
+        return { outcome: 'success' };
+      }
+      if (attempt === 3) {
+        expect(sctx.stepIndex).toBe(2);
+        git.headByCwd.set(ctx.cwd, 'attempt-3');
+        return { outcome: 'success' };
+      }
+      throw new Error(`Unexpected attempt ${attempt}`);
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 1,
+      revertScopeFiles,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).toHaveBeenCalledWith({
+      cwd: ctx.cwd,
+      baseline: 'pre-step',
+      expectedHeadSha: 'attempt-1',
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['src/downstream.ts'],
+    });
+
+    const changedFilesCalls = git.changedFilesCalls.filter((c) => c.head === 'amended-1');
+    expect(changedFilesCalls.length).toBeGreaterThanOrEqual(1);
+
+    const createdFilesCalls = git.createdFilesCalls.filter((c) => c.head === 'amended-1');
+    expect(createdFilesCalls.length).toBeGreaterThanOrEqual(1);
+
+    expect(runStep).toHaveBeenCalledTimes(3);
+    expect(events.filter((e) => e.type === 'step.completed')).toHaveLength(2);
+  });
+
+  it('does not mutate the manifest while recovering a premature implementation', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx } = makeCtx(artifacts, git);
+
+    const manifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: primary task',
+          expected_files: ['src/task1.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2: downstream task',
+          expected_files: ['src/task2.ts'],
+        },
+      ],
+    };
+
+    await writePlanAndManifest(artifacts, manifest, ctx.runUuid);
+    const manifestBefore = await artifacts.read(ctx.runUuid, 'task-manifest.json');
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/task1.ts', 'src/task2.ts']);
+    git.changedFilesResults.set('pre-step|amended-1', ['src/task1.ts']);
+    git.changedFilesResults.set('pre-step|attempt-2', ['src/task1.ts']);
+    git.changedFilesResults.set('attempt-2|attempt-3', ['src/task2.ts']);
+
+    const revertScopeFiles = vi.fn(
+      async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
+        git.headByCwd.set(input.cwd, 'amended-1');
+        return {
+          revertedScopeFiles: ['src/task2.ts'],
+          removedNewlyIgnoredFiles: [],
+          amendedHeadSha: 'amended-1',
+        };
+      },
+    );
+
+    let attempt = 0;
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      attempt += 1;
+      git.headByCwd.set(ctx.cwd, `attempt-${attempt}`);
+      if (attempt === 1) {
+        return {
+          outcome: 'recoverable_scope_violation',
+          failureMessage: 'premature implementation of downstream file',
+        };
+      }
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 1,
+      revertScopeFiles,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const manifestAfter = await artifacts.read(ctx.runUuid, 'task-manifest.json');
+    expect(manifestAfter).toEqual(manifestBefore);
+    expect(JSON.parse(manifestAfter)).toEqual(manifest);
+  });
 });
