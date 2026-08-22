@@ -31,7 +31,8 @@ function isExemptOrDeclaredPath(
   const prefix = `${path}/`;
   for (const set of [writableFiles, referenceFiles, exemptFiles]) {
     for (const item of set) {
-      if (item.startsWith(prefix)) {
+      const itemPrefix = item.endsWith('/') ? item : `${item}/`;
+      if (item.startsWith(prefix) || path.startsWith(itemPrefix)) {
         return true;
       }
     }
@@ -100,13 +101,17 @@ export async function recordScratchFilesReport(
   const existingIdx = report.steps.findIndex(
     (s) =>
       (s.phaseId ?? 'implement') === phaseId &&
-      (s.stepTitle === stepTitle || (stepIndex !== 0 && s.stepIndex === stepIndex)),
+      (stepIndex !== 0 && s.stepIndex !== 0
+        ? s.stepIndex === stepIndex
+        : s.stepTitle === stepTitle),
   );
   const newRecord: ScratchFileStepRecord = { phaseId, stepIndex, totalSteps, stepTitle, files };
   if (existingIdx >= 0) {
     report.steps[existingIdx] = newRecord;
-  } else {
+  } else if (files.length > 0) {
     report.steps.push(newRecord);
+  } else {
+    return;
   }
 
   try {
@@ -155,6 +160,15 @@ export async function remediateScratchFiles(
   );
 
   if (allScratchFiles.length === 0) {
+    await recordScratchFilesReport(
+      opts.artifacts,
+      opts.runUuid,
+      opts.stepIndex ?? 0,
+      opts.totalSteps ?? 1,
+      opts.stepTitle ?? opts.phase ?? 'unknown',
+      [],
+      opts.phase ?? 'implement',
+    );
     return {
       allScratchFiles: [],
       deletedFiles: [],

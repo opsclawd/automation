@@ -232,6 +232,7 @@ describe('ImplementHandler scratch-file reporting', () => {
       const result = await new ImplementHandler({
         steps: harness.steps,
         runStep: harness.runStep,
+        maxDeclaredFilesRetries: 0,
       }).run(harness.ctx);
 
       expect(result).toMatchObject({ outcome: 'failed' });

@@ -58,6 +58,22 @@ describe('scratch-file-remediation', () => {
       const untracked = undeclaredUntrackedFiles(status, writable, reference, exempt);
       expect(untracked).toEqual(['scratch_dir']);
     });
+
+    it('exempts files inside explicitly exempted directories', () => {
+      const status = [
+        '?? fixtures/sub/data.json',
+        '?? fixtures/mock.ts',
+        '?? custom_dir/nested/file.txt',
+        '?? scratch.js',
+      ].join('\n');
+
+      const writable = new Set(['src/index.ts']);
+      const reference = new Set<string>();
+      const exempt = new Set(['fixtures', 'custom_dir/nested']);
+
+      const untracked = undeclaredUntrackedFiles(status, writable, reference, exempt);
+      expect(untracked).toEqual(['scratch.js']);
+    });
   });
 
   describe('recordScratchFilesReport', () => {
@@ -99,6 +115,47 @@ describe('scratch-file-remediation', () => {
         totalSteps: 1,
         stepTitle: 'compound',
         files: ['compound-scratch.js'],
+      });
+    });
+
+    it('differentiates different steps that share the same stepTitle', async () => {
+      const artifacts = new FakeArtifactStore();
+      const runUuid = 'test-run-uuid';
+
+      await recordScratchFilesReport(
+        artifacts,
+        runUuid,
+        1,
+        2,
+        'Shared Task Title',
+        ['step1-scratch.js'],
+        'implement',
+      );
+      await recordScratchFilesReport(
+        artifacts,
+        runUuid,
+        2,
+        2,
+        'Shared Task Title',
+        ['step2-scratch.js'],
+        'implement',
+      );
+
+      const report = JSON.parse(await artifacts.read(runUuid, SCRATCH_FILES_ARTIFACT_PATH));
+      expect(report.steps).toHaveLength(2);
+      expect(report.steps[0]).toEqual({
+        phaseId: 'implement',
+        stepIndex: 1,
+        totalSteps: 2,
+        stepTitle: 'Shared Task Title',
+        files: ['step1-scratch.js'],
+      });
+      expect(report.steps[1]).toEqual({
+        phaseId: 'implement',
+        stepIndex: 2,
+        totalSteps: 2,
+        stepTitle: 'Shared Task Title',
+        files: ['step2-scratch.js'],
       });
     });
 
@@ -563,6 +620,62 @@ describe('scratch-file-remediation', () => {
         expect(report.steps[1].phaseId).toBe('compound');
         expect(report.steps[1].stepTitle).toBe('compound');
         expect(report.steps[1].files).toEqual(['get_diff.sh']);
+      } finally {
+        rmSync(tmpCwd, { recursive: true, force: true });
+      }
+    });
+
+    it('updates report to empty files when a step retry successfully clears scratch files', async () => {
+      const tmpCwd = mkdtempSync(join(tmpdir(), 'remediation-retry-test-'));
+      try {
+        const artifacts = new FakeArtifactStore();
+        const runUuid = 'test-run-uuid';
+
+        // Initial attempt with scratch files
+        await remediateScratchFiles({
+          cwd: tmpCwd,
+          runUuid,
+          status: '?? scratch.js',
+          writableFiles: new Set(),
+          referenceFiles: new Set(),
+          exemptFiles: new Set(),
+          artifacts,
+          phase: 'implement',
+          stepIndex: 1,
+          totalSteps: 2,
+          stepTitle: 'Step 1',
+        });
+
+        let report = JSON.parse(await artifacts.read(runUuid, SCRATCH_FILES_ARTIFACT_PATH));
+        expect(report.steps[0].files).toEqual(['scratch.js']);
+
+        // Retry of step 1 produces clean status (no scratch files)
+        const retryResult = await remediateScratchFiles({
+          cwd: tmpCwd,
+          runUuid,
+          status: '',
+          writableFiles: new Set(),
+          referenceFiles: new Set(),
+          exemptFiles: new Set(),
+          artifacts,
+          phase: 'implement',
+          stepIndex: 1,
+          totalSteps: 2,
+          stepTitle: 'Step 1',
+        });
+
+        expect(retryResult.allScratchFiles).toEqual([]);
+        expect(retryResult.remediated).toBe(false);
+
+        report = JSON.parse(await artifacts.read(runUuid, SCRATCH_FILES_ARTIFACT_PATH));
+        expect(report.steps).toHaveLength(1);
+        expect(report.steps[0]).toEqual({
+          phaseId: 'implement',
+          stepIndex: 1,
+          totalSteps: 2,
+          stepTitle: 'Step 1',
+          files: [],
+        });
       } finally {
         rmSync(tmpCwd, { recursive: true, force: true });
       }
