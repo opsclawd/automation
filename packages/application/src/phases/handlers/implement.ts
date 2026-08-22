@@ -938,6 +938,8 @@ export class ImplementHandler implements PhaseHandler {
               .filter((p) => !requiredSet.has(p))
               .filter((p) => isProtectedFilePath(p));
 
+            const preRepairPrematureImplementation = [...prematureImplementation];
+
             const repairCandidates = [
               ...new Set(
                 [
@@ -1036,6 +1038,53 @@ export class ImplementHandler implements PhaseHandler {
                   revertedScopeFiles: repairResult.revertedScopeFiles,
                   removedNewlyIgnoredFilesCount: repairResult.removedNewlyIgnoredFiles.length,
                 };
+
+                const prematureByOwner = new Map<number, Set<string>>();
+                for (const record of preRepairPrematureImplementation) {
+                  const norm = normalizeTaskPath(record.path);
+                  if (norm && actuallyRevertedNormalized.has(norm)) {
+                    let ownerSet = prematureByOwner.get(record.taskNumber);
+                    if (!ownerSet) {
+                      ownerSet = new Set();
+                      prematureByOwner.set(record.taskNumber, ownerSet);
+                    }
+                    ownerSet.add(norm);
+                  }
+                }
+
+                const currentTaskTitle = task?.title ?? d.title;
+                const sortedOwnerTaskNumbers = [...prematureByOwner.keys()].sort((a, b) => a - b);
+                for (const ownerTaskNumber of sortedOwnerTaskNumbers) {
+                  const ownerPaths = [...prematureByOwner.get(ownerTaskNumber)!].sort();
+                  const ownerTask = manifest?.tasks.find((t) => t.n === ownerTaskNumber);
+                  const ownerTaskTitle = ownerTask?.title ?? `Task ${ownerTaskNumber}`;
+
+                  emit(
+                    'step.premature_implementation',
+                    'warn',
+                    `step ${d.index}/${totalSteps} repaired premature implementation of files owned by task ${ownerTaskNumber} (${ownerTaskTitle}): ${ownerPaths.join(', ')}`,
+                    {
+                      index: d.index,
+                      total: totalSteps,
+                      currentTaskNumber: d.index,
+                      currentTaskTitle,
+                      taskTitle: currentTaskTitle,
+                      ownerIndex: ownerTaskNumber,
+                      ownerTaskNumber,
+                      ownerTitle: ownerTaskTitle,
+                      ownerTaskTitle,
+                      files: ownerPaths,
+                      paths: ownerPaths,
+                      revertedScopeFiles: ownerPaths,
+                      preStepHead: preStepHead!,
+                      amendedHeadSha: repairResult.amendedHeadSha,
+                      attempt: declaredFilesRetryCount + 1,
+                      retryAttempt: declaredFilesRetryCount + 1,
+                      maxRetries: maxDeclaredFilesRetries,
+                      maxDeclaredFilesRetries,
+                    },
+                  );
+                }
 
                 const postRepairEval = await evaluateWorktreeState({
                   cwd: ctx.cwd,
