@@ -736,6 +736,8 @@ export class ImplementHandler implements PhaseHandler {
             // decide whether an unavailable status snapshot must fail closed.
           }
 
+          let handlerVerifiedNoBoundaryViolation = false;
+
           if (shouldCaptureBaseline) {
             let postStepHead: string | undefined;
             let committedFiles: string[] = [];
@@ -1231,6 +1233,7 @@ export class ImplementHandler implements PhaseHandler {
             const hasScopeRepairViolation = repairedScopeRecord !== undefined;
             const hasBoundaryViolation =
               hasMissingViolation || hasUndeclaredViolation || hasScopeRepairViolation;
+            handlerVerifiedNoBoundaryViolation = !hasBoundaryViolation;
 
             if (hasBoundaryViolation) {
               if (declaredFilesRetryCount < maxDeclaredFilesRetries) {
@@ -1341,7 +1344,7 @@ export class ImplementHandler implements PhaseHandler {
             }
           }
 
-          if (result.outcome === 'success') {
+          if (result.outcome === 'success' || handlerVerifiedNoBoundaryViolation) {
             this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
             doneIdx.add(d.index);
             emit('step.completed', 'info', `step ${d.index}/${totalSteps} done`, {

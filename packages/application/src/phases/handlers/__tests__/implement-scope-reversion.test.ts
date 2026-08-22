@@ -1075,4 +1075,59 @@ describe('ImplementHandler scope reversion and classify-repair-reclassify loop',
     expect(reviewEvents.length).toBeGreaterThanOrEqual(1);
     expect(reviewEvents[0].metadata?.exhaustedCandidates).toEqual(['src/downstream.ts']);
   });
+
+  it('treats a recoverable scope result as success when the handler finds nothing to repair', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: primary task',
+          expected_files: ['src/task1.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.statusByCwd.set(ctx.cwd, '');
+    // The commit only touches the declared file — the inner loop's own
+    // pre-commit view (e.g. before remediateScratchFiles/formatting-debt
+    // filtering resolve the flagged path) reported recoverable_scope_violation,
+    // but by the time the handler independently reclassifies the actual
+    // committed diff, there is nothing out of scope left to repair.
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/task1.ts']);
+
+    const revertScopeFiles = vi.fn<RevertScopeFilesPort>();
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
+      return {
+        outcome: 'recoverable_scope_violation',
+        failureMessage: 'stale loop diagnostic that no longer reflects the committed diff',
+      };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 1,
+      revertScopeFiles,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(revertScopeFiles).not.toHaveBeenCalled();
+    expect(runStep).toHaveBeenCalledTimes(1);
+
+    const step = steps.findByIndex(RunId(ctx.runUuid), PhaseName('implement'), 1);
+    expect(step?.status).toBe('success');
+
+    expect(events.some((e) => e.type === 'step.completed')).toBe(true);
+    expect(events.some((e) => e.type === 'step.failed')).toBe(false);
+  });
 });
