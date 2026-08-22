@@ -136,9 +136,13 @@ export function classifyTaskChanges(
     for (let i = 0; i < opts.downstreamTasks.length; i++) {
       const task = opts.downstreamTasks[i];
       const taskNum = getTaskNumber(task, baseOffset + i);
+      if (opts.currentTaskNumber !== undefined && taskNum <= opts.currentTaskNumber) {
+        continue;
+      }
       const scope = resolveEffectiveTaskScope(task);
       for (const reqFile of scope.requiredFiles) {
-        if (!downstreamRequiredMap.has(reqFile)) {
+        const existing = downstreamRequiredMap.get(reqFile);
+        if (existing === undefined || taskNum < existing) {
           downstreamRequiredMap.set(reqFile, taskNum);
         }
       }
@@ -164,7 +168,8 @@ export function classifyTaskChanges(
       }
       const scope = resolveEffectiveTaskScope(task);
       for (const reqFile of scope.requiredFiles) {
-        if (!downstreamRequiredMap.has(reqFile)) {
+        const existing = downstreamRequiredMap.get(reqFile);
+        if (existing === undefined || taskNum < existing) {
           downstreamRequiredMap.set(reqFile, taskNum);
         }
       }

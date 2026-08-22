@@ -4,6 +4,9 @@ import {
   checkTaskBoundaries,
   loadManifest,
   isPathPermittedByScope,
+  classifyTaskChanges,
+  type EffectiveTaskScope,
+  type TaskChangeCandidate,
 } from '../task-file-boundaries.js';
 
 describe('task-file-boundaries helpers', () => {
@@ -341,6 +344,115 @@ describe('task-file-boundaries helpers', () => {
         },
       );
       expect(result).toEqual({ status: 'missing', message: 'task-manifest.json not found' });
+    });
+  });
+
+  describe('classifyTaskChanges downstream selection', () => {
+    it('classifies only numeric downstream task deliverables', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: ['src/task2.ts'],
+        mayExtendFiles: ['src/task1.ts', 'src/future.ts'],
+        permittedAreas: [],
+        nonGoals: [],
+        referenceFiles: [],
+      };
+
+      const manifestTasks = [
+        { n: 1, expected_files: ['src/task1.ts'] },
+        { n: 2, expected_files: ['src/task2.ts'] },
+        { n: 3, expected_files: ['src/future.ts'] },
+      ];
+
+      const candidates: TaskChangeCandidate[] = [
+        { path: 'src/task1.ts', tracked: true },
+        { path: 'src/task2.ts', tracked: true },
+        { path: 'src/future.ts', tracked: true },
+      ];
+
+      const result = classifyTaskChanges({
+        candidates,
+        currentScope,
+        manifestTasks,
+        currentTaskNumber: 2,
+      });
+
+      expect(result.prematureImplementation).toEqual([{ path: 'src/future.ts', taskNumber: 3 }]);
+      expect(result.permittedPaths).toEqual(['src/task1.ts', 'src/task2.ts']);
+    });
+
+    it('normalizes duplicate candidates and selects the earliest downstream owner', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: ['src/task1.ts'],
+        mayExtendFiles: [],
+        permittedAreas: [],
+        nonGoals: [],
+        referenceFiles: [],
+      };
+
+      // manifestTasks provided with higher task number first
+      const manifestTasks = [
+        { n: 4, expected_files: ['src/future.ts'] },
+        { n: 2, expected_files: ['./src/future.ts'] },
+        { n: 3, expected_files: ['src//future.ts'] },
+      ];
+
+      // Committed and dirty aliases for candidate
+      const candidates: (string | TaskChangeCandidate)[] = [
+        { path: 'src/future.ts', tracked: true },
+        { path: './src/future.ts', tracked: false },
+        'src//future.ts',
+      ];
+
+      const result = classifyTaskChanges({
+        candidates,
+        currentScope,
+        manifestTasks,
+        currentTaskNumber: 1,
+      });
+
+      expect(result.prematureImplementation).toEqual([{ path: 'src/future.ts', taskNumber: 2 }]);
+
+      // Also test downstreamTasks option with out-of-order array
+      const downstreamResult = classifyTaskChanges({
+        candidates,
+        currentScope,
+        downstreamTasks: [
+          { n: 5, expected_files: ['src/future.ts'] },
+          { n: 2, expected_files: ['src/future.ts'] },
+          { n: 3, expected_files: ['src/future.ts'] },
+        ],
+        currentTaskNumber: 1,
+      });
+
+      expect(downstreamResult.prematureImplementation).toEqual([
+        { path: 'src/future.ts', taskNumber: 2 },
+      ]);
+    });
+
+    it('treats downstream legacy files as required deliverables', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: ['src/task1.ts'],
+        mayExtendFiles: [],
+        permittedAreas: [],
+        nonGoals: [],
+        referenceFiles: [],
+      };
+
+      const manifestTasks = [
+        { n: 1, expected_files: ['src/task1.ts'] },
+        { n: 2, files: ['src/legacy.ts'] },
+      ];
+
+      const candidates = ['src/legacy.ts'];
+
+      const result = classifyTaskChanges({
+        candidates,
+        currentScope,
+        manifestTasks,
+        currentTaskNumber: 1,
+      });
+
+      expect(result.prematureImplementation).toEqual([{ path: 'src/legacy.ts', taskNumber: 2 }]);
     });
   });
 });
