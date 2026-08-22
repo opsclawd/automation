@@ -189,6 +189,7 @@ describe('ImplementHandler protected-file policy', () => {
 
     expect(runStep).toHaveBeenCalledTimes(2);
     expect(contexts[1]?.priorAttemptRepairedScopeFiles).toEqual(['.gitignore']);
+    expect(contexts[1]?.priorAttemptRepairedProtectedFiles).toEqual(['.gitignore']);
     expect(contexts[1]?.priorAttemptUndeclaredFiles).toBeUndefined();
 
     const retryEvents = events.filter((e) => e.type === 'step.declared_files_retry');
@@ -276,6 +277,10 @@ describe('ImplementHandler protected-file policy', () => {
       '.github-actions.yml',
       '.github/workflows/deploy.yml',
     ]);
+    expect(contexts[1]?.priorAttemptRepairedProtectedFiles).toEqual([
+      '.ai-orchestrator.json',
+      '.github/workflows/deploy.yml',
+    ]);
 
     const retryEvents = events.filter((e) => e.type === 'step.declared_files_retry');
     expect(retryEvents).toHaveLength(1);
@@ -340,6 +345,7 @@ describe('ImplementHandler protected-file policy', () => {
 
     expect(result.outcome).toBe('passed');
     expect(contexts[1]?.priorAttemptRepairedScopeFiles).toEqual(['.gitignore']);
+    expect(contexts[1]?.priorAttemptRepairedProtectedFiles).toEqual(['.gitignore']);
     expect(contexts[1]?.priorAttemptUndeclaredFiles).toBeUndefined();
 
     const retryEvents = events.filter((e) => e.type === 'step.declared_files_retry');

@@ -481,7 +481,8 @@ export class ImplementHandler implements PhaseHandler {
             ...(priorAttemptRepairedScopeFiles !== undefined
               ? {
                   priorAttemptRepairedScopeFiles,
-                  priorAttemptRepairedProtectedFiles: priorAttemptRepairedScopeFiles,
+                  priorAttemptRepairedProtectedFiles:
+                    priorAttemptRepairedScopeFiles.filter(isProtectedFilePath),
                 }
               : {}),
           });
