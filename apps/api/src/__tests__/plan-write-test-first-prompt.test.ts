@@ -16,6 +16,14 @@ describe('plan-write test-first task ordering', () => {
     expect(prompt).toContain(
       'For additive feature work, unit tests MUST be delivered in the same task as their corresponding implementation code',
     );
+    expect(prompt).toContain('DEFERRED SIGNATURE CHANGES IN RED TASKS');
+    expect(prompt).toContain('explicitly-typed local variable or interface');
+    // Both compiler-trap directions must be covered, not just excess-property-on-literal:
+    // reading a not-yet-existent field off the actual value is a different error
+    // (Property does not exist) from constructing an expected literal with extra fields
+    // (excess-property check), and needs a different fix (cast the actual value).
+    expect(prompt).toContain('Property does not exist');
+    expect(prompt).toContain('cast the value through');
   });
 
   it('preserves test-first task separation during plan repair', () => {
@@ -27,5 +35,9 @@ describe('plan-write test-first task ordering', () => {
     expect(repairPrompt).toContain(
       'For additive feature work,\n  preserve unit tests co-located within the same task as their implementation code',
     );
+    expect(repairPrompt).toContain('DEFERRED SIGNATURE CHANGES IN RED TASKS');
+    expect(repairPrompt).toContain('explicitly-typed local variable or interface');
+    expect(repairPrompt).toContain('Property does not exist');
+    expect(repairPrompt).toContain('cast the value through');
   });
 });
