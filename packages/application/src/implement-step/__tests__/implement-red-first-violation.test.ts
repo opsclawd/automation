@@ -6,6 +6,7 @@ import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
 import { ImplementStepLoop } from '../implement-step-loop.js';
 import type {
   ImplementStepLoopDeps,
+  ImplementStepLoopResult,
   ImplementResult,
   ImplementStepOptions,
   TypecheckResult,
@@ -30,6 +31,26 @@ const baseManifest: TaskManifest = {
       expected_files: ['src/proof.test.ts'],
       reference_files: ['src/read-only.ts'],
       validation_commands: ['! pnpm test -- src/proof.test.ts'],
+    },
+  ],
+};
+
+const twoTaskManifestWithPremature: TaskManifest = {
+  version: 2,
+  task_count: 2,
+  tasks: [
+    {
+      n: 1,
+      title: 'Add the RED-first regression proof',
+      expected_files: ['src/proof.test.ts'],
+      reference_files: ['src/read-only.ts'],
+      validation_commands: ['! pnpm test -- src/proof.test.ts'],
+    },
+    {
+      n: 2,
+      title: 'Implement the fix in future task',
+      expected_files: ['src/future-fix.ts'],
+      validation_commands: ['pnpm test -- src/proof.test.ts'],
     },
   ],
 };
@@ -198,7 +219,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/proof.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     const harness = createHarness({
       changedFiles: [
@@ -245,7 +266,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/proof.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     const harness = createHarness({
       changedFiles: [
@@ -259,7 +280,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
 
     const result = await harness.loop.execute(harness.input);
 
-    expect(result.outcome).toBe('failed');
+    expect(result.outcome).toBe('recoverable_scope_violation');
     expect(result.loop.status).toBe('failed');
     expect(result.loop.iterations).toHaveLength(1);
     expect(result.loop.iterations[0].outcome).toBe('failed');
@@ -292,7 +313,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/proof.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     const harness = createHarness({
       changedFiles: ['src/proof.test.ts'],
@@ -313,7 +334,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['pnpm lint'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     const harness = createHarness({
       changedFiles: ['src/proof.test.ts', 'src/future-fix.ts'],
@@ -382,7 +403,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/proof.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     const harness = createHarness({
       manifest: twoTaskManifest,
@@ -432,7 +453,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/proof.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     const harness = createHarness({
       manifest: twoTaskManifest,
@@ -482,7 +503,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/proof.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     const harness = createHarness({
       manifest: twoTaskManifestWithRef,
@@ -505,5 +526,122 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     expect(harness.events.some((event) => event.type === 'step.red_first_violation')).toBe(false);
     expect(harness.runSpecReview).toHaveBeenCalled();
     expect(harness.runQualityReview).toHaveBeenCalled();
+  });
+
+  it('returns a recoverable scope violation for premature implementation and skips review work', async () => {
+    const revalidationPayload = {
+      validationRunId: 'validation-1',
+      passed: false,
+      failedCommands: ['! pnpm test -- src/proof.test.ts'],
+    } as RevalidationResult;
+
+    const harness = createHarness({
+      manifest: twoTaskManifestWithPremature,
+      changedFiles: [
+        'src/proof.test.ts',
+        './src/future-fix.ts',
+        'src\\future-fix.ts',
+        'generated/allowed.ts',
+      ],
+      revalidationResult: revalidationPayload,
+    });
+
+    const result: ImplementStepLoopResult = await harness.loop.execute(harness.input);
+
+    expect(result.outcome).toBe('recoverable_scope_violation');
+    expect(result.loop.status).toBe('failed');
+    expect(result.loop.iterations).toHaveLength(1);
+    expect(result.loop.iterations[0].outcome).toBe('failed');
+    expect(result.loop.iterations[0].reviewInvocationId).toBe('');
+    expect(result.prematureImplementation).toEqual([{ path: 'src/future-fix.ts', taskNumber: 2 }]);
+
+    expect(result.failureMessage).toBeDefined();
+    expect(result.failureMessage).toContain('Task 1');
+    expect(result.failureMessage).toContain('Add the RED-first regression proof');
+    expect(result.failureMessage).toContain('! pnpm test -- src/proof.test.ts');
+    expect(result.failureMessage).toContain('src/future-fix.ts (owned by task 2)');
+
+    const redEvent = harness.events.find((e) => e.type === 'step.red_first_violation');
+    expect(redEvent).toBeDefined();
+    expect(redEvent?.metadata).toMatchObject({
+      prematureImplementation: [{ path: 'src/future-fix.ts', taskNumber: 2 }],
+      failedInvertedCommands: ['! pnpm test -- src/proof.test.ts'],
+    });
+
+    expect(harness.runSpecReview).not.toHaveBeenCalled();
+    expect(harness.runQualityReview).not.toHaveBeenCalled();
+    expect(harness.runFix).not.toHaveBeenCalled();
+  });
+
+  it('hands mixed drift non-goal protected and premature changes to outer recovery', async () => {
+    const mixedManifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Add the RED-first regression proof',
+          expected_files: ['src/proof.test.ts'],
+          non_goals: ['src/non-goal.ts'],
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+        {
+          n: 2,
+          title: 'Implement the fix in future task',
+          expected_files: ['src/future-fix.ts'],
+          validation_commands: ['pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    };
+
+    const revalidationPayload = {
+      validationRunId: 'validation-1',
+      passed: false,
+      failedCommands: ['! pnpm test -- src/proof.test.ts'],
+    } as RevalidationResult;
+
+    const harness = createHarness({
+      manifest: mixedManifest,
+      changedFiles: [
+        'src/proof.test.ts',
+        'src/future-fix.ts',
+        'src/drift.ts',
+        'src/non-goal.ts',
+        '.gitignore',
+        'generated/allowed.ts',
+      ],
+      revalidationResult: revalidationPayload,
+    });
+
+    const result: ImplementStepLoopResult = await harness.loop.execute(harness.input);
+
+    expect(result.outcome).toBe('recoverable_scope_violation');
+    expect(result.loop.status).toBe('failed');
+    expect(result.loop.iterations).toHaveLength(1);
+    expect(result.loop.iterations[0].outcome).toBe('failed');
+    expect(result.loop.iterations[0].reviewInvocationId).toBe('');
+    expect(result.prematureImplementation).toEqual([{ path: 'src/future-fix.ts', taskNumber: 2 }]);
+    expect(result.driftFiles).toEqual(['src/drift.ts']);
+    expect(result.nonGoalFiles).toEqual(['src/non-goal.ts']);
+    expect(result.protectedFiles).toEqual(['.gitignore']);
+
+    expect(result.failureMessage).toBeDefined();
+    expect(result.failureMessage).toContain('Task 1');
+    expect(result.failureMessage).toContain('src/future-fix.ts (owned by task 2)');
+    expect(result.failureMessage).toContain('src/drift.ts');
+
+    const redEvent = harness.events.find((e) => e.type === 'step.red_first_violation');
+    expect(redEvent).toBeDefined();
+    expect(redEvent?.metadata).toMatchObject({
+      prematureImplementation: [{ path: 'src/future-fix.ts', taskNumber: 2 }],
+      driftFiles: ['src/drift.ts'],
+      nonGoalFiles: ['src/non-goal.ts'],
+      protectedFiles: ['.gitignore'],
+      failedInvertedCommands: ['! pnpm test -- src/proof.test.ts'],
+    });
+
+    expect(harness.runSpecReview).not.toHaveBeenCalled();
+    expect(harness.runQualityReview).not.toHaveBeenCalled();
+    expect(harness.runFix).not.toHaveBeenCalled();
   });
 });

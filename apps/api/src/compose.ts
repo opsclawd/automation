@@ -180,6 +180,7 @@ import {
   type RunWorkspaceTypecheckPort,
   verifyArbiterGrounding,
   orchestratorExcludePatterns,
+  type StepRunResult,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -5566,10 +5567,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         initialPreStepHead?: string;
         exemptUndeclaredFiles?: string[];
         completedStepIndexes?: number[];
-      }): Promise<{
-        outcome: 'success' | 'failed' | 'needs_human_review';
-        failureMessage?: string;
-      }> => {
+      }): Promise<StepRunResult> => {
         if (!implementStepLoop) throw new Error('implementStepLoop not initialized');
         const result = await implementStepLoop.execute({
           runId: RunId(sctx.ctx.runUuid),
@@ -5615,6 +5613,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           ...(result.modifiedReferenceFiles !== undefined
             ? { modifiedReferenceFiles: result.modifiedReferenceFiles }
             : {}),
+          ...(result.prematureImplementation !== undefined
+            ? { prematureImplementation: result.prematureImplementation }
+            : {}),
+          ...(result.driftFiles !== undefined ? { driftFiles: result.driftFiles } : {}),
+          ...(result.nonGoalFiles !== undefined ? { nonGoalFiles: result.nonGoalFiles } : {}),
+          ...(result.protectedFiles !== undefined ? { protectedFiles: result.protectedFiles } : {}),
         };
       };
 

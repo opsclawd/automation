@@ -367,10 +367,14 @@ export interface StepRunContext {
 }
 
 export interface StepRunResult {
-  outcome: 'success' | 'failed' | 'needs_human_review';
+  outcome: 'success' | 'failed' | 'needs_human_review' | 'recoverable_scope_violation';
   failureMessage?: string;
   failureKind?: FailureKind;
   modifiedReferenceFiles?: string[];
+  prematureImplementation?: PrematureImplementationRecord[];
+  driftFiles?: string[];
+  nonGoalFiles?: string[];
+  protectedFiles?: string[];
 }
 
 export interface ImplementHandlerOpts {
@@ -697,7 +701,7 @@ export class ImplementHandler implements PhaseHandler {
           );
         }
 
-        if (result.outcome === 'success') {
+        if (result.outcome === 'success' || result.outcome === 'recoverable_scope_violation') {
           const currentScope = resolveEffectiveTaskScope(task);
           const expectedFiles = currentScope.requiredFiles;
           const referenceFiles = currentScope.referenceFiles;
@@ -1288,12 +1292,24 @@ export class ImplementHandler implements PhaseHandler {
             }
           }
 
-          this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
-          doneIdx.add(d.index);
-          emit('step.completed', 'info', `step ${d.index}/${totalSteps} done`, {
-            index: d.index,
-            total: totalSteps,
-          });
+          if (result.outcome === 'success') {
+            this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
+            doneIdx.add(d.index);
+            emit('step.completed', 'info', `step ${d.index}/${totalSteps} done`, {
+              index: d.index,
+              total: totalSteps,
+            });
+          } else {
+            const failureMessage =
+              result.failureMessage ??
+              `step ${d.index} (${d.title}) scope violation could not be recovered`;
+            this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+            emit('step.failed', 'error', failureMessage, {
+              index: d.index,
+              total: totalSteps,
+            });
+            return this.fail(ctx, emit, result.failureKind ?? 'invalid_result', failureMessage);
+          }
         } else if (result.outcome === 'needs_human_review') {
           this.opts.steps.upsert({ ...step, status: 'needs_human_review', completedAt: ctx.now() });
           emit(
@@ -1334,16 +1350,20 @@ export class ImplementHandler implements PhaseHandler {
             return this.fail(
               ctx,
               emit,
-              'invalid_result',
+              result.failureKind ?? 'invalid_result',
               result.failureMessage,
-              'Separate the regression proof from its implementation task and resume from the failed step.',
             );
           }
           emit('step.failed', 'error', `step ${d.index}/${totalSteps} failed`, {
             index: d.index,
             total: totalSteps,
           });
-          return this.fail(ctx, emit, 'agent_incomplete', `step ${d.index} (${d.title}) failed`);
+          return this.fail(
+            ctx,
+            emit,
+            result.failureKind ?? 'agent_incomplete',
+            `step ${d.index} (${d.title}) failed`,
+          );
         }
         break;
       }

@@ -1119,7 +1119,23 @@ export class ImplementStepLoop {
               outcome: 'failed',
             },
           );
-          return { outcome: 'failed', loop, failureMessage };
+          return {
+            outcome: 'recoverable_scope_violation',
+            loop,
+            failureMessage,
+            ...(classification.prematureImplementation.length > 0
+              ? { prematureImplementation: classification.prematureImplementation }
+              : {}),
+            ...(classification.driftFiles.length > 0
+              ? { driftFiles: classification.driftFiles }
+              : {}),
+            ...(classification.nonGoalFiles && classification.nonGoalFiles.length > 0
+              ? { nonGoalFiles: classification.nonGoalFiles }
+              : {}),
+            ...(classification.protectedFiles && classification.protectedFiles.length > 0
+              ? { protectedFiles: classification.protectedFiles }
+              : {}),
+          };
         }
       }
     }

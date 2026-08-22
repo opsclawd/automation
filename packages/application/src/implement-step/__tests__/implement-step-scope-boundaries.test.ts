@@ -216,7 +216,7 @@ describe('ImplementStepLoop Scope Boundaries', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/proof.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     // Subcase A: All candidates are within effective task scope (expected, may_extend, tracked area file)
     const permittedHarness = createHarness({
@@ -241,7 +241,7 @@ describe('ImplementStepLoop Scope Boundaries', () => {
     });
 
     const driftResult = await driftHarness.loop.execute(driftHarness.input);
-    expect(driftResult.outcome).toBe('failed');
+    expect(driftResult.outcome).toBe('recoverable_scope_violation');
     expect(driftHarness.runSpecReview).not.toHaveBeenCalled();
     const failureMessage = (driftResult as unknown as { failureMessage?: string }).failureMessage;
     expect(failureMessage).toBeDefined();
@@ -281,7 +281,7 @@ describe('ImplementStepLoop Scope Boundaries', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/task1.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     const harness = createHarness({
       manifest,
@@ -294,7 +294,7 @@ describe('ImplementStepLoop Scope Boundaries', () => {
 
     const result = await harness.loop.execute(harness.input);
 
-    expect(result.outcome).toBe('failed');
+    expect(result.outcome).toBe('recoverable_scope_violation');
     expect(harness.runSpecReview).not.toHaveBeenCalled();
 
     const failureMessage = (result as unknown as { failureMessage?: string }).failureMessage;
@@ -334,7 +334,7 @@ describe('ImplementStepLoop Scope Boundaries', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/proof.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     const harness = createHarness({
       manifest,
@@ -371,7 +371,7 @@ describe('ImplementStepLoop Scope Boundaries', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/feature/entry.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     // Subcase A: V1 manifest with `files`
     const v1Manifest = {
@@ -450,7 +450,7 @@ describe('ImplementStepLoop Scope Boundaries', () => {
       validationRunId: 'validation-1',
       passed: false,
       failedCommands: ['! pnpm test -- src/proof.test.ts'],
-    } as unknown as RevalidationResult;
+    } as RevalidationResult;
 
     // Untracked file created in working tree within permitted area
     const harness = createHarness({
@@ -465,7 +465,7 @@ describe('ImplementStepLoop Scope Boundaries', () => {
 
     const result = await harness.loop.execute(harness.input);
 
-    expect(result.outcome).toBe('failed');
+    expect(result.outcome).toBe('recoverable_scope_violation');
     expect(harness.runSpecReview).not.toHaveBeenCalled();
 
     const failureMessage = (result as unknown as { failureMessage?: string }).failureMessage;
