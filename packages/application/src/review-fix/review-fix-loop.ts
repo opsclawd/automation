@@ -2691,7 +2691,7 @@ export class ReviewFixLoop {
     manifestResult: ManifestLoadResult,
   ): Promise<string> {
     if (
-      !this.deps.revertProtectedFiles ||
+      !this.deps.revertScopeFiles ||
       !this.deps.git ||
       typeof this.deps.git.changedFiles !== 'function'
     ) {
@@ -2711,11 +2711,13 @@ export class ReviewFixLoop {
         ),
       ].sort();
 
-      if (protectedFiles.length > 0 && this.deps.revertProtectedFiles) {
-        const repairResult = await this.deps.revertProtectedFiles({
+      if (protectedFiles.length > 0 && this.deps.revertScopeFiles) {
+        const repairResult = await this.deps.revertScopeFiles({
           cwd: ctx.cwd,
           baseline: headBeforeFix,
-          protectedFiles,
+          expectedHeadSha: headAfterFix,
+          rewriteSafety: 'unpublished',
+          scopeFiles: protectedFiles,
         });
         this.emit(
           loopInput,
@@ -2724,7 +2726,7 @@ export class ReviewFixLoop {
           `review/fix iteration ${ctx.iterationIndex} modified protected files (${protectedFiles.join(', ')}); reverted protected changes`,
           {
             iterationIndex: ctx.iterationIndex,
-            revertedProtectedFiles: repairResult.revertedProtectedFiles,
+            revertedScopeFiles: repairResult.revertedScopeFiles,
             removedNewlyIgnoredFiles: repairResult.removedNewlyIgnoredFiles,
             amendedHeadSha: repairResult.amendedHeadSha,
           },

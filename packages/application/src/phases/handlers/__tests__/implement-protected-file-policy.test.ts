@@ -8,10 +8,10 @@ import { FakeStepRepository } from '../../../test-doubles/fake-step-repository.j
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import type {
-  RevertProtectedFilesInput,
-  RevertProtectedFilesPort,
-  RevertProtectedFilesResult,
-} from '../../../ports/protected-file-reverter-port.js';
+  RevertScopeFilesInput,
+  RevertScopeFilesPort,
+  RevertScopeFilesResult,
+} from '../../../ports/revert-scope-files-port.js';
 
 function makeCtx(artifacts: FakeArtifactStore, git: FakeGitPort) {
   const events: OrchestratorEvent[] = [];
@@ -99,7 +99,7 @@ describe('ImplementHandler protected-file policy', () => {
     git.headByCwd.set(ctx.cwd, 'pre-step');
     git.changedFilesResults.set('pre-step|attempt-1', ['.gitignore', 'src/app.ts']);
 
-    const revertProtectedFiles = vi.fn<RevertProtectedFilesPort>();
+    const revertScopeFiles = vi.fn<RevertScopeFilesPort>();
 
     const runStep = vi.fn(async (): Promise<StepRunResult> => {
       git.headByCwd.set(ctx.cwd, 'attempt-1');
@@ -110,11 +110,11 @@ describe('ImplementHandler protected-file policy', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 1,
-      revertProtectedFiles,
+      revertScopeFiles,
     }).run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(revertProtectedFiles).not.toHaveBeenCalled();
+    expect(revertScopeFiles).not.toHaveBeenCalled();
     expect(runStep).toHaveBeenCalledTimes(1);
     expect(events.filter((e) => e.type === 'step.completed')).toHaveLength(1);
   });
@@ -143,12 +143,12 @@ describe('ImplementHandler protected-file policy', () => {
     git.changedFilesResults.set('pre-step|amended-1', ['src/task.ts']);
     git.changedFilesResults.set('pre-step|attempt-2', ['src/task.ts']);
 
-    const revertProtectedFiles = vi.fn(
-      async (input: RevertProtectedFilesInput): Promise<RevertProtectedFilesResult> => {
+    const revertScopeFiles = vi.fn(
+      async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
         git.headByCwd.set(input.cwd, 'amended-1');
         git.statusByCwd.set(input.cwd, ''); // Status changed after repair
         return {
-          revertedProtectedFiles: ['.gitignore'],
+          revertedScopeFiles: ['.gitignore'],
           removedNewlyIgnoredFiles: [],
           amendedHeadSha: 'amended-1',
         };
@@ -168,15 +168,17 @@ describe('ImplementHandler protected-file policy', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 1,
-      revertProtectedFiles,
+      revertScopeFiles,
     }).run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
-    expect(revertProtectedFiles).toHaveBeenCalledWith({
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).toHaveBeenCalledWith({
       cwd: ctx.cwd,
       baseline: 'pre-step',
-      protectedFiles: ['.gitignore'],
+      expectedHeadSha: 'attempt-1',
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.gitignore'],
     });
 
     expect(runStep).toHaveBeenCalledTimes(2);
@@ -225,11 +227,11 @@ describe('ImplementHandler protected-file policy', () => {
     ]);
     git.changedFilesResults.set('pre-step|attempt-2', ['src/task.ts', '.github/workflows/ci.yml']);
 
-    const revertProtectedFiles = vi.fn(
-      async (input: RevertProtectedFilesInput): Promise<RevertProtectedFilesResult> => {
+    const revertScopeFiles = vi.fn(
+      async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
         git.headByCwd.set(input.cwd, 'amended-1');
         return {
-          revertedProtectedFiles: ['.ai-orchestrator.json', '.github/workflows/deploy.yml'],
+          revertedScopeFiles: ['.ai-orchestrator.json', '.github/workflows/deploy.yml'],
           removedNewlyIgnoredFiles: [],
           amendedHeadSha: 'amended-1',
         };
@@ -249,15 +251,17 @@ describe('ImplementHandler protected-file policy', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 1,
-      revertProtectedFiles,
+      revertScopeFiles,
     }).run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
-    expect(revertProtectedFiles).toHaveBeenCalledWith({
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).toHaveBeenCalledWith({
       cwd: ctx.cwd,
       baseline: 'pre-step',
-      protectedFiles: ['.ai-orchestrator.json', '.github/workflows/deploy.yml'],
+      expectedHeadSha: 'attempt-1',
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.ai-orchestrator.json', '.github/workflows/deploy.yml'],
     });
 
     // Residual non-protected undeclared file .github-actions.yml passed into priorAttemptUndeclaredFiles
@@ -301,11 +305,11 @@ describe('ImplementHandler protected-file policy', () => {
     git.changedFilesResults.set('pre-step|amended-1', ['src/feature.ts']);
     git.changedFilesResults.set('pre-step|attempt-2', ['src/feature.ts']);
 
-    const revertProtectedFiles = vi.fn(
-      async (input: RevertProtectedFilesInput): Promise<RevertProtectedFilesResult> => {
+    const revertScopeFiles = vi.fn(
+      async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
         git.headByCwd.set(input.cwd, 'amended-1');
         return {
-          revertedProtectedFiles: ['.gitignore'],
+          revertedScopeFiles: ['.gitignore'],
           removedNewlyIgnoredFiles: ['design.md', 'plan.md'],
           amendedHeadSha: 'amended-1',
         };
@@ -325,7 +329,7 @@ describe('ImplementHandler protected-file policy', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 1,
-      revertProtectedFiles,
+      revertScopeFiles,
     }).run(ctx);
 
     expect(result.outcome).toBe('passed');
@@ -363,11 +367,11 @@ describe('ImplementHandler protected-file policy', () => {
     git.changedFilesResults.set('pre-step|amended-1', ['src/task.ts']);
     git.changedFilesResults.set('pre-step|attempt-2', ['src/task.ts']);
 
-    const revertProtectedFiles = vi.fn(
-      async (input: RevertProtectedFilesInput): Promise<RevertProtectedFilesResult> => {
+    const revertScopeFiles = vi.fn(
+      async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
         git.headByCwd.set(input.cwd, 'amended-1');
         return {
-          revertedProtectedFiles: ['.ai-orchestrator.json'],
+          revertedScopeFiles: ['.ai-orchestrator.json'],
           removedNewlyIgnoredFiles: [],
           amendedHeadSha: 'amended-1',
         };
@@ -385,7 +389,7 @@ describe('ImplementHandler protected-file policy', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 2,
-      revertProtectedFiles,
+      revertScopeFiles,
     }).run(ctx);
 
     expect(result.outcome).toBe('passed');
@@ -398,7 +402,7 @@ describe('ImplementHandler protected-file policy', () => {
   });
 
   it('fails closed when protected-file repair cannot amend the step', async () => {
-    // Subcase 1: revertProtectedFiles dependency is absent
+    // Subcase 1: revertScopeFiles dependency is absent
     const artifacts1 = new FakeArtifactStore();
     const git1 = new FakeGitPort();
     const steps1 = new FakeStepRepository();
@@ -428,7 +432,7 @@ describe('ImplementHandler protected-file policy', () => {
       steps: steps1,
       runStep: runStep1,
       maxDeclaredFilesRetries: 2,
-      // revertProtectedFiles omitted
+      // revertScopeFiles omitted
     }).run(ctx1);
 
     expect(result1.outcome).toBe('failed');
@@ -436,7 +440,7 @@ describe('ImplementHandler protected-file policy', () => {
     expect(events1.filter((e) => e.type === 'step.completed')).toHaveLength(0);
     expect(events1.filter((e) => e.type === 'step.failed')).toHaveLength(1);
 
-    // Subcase 2: revertProtectedFiles throws
+    // Subcase 2: revertScopeFiles throws
     const artifacts2 = new FakeArtifactStore();
     const git2 = new FakeGitPort();
     const steps2 = new FakeStepRepository();
@@ -462,7 +466,7 @@ describe('ImplementHandler protected-file policy', () => {
       return { outcome: 'success' };
     });
 
-    const revertProtectedFiles2 = vi.fn(async () => {
+    const revertScopeFiles2 = vi.fn(async () => {
       throw new Error('git commit --amend failed');
     });
 
@@ -470,7 +474,7 @@ describe('ImplementHandler protected-file policy', () => {
       steps: steps2,
       runStep: runStep2,
       maxDeclaredFilesRetries: 2,
-      revertProtectedFiles: revertProtectedFiles2,
+      revertScopeFiles: revertScopeFiles2,
     }).run(ctx2);
 
     expect(result2.outcome).toBe('failed');
@@ -507,11 +511,11 @@ describe('ImplementHandler protected-file policy', () => {
     ]);
     git.changedFilesResults.set('pre-step|amended-1', ['src/task.ts']);
 
-    const revertProtectedFiles = vi.fn(
-      async (input: RevertProtectedFilesInput): Promise<RevertProtectedFilesResult> => {
+    const revertScopeFiles = vi.fn(
+      async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
         git.headByCwd.set(input.cwd, 'amended-1');
         return {
-          revertedProtectedFiles: ['.gitignore'],
+          revertedScopeFiles: ['.gitignore'],
           removedNewlyIgnoredFiles: ['artifact1.md', 'artifact2.md', 'artifact3.md'],
           amendedHeadSha: 'amended-1',
         };
@@ -527,7 +531,7 @@ describe('ImplementHandler protected-file policy', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 0, // No retry budget
-      revertProtectedFiles,
+      revertScopeFiles,
     }).run(ctx);
 
     expect(result.outcome).toBe('failed');
@@ -567,11 +571,11 @@ describe('ImplementHandler protected-file policy', () => {
     git.changedFilesResults.set('pre-step|attempt-1', ['src/task.ts', '.gitignore']);
     git.changedFilesResults.set('pre-step|amended-1', ['src/task.ts']);
 
-    const revertProtectedFiles = vi.fn(
-      async (input: RevertProtectedFilesInput): Promise<RevertProtectedFilesResult> => {
+    const revertScopeFiles = vi.fn(
+      async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
         git.headByCwd.set(input.cwd, 'amended-1');
         return {
-          revertedProtectedFiles: ['.gitignore'],
+          revertedScopeFiles: ['.gitignore'],
           removedNewlyIgnoredFiles: [],
           amendedHeadSha: 'amended-1',
         };
@@ -587,12 +591,12 @@ describe('ImplementHandler protected-file policy', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 2,
-      revertProtectedFiles,
+      revertScopeFiles,
     }).run(ctx);
 
     expect(result.outcome).toBe('needs_human_review');
     expect(runStep).toHaveBeenCalledTimes(1);
-    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
     expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.kind).toBe('needs_human_review');
@@ -681,7 +685,7 @@ describe('ImplementHandler protected-file policy', () => {
     git.headByCwd.set(ctx.cwd, 'pre-step');
     git.changedFilesResults.set('pre-step|attempt-1', ['src/task.ts', '.gitignore']);
 
-    const revertProtectedFiles = vi.fn(async () => {
+    const revertScopeFiles = vi.fn(async () => {
       throw new Error('git commit --amend failed');
     });
 
@@ -694,12 +698,12 @@ describe('ImplementHandler protected-file policy', () => {
       steps,
       runStep,
       maxDeclaredFilesRetries: 2,
-      revertProtectedFiles,
+      revertScopeFiles,
     }).run(ctx);
 
     expect(result.outcome).toBe('needs_human_review');
     expect(runStep).toHaveBeenCalledTimes(1);
-    expect(revertProtectedFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
     expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.kind).toBe('needs_human_review');

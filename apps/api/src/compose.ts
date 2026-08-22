@@ -54,7 +54,7 @@ import {
   killProcess,
   ReviewStateRepository,
   createPrReviewContextSource,
-  revertProtectedFiles,
+  revertScopeFiles,
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
@@ -3344,7 +3344,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         events: persistingEventBusForLoop,
         git: gitAdapter,
         loopHistory,
-        revertProtectedFiles,
+        revertScopeFiles,
         findingEvidenceInspector: createFindingEvidenceInspector(),
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
         readWorktreeFile,
@@ -5735,7 +5735,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             runWorkspaceTypecheck,
             maxDeclaredFilesRetries: config.phases.implement.maxDeclaredFilesRetries,
             exemptUndeclaredFiles: config.phases.implement.exemptUndeclaredFiles,
-            revertProtectedFiles,
+            revertScopeFiles,
             deleteWorktreeFile,
           }),
         );

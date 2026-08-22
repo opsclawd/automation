@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { revertProtectedFiles } from '../revert-protected-files.js';
+import { revertScopeFiles } from '../revert-scope-files.js';
 
 const tempDirs: string[] = [];
 
@@ -22,7 +22,7 @@ function trackDir(dir: string): string {
 }
 
 function initRepo(): { repoDir: string; execGit: (args: string[]) => string } {
-  const repoDir = trackDir(mkdtempSync(join(tmpdir(), 'revert-prot-files-')));
+  const repoDir = trackDir(mkdtempSync(join(tmpdir(), 'revert-scope-files-')));
   execFileSync('git', ['init', '--quiet', '--initial-branch=main', repoDir], { stdio: 'pipe' });
   execFileSync('git', ['-C', repoDir, 'config', 'user.email', 'test@example.com'], {
     stdio: 'pipe',
@@ -35,8 +35,63 @@ function initRepo(): { repoDir: string; execGit: (args: string[]) => string } {
   return { repoDir, execGit };
 }
 
-describe('revertProtectedFiles', () => {
-  it('restores protected files to the pre-step baseline and amends only the current HEAD', async () => {
+describe('revertScopeFiles', () => {
+  it('refuses to amend when expectedHeadSha differs from HEAD', async () => {
+    const { repoDir, execGit } = initRepo();
+
+    writeFileSync(join(repoDir, '.gitignore'), '/node_modules\n');
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'chore: baseline']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    writeFileSync(join(repoDir, '.gitignore'), '/dist\n');
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'feat: step commit']);
+    const actualHeadSha = execGit(['rev-parse', 'HEAD']);
+
+    const staleExpectedHeadSha = '0000000000000000000000000000000000000000';
+
+    await expect(
+      revertScopeFiles({
+        cwd: repoDir,
+        baseline: baselineSha,
+        expectedHeadSha: staleExpectedHeadSha,
+        rewriteSafety: 'unpublished',
+        scopeFiles: ['.gitignore'],
+      }),
+    ).rejects.toThrow(/expected HEAD.*does not match current HEAD/i);
+
+    expect(execGit(['rev-parse', 'HEAD'])).toBe(actualHeadSha);
+    expect(readFileSync(join(repoDir, '.gitignore'), 'utf8')).toBe('/dist\n');
+  });
+
+  it('refuses to amend when rewriteSafety is not unpublished', async () => {
+    const { repoDir, execGit } = initRepo();
+
+    writeFileSync(join(repoDir, '.gitignore'), '/node_modules\n');
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'chore: baseline']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    writeFileSync(join(repoDir, '.gitignore'), '/dist\n');
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'feat: step commit']);
+    const actualHeadSha = execGit(['rev-parse', 'HEAD']);
+
+    await expect(
+      revertScopeFiles({
+        cwd: repoDir,
+        baseline: baselineSha,
+        expectedHeadSha: actualHeadSha,
+        rewriteSafety: 'published' as unknown as 'unpublished',
+        scopeFiles: ['.gitignore'],
+      }),
+    ).rejects.toThrow(/rewriteSafety must be "unpublished"/i);
+
+    expect(execGit(['rev-parse', 'HEAD'])).toBe(actualHeadSha);
+  });
+
+  it('restores a baseline-present scope path and preserves unrelated in-scope work', async () => {
     const { repoDir, execGit } = initRepo();
 
     // Baseline commit with protected files and source file
@@ -62,14 +117,16 @@ describe('revertProtectedFiles', () => {
     execGit(['commit', '-m', 'feat: step changes']);
     const stepHeadSha = execGit(['rev-parse', 'HEAD']);
 
-    const result = await revertProtectedFiles({
+    const result = await revertScopeFiles({
       cwd: repoDir,
       baseline: baselineSha,
-      protectedFiles: ['.gitignore', '.ai-orchestrator.json'],
+      expectedHeadSha: stepHeadSha,
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.gitignore', '.ai-orchestrator.json'],
     });
 
     // Verify result object
-    expect(result.revertedProtectedFiles).toEqual(['.ai-orchestrator.json', '.gitignore']);
+    expect(result.revertedScopeFiles).toEqual(['.ai-orchestrator.json', '.gitignore']);
     expect(result.removedNewlyIgnoredFiles).toEqual([]);
     expect(result.amendedHeadSha).toBeDefined();
     expect(result.amendedHeadSha).not.toBe(stepHeadSha);
@@ -96,10 +153,9 @@ describe('revertProtectedFiles', () => {
     expect(execGit(['status', '--porcelain'])).toBe('');
   });
 
-  it('removes a protected file that did not exist at the baseline', async () => {
+  it('removes a baseline-absent scope directory recursively from index and worktree', async () => {
     const { repoDir, execGit } = initRepo();
 
-    // Baseline commit without any .github/ workflow files
     mkdirSync(join(repoDir, 'src'), { recursive: true });
     writeFileSync(join(repoDir, 'src', 'index.ts'), 'export const a = 1;\n');
 
@@ -107,30 +163,37 @@ describe('revertProtectedFiles', () => {
     execGit(['commit', '-m', 'chore: baseline commit']);
     const baselineSha = execGit(['rev-parse', 'HEAD']);
 
-    // Step creates a workflow file (protected) and a feature file
-    mkdirSync(join(repoDir, '.github', 'workflows'), { recursive: true });
-    writeFileSync(join(repoDir, '.github', 'workflows', 'ci.yml'), 'name: CI\n');
+    // Step creates a nested scope directory and a feature file
+    mkdirSync(join(repoDir, 'scratch-dir', 'nested'), { recursive: true });
+    writeFileSync(
+      join(repoDir, 'scratch-dir', 'nested', 'probe.ts'),
+      'export const probe = true;\n',
+    );
+    writeFileSync(join(repoDir, 'scratch-dir', 'other.ts'), 'export const other = true;\n');
     writeFileSync(join(repoDir, 'src', 'feature.ts'), 'export const f = 2;\n');
 
     execGit(['add', '.']);
-    execGit(['commit', '-m', 'feat: add workflow and feature']);
+    execGit(['commit', '-m', 'feat: add scratch-dir and feature']);
     const stepHeadSha = execGit(['rev-parse', 'HEAD']);
 
-    const result = await revertProtectedFiles({
+    const result = await revertScopeFiles({
       cwd: repoDir,
       baseline: baselineSha,
-      protectedFiles: ['.github/workflows/ci.yml'],
+      expectedHeadSha: stepHeadSha,
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['scratch-dir'],
     });
 
-    expect(result.revertedProtectedFiles).toEqual(['.github/workflows/ci.yml']);
+    expect(result.revertedScopeFiles).toEqual(['scratch-dir']);
     expect(result.removedNewlyIgnoredFiles).toEqual([]);
     expect(result.amendedHeadSha).not.toBe(stepHeadSha);
 
-    // Workflow file should be removed from disk and from git tracking
-    expect(existsSync(join(repoDir, '.github', 'workflows', 'ci.yml'))).toBe(false);
+    // Directory should be removed from disk and git tracking
+    expect(existsSync(join(repoDir, 'scratch-dir'))).toBe(false);
 
     const trackedFiles = execGit(['ls-files', '-z']).split('\0').filter(Boolean);
-    expect(trackedFiles).not.toContain('.github/workflows/ci.yml');
+    expect(trackedFiles).not.toContain('scratch-dir/nested/probe.ts');
+    expect(trackedFiles).not.toContain('scratch-dir/other.ts');
     expect(trackedFiles).toContain('src/feature.ts');
 
     const diffFiles = execGit(['diff', '--name-only', '-z', `${baselineSha}..HEAD`])
@@ -139,6 +202,97 @@ describe('revertProtectedFiles', () => {
     expect(diffFiles).toEqual(['src/feature.ts']);
 
     expect(execGit(['status', '--porcelain'])).toBe('');
+  });
+
+  it('normalizes, removes empty entries, deduplicates, and sorts requested scope paths', async () => {
+    const { repoDir, execGit } = initRepo();
+
+    writeFileSync(join(repoDir, '.gitignore'), '/dist\n');
+    mkdirSync(join(repoDir, '.github', 'workflows'), { recursive: true });
+    writeFileSync(join(repoDir, '.github', 'workflows', 'b.yml'), 'name: B\n');
+    writeFileSync(join(repoDir, '.github', 'workflows', 'a.yml'), 'name: A\n');
+
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'chore: baseline commit']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    // Step modifies .gitignore, a.yml, b.yml, and creates c.yml
+    writeFileSync(join(repoDir, '.gitignore'), '/build\n');
+    writeFileSync(join(repoDir, '.github', 'workflows', 'b.yml'), 'name: B modified\n');
+    writeFileSync(join(repoDir, '.github', 'workflows', 'a.yml'), 'name: A modified\n');
+    writeFileSync(join(repoDir, '.github', 'workflows', 'c.yml'), 'name: C new\n');
+
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'feat: step changes']);
+    const stepHeadSha = execGit(['rev-parse', 'HEAD']);
+
+    // Pass redundant, unnormalized, empty, and duplicate paths
+    const result = await revertScopeFiles({
+      cwd: repoDir,
+      baseline: baselineSha,
+      expectedHeadSha: stepHeadSha,
+      rewriteSafety: 'unpublished',
+      scopeFiles: [
+        '.github/workflows/../workflows/b.yml',
+        '.gitignore',
+        '',
+        '.github/workflows/c.yml',
+        '   ',
+        '.gitignore',
+        '.github/workflows/a.yml',
+      ],
+    });
+
+    expect(result.revertedScopeFiles).toEqual([
+      '.github/workflows/a.yml',
+      '.github/workflows/b.yml',
+      '.github/workflows/c.yml',
+      '.gitignore',
+    ]);
+
+    expect(existsSync(join(repoDir, '.github', 'workflows', 'c.yml'))).toBe(false);
+    expect(readFileSync(join(repoDir, '.github', 'workflows', 'a.yml'), 'utf8')).toBe('name: A\n');
+    expect(readFileSync(join(repoDir, '.github', 'workflows', 'b.yml'), 'utf8')).toBe('name: B\n');
+    expect(readFileSync(join(repoDir, '.gitignore'), 'utf8')).toBe('/dist\n');
+  });
+
+  it('does not consume or report a repair when final verification finds a requested path still changed', async () => {
+    const { repoDir, execGit } = initRepo();
+
+    mkdirSync(join(repoDir, 'src'), { recursive: true });
+    writeFileSync(join(repoDir, 'src', 'index.ts'), 'export const a = 1;\n');
+
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'chore: baseline commit']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    // Step creates a non-goal file and a feature file
+    writeFileSync(join(repoDir, 'src', 'unauthorized.ts'), 'export const bad = true;\n');
+    writeFileSync(join(repoDir, 'src', 'index.ts'), 'export const a = 2;\n');
+
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'feat: add unauthorized and update index']);
+    const stepHeadSha = execGit(['rev-parse', 'HEAD']);
+
+    // Create a post-commit hook that re-creates the unauthorized file after commit --amend
+    mkdirSync(join(repoDir, '.git', 'hooks'), { recursive: true });
+    const hookPath = join(repoDir, '.git', 'hooks', 'post-commit');
+    writeFileSync(
+      hookPath,
+      `#!/bin/sh\necho "re-created" > "${join(repoDir, 'src', 'unauthorized.ts')}"\n`,
+      { mode: 0o755 },
+    );
+
+    // Attempting to revert should fail verification because unauthorized.ts is still modified/untracked in status
+    await expect(
+      revertScopeFiles({
+        cwd: repoDir,
+        baseline: baselineSha,
+        expectedHeadSha: stepHeadSha,
+        rewriteSafety: 'unpublished',
+        scopeFiles: ['src/unauthorized.ts'],
+      }),
+    ).rejects.toThrow(/Scope repair verification failed/i);
   });
 
   it('removes only newly added ignored files while retaining pre-existing tracked ignored files', async () => {
@@ -164,14 +318,17 @@ describe('revertProtectedFiles', () => {
 
     execGit(['add', '.']);
     execGit(['commit', '-m', 'feat: step added newly-ignored and work']);
+    const stepHeadSha = execGit(['rev-parse', 'HEAD']);
 
-    const result = await revertProtectedFiles({
+    const result = await revertScopeFiles({
       cwd: repoDir,
       baseline: baselineSha,
-      protectedFiles: ['.gitignore'],
+      expectedHeadSha: stepHeadSha,
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.gitignore'],
     });
 
-    expect(result.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(result.revertedScopeFiles).toEqual(['.gitignore']);
     expect(result.removedNewlyIgnoredFiles).toEqual(['newly-ignored.txt']);
 
     // Pre-existing tracked ignored file must still be tracked
@@ -227,14 +384,17 @@ describe('revertProtectedFiles', () => {
 
     execGit(['add', '.']);
     execGit(['commit', '-m', 'feat: un-ignore and add artifacts and app update']);
+    const stepHeadSha = execGit(['rev-parse', 'HEAD']);
 
-    const result = await revertProtectedFiles({
+    const result = await revertScopeFiles({
       cwd: repoDir,
       baseline: baselineSha,
-      protectedFiles: ['.gitignore'],
+      expectedHeadSha: stepHeadSha,
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.gitignore'],
     });
 
-    expect(result.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(result.revertedScopeFiles).toEqual(['.gitignore']);
     expect(result.removedNewlyIgnoredFiles).toEqual([
       'design.md',
       'result.json',
@@ -285,14 +445,17 @@ describe('revertProtectedFiles', () => {
     execGit(['add', '.']);
     const originalMessage = 'feat(core): implement core feature\n\n- added b\n- added extra';
     execGit(['commit', '-m', originalMessage]);
+    const stepHeadSha = execGit(['rev-parse', 'HEAD']);
 
-    const result = await revertProtectedFiles({
+    const result = await revertScopeFiles({
       cwd: repoDir,
       baseline: baselineSha,
-      protectedFiles: ['.gitignore'],
+      expectedHeadSha: stepHeadSha,
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.gitignore'],
     });
 
-    expect(result.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(result.revertedScopeFiles).toEqual(['.gitignore']);
 
     // Commit message must be exactly preserved
     const amendedMessage = execGit(['log', '-1', '--format=%B']);
@@ -304,53 +467,6 @@ describe('revertProtectedFiles', () => {
       .filter(Boolean)
       .sort();
     expect(diffFiles).toEqual(['src/extra.ts', 'src/feature.ts']);
-  });
-
-  it('handles path deduplication, sorting, and safe pathspecs', async () => {
-    const { repoDir, execGit } = initRepo();
-
-    writeFileSync(join(repoDir, '.gitignore'), '/dist\n');
-    mkdirSync(join(repoDir, '.github', 'workflows'), { recursive: true });
-    writeFileSync(join(repoDir, '.github', 'workflows', 'b.yml'), 'name: B\n');
-    writeFileSync(join(repoDir, '.github', 'workflows', 'a.yml'), 'name: A\n');
-
-    execGit(['add', '.']);
-    execGit(['commit', '-m', 'chore: baseline commit']);
-    const baselineSha = execGit(['rev-parse', 'HEAD']);
-
-    // Step modifies .gitignore, a.yml, b.yml, and creates c.yml
-    writeFileSync(join(repoDir, '.gitignore'), '/build\n');
-    writeFileSync(join(repoDir, '.github', 'workflows', 'b.yml'), 'name: B modified\n');
-    writeFileSync(join(repoDir, '.github', 'workflows', 'a.yml'), 'name: A modified\n');
-    writeFileSync(join(repoDir, '.github', 'workflows', 'c.yml'), 'name: C new\n');
-
-    execGit(['add', '.']);
-    execGit(['commit', '-m', 'feat: step changes']);
-
-    // Pass unsorted with duplicates
-    const result = await revertProtectedFiles({
-      cwd: repoDir,
-      baseline: baselineSha,
-      protectedFiles: [
-        '.github/workflows/b.yml',
-        '.gitignore',
-        '.github/workflows/c.yml',
-        '.gitignore',
-        '.github/workflows/a.yml',
-      ],
-    });
-
-    expect(result.revertedProtectedFiles).toEqual([
-      '.github/workflows/a.yml',
-      '.github/workflows/b.yml',
-      '.github/workflows/c.yml',
-      '.gitignore',
-    ]);
-
-    expect(existsSync(join(repoDir, '.github', 'workflows', 'c.yml'))).toBe(false);
-    expect(readFileSync(join(repoDir, '.github', 'workflows', 'a.yml'), 'utf8')).toBe('name: A\n');
-    expect(readFileSync(join(repoDir, '.github', 'workflows', 'b.yml'), 'utf8')).toBe('name: B\n');
-    expect(readFileSync(join(repoDir, '.gitignore'), 'utf8')).toBe('/dist\n');
   });
 
   it('removes newly added files inside an existing baseline protected directory', async () => {
@@ -372,14 +488,17 @@ describe('revertProtectedFiles', () => {
 
     execGit(['add', '.']);
     execGit(['commit', '-m', 'feat: add malicious workflow and modify ci']);
+    const stepHeadSha = execGit(['rev-parse', 'HEAD']);
 
-    const result = await revertProtectedFiles({
+    const result = await revertScopeFiles({
       cwd: repoDir,
       baseline: baselineSha,
-      protectedFiles: ['.github/workflows'],
+      expectedHeadSha: stepHeadSha,
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.github/workflows'],
     });
 
-    expect(result.revertedProtectedFiles).toEqual(['.github/workflows']);
+    expect(result.revertedScopeFiles).toEqual(['.github/workflows']);
     expect(existsSync(join(repoDir, '.github', 'workflows', 'malicious.yml'))).toBe(false);
     expect(readFileSync(join(repoDir, '.github', 'workflows', 'ci.yml'), 'utf8')).toBe(
       'name: CI baseline\n',
@@ -419,14 +538,17 @@ describe('revertProtectedFiles', () => {
 
     execGit(['add', '.']);
     execGit(['commit', '-m', 'feat: delete and add identical file']);
+    const stepHeadSha = execGit(['rev-parse', 'HEAD']);
 
-    const result = await revertProtectedFiles({
+    const result = await revertScopeFiles({
       cwd: repoDir,
       baseline: baselineSha,
-      protectedFiles: ['.gitignore'],
+      expectedHeadSha: stepHeadSha,
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.gitignore'],
     });
 
-    expect(result.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(result.revertedScopeFiles).toEqual(['.gitignore']);
     expect(result.removedNewlyIgnoredFiles).toEqual(['renamed-artifact.txt']);
 
     const trackedFiles = execGit(['ls-files', '-z']).split('\0').filter(Boolean);
@@ -457,14 +579,17 @@ describe('revertProtectedFiles', () => {
 
     execGit(['add', '.']);
     execGit(['commit', '-m', 'feat: add spaced file']);
+    const stepHeadSha = execGit(['rev-parse', 'HEAD']);
 
-    const result = await revertProtectedFiles({
+    const result = await revertScopeFiles({
       cwd: repoDir,
       baseline: baselineSha,
-      protectedFiles: ['.gitignore'],
+      expectedHeadSha: stepHeadSha,
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.gitignore'],
     });
 
-    expect(result.revertedProtectedFiles).toEqual(['.gitignore']);
+    expect(result.revertedScopeFiles).toEqual(['.gitignore']);
     expect(result.removedNewlyIgnoredFiles).toEqual([spacedFilename]);
 
     const trackedFiles = execGit(['ls-files', '-z']).split('\0').filter(Boolean);

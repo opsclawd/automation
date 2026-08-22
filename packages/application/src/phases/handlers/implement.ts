@@ -31,9 +31,9 @@ import {
   isFormattingOnlyChange,
 } from '../../inherited-formatting-debt.js';
 import type {
-  RevertProtectedFilesPort,
-  RevertProtectedFilesResult,
-} from '../../ports/protected-file-reverter-port.js';
+  RevertScopeFilesPort,
+  RevertScopeFilesResult,
+} from '../../ports/revert-scope-files-port.js';
 import type { DeleteWorktreeFilePort } from '../../ports/delete-worktree-file-port.js';
 import { isProtectedFilePath, remediateScratchFiles } from '../../scratch-file-remediation.js';
 export type { ScratchFileStepRecord, ScratchFilesReport } from '../../scratch-file-remediation.js';
@@ -186,7 +186,7 @@ export interface ImplementHandlerOpts {
   typecheckLogDir?: string | ((runUuid: string) => string);
   maxDeclaredFilesRetries?: number | undefined;
   exemptUndeclaredFiles?: string[] | undefined;
-  revertProtectedFiles?: RevertProtectedFilesPort | undefined;
+  revertScopeFiles?: RevertScopeFilesPort | undefined;
   deleteWorktreeFile?: DeleteWorktreeFilePort | undefined;
 }
 
@@ -587,19 +587,21 @@ export class ImplementHandler implements PhaseHandler {
             let protectedRepairError: string | undefined;
 
             if (undeclaredProtectedPaths.length > 0) {
-              if (this.opts.revertProtectedFiles) {
-                let repairResult: RevertProtectedFilesResult;
+              if (this.opts.revertScopeFiles) {
+                let repairResult: RevertScopeFilesResult;
                 try {
-                  repairResult = await this.opts.revertProtectedFiles({
+                  repairResult = await this.opts.revertScopeFiles({
                     cwd: ctx.cwd,
                     baseline: preStepHead!,
-                    protectedFiles: undeclaredProtectedPaths,
+                    expectedHeadSha: postStepHead!,
+                    rewriteSafety: 'unpublished',
+                    scopeFiles: undeclaredProtectedPaths,
                   });
                   statusPromise = undefined;
                   postStepHead = await ctx.git.headCommitSha(ctx.cwd);
                   committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
                   repairedProtectedRecord = {
-                    revertedProtectedFiles: repairResult.revertedProtectedFiles,
+                    revertedProtectedFiles: repairResult.revertedScopeFiles,
                     removedNewlyIgnoredFilesCount: repairResult.removedNewlyIgnoredFiles.length,
                   };
                 } catch (error) {
@@ -622,7 +624,7 @@ export class ImplementHandler implements PhaseHandler {
                   protectedRepairError = message;
                 }
               } else if (preservedModifiedReferenceFiles.length === 0) {
-                const repairError = 'revertProtectedFiles port is not configured';
+                const repairError = 'revertScopeFiles port is not configured';
                 this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
                 emit(
                   'step.failed',
