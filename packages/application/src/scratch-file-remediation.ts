@@ -10,7 +10,33 @@ export const SCRATCH_FILES_ARTIFACT_PATH = '.ai-tmp/scratch-files.json';
 
 export function isProtectedFilePath(filePath: string): boolean {
   const norm = normalizeTaskPath(filePath);
-  return norm === '.gitignore' || norm === '.ai-orchestrator.json' || norm.startsWith('.github/');
+  return (
+    norm === '.gitignore' ||
+    norm.endsWith('/.gitignore') ||
+    norm === '.ai-orchestrator.json' ||
+    norm === '.github' ||
+    norm.startsWith('.github/')
+  );
+}
+
+function isExemptOrDeclaredPath(
+  path: string,
+  writableFiles: ReadonlySet<string>,
+  referenceFiles: ReadonlySet<string>,
+  exemptFiles: ReadonlySet<string>,
+): boolean {
+  if (writableFiles.has(path) || referenceFiles.has(path) || exemptFiles.has(path)) {
+    return true;
+  }
+  const prefix = `${path}/`;
+  for (const set of [writableFiles, referenceFiles, exemptFiles]) {
+    for (const item of set) {
+      if (item.startsWith(prefix)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 export function undeclaredUntrackedFiles(
@@ -26,9 +52,7 @@ export function undeclaredUntrackedFiles(
     .filter((p) => p.length > 0)
     .filter(
       (p) =>
-        !writableFiles.has(p) &&
-        !referenceFiles.has(p) &&
-        !exemptFiles.has(p) &&
+        !isExemptOrDeclaredPath(p, writableFiles, referenceFiles, exemptFiles) &&
         !isProtectedFilePath(p) &&
         !isOrchestratorArtifactPattern(p),
     );
@@ -115,8 +139,8 @@ export interface RemediateScratchFilesOptions {
 
 export interface RemediateScratchFilesResult {
   allScratchFiles: string[];
-  deletedRootFiles: string[];
-  remainingSubDirFiles: string[];
+  deletedFiles: string[];
+  remainingFiles: string[];
   remediated: boolean;
 }
 
@@ -133,14 +157,11 @@ export async function remediateScratchFiles(
   if (allScratchFiles.length === 0) {
     return {
       allScratchFiles: [],
-      deletedRootFiles: [],
-      remainingSubDirFiles: [],
+      deletedFiles: [],
+      remainingFiles: [],
       remediated: false,
     };
   }
-
-  const rootFiles = allScratchFiles.filter((f) => !f.includes('/'));
-  const subDirFiles = allScratchFiles.filter((f) => f.includes('/'));
 
   if (opts.emit) {
     if (opts.phase === 'implement' && opts.stepIndex !== undefined) {
@@ -153,8 +174,6 @@ export async function remediateScratchFiles(
           total: opts.totalSteps ?? 1,
           taskTitle: opts.stepTitle ?? `step ${opts.stepIndex}`,
           files: allScratchFiles,
-          ...(rootFiles.length > 0 ? { rootFiles } : {}),
-          ...(subDirFiles.length > 0 ? { subDirFiles } : {}),
         },
       );
     } else {
@@ -166,21 +185,19 @@ export async function remediateScratchFiles(
         {
           phase: phaseName,
           files: allScratchFiles,
-          ...(rootFiles.length > 0 ? { rootFiles } : {}),
-          ...(subDirFiles.length > 0 ? { subDirFiles } : {}),
         },
       );
     }
   }
 
-  const deletedRootFiles: string[] = [];
+  const deletedFiles: string[] = [];
   if (opts.deleteWorktreeFile) {
-    for (const file of rootFiles) {
+    for (const file of allScratchFiles) {
       try {
-        if (!file.includes('/') && !isProtectedFilePath(file)) {
+        if (!isProtectedFilePath(file)) {
           const deleted = await opts.deleteWorktreeFile(opts.cwd, file);
           if (deleted) {
-            deletedRootFiles.push(file);
+            deletedFiles.push(file);
           }
         }
       } catch {
@@ -199,10 +216,13 @@ export async function remediateScratchFiles(
     opts.phase ?? 'implement',
   );
 
+  const deletedSet = new Set(deletedFiles);
+  const remainingFiles = allScratchFiles.filter((f) => !deletedSet.has(f));
+
   return {
     allScratchFiles,
-    deletedRootFiles,
-    remainingSubDirFiles: subDirFiles,
-    remediated: deletedRootFiles.length > 0,
+    deletedFiles,
+    remainingFiles,
+    remediated: deletedFiles.length > 0,
   };
 }

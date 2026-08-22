@@ -253,7 +253,13 @@ export function isFormattingOnlyChange(
 
 function isProtectedFilePath(path: string): boolean {
   const norm = normalizeTaskPath(path);
-  return norm === '.gitignore' || norm === '.ai-orchestrator.json' || norm.startsWith('.github/');
+  return (
+    norm === '.gitignore' ||
+    norm.endsWith('/.gitignore') ||
+    norm === '.ai-orchestrator.json' ||
+    norm === '.github' ||
+    norm.startsWith('.github/')
+  );
 }
 
 export async function findInheritedFormattingDebtFiles(

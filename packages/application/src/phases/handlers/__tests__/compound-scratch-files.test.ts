@@ -165,7 +165,7 @@ describe('CompoundHandler scratch file remediation (regression #948)', () => {
     }
   });
 
-  it('records subdirectory untracked files in scratch artifact without deleting them and fails boundary check', async () => {
+  it('remediates undeclared untracked subdirectory scratch files, writes report, and completes successfully', async () => {
     const pkgDir = join(tmpCwd, 'packages', 'contracts');
     mkdirSync(pkgDir, { recursive: true });
     const subScratch = join(pkgDir, 'scratch.ts');
@@ -184,16 +184,10 @@ describe('CompoundHandler scratch file remediation (regression #948)', () => {
       const handler = new CompoundHandler();
       const result = await handler.run(ctx);
 
-      expect(result.outcome).toBe('failed');
-      if (result.outcome === 'failed') {
-        expect(result.failure.kind).toBe('validation_failed');
-        expect(result.failure.message).toContain(
-          'compound phase modified undeclared files: packages/contracts/scratch.ts',
-        );
-      }
+      expect(result.outcome).toBe('passed');
 
-      // Subdirectory file must NOT be deleted from disk
-      expect(existsSync(subScratch)).toBe(true);
+      // Subdirectory file must be deleted from disk
+      expect(existsSync(subScratch)).toBe(false);
 
       // Recorded in scratch artifact
       const artifactContent = await artifacts.read(RUN_UUID, '.ai-tmp/scratch-files.json');
@@ -206,9 +200,7 @@ describe('CompoundHandler scratch file remediation (regression #948)', () => {
         }),
       );
 
-      expect(events.filter((e) => e.type === 'compound.boundary_violation')).toHaveLength(1);
-      expect(events.filter((e) => e.type === 'compound.failed')).toHaveLength(1);
-      expect(events.filter((e) => e.type === 'compound.completed')).toHaveLength(0);
+      expect(events.filter((e) => e.type === 'compound.completed')).toHaveLength(1);
     } finally {
       rmSync(tmpCwd, { recursive: true, force: true });
     }
