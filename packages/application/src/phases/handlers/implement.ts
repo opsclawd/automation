@@ -367,10 +367,14 @@ export interface StepRunContext {
 }
 
 export interface StepRunResult {
-  outcome: 'success' | 'failed' | 'needs_human_review';
+  outcome: 'success' | 'failed' | 'needs_human_review' | 'recoverable_scope_violation';
   failureMessage?: string;
   failureKind?: FailureKind;
   modifiedReferenceFiles?: string[];
+  prematureImplementation?: PrematureImplementationRecord[];
+  driftFiles?: string[];
+  nonGoalFiles?: string[];
+  protectedFiles?: string[];
 }
 
 export interface ImplementHandlerOpts {
@@ -697,7 +701,7 @@ export class ImplementHandler implements PhaseHandler {
           );
         }
 
-        if (result.outcome === 'success') {
+        if (result.outcome === 'success' || result.outcome === 'recoverable_scope_violation') {
           const currentScope = resolveEffectiveTaskScope(task);
           const expectedFiles = currentScope.requiredFiles;
           const referenceFiles = currentScope.referenceFiles;
@@ -731,6 +735,8 @@ export class ImplementHandler implements PhaseHandler {
             // Reporting is best-effort. Existing declared-file checks below still
             // decide whether an unavailable status snapshot must fail closed.
           }
+
+          let handlerVerifiedNoBoundaryViolation = false;
 
           if (shouldCaptureBaseline) {
             let postStepHead: string | undefined;
@@ -934,6 +940,8 @@ export class ImplementHandler implements PhaseHandler {
               .filter((p) => !requiredSet.has(p))
               .filter((p) => isProtectedFilePath(p));
 
+            const preRepairPrematureImplementation = [...prematureImplementation];
+
             const repairCandidates = [
               ...new Set(
                 [
@@ -1032,6 +1040,53 @@ export class ImplementHandler implements PhaseHandler {
                   revertedScopeFiles: repairResult.revertedScopeFiles,
                   removedNewlyIgnoredFilesCount: repairResult.removedNewlyIgnoredFiles.length,
                 };
+
+                const prematureByOwner = new Map<number, Set<string>>();
+                for (const record of preRepairPrematureImplementation) {
+                  const norm = normalizeTaskPath(record.path);
+                  if (norm && actuallyRevertedNormalized.has(norm)) {
+                    let ownerSet = prematureByOwner.get(record.taskNumber);
+                    if (!ownerSet) {
+                      ownerSet = new Set();
+                      prematureByOwner.set(record.taskNumber, ownerSet);
+                    }
+                    ownerSet.add(norm);
+                  }
+                }
+
+                const currentTaskTitle = task?.title ?? d.title;
+                const sortedOwnerTaskNumbers = [...prematureByOwner.keys()].sort((a, b) => a - b);
+                for (const ownerTaskNumber of sortedOwnerTaskNumbers) {
+                  const ownerPaths = [...prematureByOwner.get(ownerTaskNumber)!].sort();
+                  const ownerTask = manifest?.tasks.find((t) => t.n === ownerTaskNumber);
+                  const ownerTaskTitle = ownerTask?.title ?? `Task ${ownerTaskNumber}`;
+
+                  emit(
+                    'step.premature_implementation',
+                    'warn',
+                    `step ${d.index}/${totalSteps} repaired premature implementation of files owned by task ${ownerTaskNumber} (${ownerTaskTitle}): ${ownerPaths.join(', ')}`,
+                    {
+                      index: d.index,
+                      total: totalSteps,
+                      currentTaskNumber: d.index,
+                      currentTaskTitle,
+                      taskTitle: currentTaskTitle,
+                      ownerIndex: ownerTaskNumber,
+                      ownerTaskNumber,
+                      ownerTitle: ownerTaskTitle,
+                      ownerTaskTitle,
+                      files: ownerPaths,
+                      paths: ownerPaths,
+                      revertedScopeFiles: ownerPaths,
+                      preStepHead: preStepHead!,
+                      amendedHeadSha: repairResult.amendedHeadSha,
+                      attempt: declaredFilesRetryCount + 1,
+                      retryAttempt: declaredFilesRetryCount + 1,
+                      maxRetries: maxDeclaredFilesRetries,
+                      maxDeclaredFilesRetries,
+                    },
+                  );
+                }
 
                 const postRepairEval = await evaluateWorktreeState({
                   cwd: ctx.cwd,
@@ -1178,6 +1233,7 @@ export class ImplementHandler implements PhaseHandler {
             const hasScopeRepairViolation = repairedScopeRecord !== undefined;
             const hasBoundaryViolation =
               hasMissingViolation || hasUndeclaredViolation || hasScopeRepairViolation;
+            handlerVerifiedNoBoundaryViolation = !hasBoundaryViolation;
 
             if (hasBoundaryViolation) {
               if (declaredFilesRetryCount < maxDeclaredFilesRetries) {
@@ -1288,12 +1344,24 @@ export class ImplementHandler implements PhaseHandler {
             }
           }
 
-          this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
-          doneIdx.add(d.index);
-          emit('step.completed', 'info', `step ${d.index}/${totalSteps} done`, {
-            index: d.index,
-            total: totalSteps,
-          });
+          if (result.outcome === 'success' || handlerVerifiedNoBoundaryViolation) {
+            this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
+            doneIdx.add(d.index);
+            emit('step.completed', 'info', `step ${d.index}/${totalSteps} done`, {
+              index: d.index,
+              total: totalSteps,
+            });
+          } else {
+            const failureMessage =
+              result.failureMessage ??
+              `step ${d.index} (${d.title}) scope violation could not be recovered`;
+            this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+            emit('step.failed', 'error', failureMessage, {
+              index: d.index,
+              total: totalSteps,
+            });
+            return this.fail(ctx, emit, result.failureKind ?? 'invalid_result', failureMessage);
+          }
         } else if (result.outcome === 'needs_human_review') {
           this.opts.steps.upsert({ ...step, status: 'needs_human_review', completedAt: ctx.now() });
           emit(
@@ -1334,16 +1402,20 @@ export class ImplementHandler implements PhaseHandler {
             return this.fail(
               ctx,
               emit,
-              'invalid_result',
+              result.failureKind ?? 'invalid_result',
               result.failureMessage,
-              'Separate the regression proof from its implementation task and resume from the failed step.',
             );
           }
           emit('step.failed', 'error', `step ${d.index}/${totalSteps} failed`, {
             index: d.index,
             total: totalSteps,
           });
-          return this.fail(ctx, emit, 'agent_incomplete', `step ${d.index} (${d.title}) failed`);
+          return this.fail(
+            ctx,
+            emit,
+            result.failureKind ?? 'agent_incomplete',
+            `step ${d.index} (${d.title}) failed`,
+          );
         }
         break;
       }
