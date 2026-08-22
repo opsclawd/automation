@@ -455,4 +455,185 @@ describe('task-file-boundaries helpers', () => {
       expect(result.prematureImplementation).toEqual([{ path: 'src/legacy.ts', taskNumber: 2 }]);
     });
   });
+
+  describe('classifyTaskChanges downstream precedence', () => {
+    it('gives downstream expected files precedence over broad current-task permissions', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: ['src/task1.ts'],
+        mayExtendFiles: ['src/extendable.ts'],
+        permittedAreas: ['src/area'],
+        nonGoals: [],
+        referenceFiles: ['src/referenced.ts'],
+      };
+
+      const manifestTasks = [
+        { n: 1, expected_files: ['src/task1.ts'] },
+        {
+          n: 2,
+          expected_files: [
+            'src/referenced.ts',
+            'src/extendable.ts',
+            'src/area/nested.ts',
+            'src/unpermitted/drift.ts',
+          ],
+        },
+      ];
+
+      const candidates: TaskChangeCandidate[] = [
+        { path: 'src/task1.ts', tracked: true },
+        { path: 'src/referenced.ts', tracked: true },
+        { path: 'src/extendable.ts', tracked: true },
+        { path: 'src/area/nested.ts', tracked: true },
+        { path: 'src/unpermitted/drift.ts', tracked: true },
+        { path: 'src/area/local.ts', tracked: true },
+      ];
+
+      const result = classifyTaskChanges({
+        candidates,
+        currentScope,
+        manifestTasks,
+        currentTaskNumber: 1,
+      });
+
+      // Downstream expected_files beats reference_files, may_extend, permitted_areas, and generic drift
+      expect(result.prematureImplementation).toEqual([
+        { path: 'src/area/nested.ts', taskNumber: 2 },
+        { path: 'src/extendable.ts', taskNumber: 2 },
+        { path: 'src/referenced.ts', taskNumber: 2 },
+        { path: 'src/unpermitted/drift.ts', taskNumber: 2 },
+      ]);
+      expect(result.modifiedReferenceFiles).toEqual([]);
+      expect(result.permittedPaths).toEqual(['src/area/local.ts', 'src/task1.ts']);
+      expect(result.driftFiles).toEqual([]);
+    });
+
+    it('gives current expected files precedence over duplicate downstream declarations', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: ['src/shared-obligation.ts'],
+        mayExtendFiles: [],
+        permittedAreas: [],
+        nonGoals: ['src/blocked.ts'],
+        referenceFiles: [],
+      };
+
+      const manifestTasks = [
+        { n: 1, expected_files: ['src/shared-obligation.ts'] },
+        {
+          n: 2,
+          expected_files: [
+            'src/shared-obligation.ts',
+            'src/blocked.ts',
+            '.gitignore',
+            'task-manifest.json',
+          ],
+        },
+      ];
+
+      const candidates: (string | TaskChangeCandidate)[] = [
+        'src/shared-obligation.ts',
+        'src/blocked.ts',
+        '.gitignore',
+        'task-manifest.json',
+      ];
+
+      const result = classifyTaskChanges({
+        candidates,
+        currentScope,
+        manifestTasks,
+        currentTaskNumber: 1,
+      });
+
+      // Current required file wins over duplicate downstream declaration
+      expect(result.permittedPaths).toEqual(['src/shared-obligation.ts']);
+      // Non-goals and protected paths retain precedence over downstream declaration
+      expect(result.nonGoalFiles).toEqual(['src/blocked.ts']);
+      expect(result.protectedFiles).toEqual(['.gitignore', 'task-manifest.json']);
+      // None of the higher-precedence collisions fall through to prematureImplementation
+      expect(result.prematureImplementation).toEqual([]);
+    });
+
+    it('proves downstream expected files beats reference files individually', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: [],
+        mayExtendFiles: [],
+        permittedAreas: [],
+        nonGoals: [],
+        referenceFiles: ['src/ref.ts'],
+      };
+
+      const result = classifyTaskChanges({
+        candidates: ['src/ref.ts'],
+        currentScope,
+        downstreamTasks: [{ n: 2, expected_files: ['src/ref.ts'] }],
+        currentTaskNumber: 1,
+      });
+
+      expect(result.prematureImplementation).toEqual([{ path: 'src/ref.ts', taskNumber: 2 }]);
+      expect(result.modifiedReferenceFiles).toEqual([]);
+    });
+
+    it('proves downstream expected files beats may_extend individually', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: [],
+        mayExtendFiles: ['src/ext.ts'],
+        permittedAreas: [],
+        nonGoals: [],
+        referenceFiles: [],
+      };
+
+      const result = classifyTaskChanges({
+        candidates: ['src/ext.ts'],
+        currentScope,
+        downstreamTasks: [{ n: 2, expected_files: ['src/ext.ts'] }],
+        currentTaskNumber: 1,
+      });
+
+      expect(result.prematureImplementation).toEqual([{ path: 'src/ext.ts', taskNumber: 2 }]);
+      expect(result.permittedPaths).toEqual([]);
+    });
+
+    it('proves downstream expected files beats permitted areas individually', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: [],
+        mayExtendFiles: [],
+        permittedAreas: ['src/area'],
+        nonGoals: [],
+        referenceFiles: [],
+      };
+
+      const result = classifyTaskChanges({
+        candidates: [{ path: 'src/area/child.ts', tracked: true }],
+        currentScope,
+        downstreamTasks: [{ n: 2, expected_files: ['src/area/child.ts'] }],
+        currentTaskNumber: 1,
+      });
+
+      expect(result.prematureImplementation).toEqual([
+        { path: 'src/area/child.ts', taskNumber: 2 },
+      ]);
+      expect(result.permittedPaths).toEqual([]);
+    });
+
+    it('proves downstream expected files beats generic drift individually', () => {
+      const currentScope: EffectiveTaskScope = {
+        requiredFiles: [],
+        mayExtendFiles: [],
+        permittedAreas: [],
+        nonGoals: [],
+        referenceFiles: [],
+      };
+
+      const result = classifyTaskChanges({
+        candidates: ['src/unpermitted.ts'],
+        currentScope,
+        downstreamTasks: [{ n: 2, expected_files: ['src/unpermitted.ts'] }],
+        currentTaskNumber: 1,
+      });
+
+      expect(result.prematureImplementation).toEqual([
+        { path: 'src/unpermitted.ts', taskNumber: 2 },
+      ]);
+      expect(result.driftFiles).toEqual([]);
+    });
+  });
 });
