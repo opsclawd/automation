@@ -58,6 +58,10 @@ scratch. For example:
   preserve that separation while repairing — renumber them if required, but keep the proof ahead of
   the fix and keep the implementation source change out of the proof task. For additive feature work,
   preserve unit tests co-located within the same task as their implementation code.
+- DEFERRED SIGNATURE CHANGES IN RED TASKS: When a RED or regression-proof task asserts against a field,
+  property, or shape whose signature change lands in a later task, ensure the RED test routes expected
+  values through an explicitly-typed local variable or interface so the RED failure is a runtime assertion
+  mismatch rather than a TypeScript excess-property or property-does-not-exist compiler error.
 
 ## CRITICAL RULES
 

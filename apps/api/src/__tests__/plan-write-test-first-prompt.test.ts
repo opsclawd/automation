@@ -16,6 +16,8 @@ describe('plan-write test-first task ordering', () => {
     expect(prompt).toContain(
       'For additive feature work, unit tests MUST be delivered in the same task as their corresponding implementation code',
     );
+    expect(prompt).toContain('DEFERRED SIGNATURE CHANGES IN RED TASKS');
+    expect(prompt).toContain('explicitly-typed local variable or interface');
   });
 
   it('preserves test-first task separation during plan repair', () => {
@@ -27,5 +29,7 @@ describe('plan-write test-first task ordering', () => {
     expect(repairPrompt).toContain(
       'For additive feature work,\n  preserve unit tests co-located within the same task as their implementation code',
     );
+    expect(repairPrompt).toContain('DEFERRED SIGNATURE CHANGES IN RED TASKS');
+    expect(repairPrompt).toContain('explicitly-typed local variable or interface');
   });
 });
