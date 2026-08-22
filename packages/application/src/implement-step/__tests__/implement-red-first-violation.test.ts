@@ -211,10 +211,10 @@ function createHarness(options: HarnessOptions = {}) {
 }
 
 describe('ImplementStepLoop RED-first scope violation regression proof', () => {
-  it('escalates to needs_human_review when a failed inverted command accompanies modified reference files', async () => {
+  it('keeps modified reference files on the human-review path even with premature changes', async () => {
     // changed files intentionally include one expected file, one modified
-    // reference, one undeclared file, one duplicate spelling, and one exemption
-    // so the assertion locks normalized/sorted boundary semantics.
+    // reference, one premature future-task file, one duplicate spelling, and one exemption
+    // so the assertion locks reference-fault precedence over recoverable premature changes.
     const revalidationPayload = {
       validationRunId: 'validation-1',
       passed: false,
@@ -222,6 +222,7 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     } as RevalidationResult;
 
     const harness = createHarness({
+      manifest: twoTaskManifestWithPremature,
       changedFiles: [
         'src/proof.test.ts',
         'src/read-only.ts',
@@ -252,13 +253,45 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     expect(redEvent).toBeDefined();
     expect(redEvent?.metadata).toMatchObject({
       modifiedReferenceFiles: ['src/read-only.ts'],
-      undeclaredFiles: ['src/future-fix.ts'],
+      prematureImplementation: [{ path: 'src/future-fix.ts', taskNumber: 2 }],
       failedInvertedCommands: ['! pnpm test -- src/proof.test.ts'],
     });
 
     expect(harness.runSpecReview).not.toHaveBeenCalled();
     expect(harness.runQualityReview).not.toHaveBeenCalled();
     expect(harness.runFix).not.toHaveBeenCalled();
+  });
+
+  it('keeps non-scope implementation failures terminal', async () => {
+    const revalidationPayload = {
+      validationRunId: 'validation-1',
+      passed: false,
+      failedCommands: ['! pnpm test -- src/proof.test.ts'],
+    } as RevalidationResult;
+
+    const harness = createHarness({
+      manifest: twoTaskManifestWithPremature,
+      changedFiles: ['src/proof.test.ts', 'src/future-fix.ts'],
+      revalidationResult: revalidationPayload,
+    });
+
+    harness.runImplement.mockResolvedValueOnce({
+      invocationId: 'impl-fail',
+      agentOutcome: 'failed',
+    });
+
+    const result = await harness.loop.execute(harness.input);
+
+    expect(result.outcome).toBe('failed');
+    expect(result.loop.status).toBe('failed');
+    expect(result.loop.iterations).toHaveLength(1);
+    expect(result.loop.iterations[0].outcome).toBe('failed');
+    expect(result.loop.iterations[0].reviewInvocationId).toBe('');
+    expect(harness.runRevalidation).not.toHaveBeenCalled();
+    expect(harness.runSpecReview).not.toHaveBeenCalled();
+    expect(harness.runQualityReview).not.toHaveBeenCalled();
+    expect(harness.runFix).not.toHaveBeenCalled();
+    expect(harness.events.some((e) => e.type === 'step.red_first_violation')).toBe(false);
   });
 
   it('fails before review when a failed inverted command accompanies purely undeclared commits', async () => {
