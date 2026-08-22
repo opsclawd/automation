@@ -7,6 +7,7 @@ import type { FixStepOptions, RevalidationResult } from '../review-fix/types.js'
 import type { GitPort } from '../ports/git-port.js';
 import type { ReviewStateRepositoryPort } from '../ports/review-state-repository-port.js';
 import type { ReadWorktreeFilePort } from '../ports.js';
+import type { PrematureImplementationRecord } from '../task-file-boundaries.js';
 
 export interface StepLoopContext {
   loopId: string;
@@ -423,8 +424,12 @@ export interface ImplementStepLoopInput {
 
 export interface ImplementStepLoopResult {
   loop: Loop;
-  outcome: 'success' | 'failed' | 'needs_human_review';
+  outcome: 'success' | 'failed' | 'needs_human_review' | 'recoverable_scope_violation';
   failureMessage?: string;
   failureKind?: FailureKind;
   modifiedReferenceFiles?: string[];
+  prematureImplementation?: PrematureImplementationRecord[];
+  driftFiles?: string[];
+  nonGoalFiles?: string[];
+  protectedFiles?: string[];
 }
