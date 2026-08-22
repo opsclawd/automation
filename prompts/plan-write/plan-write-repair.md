@@ -59,9 +59,16 @@ scratch. For example:
   the fix and keep the implementation source change out of the proof task. For additive feature work,
   preserve unit tests co-located within the same task as their implementation code.
 - DEFERRED SIGNATURE CHANGES IN RED TASKS: When a RED or regression-proof task asserts against a field,
-  property, or shape whose signature change lands in a later task, ensure the RED test routes expected
-  values through an explicitly-typed local variable or interface so the RED failure is a runtime assertion
-  mismatch rather than a TypeScript excess-property or property-does-not-exist compiler error.
+  property, or shape whose signature change lands in a later task, check which compiler trap actually
+  applies and fix the right side:
+  - Reading a not-yet-existent field off the actual returned/mutated value (`Property does not exist`) —
+    cast the value through a local interface or type assertion before reading, e.g.
+    `const typed = result as unknown as { newField: string[] }`. Typing only the expected comparison
+    value does not fix this.
+  - Constructing an expected value or call argument as a fresh literal with fields the current type
+    lacks (excess-property check) — route it through an explicitly-typed local variable or interface
+    instead of assigning the literal directly into a contextually-typed position.
+  RED tasks asserting on output most often need the first guard, not the second.
 
 ## CRITICAL RULES
 
