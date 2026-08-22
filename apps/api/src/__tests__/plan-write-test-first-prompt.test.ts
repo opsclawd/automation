@@ -14,7 +14,7 @@ describe('plan-write test-first task ordering', () => {
     expect(prompt).toContain('later implementation task');
     expect(prompt).toContain('prefix the validation command with `! `');
     expect(prompt).toContain(
-      'For additive feature work, unit tests MUST be delivered in the same task as their corresponding implementation code',
+      'For all such work, tests MUST be delivered in the **same task** as the implementation they test',
     );
     expect(prompt).toContain('DEFERRED SIGNATURE CHANGES IN RED TASKS');
     expect(prompt).toContain('explicitly-typed local variable or interface');
@@ -24,6 +24,13 @@ describe('plan-write test-first task ordering', () => {
     // (excess-property check), and needs a different fix (cast the actual value).
     expect(prompt).toContain('Property does not exist');
     expect(prompt).toContain('cast the value through');
+    // New capability work (additive) must not use the RED-first split, even when the
+    // pattern superficially looks like TDD discipline -- see #975's run for the concrete
+    // failure mode this guards against.
+    expect(prompt).toContain('THIS RULE DOES NOT APPLY TO NEW CAPABILITY WORK');
+    expect(prompt).toContain(
+      'does the issue describe something the codebase currently does incorrectly',
+    );
   });
 
   it('preserves test-first task separation during plan repair', () => {
@@ -39,5 +46,7 @@ describe('plan-write test-first task ordering', () => {
     expect(repairPrompt).toContain('explicitly-typed local variable or interface');
     expect(repairPrompt).toContain('Property does not exist');
     expect(repairPrompt).toContain('cast the value through');
+    expect(repairPrompt).toContain('MISAPPLIED TEST-FIRST SPLIT ON NEW CAPABILITY');
+    expect(repairPrompt).toContain('the split itself is the defect');
   });
 });
