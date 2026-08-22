@@ -79,6 +79,11 @@ scratch. For example:
     lacks (excess-property check) — route it through an explicitly-typed local variable or interface
     instead of assigning the literal directly into a contextually-typed position.
   RED tasks asserting on output most often need the first guard, not the second.
+  - Finalizing a deferred signature: The task that declares a deferred `signature_changes` entry must
+    include `may_extend` (not `reference_files`) for any file where an earlier task used a
+    local-cast/widened-type workaround anticipating that same signature, so it has permission to replace
+    the workaround with direct typed access once the signature is real — an optional touchpoint, not a
+    required deliverable.
 
 ## CRITICAL RULES
 

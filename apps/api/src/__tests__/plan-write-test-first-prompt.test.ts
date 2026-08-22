@@ -31,6 +31,8 @@ describe('plan-write test-first task ordering', () => {
     expect(prompt).toContain(
       'does the issue describe something the codebase currently does incorrectly',
     );
+    expect(prompt).toContain('Finalizing a deferred signature');
+    expect(prompt).toContain('may_extend');
   });
 
   it('preserves test-first task separation during plan repair', () => {
@@ -48,5 +50,7 @@ describe('plan-write test-first task ordering', () => {
     expect(repairPrompt).toContain('cast the value through');
     expect(repairPrompt).toContain('MISAPPLIED TEST-FIRST SPLIT ON NEW CAPABILITY');
     expect(repairPrompt).toContain('the split itself is the defect');
+    expect(repairPrompt).toContain('Finalizing a deferred signature');
+    expect(repairPrompt).toContain('may_extend');
   });
 });
