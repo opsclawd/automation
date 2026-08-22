@@ -163,6 +163,7 @@ export interface StepRunContext {
   priorAttemptMissingFiles?: string[];
   priorAttemptUndeclaredFiles?: string[];
   priorAttemptModifiedReferenceFiles?: string[];
+  priorAttemptRepairedScopeFiles?: string[];
   priorAttemptRepairedProtectedFiles?: string[];
   initialPreStepHead?: string;
   exemptUndeclaredFiles?: string[];
@@ -343,13 +344,19 @@ export class ImplementHandler implements PhaseHandler {
         continue;
       }
 
-      const existingStep = existing.find(
-        (candidate) => candidate.phaseId === 'implement' && candidate.index === d.index,
-      );
+      const existingStep =
+        this.opts.steps.findByIndex(ctx.runUuid as RunId, this.phase, d.index) ??
+        existing.find(
+          (candidate) => candidate.phaseId === 'implement' && candidate.index === d.index,
+        );
 
       const task = manifest?.tasks.find((t) => t.n === d.index);
       const declaredFiles = declaredTaskFiles(task);
       const shouldCaptureBaseline = hasDeclaredSurface(task, manifest?.version);
+
+      const revertCounts: Record<string, number> = existingStep?.revertCounts
+        ? { ...existingStep.revertCounts }
+        : {};
 
       let preStepHead = existingStep?.initialPreStepHead;
       if (shouldCaptureBaseline && preStepHead === undefined) {
@@ -370,7 +377,7 @@ export class ImplementHandler implements PhaseHandler {
             status: 'failed',
             startedAt,
             completedAt: ctx.now(),
-            revertCounts: {},
+            revertCounts,
           };
           emit('step.started', 'info', `step ${d.index}/${totalSteps}: ${d.title}`, {
             index: d.index,
@@ -413,7 +420,7 @@ export class ImplementHandler implements PhaseHandler {
               ...existingStep,
               initialPreStepHead: preStepHead,
               title: d.title,
-              revertCounts: {},
+              revertCounts,
             });
           }
         } catch {
@@ -431,7 +438,7 @@ export class ImplementHandler implements PhaseHandler {
         status: 'running',
         startedAt,
         ...(preStepHead !== undefined ? { initialPreStepHead: preStepHead } : {}),
-        revertCounts: {},
+        revertCounts,
       };
       this.opts.steps.upsert(step);
       emit('step.started', 'info', `step ${d.index}/${totalSteps}: ${d.title}`, {
@@ -443,10 +450,18 @@ export class ImplementHandler implements PhaseHandler {
       let declaredFilesRetryCount = 0;
       let priorAttemptMissingFiles: string[] | undefined;
       let priorAttemptUndeclaredFiles: string[] | undefined;
-      let priorAttemptRepairedProtectedFiles: string[] | undefined;
+      let priorAttemptRepairedScopeFiles: string[] | undefined;
       let result: StepRunResult;
 
       while (true) {
+        const latestPersisted = this.opts.steps.findByIndex(
+          ctx.runUuid as RunId,
+          this.phase,
+          d.index,
+        );
+        if (latestPersisted?.revertCounts) {
+          step.revertCounts = { ...latestPersisted.revertCounts };
+        }
         statusPromise = undefined;
         try {
           result = await this.opts.runStep({
@@ -463,8 +478,11 @@ export class ImplementHandler implements PhaseHandler {
               : {}),
             ...(priorAttemptMissingFiles !== undefined ? { priorAttemptMissingFiles } : {}),
             ...(priorAttemptUndeclaredFiles !== undefined ? { priorAttemptUndeclaredFiles } : {}),
-            ...(priorAttemptRepairedProtectedFiles !== undefined
-              ? { priorAttemptRepairedProtectedFiles }
+            ...(priorAttemptRepairedScopeFiles !== undefined
+              ? {
+                  priorAttemptRepairedScopeFiles,
+                  priorAttemptRepairedProtectedFiles: priorAttemptRepairedScopeFiles,
+                }
               : {}),
           });
         } catch (e) {
@@ -572,74 +590,6 @@ export class ImplementHandler implements PhaseHandler {
                 !requiredSet.has(normalizeTaskPath(p)) &&
                 initialCommittedSet.has(normalizeTaskPath(p)),
             );
-
-            const undeclaredProtectedPaths = [
-              ...new Set(
-                committedFiles
-                  .map(normalizeTaskPath)
-                  .filter((p) => p.length > 0 && isProtectedFilePath(p) && !requiredSet.has(p)),
-              ),
-            ].sort();
-
-            let repairedProtectedRecord:
-              | { revertedProtectedFiles: string[]; removedNewlyIgnoredFilesCount: number }
-              | undefined;
-            let protectedRepairError: string | undefined;
-
-            if (undeclaredProtectedPaths.length > 0) {
-              if (this.opts.revertScopeFiles) {
-                let repairResult: RevertScopeFilesResult;
-                try {
-                  repairResult = await this.opts.revertScopeFiles({
-                    cwd: ctx.cwd,
-                    baseline: preStepHead!,
-                    expectedHeadSha: postStepHead!,
-                    rewriteSafety: 'unpublished',
-                    scopeFiles: undeclaredProtectedPaths,
-                  });
-                  statusPromise = undefined;
-                  postStepHead = await ctx.git.headCommitSha(ctx.cwd);
-                  committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
-                  repairedProtectedRecord = {
-                    revertedProtectedFiles: repairResult.revertedScopeFiles,
-                    removedNewlyIgnoredFilesCount: repairResult.removedNewlyIgnoredFiles.length,
-                  };
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : String(error);
-                  if (preservedModifiedReferenceFiles.length === 0) {
-                    this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-                    emit(
-                      'step.failed',
-                      'error',
-                      `step ${d.index}/${totalSteps} protected file repair failed: ${message}`,
-                      { index: d.index, total: totalSteps },
-                    );
-                    return this.fail(
-                      ctx,
-                      emit,
-                      'command_failed',
-                      `step ${d.index} (${d.title}) protected file repair failed: ${message}`,
-                    );
-                  }
-                  protectedRepairError = message;
-                }
-              } else if (preservedModifiedReferenceFiles.length === 0) {
-                const repairError = 'revertScopeFiles port is not configured';
-                this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-                emit(
-                  'step.failed',
-                  'error',
-                  `step ${d.index}/${totalSteps} protected file repair failed: ${repairError}`,
-                  { index: d.index, total: totalSteps },
-                );
-                return this.fail(
-                  ctx,
-                  emit,
-                  'command_failed',
-                  `step ${d.index} (${d.title}) protected file repair failed: ${repairError}`,
-                );
-              }
-            }
 
             let statusOutput = '';
             let statusFailedBeforeAutoCommit = false;
@@ -799,7 +749,7 @@ export class ImplementHandler implements PhaseHandler {
               postCommitCandidates.push({ path: normP, tracked: isTracked });
             }
 
-            const freshClassification = classifyTaskChanges({
+            let freshClassification = classifyTaskChanges({
               candidates: postCommitCandidates,
               currentScope,
               ...(manifest?.tasks ? { manifestTasks: manifest.tasks } : {}),
@@ -810,20 +760,21 @@ export class ImplementHandler implements PhaseHandler {
                 : {}),
             });
 
-            let committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);
-            let committedSet = new Set(committedNormalized);
-            let missingFiles = expectedFiles.filter(
-              (path) => !committedSet.has(normalizeTaskPath(path)),
-            );
-
-            let modifiedReferenceFiles =
-              preservedModifiedReferenceFiles.length > 0
-                ? preservedModifiedReferenceFiles
-                : freshClassification.modifiedReferenceFiles;
+            let modifiedReferenceFiles = freshClassification.modifiedReferenceFiles;
             let nonGoalFiles = freshClassification.nonGoalFiles;
             let prematureImplementation = freshClassification.prematureImplementation;
             let driftFiles = freshClassification.driftFiles;
             let protectedFiles = freshClassification.protectedFiles ?? [];
+
+            if (preservedModifiedReferenceFiles.length > 0) {
+              modifiedReferenceFiles = [
+                ...new Set([...modifiedReferenceFiles, ...preservedModifiedReferenceFiles]),
+              ].sort();
+              const refSet = new Set(modifiedReferenceFiles);
+              protectedFiles = protectedFiles.filter((p) => !refSet.has(p));
+              driftFiles = driftFiles.filter((p) => !refSet.has(p));
+              nonGoalFiles = nonGoalFiles.filter((p) => !refSet.has(p));
+            }
 
             const candidateFilesForDebt = [
               ...new Set([
@@ -874,9 +825,7 @@ export class ImplementHandler implements PhaseHandler {
 
             const hasManifestFault = modifiedReferenceFiles.length > 0;
             if (hasManifestFault) {
-              const failureMessage = protectedRepairError
-                ? `step ${d.index} (${d.title}) modified reference_files ${modifiedReferenceFiles.join(', ')} and protected file repair failed: ${protectedRepairError}. This is a manifest fault: expected_files must include these files.`
-                : `step ${d.index} (${d.title}) modified reference_files ${modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
+              const failureMessage = `step ${d.index} (${d.title}) modified reference_files ${modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
               this.opts.steps.upsert({
                 ...step,
                 status: 'needs_human_review',
@@ -885,22 +834,17 @@ export class ImplementHandler implements PhaseHandler {
               emit(
                 'step.needs_human_review',
                 'warn',
-                protectedRepairError
-                  ? `step ${d.index}/${totalSteps} needs human review: modified reference files (${modifiedReferenceFiles.join(', ')}); protected file repair failed: ${protectedRepairError}`
-                  : `step ${d.index}/${totalSteps} needs human review: modified reference files (${modifiedReferenceFiles.join(', ')})`,
+                `step ${d.index}/${totalSteps} needs human review: modified reference files (${modifiedReferenceFiles.join(', ')})`,
                 {
                   index: d.index,
                   total: totalSteps,
                   taskTitle: task?.title ?? d.title,
                   modifiedReferenceFiles,
-                  ...(protectedRepairError ? { protectedRepairError } : {}),
                   preStepHead,
                   postStepHead,
                 },
               );
-              const suggestedAction = protectedRepairError
-                ? `Repair the protected path changes (${undeclaredProtectedPaths.join(', ')}) and update task-manifest.json to move ${modifiedReferenceFiles.join(', ')} from task ${d.index} reference_files to expected_files (a file cannot appear in both), or regenerate the manifest, then resume the run.`
-                : `Update task-manifest.json to move ${modifiedReferenceFiles.join(', ')} from task ${d.index} reference_files to expected_files (a file cannot appear in both), or regenerate the manifest, then resume the run.`;
+              const suggestedAction = `Update task-manifest.json to move ${modifiedReferenceFiles.join(', ')} from task ${d.index} reference_files to expected_files (a file cannot appear in both), or regenerate the manifest, then resume the run.`;
               return this.needsHumanReview(
                 ctx,
                 emit,
@@ -910,6 +854,252 @@ export class ImplementHandler implements PhaseHandler {
                 ['task-manifest.json'],
               );
             }
+
+            const undeclaredProtectedPaths = protectedFiles
+              .filter((p) => !requiredSet.has(p))
+              .filter((p) => isProtectedFilePath(p));
+
+            const repairCandidates = [
+              ...new Set(
+                [
+                  ...driftFiles,
+                  ...nonGoalFiles,
+                  ...prematureImplementation.map((p) => p.path),
+                  ...undeclaredProtectedPaths,
+                ]
+                  .map(normalizeTaskPath)
+                  .filter(Boolean),
+              ),
+            ].sort();
+
+            let repairedScopeRecord:
+              | {
+                  revertedScopeFiles: string[];
+                  removedNewlyIgnoredFilesCount: number;
+                }
+              | undefined;
+
+            if (repairCandidates.length > 0) {
+              const exhaustedCandidates = repairCandidates.filter(
+                (p) => (step.revertCounts[p] ?? 0) >= 2,
+              );
+              if (exhaustedCandidates.length > 0) {
+                const failureMessage = `step ${d.index} (${d.title}) exceeded maximum scope revert attempts (2) for: ${exhaustedCandidates.join(', ')}`;
+                this.opts.steps.upsert({
+                  ...step,
+                  status: 'needs_human_review',
+                  completedAt: ctx.now(),
+                });
+                emit(
+                  'step.needs_human_review',
+                  'warn',
+                  `step ${d.index}/${totalSteps} needs human review: exceeded maximum scope revert attempts for ${exhaustedCandidates.join(', ')}`,
+                  {
+                    index: d.index,
+                    total: totalSteps,
+                    taskTitle: task?.title ?? d.title,
+                    exhaustedCandidates,
+                    preStepHead,
+                    postStepHead,
+                  },
+                );
+                const suggestedAction = `Inspect the repeated scope violations (${exhaustedCandidates.join(', ')}) and update task-manifest.json or implementation scope before resuming.`;
+                return this.needsHumanReview(
+                  ctx,
+                  emit,
+                  'needs_human_review',
+                  failureMessage,
+                  suggestedAction,
+                  ['task-manifest.json'],
+                );
+              }
+
+              if (this.opts.revertScopeFiles) {
+                let repairResult: RevertScopeFilesResult;
+                try {
+                  repairResult = await this.opts.revertScopeFiles({
+                    cwd: ctx.cwd,
+                    baseline: preStepHead!,
+                    expectedHeadSha: postStepHead!,
+                    rewriteSafety: 'unpublished',
+                    scopeFiles: repairCandidates,
+                  });
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error);
+                  this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+                  emit(
+                    'step.failed',
+                    'error',
+                    `step ${d.index}/${totalSteps} scope repair failed: ${message}`,
+                    { index: d.index, total: totalSteps },
+                  );
+                  return this.fail(
+                    ctx,
+                    emit,
+                    'command_failed',
+                    `step ${d.index} (${d.title}) scope repair failed: ${message}`,
+                  );
+                }
+
+                postStepHead = repairResult.amendedHeadSha;
+                statusPromise = undefined;
+                committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead!, postStepHead);
+
+                const actuallyRevertedNormalized = new Set(
+                  repairResult.revertedScopeFiles.map(normalizeTaskPath).filter(Boolean),
+                );
+                for (const normPath of actuallyRevertedNormalized) {
+                  step.revertCounts[normPath] = (step.revertCounts[normPath] ?? 0) + 1;
+                }
+                this.opts.steps.upsert({ ...step, status: 'running' });
+
+                repairedScopeRecord = {
+                  revertedScopeFiles: repairResult.revertedScopeFiles,
+                  removedNewlyIgnoredFilesCount: repairResult.removedNewlyIgnoredFiles.length,
+                };
+
+                let postRepairCreatedSet = new Set<string>();
+                let hasPostRepairCreatedSnapshot = false;
+                if (typeof ctx.git?.createdFiles === 'function') {
+                  try {
+                    const postRepairCreatedFilesList = await ctx.git.createdFiles(
+                      ctx.cwd,
+                      preStepHead!,
+                      postStepHead,
+                    );
+                    if (postRepairCreatedFilesList !== undefined) {
+                      hasPostRepairCreatedSnapshot = true;
+                      postRepairCreatedSet = new Set(
+                        postRepairCreatedFilesList.map(normalizeTaskPath).filter(Boolean),
+                      );
+                    }
+                  } catch {
+                    hasPostRepairCreatedSnapshot = false;
+                  }
+                }
+
+                let postRepairStatusOutput = '';
+                let postRepairDirtySourcePaths: string[] = [];
+                let postRepairUntrackedPaths = new Set<string>();
+                try {
+                  postRepairStatusOutput = await readStatus();
+                  postRepairUntrackedPaths = new Set(
+                    postRepairStatusOutput
+                      .split('\n')
+                      .filter(isUntrackedOrAddedStatusLine)
+                      .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
+                      .map(normalizeTaskPath)
+                      .filter(Boolean),
+                  );
+                  postRepairDirtySourcePaths = uncommittedSourcePaths(postRepairStatusOutput)
+                    .map(normalizeTaskPath)
+                    .filter(Boolean);
+                } catch {
+                  // Status read failure handled downstream
+                }
+
+                const postRepairCandidates: TaskChangeCandidate[] = [];
+                for (const p of postRepairDirtySourcePaths) {
+                  postRepairCandidates.push({
+                    path: p,
+                    tracked: !postRepairUntrackedPaths.has(p) && !postRepairCreatedSet.has(p),
+                  });
+                }
+                for (const p of committedFiles) {
+                  const normP = normalizeTaskPath(p);
+                  if (!normP) continue;
+                  const isTracked = hasPostRepairCreatedSnapshot
+                    ? !postRepairCreatedSet.has(normP)
+                    : false;
+                  postRepairCandidates.push({ path: normP, tracked: isTracked });
+                }
+
+                freshClassification = classifyTaskChanges({
+                  candidates: postRepairCandidates,
+                  currentScope,
+                  ...(manifest?.tasks ? { manifestTasks: manifest.tasks } : {}),
+                  ...(manifest ? { manifest } : {}),
+                  currentTaskNumber: d.index,
+                  ...(this.opts.exemptUndeclaredFiles !== undefined
+                    ? { exemptFiles: this.opts.exemptUndeclaredFiles }
+                    : {}),
+                });
+
+                modifiedReferenceFiles = freshClassification.modifiedReferenceFiles;
+                nonGoalFiles = freshClassification.nonGoalFiles;
+                prematureImplementation = freshClassification.prematureImplementation;
+                driftFiles = freshClassification.driftFiles;
+                protectedFiles = freshClassification.protectedFiles ?? [];
+
+                const postRepairDebtCandidates = [
+                  ...new Set([
+                    ...modifiedReferenceFiles,
+                    ...driftFiles,
+                    ...prematureImplementation.map((p) => p.path),
+                    ...nonGoalFiles,
+                    ...protectedFiles,
+                  ]),
+                ].filter((path) => !isProtectedFilePath(path));
+
+                const postRepairDebtFiles = await findInheritedFormattingDebtFiles({
+                  cwd: ctx.cwd,
+                  manifest,
+                  currentTaskNumber: d.index,
+                  completedTaskNumbers: doneIdx,
+                  candidateFiles: postRepairDebtCandidates,
+                  preStepHead: preStepHead!,
+                  postStepHead: postStepHead!,
+                  git: ctx.git,
+                });
+
+                const postRepairDebtSet = new Set(postRepairDebtFiles);
+                modifiedReferenceFiles = modifiedReferenceFiles.filter(
+                  (path) => !postRepairDebtSet.has(path),
+                );
+                driftFiles = driftFiles.filter((path) => !postRepairDebtSet.has(path));
+                prematureImplementation = prematureImplementation.filter(
+                  (p) => !postRepairDebtSet.has(p.path),
+                );
+                nonGoalFiles = nonGoalFiles.filter((path) => !postRepairDebtSet.has(path));
+                protectedFiles = protectedFiles.filter((path) => !postRepairDebtSet.has(path));
+
+                if (postRepairDebtFiles.length > 0) {
+                  emit(
+                    'step.inherited_formatting_debt',
+                    'info',
+                    `step ${d.index}/${totalSteps} exempted inherited formatting debt: ${postRepairDebtFiles.join(', ')}`,
+                    {
+                      index: d.index,
+                      total: totalSteps,
+                      preStepHead,
+                      postStepHead,
+                      files: postRepairDebtFiles,
+                    },
+                  );
+                }
+              } else if (repairCandidates.some(isProtectedFilePath)) {
+                const repairError = 'revertScopeFiles port is not configured';
+                this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+                emit(
+                  'step.failed',
+                  'error',
+                  `step ${d.index}/${totalSteps} scope repair failed: ${repairError}`,
+                  { index: d.index, total: totalSteps },
+                );
+                return this.fail(
+                  ctx,
+                  emit,
+                  'command_failed',
+                  `step ${d.index} (${d.title}) scope repair failed: ${repairError}`,
+                );
+              }
+            }
+
+            const committedNormalized = committedFiles.map(normalizeTaskPath).filter(Boolean);
+            const committedSet = new Set(committedNormalized);
+            const missingFiles = expectedFiles.filter(
+              (path) => !committedSet.has(normalizeTaskPath(path)),
+            );
 
             let verifiedUnaffected = false;
             if (missingFiles.length > 0) {
@@ -987,9 +1177,9 @@ export class ImplementHandler implements PhaseHandler {
 
             const hasMissingViolation = missingFiles.length > 0 && !verifiedUnaffected;
             const hasUndeclaredViolation = blockingUndeclaredFiles.length > 0;
-            const hasProtectedViolation = repairedProtectedRecord !== undefined;
+            const hasScopeRepairViolation = repairedScopeRecord !== undefined;
             const hasBoundaryViolation =
-              hasMissingViolation || hasUndeclaredViolation || hasProtectedViolation;
+              hasMissingViolation || hasUndeclaredViolation || hasScopeRepairViolation;
 
             if (hasBoundaryViolation) {
               if (declaredFilesRetryCount < maxDeclaredFilesRetries) {
@@ -997,8 +1187,7 @@ export class ImplementHandler implements PhaseHandler {
                 priorAttemptMissingFiles = hasMissingViolation ? missingFiles : undefined;
                 priorAttemptUndeclaredFiles =
                   blockingUndeclaredFiles.length > 0 ? blockingUndeclaredFiles : undefined;
-                priorAttemptRepairedProtectedFiles =
-                  repairedProtectedRecord?.revertedProtectedFiles;
+                priorAttemptRepairedScopeFiles = repairedScopeRecord?.revertedScopeFiles;
 
                 this.opts.steps.upsert({ ...step, status: 'running' });
                 emit(
@@ -1017,13 +1206,17 @@ export class ImplementHandler implements PhaseHandler {
                     ...(hasMissingViolation ? { missingFiles } : {}),
                     modifiedReferenceFiles,
                     undeclaredFiles: blockingUndeclaredFiles,
-                    ...(repairedProtectedRecord !== undefined
+                    ...(repairedScopeRecord !== undefined
                       ? {
-                          repairedProtectedFiles: repairedProtectedRecord.revertedProtectedFiles,
+                          repairedScopeFiles: repairedScopeRecord.revertedScopeFiles,
                           removedNewlyIgnoredFilesCount:
-                            repairedProtectedRecord.removedNewlyIgnoredFilesCount,
-                          protectedFileDiagnostic:
-                            formatProtectedDiagnostic(repairedProtectedRecord),
+                            repairedScopeRecord.removedNewlyIgnoredFilesCount,
+                          protectedFileDiagnostic: formatProtectedDiagnostic({
+                            revertedProtectedFiles:
+                              repairedScopeRecord.revertedScopeFiles.filter(isProtectedFilePath),
+                            removedNewlyIgnoredFilesCount:
+                              repairedScopeRecord.removedNewlyIgnoredFilesCount,
+                          }),
                         }
                       : {}),
                     preStepHead,
@@ -1051,15 +1244,31 @@ export class ImplementHandler implements PhaseHandler {
                 }
 
                 const violationParts: string[] = [];
-                if (repairedProtectedRecord !== undefined) {
-                  violationParts.push(formatProtectedDiagnostic(repairedProtectedRecord));
+                if (repairedScopeRecord !== undefined) {
+                  const protectedReverted =
+                    repairedScopeRecord.revertedScopeFiles.filter(isProtectedFilePath);
+                  if (protectedReverted.length > 0) {
+                    violationParts.push(
+                      formatProtectedDiagnostic({
+                        revertedProtectedFiles: protectedReverted,
+                        removedNewlyIgnoredFilesCount:
+                          repairedScopeRecord.removedNewlyIgnoredFilesCount,
+                      }),
+                    );
+                  }
                 }
                 if (hasMissingViolation) {
                   violationParts.push(`did not commit declared files: ${missingFiles.join(', ')}`);
                 }
-                if (blockingUndeclaredFiles.length > 0) {
+                const nonProtectedRepaired = repairedScopeRecord
+                  ? repairedScopeRecord.revertedScopeFiles.filter((p) => !isProtectedFilePath(p))
+                  : [];
+                const allUndeclaredFiles = [
+                  ...new Set([...nonProtectedRepaired, ...blockingUndeclaredFiles]),
+                ].sort();
+                if (allUndeclaredFiles.length > 0) {
                   violationParts.push(
-                    `committed undeclared files: ${blockingUndeclaredFiles.join(', ')}`,
+                    `committed undeclared files: ${allUndeclaredFiles.join(', ')}`,
                   );
                 }
 
@@ -1073,7 +1282,7 @@ export class ImplementHandler implements PhaseHandler {
                   emit,
                   'invalid_result',
                   failureMessage,
-                  hasMissingViolation && !hasUndeclaredViolation && !hasProtectedViolation
+                  hasMissingViolation && !hasUndeclaredViolation && !hasScopeRepairViolation
                     ? 'Ensure the implementation commits all files declared in expected_files.'
                     : 'Ensure the implementation commits all declared expected_files and does not modify reference or undeclared files.',
                 );

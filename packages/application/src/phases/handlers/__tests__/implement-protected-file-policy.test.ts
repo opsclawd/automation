@@ -37,6 +37,12 @@ function makeCtx(artifacts: FakeArtifactStore, git: FakeGitPort) {
       let n = 0;
       return () => `id-${++n}`;
     })(),
+    deleteWorktreeFile: async (cwd: string, relativePath: string) => {
+      const currentStatus = git.statusByCwd.get(cwd) ?? '';
+      const lines = currentStatus.split('\n').filter((l) => !l.includes(relativePath));
+      git.statusByCwd.set(cwd, lines.join('\n'));
+      return true;
+    },
   } satisfies PhaseHandlerContext;
   return { ctx, events };
 }
@@ -182,7 +188,7 @@ describe('ImplementHandler protected-file policy', () => {
     });
 
     expect(runStep).toHaveBeenCalledTimes(2);
-    expect(contexts[1]?.priorAttemptRepairedProtectedFiles).toEqual(['.gitignore']);
+    expect(contexts[1]?.priorAttemptRepairedScopeFiles).toEqual(['.gitignore']);
     expect(contexts[1]?.priorAttemptUndeclaredFiles).toBeUndefined();
 
     const retryEvents = events.filter((e) => e.type === 'step.declared_files_retry');
@@ -210,9 +216,9 @@ describe('ImplementHandler protected-file policy', () => {
     git.headByCwd.set(ctx.cwd, 'pre-step');
     // Attempt 1 commits:
     // - declared .github/workflows/ci.yml
-    // - undeclared protected .github/workflows/deploy.yml (should be repaired)
-    // - undeclared protected .ai-orchestrator.json (should be repaired)
-    // - undeclared non-protected .github-actions.yml (should NOT be repaired, becomes undeclared)
+    // - undeclared protected .github/workflows/deploy.yml (repaired)
+    // - undeclared protected .ai-orchestrator.json (repaired)
+    // - undeclared non-protected .github-actions.yml (repaired as drift under unified scope repair)
     git.changedFilesResults.set('pre-step|attempt-1', [
       'src/task.ts',
       '.github/workflows/ci.yml',
@@ -220,18 +226,18 @@ describe('ImplementHandler protected-file policy', () => {
       '.ai-orchestrator.json',
       '.github-actions.yml',
     ]);
-    git.changedFilesResults.set('pre-step|amended-1', [
-      'src/task.ts',
-      '.github/workflows/ci.yml',
-      '.github-actions.yml',
-    ]);
+    git.changedFilesResults.set('pre-step|amended-1', ['src/task.ts', '.github/workflows/ci.yml']);
     git.changedFilesResults.set('pre-step|attempt-2', ['src/task.ts', '.github/workflows/ci.yml']);
 
     const revertScopeFiles = vi.fn(
       async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
         git.headByCwd.set(input.cwd, 'amended-1');
         return {
-          revertedScopeFiles: ['.ai-orchestrator.json', '.github/workflows/deploy.yml'],
+          revertedScopeFiles: [
+            '.ai-orchestrator.json',
+            '.github-actions.yml',
+            '.github/workflows/deploy.yml',
+          ],
           removedNewlyIgnoredFiles: [],
           amendedHeadSha: 'amended-1',
         };
@@ -261,13 +267,13 @@ describe('ImplementHandler protected-file policy', () => {
       baseline: 'pre-step',
       expectedHeadSha: 'attempt-1',
       rewriteSafety: 'unpublished',
-      scopeFiles: ['.ai-orchestrator.json', '.github/workflows/deploy.yml'],
+      scopeFiles: ['.ai-orchestrator.json', '.github-actions.yml', '.github/workflows/deploy.yml'],
     });
 
-    // Residual non-protected undeclared file .github-actions.yml passed into priorAttemptUndeclaredFiles
-    expect(contexts[1]?.priorAttemptUndeclaredFiles).toEqual(['.github-actions.yml']);
-    expect(contexts[1]?.priorAttemptRepairedProtectedFiles).toEqual([
+    expect(contexts[1]?.priorAttemptUndeclaredFiles).toBeUndefined();
+    expect(contexts[1]?.priorAttemptRepairedScopeFiles).toEqual([
       '.ai-orchestrator.json',
+      '.github-actions.yml',
       '.github/workflows/deploy.yml',
     ]);
 
@@ -333,7 +339,7 @@ describe('ImplementHandler protected-file policy', () => {
     }).run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(contexts[1]?.priorAttemptRepairedProtectedFiles).toEqual(['.gitignore']);
+    expect(contexts[1]?.priorAttemptRepairedScopeFiles).toEqual(['.gitignore']);
     expect(contexts[1]?.priorAttemptUndeclaredFiles).toBeUndefined();
 
     const retryEvents = events.filter((e) => e.type === 'step.declared_files_retry');
@@ -596,7 +602,7 @@ describe('ImplementHandler protected-file policy', () => {
 
     expect(result.outcome).toBe('needs_human_review');
     expect(runStep).toHaveBeenCalledTimes(1);
-    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).not.toHaveBeenCalled();
     expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.kind).toBe('needs_human_review');
@@ -663,7 +669,7 @@ describe('ImplementHandler protected-file policy', () => {
     }
   });
 
-  it('surfaces both manifest fault and repair failure when protected reference_file repair throws', async () => {
+  it('surfaces manifest fault when protected reference_file is modified even if repair is configured', async () => {
     const artifacts = new FakeArtifactStore();
     const git = new FakeGitPort();
     const steps = new FakeStepRepository();
@@ -703,33 +709,145 @@ describe('ImplementHandler protected-file policy', () => {
 
     expect(result.outcome).toBe('needs_human_review');
     expect(runStep).toHaveBeenCalledTimes(1);
-    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).not.toHaveBeenCalled();
     expect(events.filter((e) => e.type === 'step.declared_files_retry')).toHaveLength(0);
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.kind).toBe('needs_human_review');
       expect(result.failure.message).toContain('modified reference_files .gitignore');
-      expect(result.failure.message).toContain(
-        'protected file repair failed: git commit --amend failed',
-      );
       expect(result.failure.artifacts).toEqual(['task-manifest.json']);
-      expect(result.failure.suggestedAction).toContain(
-        'Repair the protected path changes (.gitignore)',
-      );
-      expect(result.failure.suggestedAction).toContain('update task-manifest.json');
+      expect(result.failure.suggestedAction).toContain('Update task-manifest.json');
     }
 
     const stepEvents = events.filter((e) => e.type === 'step.needs_human_review');
     expect(stepEvents).toHaveLength(1);
     expect(stepEvents[0]?.message).toContain('modified reference files (.gitignore)');
-    expect(stepEvents[0]?.message).toContain(
-      'protected file repair failed: git commit --amend failed',
-    );
     expect(stepEvents[0]?.metadata).toMatchObject({
       index: 1,
       total: 1,
       taskTitle: 'modify reference .gitignore throwing repair',
       modifiedReferenceFiles: ['.gitignore'],
-      protectedRepairError: 'git commit --amend failed',
     });
+  });
+
+  it('produces non-empty failure message when maxDeclaredFilesRetries is exhausted due to non-protected files being repaired', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'modify core logic',
+          expected_files: ['src/feature.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    // Pre-repair commit modified declared file src/feature.ts and undeclared non-protected file src/undeclared.ts
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/feature.ts', 'src/undeclared.ts']);
+    git.changedFilesResults.set('pre-step|amended-1', ['src/feature.ts']);
+
+    const revertScopeFiles = vi.fn(
+      async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
+        git.headByCwd.set(input.cwd, 'amended-1');
+        return {
+          revertedScopeFiles: ['src/undeclared.ts'],
+          removedNewlyIgnoredFiles: [],
+          amendedHeadSha: 'amended-1',
+        };
+      },
+    );
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
+      return { outcome: 'success' };
+    });
+
+    // maxDeclaredFilesRetries = 0 so no retry is attempted and boundary violation fails immediately
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 0,
+      revertScopeFiles,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    if (result.outcome === 'failed') {
+      expect(result.failure.message).toBe(
+        'step 1 (Task 1: modify core logic) committed undeclared files: src/undeclared.ts',
+      );
+    }
+
+    const failedEvents = events.filter((e) => e.type === 'step.failed');
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]?.message).toBe(
+      'step 1 (Task 1: modify core logic) committed undeclared files: src/undeclared.ts',
+    );
+  });
+
+  it('emits repairedScopeFiles in step.declared_files_retry event metadata', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'modify with out of scope file',
+          expected_files: ['src/feature.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/feature.ts', 'src/drift.ts']);
+    git.changedFilesResults.set('pre-step|amended-1', ['src/feature.ts']);
+    git.changedFilesResults.set('pre-step|attempt-2', ['src/feature.ts']);
+
+    const revertScopeFiles = vi.fn(
+      async (input: RevertScopeFilesInput): Promise<RevertScopeFilesResult> => {
+        git.headByCwd.set(input.cwd, 'amended-1');
+        return {
+          revertedScopeFiles: ['src/drift.ts'],
+          removedNewlyIgnoredFiles: [],
+          amendedHeadSha: 'amended-1',
+        };
+      },
+    );
+
+    let attempt = 0;
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      attempt += 1;
+      git.headByCwd.set(ctx.cwd, `attempt-${attempt}`);
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 1,
+      revertScopeFiles,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const retryEvents = events.filter((e) => e.type === 'step.declared_files_retry');
+    expect(retryEvents).toHaveLength(1);
+    expect(retryEvents[0]?.metadata).toMatchObject({
+      index: 1,
+      repairedScopeFiles: ['src/drift.ts'],
+    });
+    expect(
+      (retryEvents[0]?.metadata as Record<string, unknown>).repairedProtectedFiles,
+    ).toBeUndefined();
   });
 });
