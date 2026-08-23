@@ -977,4 +977,63 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     expect(boundaryEvents).toHaveLength(0);
     expect(result.phaseOutcome).toBe('passed');
   });
+
+  it('rejects a review-fix commit that touches a file declared only under a downstream task when currentTaskNumber is passed', async () => {
+    const multiTaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['src/task1.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2',
+          expected_files: ['src/task2.ts'],
+        },
+      ],
+    };
+
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [
+        { severity: 'P1', summary: 'bug in task 1', files: ['src/task1.ts'] },
+      ],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['src/task2.ts']);
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'fixed by touching downstream task file',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({
+      ...baseInput,
+      manifest: multiTaskManifest,
+      currentTaskNumber: 1,
+      maxIterations: 1,
+    });
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.message).toContain(
+      'premature implementation of files owned by downstream tasks: src/task2.ts (owned by task 2)',
+    );
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+    expect(result.loop.iterations[0]?.outcome).toBe('unresolved');
+  });
 });
