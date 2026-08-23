@@ -55,6 +55,19 @@ export class TaskContextGenerator {
     sections.push(header);
     diagnostics.componentSizes['header'] = header.length;
 
+    // 1.5 Execution Semantics
+    if (input.manifest.version === 2) {
+      const t2 = task as TaskManifestEntryV2;
+      if (t2.task_type || t2.paired_with_task) {
+        let execContent = '## Execution Semantics\n\n';
+        if (t2.task_type) execContent += `Task Type: ${t2.task_type}\n`;
+        if (t2.paired_with_task) execContent += `Paired With Task: ${t2.paired_with_task}\n`;
+        execContent += '\n';
+        sections.push(execContent);
+        diagnostics.componentSizes['execution_semantics'] = execContent.length;
+      }
+    }
+
     // 2. Workspace & Scope Constraints
     const constraints = `## Workspace & Scope Constraints\n\n${workspaceConstraints}\n\nWorking Directory: ${cwd}\nRepository: ${repoId}\nBranch: ${branchName}\n${startCommitSha ? `Start Commit: ${startCommitSha}\n` : ''}\n`;
     sections.push(constraints);
