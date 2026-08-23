@@ -49,7 +49,7 @@ scratch. For example:
   `task-manifest.json`.
 - `task-manifest.json` must remain valid per its schema: `version: 2`, `task_count` equal to
   `tasks.length`, each task with a numeric `n` and non-empty string `title`. Preserve any existing
-  `permitted_areas`, `may_extend`, `non_goals`, `reference_files`, and `signature_changes` fields — do not remove valid declarations or convert them to V1 format.
+  `permitted_areas`, `may_extend`, `non_goals`, `reference_files`, `signature_changes`, `task_type`, and `paired_with_task` fields — do not remove valid declarations or convert them to V1 format.
 - Scope preservation and narrowing: Preserve valid scope declarations. Fix collisions with the narrowest permission instead of widening obligations or repository scope. Never declare or widen permissions to the repository root `""` or `.`.
 - When showing example task headers for illustration only (not real task headings), indent them by
   at least 2 spaces or wrap in inline code — a real task heading always starts at column 0.
