@@ -3878,6 +3878,13 @@ export function composeRoot(opts: ComposeOptions): Container {
             (a) => !existsSync(join(ctx.cwd, a)),
           );
           if (missingProse.length === 1 && missingProse[0] !== undefined) {
+            const existingStepRecord = stepRepository.findByIndex(
+              RunId(String(ctx.runId)),
+              PhaseName('implement'),
+              ctx.stepIndex,
+            );
+            const preStepHead =
+              ctx.initialPreStepHead ?? existingStepRecord?.initialPreStepHead ?? startCommitSha;
             const synthInput: SynthesizeFromTranscriptInput = {
               runId: String(ctx.runId),
               cwd: ctx.cwd,
@@ -3889,6 +3896,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 stderrPath: result.stderrPath,
               },
               missingArtifact: missingProse[0],
+              preStepHead,
               startCommitSha,
               endCommitSha: result.endCommitSha ?? startCommitSha,
               primaryExitCode: result.exitCode,

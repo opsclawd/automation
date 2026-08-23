@@ -122,6 +122,21 @@ describe('SynthesizeFromTranscript policy', () => {
     expect(req.fallbackOfInvocationId).toBe(PRIMARY_ID);
     expect(req.fallbackReason).toBe('synthesized_from_transcript');
     expect(req.expectedArtifacts).toEqual(['implementation-log.md']);
+    expect(req.promptPath).not.toContain('You are a transcript-summarizer.');
+    expect(req.promptPath.endsWith('.md')).toBe(true);
+  });
+
+  it('succeeds on fallback invocation where startCommitSha equals endCommitSha but preStepHead shows committed work', async () => {
+    env.git.logBetweenResults.set('base123|def456', ['commit def456: implement fix']);
+    const result = await env.guard.synthesizeFromTranscript(
+      makeBaseInput({
+        preStepHead: 'base123',
+        startCommitSha: 'def456',
+        endCommitSha: 'def456',
+      }),
+    );
+    expect(result.outcome).toBe('synthesized');
+    expect(env.agent.invocations).toHaveLength(1);
   });
 
   it('returns no_policy_match when artifact is not in the prose allowlist', async () => {

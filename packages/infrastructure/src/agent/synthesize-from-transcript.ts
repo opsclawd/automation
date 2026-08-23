@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { existsSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { AgentInvocationId, AgentProfileName } from '@ai-sdlc/domain';
 import type {
   AgentPort,
@@ -128,7 +130,9 @@ export class SynthesizeFromTranscript implements SynthesizeFromTranscriptPort {
       return { outcome: 'no_policy_match' };
     }
 
-    if (input.endCommitSha === input.startCommitSha) {
+    const baselineSha = input.preStepHead ?? input.startCommitSha;
+
+    if (input.endCommitSha === baselineSha) {
       this.emitPolicyNotSatisfied(input, 'head_unchanged');
       return { outcome: 'no_policy_match' };
     }
@@ -152,11 +156,11 @@ export class SynthesizeFromTranscript implements SynthesizeFromTranscriptPort {
 
     const headLines = tail.split(/\r?\n/).slice(-TAIL_HEAD_LINES).join('\n');
     const gitLog = await this.git
-      .logBetween(input.cwd, input.startCommitSha, input.endCommitSha)
+      .logBetween(input.cwd, baselineSha, input.endCommitSha)
       .then((arr) => arr.join('\n'))
       .catch(() => '');
     const diffSummary = await this.git
-      .diff(input.cwd, input.startCommitSha, input.endCommitSha)
+      .diff(input.cwd, baselineSha, input.endCommitSha)
       .then((d) => d.split(/\r?\n/).slice(0, DIFF_SUMMARY_MAX_LINES).join('\n'))
       .catch(() => '');
 
@@ -164,16 +168,18 @@ export class SynthesizeFromTranscript implements SynthesizeFromTranscriptPort {
     const prompt = this.promptBuilder({
       artifactPath: input.missingArtifact,
       tail: headLines,
-      baseSha: input.startCommitSha,
+      baseSha: baselineSha,
       headSha: input.endCommitSha,
       gitLog,
       diffSummary,
       primaryInvocationId: String(input.primaryInvocation.id),
     });
 
+    const promptPath = this.writePromptFile(prompt);
+
     const request: AgentInvocationRequest = {
       profile: AgentProfileName(this.resultWriterProfile),
-      promptPath: prompt,
+      promptPath,
       expectedArtifacts: [input.missingArtifact],
       cwd: input.cwd,
       runId: input.runId,
@@ -200,6 +206,8 @@ export class SynthesizeFromTranscript implements SynthesizeFromTranscriptPort {
         synthesisInvocationId: synthesisId,
         tailBytes: headLines.length,
       };
+    } finally {
+      removePromptFile(promptPath);
     }
 
     if (result.outcome !== 'success' || result.exitCode !== 0) {
@@ -343,6 +351,14 @@ export class SynthesizeFromTranscript implements SynthesizeFromTranscriptPort {
     });
   }
 
+  private writePromptFile(prompt: string): string {
+    const dir = join(tmpdir(), `synthesize-transcript-${randomUUID()}`);
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, 'prompt.md');
+    writeFileSync(path, prompt);
+    return path;
+  }
+
   private emit(
     input: SynthesizeFromTranscriptInput,
     level: 'info' | 'warn' | 'error',
@@ -396,4 +412,12 @@ function isBlockedArtifact(contents: string): boolean {
 
 function stringifyErr(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+function removePromptFile(promptPath: string): void {
+  try {
+    rmSync(dirname(promptPath), { recursive: true, force: true });
+  } catch {
+    // Best-effort cleanup.
+  }
 }

@@ -14,7 +14,10 @@ export interface SynthesizeFromTranscriptInput {
   };
   // The single missing artifact (D3.c — exactly one allowed).
   missingArtifact: string;
-  // Git state of the primary invocation.
+  // Step baseline SHA (before primary or fallback invocation started).
+  // If omitted, falls back to startCommitSha.
+  preStepHead?: string;
+  // Git state of the invocation.
   startCommitSha: string;
   endCommitSha: string;
   // Exit code of the primary invocation (D3.2 — must be 0).
