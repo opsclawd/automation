@@ -2073,16 +2073,30 @@ export function composeRoot(opts: ComposeOptions): Container {
   const prReviewRepository = new PrReviewRepository(db);
   const eventBus = new InMemoryEventBus();
 
-  const eventRepository = new EventRepository(db, repoId);
-  const eventRepositoryFactory: EventRepositoryFactory = (rId: RepositoryId) =>
-    new EventRepository(db, rId);
+  const eventRepositoryCache = new Map<RepositoryId, EventRepository>();
+  const getEventRepository = (rId: RepositoryId): EventRepository => {
+    let repo = eventRepositoryCache.get(rId);
+    if (!repo) {
+      repo = new EventRepository(db, rId);
+      eventRepositoryCache.set(rId, repo);
+    }
+    return repo;
+  };
+  const eventRepository = getEventRepository(repoId);
+  const eventRepositoryFactory: EventRepositoryFactory = getEventRepository;
+
+  const runRepoIdCache = new Map<string, RepositoryId>();
 
   const persistingEventBus: EventBusPort = {
     subscribe: (runUuid, listener) => eventBus.subscribe(runUuid, listener),
     publish: (runUuid, event) => {
       eventBus.publish(runUuid, event);
       try {
-        const rId = runRepository.findByUuid(runUuid)?.repoId ?? repoId;
+        let rId = runRepoIdCache.get(runUuid);
+        if (!rId) {
+          rId = runRepository.findByUuid(runUuid)?.repoId ?? repoId;
+          runRepoIdCache.set(runUuid, rId);
+        }
         eventRepositoryFactory(rId).insert({
           runUuid,
           ...(event.phase !== undefined ? { phase: event.phase } : {}),

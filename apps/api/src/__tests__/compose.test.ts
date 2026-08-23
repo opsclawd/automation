@@ -1709,10 +1709,11 @@ exit 1
     const path = require('node:path');
     const composeSource = fs.readFileSync(path.join(__dirname, '..', 'compose.ts'), 'utf-8');
 
-    // Dynamic repoId resolution in persistingEventBus
+    // Dynamic repoId resolution and caching in persistingEventBus
     expect(composeSource).toMatch(
-      /const rId = runRepository\.findByUuid\(runUuid\)\?\.repoId \?\? repoId;/,
+      /let rId = runRepoIdCache\.get\(runUuid\);[\s\S]*?runRepository\.findByUuid\(runUuid\)\?\.repoId \?\? repoId;[\s\S]*?runRepoIdCache\.set\(runUuid, rId\);/,
     );
+    expect(composeSource).toMatch(/eventRepositoryCache\.get\(rId\)/);
     expect(composeSource).toMatch(/eventRepositoryFactory\(rId\)\.insert\(/);
 
     // Wired into RunExecutor
@@ -1732,5 +1733,77 @@ exit 1
     expect(composeSource).toMatch(
       /const buildOrphanedRunsSweeper = \(\) =>\s*new OrphanedRunsSweeper\(\{[\s\S]*?eventBus: persistingEventBus/,
     );
+  });
+
+  it('persistingEventBus caches repoId lookup across publishes for the same runUuid', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'compose-persisting-bus-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      repoFullName: 'owner/repo',
+      runStartupSweeps: false,
+    });
+
+    const runUuid = 'cache-test-run-uuid-1';
+    container.runRepository.insertIfNoActive({
+      uuid: runUuid,
+      displayId: 'R-001',
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      repoId: RepositoryId('owner/repo'),
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    });
+
+    const runRecord = container.runRepository.findByUuid(runUuid)!;
+    const ctx = container.buildRunContext!(runRecord);
+    const findByUuidSpy = vi.spyOn(container.runRepository, 'findByUuid');
+
+    ctx.events.publish(runRecord.uuid, {
+      level: 'info',
+      type: 'step.started',
+      message: 'test message 1',
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(findByUuidSpy).toHaveBeenCalledTimes(1);
+
+    ctx.events.publish(runRecord.uuid, {
+      level: 'info',
+      type: 'step.completed',
+      message: 'test message 2',
+      timestamp: new Date().toISOString(),
+    });
+
+    // Should still be called only once due to runRepoIdCache
+    expect(findByUuidSpy).toHaveBeenCalledTimes(1);
+
+    const events = container.eventRepository.listByRunSince(runRecord.uuid);
+    expect(events.length).toBeGreaterThanOrEqual(2);
   });
 });
