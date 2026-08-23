@@ -2161,7 +2161,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       eventBus.publish(runUuid, event);
       try {
         let rId = runRepoIdCache.get(runUuid);
-        if (!rId) {
+        if (rId === undefined) {
           const run = runRepository.findByUuid(runUuid);
           if (run) {
             rId = run.repoId;
@@ -6615,14 +6615,14 @@ export function composeRoot(opts: ComposeOptions): Container {
           const config = loadConfig(cwd);
           if (!config.validation?.commands?.length) {
             try {
-              eventRepository.insert({
-                runUuid: runId,
+              persistingEventBus.publish(runId, {
+                runId,
                 phase: 'post-pr-review',
                 level: 'warn',
                 type: 'post-pr-review.build_verification_skipped',
                 message: 'build verification skipped: no validation.commands configured',
                 metadata: { cwd },
-                timestamp: new Date(),
+                timestamp: new Date().toISOString(),
               });
             } catch {}
             return { passed: true };
@@ -6697,14 +6697,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       repoRoot: opts.repoRoot,
       onWarning: (message, metadata, runId) => {
         try {
-          eventRepository.insert({
-            runUuid: runId,
+          persistingEventBus.publish(runId, {
+            runId,
             phase: 'post-pr-review',
             level: 'warn',
             type: 'post-pr-review.main_checkout_guard',
             message,
-            metadata,
-            timestamp: new Date(),
+            metadata: metadata ?? {},
+            timestamp: new Date().toISOString(),
           });
         } catch {}
       },

@@ -1711,10 +1711,18 @@ exit 1
 
     // Dynamic repoId resolution and caching in persistingEventBus
     expect(composeSource).toMatch(
-      /let rId = runRepoIdCache\.get\(runUuid\);[\s\S]*?const run = runRepository\.findByUuid\(runUuid\);[\s\S]*?runRepoIdCache\.set\(runUuid, rId\);/,
+      /let rId = runRepoIdCache\.get\(runUuid\);[\s\S]*?if \(rId === undefined\) \{[\s\S]*?const run = runRepository\.findByUuid\(runUuid\);[\s\S]*?runRepoIdCache\.set\(runUuid, rId\);/,
     );
     expect(composeSource).toMatch(/eventRepositoryCache\.get\(rId\)/);
     expect(composeSource).toMatch(/eventRepositoryFactory\(rId\)\.insert\(/);
+
+    // buildPrReviewPoller uses persistingEventBus rather than bypassing through eventRepository.insert
+    expect(composeSource).toMatch(
+      /buildPrReviewPoller[\s\S]*?persistingEventBus\.publish\(runId,\s*\{\s*runId,\s*phase:\s*'post-pr-review',\s*level:\s*'warn',\s*type:\s*'post-pr-review\.build_verification_skipped'/,
+    );
+    expect(composeSource).toMatch(
+      /buildPrReviewPoller[\s\S]*?persistingEventBus\.publish\(runId,\s*\{\s*runId,\s*phase:\s*'post-pr-review',\s*level:\s*'warn',\s*type:\s*'post-pr-review\.main_checkout_guard'/,
+    );
 
     // Wired into RunExecutor
     expect(composeSource).toMatch(
@@ -2039,5 +2047,86 @@ exit 1
     expect(persisted[0].message).toBe('test command from CLI');
 
     unsubscribe();
+  });
+
+  it('persistingEventBus caches empty string repoId (local directory mode) without redundant findByUuid queries', async () => {
+    const root = trackDir(() =>
+      mkdtempSync(path.join(os.tmpdir(), 'compose-persisting-bus-empty-repo-')),
+    );
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      repoFullName: '',
+      runStartupSweeps: false,
+    });
+
+    const runUuid = 'cache-test-run-empty-repoid';
+    const runRecord: RunRecord = {
+      uuid: runUuid,
+      displayId: 'R-001',
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      repoId: '' as RepositoryId,
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    };
+    const dummyRun = {
+      uuid: runUuid,
+      displayId: 'R-001',
+      issueNumber: 1,
+      type: 'issue_to_pr' as const,
+      status: 'running' as const,
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    };
+    const ctx = container.buildRunContext!(dummyRun);
+    const findByUuidSpy = vi
+      .spyOn(container.runRepository, 'findByUuid')
+      .mockReturnValue(runRecord);
+
+    ctx.events.publish(runUuid, {
+      level: 'info',
+      type: 'step.started',
+      message: 'test message 1',
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(findByUuidSpy).toHaveBeenCalledTimes(1);
+
+    ctx.events.publish(runUuid, {
+      level: 'info',
+      type: 'step.completed',
+      message: 'test message 2',
+      timestamp: new Date().toISOString(),
+    });
+
+    // Empty string repoId should be treated as a valid cache hit, not re-querying findByUuid
+    expect(findByUuidSpy).toHaveBeenCalledTimes(1);
   });
 });
