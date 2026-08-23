@@ -1733,6 +1733,9 @@ exit 1
     expect(composeSource).toMatch(
       /const buildOrphanedRunsSweeper = \(\) =>\s*new OrphanedRunsSweeper\(\{[\s\S]*?eventBus: persistingEventBus/,
     );
+
+    // Returned in container export
+    expect(composeSource).toMatch(/return \{[\s\S]*?eventBus:\s*persistingEventBus[\s\S]*?\};/);
   });
 
   it('persistingEventBus caches repoId lookup across publishes for the same runUuid', async () => {
@@ -1969,5 +1972,72 @@ exit 1
     expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to persist event:', expect.any(Error));
 
     consoleErrorSpy.mockRestore();
+  });
+
+  it('container.eventBus publishes to in-memory listeners and persists to database', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'compose-container-bus-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      repoFullName: 'owner/repo',
+      runStartupSweeps: false,
+    });
+
+    const runUuid = 'container-bus-test-uuid';
+    container.runRepository.insertIfNoActive({
+      uuid: runUuid,
+      displayId: 'R-099',
+      issueNumber: 99,
+      type: 'issue_to_pr',
+      status: 'running',
+      repoId: RepositoryId('owner/repo'),
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    });
+
+    const listener = vi.fn();
+    const unsubscribe = container.eventBus.subscribe(runUuid, listener);
+
+    const testEvent = {
+      level: 'info' as const,
+      type: 'user.command',
+      message: 'test command from CLI',
+      timestamp: new Date().toISOString(),
+    };
+
+    container.eventBus.publish(runUuid, testEvent);
+
+    expect(listener).toHaveBeenCalledWith(testEvent);
+
+    const persisted = container.eventRepository.listByRunSince(runUuid);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0].type).toBe('user.command');
+    expect(persisted[0].message).toBe('test command from CLI');
+
+    unsubscribe();
   });
 });

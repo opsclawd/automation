@@ -7214,7 +7214,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     baseTmpDir,
     defaultBranch: resolvedDefaultBranch,
     repoDefaultBranch: resolvedDefaultBranch,
-    eventBus,
+    eventBus: persistingEventBus,
     ...(agentRuntime ? { agentRuntime } : {}),
     ...(buildRunContext !== undefined ? { buildRunContext } : {}),
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,

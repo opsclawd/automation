@@ -300,10 +300,16 @@ describe('CLI runs cancel command', () => {
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
-      const spy1 = vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitShaOf').mockResolvedValue('8de189a');
-      const spy2 = vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha').mockResolvedValue('8de189a');
+      const spy1 = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'headCommitShaOf')
+        .mockResolvedValue('8de189a');
+      const spy2 = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'headCommitSha')
+        .mockResolvedValue('8de189a');
       const spy3 = vi.spyOn(GitWorktreeAdapter.prototype, 'resetHard').mockResolvedValue(undefined);
-      const spy4 = vi.spyOn(GitWorktreeAdapter.prototype, 'cleanUntracked').mockResolvedValue(undefined);
+      const spy4 = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'cleanUntracked')
+        .mockResolvedValue(undefined);
 
       const stdoutChunks: string[] = [];
       const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
@@ -321,7 +327,9 @@ describe('CLI runs cancel command', () => {
       spy3.mockRestore();
       spy4.mockRestore();
 
-      expect(stdoutChunks.join('')).toContain('Run cancelled successfully (branch left at 8de189a)');
+      expect(stdoutChunks.join('')).toContain(
+        'Run cancelled successfully (branch left at 8de189a)',
+      );
     } finally {
       process.chdir(savedCwd);
     }
@@ -2642,34 +2650,29 @@ describe('CLI run --executor ts', () => {
         createdAt: new Date(),
       } as ReturnType<JobQueueRepository['findById']>);
 
-      // First call returns 'running' (before reconcile), second call returns 'failed' (after reconcile)
-      const runFindByUuidSpy = vi
-        .spyOn(RunRepository.prototype, 'findByUuid')
-        .mockReturnValueOnce({
-          uuid: 'gen-uuid-1',
-          status: 'running',
-          displayId: 'issue-8-20260622-000000',
-          issueNumber: 8,
-          type: 'issue_to_pr',
-          completedPhases: [],
-          skippedPhases: [],
-          startedAt: new Date(),
-        })
-        .mockReturnValueOnce({
-          uuid: 'gen-uuid-1',
-          status: 'failed',
-          displayId: 'issue-8-20260622-000000',
-          issueNumber: 8,
-          type: 'issue_to_pr',
-          completedPhases: [],
-          skippedPhases: [],
-          startedAt: new Date(),
-        });
+      let runStatus = 'running';
+      const runFindByUuidSpy = vi.spyOn(RunRepository.prototype, 'findByUuid').mockImplementation(
+        (uuid: string) =>
+          ({
+            uuid,
+            repoId: 'owner/repo',
+            status: runStatus,
+            displayId: 'issue-8-20260622-000000',
+            issueNumber: 8,
+            type: 'issue_to_pr',
+            completedPhases: [],
+            skippedPhases: [],
+            startedAt: new Date(),
+          }) as ReturnType<RunRepository['findByUuid']>,
+      );
 
       // Mock atomicUpdateByUuid to return true (indicating successful update)
       const atomicUpdateSpy = vi
         .spyOn(RunRepository.prototype, 'atomicUpdateByUuid')
-        .mockReturnValue(true);
+        .mockImplementation((_uuid, update) => {
+          if (update.status) runStatus = update.status;
+          return true;
+        });
 
       vi.spyOn(WorkerScheduler.prototype, 'runUntilComplete').mockResolvedValue(undefined);
 
