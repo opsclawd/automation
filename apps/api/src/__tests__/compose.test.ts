@@ -1711,7 +1711,7 @@ exit 1
 
     // Dynamic repoId resolution and caching in persistingEventBus
     expect(composeSource).toMatch(
-      /let rId = runRepoIdCache\.get\(runUuid\);[\s\S]*?runRepository\.findByUuid\(runUuid\)\?\.repoId \?\? repoId;[\s\S]*?runRepoIdCache\.set\(runUuid, rId\);/,
+      /let rId = runRepoIdCache\.get\(runUuid\);[\s\S]*?const run = runRepository\.findByUuid\(runUuid\);[\s\S]*?runRepoIdCache\.set\(runUuid, rId\);/,
     );
     expect(composeSource).toMatch(/eventRepositoryCache\.get\(rId\)/);
     expect(composeSource).toMatch(/eventRepositoryFactory\(rId\)\.insert\(/);
@@ -1805,5 +1805,169 @@ exit 1
 
     const events = container.eventRepository.listByRunSince(runRecord.uuid);
     expect(events.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('persistingEventBus does not cache fallback repoId when run is not yet found, routing correctly once inserted', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'compose-bus-fallback-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      repoFullName: 'owner/root-repo',
+      runStartupSweeps: false,
+    });
+
+    const runUuid = 'pre-insert-run-uuid';
+    const dummyRun = {
+      uuid: runUuid,
+      displayId: 'issue-2-20260622-120000',
+      issueNumber: 2,
+      type: 'issue_to_pr' as const,
+      status: 'running' as const,
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    };
+    const persistingEventBus = container.buildRunContext!(dummyRun).events;
+    const findByUuidSpy = vi.spyOn(container.runRepository, 'findByUuid');
+
+    // 1. Publish event BEFORE run exists in DB (console.error will log foreign key constraint error because run is not in DB)
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    persistingEventBus.publish(runUuid, {
+      level: 'info',
+      type: 'step.started',
+      message: 'early event before db insert',
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(findByUuidSpy).toHaveBeenCalledTimes(1);
+
+    // 2. Now insert the run with a specific sub-repo repoId
+    const targetRepoId = RepositoryId('owner/sub-repo');
+    container.runRepository.insertIfNoActive({
+      uuid: runUuid,
+      displayId: 'R-002',
+      issueNumber: 2,
+      type: 'issue_to_pr',
+      status: 'running',
+      repoId: targetRepoId,
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    });
+
+    // 3. Publish event AFTER run exists in DB
+    // If fallback repoId was cached in step 1, this would NOT call findByUuid and would route to root-repo.
+    // Because fallback was not cached, findByUuid is called again to discover the newly-inserted run.
+    persistingEventBus.publish(runUuid, {
+      level: 'info',
+      type: 'step.completed',
+      message: 'event after db insert',
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(findByUuidSpy).toHaveBeenCalledTimes(2);
+
+    // 4. Subsequent publish uses the cached targetRepoId and does NOT query findByUuid again
+    persistingEventBus.publish(runUuid, {
+      level: 'info',
+      type: 'step.completed',
+      message: 'second event after db insert',
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(findByUuidSpy).toHaveBeenCalledTimes(2);
+
+    // 5. Verify the persisted events were recorded with targetRepoId
+    const events = container.eventRepository.listByRunSince(runUuid);
+    expect(events).toHaveLength(2);
+    expect(events[0].repoId).toBe(targetRepoId);
+    expect(events[1].repoId).toBe(targetRepoId);
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('persistingEventBus logs error with console.error and does not crash when event persistence fails', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'compose-bus-err-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      repoFullName: 'owner/repo',
+      runStartupSweeps: false,
+    });
+
+    const dummyRun = {
+      uuid: 'some-run-uuid',
+      displayId: 'issue-3-20260622-120000',
+      issueNumber: 3,
+      type: 'issue_to_pr' as const,
+      status: 'running' as const,
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    };
+    const persistingEventBus = container.buildRunContext!(dummyRun).events;
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(container.eventRepository, 'insert').mockImplementation(() => {
+      throw new Error('Database disk full');
+    });
+
+    expect(() => {
+      persistingEventBus.publish('some-run-uuid', {
+        level: 'error',
+        type: 'step.failed',
+        message: 'failure event',
+        timestamp: new Date().toISOString(),
+      });
+    }).not.toThrow();
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to persist event:', expect.any(Error));
+
+    consoleErrorSpy.mockRestore();
   });
 });

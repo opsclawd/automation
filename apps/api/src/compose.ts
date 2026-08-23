@@ -295,6 +295,7 @@ import {
   PLAN_FIX_RESULT_ARTIFACT,
   buildPlanReviewFixPrompt,
 } from './plan-review-prompts.js';
+import { LruMap } from './lru-cache.js';
 import {
   getPostPrReviewCommitPolicy,
   WORKSPACE_CONSTRAINTS,
@@ -2085,7 +2086,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const eventRepository = getEventRepository(repoId);
   const eventRepositoryFactory: EventRepositoryFactory = getEventRepository;
 
-  const runRepoIdCache = new Map<string, RepositoryId>();
+  const runRepoIdCache = new LruMap<string, RepositoryId>(1000);
 
   const persistingEventBus: EventBusPort = {
     subscribe: (runUuid, listener) => eventBus.subscribe(runUuid, listener),
@@ -2094,8 +2095,13 @@ export function composeRoot(opts: ComposeOptions): Container {
       try {
         let rId = runRepoIdCache.get(runUuid);
         if (!rId) {
-          rId = runRepository.findByUuid(runUuid)?.repoId ?? repoId;
-          runRepoIdCache.set(runUuid, rId);
+          const run = runRepository.findByUuid(runUuid);
+          if (run) {
+            rId = run.repoId;
+            runRepoIdCache.set(runUuid, rId);
+          } else {
+            rId = repoId;
+          }
         }
         eventRepositoryFactory(rId).insert({
           runUuid,
@@ -2108,8 +2114,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             : {}),
           timestamp: new Date(event.timestamp),
         });
-      } catch {
-        // Best-effort: event persistence must not crash
+      } catch (err) {
+        // Best-effort: event persistence must not crash callers, but log error for diagnostics
+        console.error('Failed to persist event:', err);
       }
     },
   };
