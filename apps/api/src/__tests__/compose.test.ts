@@ -1703,4 +1703,34 @@ exit 1
     expect(src).toContain('if (opts.isTerminalFix) {');
     expect(src).toContain("verdict: 'done_with_fixes'");
   });
+
+  it('persistingEventBus dynamically resolves repoId for multi-repo isolation and wires background components', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const composeSource = fs.readFileSync(path.join(__dirname, '..', 'compose.ts'), 'utf-8');
+
+    // Dynamic repoId resolution in persistingEventBus
+    expect(composeSource).toMatch(
+      /const rId = runRepository\.findByUuid\(runUuid\)\?\.repoId \?\? repoId;/,
+    );
+    expect(composeSource).toMatch(/eventRepositoryFactory\(rId\)\.insert\(/);
+
+    // Wired into RunExecutor
+    expect(composeSource).toMatch(
+      /runExecutor = new RunExecutor\(\{[\s\S]*?events: persistingEventBus/,
+    );
+
+    // Wired into buildContext (PhaseHandlerContext)
+    expect(composeSource).toMatch(
+      /const buildContext = \(run: Run\): PhaseHandlerContext => \{[\s\S]*?events: persistingEventBus/,
+    );
+
+    // Wired into WaitingRunsSweeper and OrphanedRunsSweeper builders
+    expect(composeSource).toMatch(
+      /const buildWaitingRunsSweeper = \(\) =>\s*new WaitingRunsSweeper\(\{[\s\S]*?eventBus: persistingEventBus/,
+    );
+    expect(composeSource).toMatch(
+      /const buildOrphanedRunsSweeper = \(\) =>\s*new OrphanedRunsSweeper\(\{[\s\S]*?eventBus: persistingEventBus/,
+    );
+  });
 });

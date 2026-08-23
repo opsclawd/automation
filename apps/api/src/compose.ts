@@ -2073,6 +2073,33 @@ export function composeRoot(opts: ComposeOptions): Container {
   const prReviewRepository = new PrReviewRepository(db);
   const eventBus = new InMemoryEventBus();
 
+  const eventRepository = new EventRepository(db, repoId);
+  const eventRepositoryFactory: EventRepositoryFactory = (rId: RepositoryId) =>
+    new EventRepository(db, rId);
+
+  const persistingEventBus: EventBusPort = {
+    subscribe: (runUuid, listener) => eventBus.subscribe(runUuid, listener),
+    publish: (runUuid, event) => {
+      eventBus.publish(runUuid, event);
+      try {
+        const rId = runRepository.findByUuid(runUuid)?.repoId ?? repoId;
+        eventRepositoryFactory(rId).insert({
+          runUuid,
+          ...(event.phase !== undefined ? { phase: event.phase } : {}),
+          level: event.level,
+          type: event.type,
+          message: event.message,
+          ...(event.metadata !== undefined
+            ? { metadata: event.metadata as Record<string, unknown> }
+            : {}),
+          timestamp: new Date(event.timestamp),
+        });
+      } catch {
+        // Best-effort: event persistence must not crash
+      }
+    },
+  };
+
   const resolvePrContextForRun = async (
     run: RunRecord,
   ): Promise<{ repoFullName: string; prNumber: number } | undefined> => {
@@ -2173,7 +2200,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           runRepository,
           leases: workerLeaseRepository,
           queue: jobQueue,
-          eventBus,
+          eventBus: persistingEventBus,
           now: () => new Date(),
           logger: sweepLogger,
         });
@@ -2229,13 +2256,13 @@ export function composeRoot(opts: ComposeOptions): Container {
       runRepository,
       prReviewRepo: prReviewRepository,
       github: getGhAdapterForSweep(),
-      eventBus,
+      eventBus: persistingEventBus,
       now: () => new Date(),
       readyMaxDays,
       applyReactivation: (run: RunRecord, decision: { action: string; reason: string }) => {
         applyReactivation(run as never, decision as never, {
           runRepository,
-          eventBus,
+          eventBus: persistingEventBus,
           now: () => new Date(),
         });
       },
@@ -2261,9 +2288,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     );
   }
 
-  const eventRepository = new EventRepository(db, repoId);
-  const eventRepositoryFactory: EventRepositoryFactory = (rId: RepositoryId) =>
-    new EventRepository(db, rId);
   const failureRepository = new FailureRepository(db);
   const agentInvocationRepository = new AgentInvocationRepository(db);
   const validationRunRepository = new ValidationRunRepository(db);
@@ -2499,7 +2523,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         adapters,
         invocationRepository: agentInvocationRepository,
         usageRepository: agentUsageRepository,
-        eventBus,
+        eventBus: persistingEventBus,
       });
       const agent = config.agent;
       // Non-optional local so the ReviewFixHandler closure below can reference it
@@ -2990,39 +3014,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
-      // Wrap the in-memory bus so loop events survive process restarts.
-      // Without this wrapper loop.iteration.*, loop.exhausted, and
-      // phase.fallback.escalated events vanish when no live subscriber exists.
-      const persistingEventBusForLoop: EventBusPort = {
-        subscribe: (runUuid, listener) => eventBus.subscribe(runUuid, listener),
-        publish: (runUuid, event) => {
-          eventBus.publish(runUuid, event);
-          try {
-            eventRepository.insert({
-              runUuid,
-              ...(event.phase !== undefined ? { phase: event.phase } : {}),
-              level: event.level,
-              type: event.type,
-              message: event.message,
-              ...(event.metadata !== undefined
-                ? { metadata: event.metadata as Record<string, unknown> }
-                : {}),
-              timestamp: new Date(event.timestamp),
-            });
-          } catch {
-            // Best-effort: event persistence must not crash the loop
-          }
-        },
-      };
-
-      const loopHistory = createReviewLoopHistoryFilePort(persistingEventBusForLoop);
-      const implementStepHistory = createImplementStepHistoryFilePort(persistingEventBusForLoop);
+      const loopHistory = createReviewLoopHistoryFilePort(persistingEventBus);
+      const implementStepHistory = createImplementStepHistoryFilePort(persistingEventBus);
 
       const resolveStartCommitSha = (cwd: string, runId: string): string => {
         try {
           return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
         } catch (err) {
-          persistingEventBusForLoop.publish(runId, {
+          persistingEventBus.publish(runId, {
             runId,
             level: 'warn',
             type: 'git.rev_parse_failed',
@@ -3342,7 +3341,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         runRevalidation,
         rollbackFix,
         loops: loopRepository,
-        events: persistingEventBusForLoop,
+        events: persistingEventBus,
         git: gitAdapter,
         loopHistory,
         revertScopeFiles,
@@ -3444,7 +3443,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         runRevalidation,
         rollbackFix,
         loops: loopRepository,
-        events: persistingEventBusForLoop,
+        events: persistingEventBus,
         git: gitAdapter,
         readWorktreeFile,
         artifactStore: loopArtifactStore,
@@ -3493,7 +3492,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             github: new GhCliAdapter(),
             git: gitAdapter,
             agent: artifactAgent,
-            events: eventBus,
+            events: persistingEventBus,
             now: () => new Date(),
           },
           {
@@ -3641,7 +3640,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 }),
           });
         } catch (err) {
-          persistingEventBusForLoop.publish(String(ctx.runId), {
+          persistingEventBus.publish(String(ctx.runId), {
             runId: String(ctx.runId),
             level: 'error',
             type: 'agent.invoke_failed',
@@ -3663,7 +3662,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               join(artifactDir, `result-iter-0.json`),
             );
           } catch (err) {
-            persistingEventBusForLoop.publish(String(ctx.runId), {
+            persistingEventBus.publish(String(ctx.runId), {
               runId: String(ctx.runId),
               level: 'warn',
               type: 'artifact.copy_failed',
@@ -3731,7 +3730,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                   contractViolations: [],
                 });
                 for (const s of guardOutcome.synthesized) {
-                  persistingEventBusForLoop.publish(String(ctx.runId), {
+                  persistingEventBus.publish(String(ctx.runId), {
                     runId: String(ctx.runId),
                     level: 'warn',
                     type: 'step.artifact.synthesized',
@@ -3746,7 +3745,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                   });
                 }
               } else {
-                persistingEventBusForLoop.publish(String(ctx.runId), {
+                persistingEventBus.publish(String(ctx.runId), {
                   runId: String(ctx.runId),
                   level: 'info',
                   type: 'step.artifact.not_synthesized',
@@ -3760,7 +3759,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 });
               }
             } catch (e) {
-              persistingEventBusForLoop.publish(String(ctx.runId), {
+              persistingEventBus.publish(String(ctx.runId), {
                 runId: String(ctx.runId),
                 level: 'warn',
                 type: 'step.artifact.synthesized',
@@ -3817,7 +3816,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 });
               }
             } catch (e) {
-              persistingEventBusForLoop.publish(String(ctx.runId), {
+              persistingEventBus.publish(String(ctx.runId), {
                 runId: String(ctx.runId),
                 level: 'warn',
                 type: 'artifact.synthesis_failed',
@@ -3910,7 +3909,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           mkdirSync(dirname(destination), { recursive: true });
           copyFileSync(join(ctx.cwd, resultJsonPath), destination);
         } catch (err) {
-          persistingEventBusForLoop.publish(String(ctx.runId), {
+          persistingEventBus.publish(String(ctx.runId), {
             runId: String(ctx.runId),
             level: 'warn',
             type: 'artifact.copy_failed',
@@ -3931,7 +3930,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             mkdirSync(dirname(modeSpecificDestination), { recursive: true });
             copyFileSync(join(ctx.cwd, resultJsonPath), modeSpecificDestination);
           } catch (err) {
-            persistingEventBusForLoop.publish(String(ctx.runId), {
+            persistingEventBus.publish(String(ctx.runId), {
               runId: String(ctx.runId),
               level: 'warn',
               type: 'artifact.copy_failed',
@@ -4023,7 +4022,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               : {}),
           });
         } catch (err) {
-          persistingEventBusForLoop.publish(String(ctx.runId), {
+          persistingEventBus.publish(String(ctx.runId), {
             runId: String(ctx.runId),
             level: 'error',
             type: 'agent.invoke_failed',
@@ -4038,7 +4037,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           encoding: 'utf-8',
         }).trim();
         if (postInvokeHead !== startCommitSha) {
-          persistingEventBusForLoop.publish(String(ctx.runId), {
+          persistingEventBus.publish(String(ctx.runId), {
             runId: String(ctx.runId),
             level: 'warn',
             type: 'review.stale_head',
@@ -4162,7 +4161,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               : {}),
           });
         } catch (err) {
-          persistingEventBusForLoop.publish(String(ctx.runId), {
+          persistingEventBus.publish(String(ctx.runId), {
             runId: String(ctx.runId),
             level: 'error',
             type: 'agent.invoke_failed',
@@ -4177,7 +4176,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           encoding: 'utf-8',
         }).trim();
         if (postInvokeHead !== startCommitSha) {
-          persistingEventBusForLoop.publish(String(ctx.runId), {
+          persistingEventBus.publish(String(ctx.runId), {
             runId: String(ctx.runId),
             level: 'warn',
             type: 'review.stale_head',
@@ -4317,7 +4316,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 }),
           });
         } catch (err) {
-          persistingEventBusForLoop.publish(String(ctx.runId), {
+          persistingEventBus.publish(String(ctx.runId), {
             runId: String(ctx.runId),
             level: 'error',
             type: 'agent.invoke_failed',
@@ -4535,7 +4534,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 },
               });
             } catch (err) {
-              persistingEventBusForLoop.publish(String(ctx.runId), {
+              persistingEventBus.publish(String(ctx.runId), {
                 runId: String(ctx.runId),
                 level: 'error',
                 type: 'agent.invoke_failed',
@@ -4663,7 +4662,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 },
               });
             } catch (err) {
-              persistingEventBusForLoop.publish(String(ctx.runId), {
+              persistingEventBus.publish(String(ctx.runId), {
                 runId: String(ctx.runId),
                 level: 'error',
                 type: 'agent.invoke_failed',
@@ -4839,7 +4838,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           ? { runFinalReviewArbiter: implementStepFinalReviewRunArbiter }
           : {}),
         loops: loopRepository,
-        events: persistingEventBusForLoop,
+        events: persistingEventBus,
         implementProfile: AgentProfileName(implementProfileName),
         ...(implementFallbackProfileName
           ? { implementFallbackProfile: AgentProfileName(implementFallbackProfileName) }
@@ -5535,7 +5534,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           ? { runFinalReviewArbiter: planReviewFinalReviewRunArbiter }
           : {}),
         loops: loopRepository,
-        events: persistingEventBusForLoop,
+        events: persistingEventBus,
         reviewerMaxRetries: 2,
         now: () => new Date(),
         idFactory: () => randomUUID(),
@@ -5711,7 +5710,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         artifacts: artifactStoreForRun,
         git: gitAdapter,
         agent: artifactAgent,
-        eventBus: persistingEventBusForLoop,
+        eventBus: persistingEventBus,
       });
 
       const runWorkspaceTypecheck: RunWorkspaceTypecheckPort = async ({ cwd }) => {
@@ -5810,7 +5809,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         | undefined
       > => {
         if (!architectPassEnabled) {
-          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          persistingEventBus.publish(String(ctx.runUuid), {
             runId: String(ctx.runUuid),
             level: 'info',
             type: 'review_fix.architect_pass_skipped',
@@ -5827,7 +5826,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           manifestJson = await ctx.artifacts.read(String(ctx.runUuid), 'review-task-manifest.json');
         } catch {
           // No manifest — let the loop fail downstream with "no findings to fix".
-          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          persistingEventBus.publish(String(ctx.runUuid), {
             runId: String(ctx.runUuid),
             level: 'info',
             type: 'review_fix.architect_pass_skipped',
@@ -5857,7 +5856,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
 
         if (fixTaskCount === 0) {
-          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          persistingEventBus.publish(String(ctx.runUuid), {
             runId: String(ctx.runUuid),
             level: 'info',
             type: 'review_fix.architect_pass_skipped',
@@ -5876,7 +5875,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           );
         }
 
-        persistingEventBusForLoop.publish(String(ctx.runUuid), {
+        persistingEventBus.publish(String(ctx.runUuid), {
           runId: String(ctx.runUuid),
           level: 'info',
           type: 'review_fix.architect_pass_started',
@@ -5923,7 +5922,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           writeFileSync(promptPath, prompt, 'utf-8');
         } catch (err) {
           // Fail-soft: I/O errors when writing the prompt must not crash the run.
-          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          persistingEventBus.publish(String(ctx.runUuid), {
             runId: String(ctx.runUuid),
             level: 'warn',
             type: 'review_fix.architect_pass_failed',
@@ -5954,7 +5953,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           agentOutcome = result.outcome;
         } catch (err) {
           agentOutcome = 'failed';
-          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          persistingEventBus.publish(String(ctx.runUuid), {
             runId: String(ctx.runUuid),
             level: 'warn',
             type: 'review_fix.architect_pass_failed',
@@ -5966,7 +5965,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
 
         if (agentOutcome !== 'success') {
-          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          persistingEventBus.publish(String(ctx.runUuid), {
             runId: String(ctx.runUuid),
             level: 'warn',
             type: 'review_fix.architect_pass_failed',
@@ -6011,7 +6010,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           } catch {
             // best-effort reset; the loop will continue without a plan
           }
-          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          persistingEventBus.publish(String(ctx.runUuid), {
             runId: String(ctx.runUuid),
             level: 'warn',
             type: 'review_fix.architect_pass_failed',
@@ -6028,7 +6027,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         try {
           planRaw = readFileSync(planPath, 'utf-8');
         } catch {
-          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          persistingEventBus.publish(String(ctx.runUuid), {
             runId: String(ctx.runUuid),
             level: 'warn',
             type: 'review_fix.architect_pass_failed',
@@ -6043,7 +6042,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         try {
           planJson = JSON.parse(planRaw);
         } catch {
-          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          persistingEventBus.publish(String(ctx.runUuid), {
             runId: String(ctx.runUuid),
             level: 'warn',
             type: 'review_fix.architect_pass_failed',
@@ -6056,7 +6055,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
         const validated = architectPlanSchema.safeParse(planJson);
         if (!validated.success) {
-          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          persistingEventBus.publish(String(ctx.runUuid), {
             runId: String(ctx.runUuid),
             level: 'warn',
             type: 'review_fix.architect_pass_failed',
@@ -6069,7 +6068,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           return undefined;
         }
 
-        persistingEventBusForLoop.publish(String(ctx.runUuid), {
+        persistingEventBus.publish(String(ctx.runUuid), {
           runId: String(ctx.runUuid),
           level: 'info',
           type: 'review_fix.architect_pass_completed',
@@ -6208,7 +6207,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         runRepository,
         failureRepository,
         phaseRepository,
-        events: eventBus,
+        events: persistingEventBus,
         registry: phaseRegistry,
         contextFactory: buildContext,
         logger,
@@ -6259,7 +6258,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         runRepository,
         prReviewRepo: prReviewRepository,
         github: getGhAdapterForSweep(),
-        eventBus,
+        eventBus: persistingEventBus,
         now: () => new Date(),
         readyMaxDays,
         applyReactivation: (run: RunRecord, decision: { action: string; reason: string }) => {
@@ -6280,7 +6279,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           if (!isGenuineReactivation) {
             applyReactivation(run as never, decision as never, {
               runRepository,
-              eventBus,
+              eventBus: persistingEventBus,
               now: () => new Date(),
             });
           }
@@ -6290,7 +6289,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       runRepository,
       leases: workerLeaseRepository,
       queue: jobQueue,
-      eventBus,
+      eventBus: persistingEventBus,
       now: () => new Date(),
       logger: sweepLogger,
     });
@@ -6300,7 +6299,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       runRepository,
       leases: workerLeaseRepository,
       queue: jobQueue,
-      eventBus,
+      eventBus: persistingEventBus,
       now: () => new Date(),
       logger: sweepLogger,
     });
@@ -6819,30 +6818,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       },
     });
-    // Wrap the in-memory bus so poll events are persisted to the database.
-    // In the detached CLI process there are no SSE subscribers, so without
-    // this wrapper post-pr-review.poll.* events would vanish.
-    const persistingEventBus: EventBusPort = {
-      subscribe: (runUuid, listener) => eventBus.subscribe(runUuid, listener),
-      publish: (runUuid, event) => {
-        eventBus.publish(runUuid, event);
-        try {
-          eventRepository.insert({
-            runUuid,
-            ...(event.phase !== undefined ? { phase: event.phase } : {}),
-            level: event.level,
-            type: event.type,
-            message: event.message,
-            ...(event.metadata !== undefined
-              ? { metadata: event.metadata as Record<string, unknown> }
-              : {}),
-            timestamp: new Date(event.timestamp),
-          });
-        } catch {
-          // Best-effort: event persistence must not crash the poller
-        }
-      },
-    };
     return new PrReviewPoller({
       prReviewRepo: prReviewRepository,
       processOnePass: async (input) => {
@@ -7032,7 +7007,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 runRepository: runtime.runRepository,
                 prReviewRepo: runtime.prReviewRepository,
                 github: getGhAdapterForSweep(),
-                eventBus,
+                eventBus: persistingEventBus,
                 now: () => new Date(),
                 readyMaxDays,
                 applyReactivation: (
@@ -7047,7 +7022,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                   if (!isGenuineReactivation) {
                     applyReactivation(run as never, decision as never, {
                       runRepository: runtime.runRepository,
-                      eventBus,
+                      eventBus: persistingEventBus,
                       now: () => new Date(),
                     });
                   }
@@ -7057,7 +7032,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               runRepository: runtime.runRepository,
               leases: runtime.workerLeaseRepository,
               queue: runtime.jobQueue,
-              eventBus,
+              eventBus: persistingEventBus,
               now: () => new Date(),
               logger: sweepLogger,
             });
@@ -7066,7 +7041,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               runRepository: runtime.runRepository,
               leases: runtime.workerLeaseRepository,
               queue: runtime.jobQueue,
-              eventBus,
+              eventBus: persistingEventBus,
               now: () => new Date(),
               logger: sweepLogger,
             });
