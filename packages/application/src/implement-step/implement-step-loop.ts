@@ -407,6 +407,9 @@ export class ImplementStepLoop {
       iterationIndex: 1,
       manifest: input.manifest,
       planMd: input.planMd,
+      ...(input.initialPreStepHead !== undefined
+        ? { initialPreStepHead: input.initialPreStepHead }
+        : {}),
     };
 
     // --- History helpers (closure over deps/loop) ---

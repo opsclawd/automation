@@ -22,6 +22,7 @@ export interface StepLoopContext {
   metadata?: Record<string, unknown>;
   manifest: TaskManifest;
   planMd: string;
+  initialPreStepHead?: string;
 }
 
 export interface ImplementResult {
