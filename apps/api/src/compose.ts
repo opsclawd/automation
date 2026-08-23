@@ -3794,7 +3794,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             const existingStepRecord = stepRepository.findByIndex(
               RunId(String(ctx.runId)),
               PhaseName('implement'),
-              ctx.stepIndex - 1,
+              ctx.stepIndex,
             );
             const preStepHead =
               ctx.initialPreStepHead ?? existingStepRecord?.initialPreStepHead ?? startCommitSha;
