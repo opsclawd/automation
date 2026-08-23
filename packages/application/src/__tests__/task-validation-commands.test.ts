@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildTaskValidationCommands,
+  checkRedTaskValidationParity,
   checkTaskValidationCommandsDeclarationMismatch,
   checkTaskValidationCommandsSatisfiability,
   expandTaskValidationCommandsWithNewTests,
@@ -687,5 +688,67 @@ describe('checkTaskValidationCommandsDeclarationMismatch', () => {
     expect(diagnostic).not.toBeNull();
     expect(diagnostic).toContain('Task 1');
     expect(diagnostic).toContain('packages/foo/src/__tests__/a.test.ts');
+  });
+});
+
+describe('checkRedTaskValidationParity', () => {
+  it('returns null for valid red tasks with negation', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 't1',
+          task_type: 'red',
+          validation_commands: ['! pnpm test'],
+          paired_with_task: 2,
+        },
+        { n: 2, title: 't2', validation_commands: ['pnpm test'] },
+      ],
+    };
+    expect(checkRedTaskValidationParity(manifest)).toBeNull();
+  });
+
+  it('diagnoses red tasks lacking negation', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [{ n: 1, title: 't1', task_type: 'red', validation_commands: ['pnpm test'] }],
+    };
+    expect(checkRedTaskValidationParity(manifest)).toContain(
+      "task_type is 'red' but it lacks '! ' negation",
+    );
+  });
+
+  it('diagnoses red tasks with empty validation_commands', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [{ n: 1, title: 't1', task_type: 'red', validation_commands: [] }],
+    };
+    expect(checkRedTaskValidationParity(manifest)).toContain(
+      "task_type is 'red' but it lacks '! ' negation",
+    );
+  });
+
+  it('diagnoses red tasks sharing logically identical validation expectations with paired task', () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 't1',
+          task_type: 'red',
+          validation_commands: ['! pnpm test file.ts'],
+          paired_with_task: 2,
+        },
+        { n: 2, title: 't2', validation_commands: ['! pnpm test file.ts'] },
+      ],
+    };
+    expect(checkRedTaskValidationParity(manifest)).toContain(
+      'logically identical validation commands',
+    );
   });
 });
