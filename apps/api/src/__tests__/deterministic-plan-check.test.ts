@@ -519,4 +519,35 @@ describe('createDeterministicPlanCheck', () => {
       signatureBlastRadiusFailures: [],
     });
   });
+
+  it('includes red task validation parity diagnostic', async () => {
+    const readPlanMd = vi.fn().mockResolvedValue('some plan markdown');
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          task_type: 'red',
+          validation_commands: ['pnpm test'],
+        },
+      ],
+    };
+    const readManifest = vi.fn().mockResolvedValue(JSON.stringify(manifest));
+    const validatePlanTaskList = vi.fn().mockReturnValue({ success: true });
+    const signatureAnalyzer: SignatureReferenceAnalyzerPort = {
+      analyze: vi.fn(),
+    };
+
+    const check = createDeterministicPlanCheck({
+      readPlanMd,
+      readManifest,
+      validatePlanTaskList,
+      signatureAnalyzer,
+    });
+
+    const result = await check(dummyCtx);
+    expect(result.diagnostic).toContain("task_type is 'red' but it lacks '! ' negation");
+  });
 });

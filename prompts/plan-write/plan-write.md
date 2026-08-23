@@ -54,6 +54,8 @@ Write `task-manifest.json` as a JSON file with this exact structure:
     {
       "n": 1,
       "title": "Short task title",
+      "task_type": "standard",
+      "paired_with_task": 2,
       "expected_files": ["path/to/file1", "path/to/file2"],
       "permitted_areas": ["path/to/dir"],
       "may_extend": ["path/to/optional-edit.ts"],
@@ -86,6 +88,8 @@ Fields:
 - `task_count`: must equal `tasks.length`
 - `tasks[].n`: sequential 1-indexed task number
 - `tasks[].title`: one-line summary matching the prose task header
+- `tasks[].task_type`: Execution intent of the task. Must be one of `"standard"`, `"red"`, `"implementation"`, or `"verification"` (optional).
+- `tasks[].paired_with_task`: The 1-based index of the paired task (e.g. the implementation task paired with a red task) (optional).
 - `tasks[].expected_files`: files the implementer must modify and commit (optional but encouraged). Keep `expected_files` minimal and obligatory: each file listed here is a required deliverable that must appear in the task's committed diff before completion. Root-level expected files (e.g. `package.json` or `README.md`) grant permission only to that exact file and do NOT derive repository-root area permissions.
 - `tasks[].permitted_areas`: repository-relative directory roots for bounded incidental tracked edits or for explicitly write-capable empty tasks (optional, default `[]`). Authorizes editing existing tracked files within the specified directory roots; untracked file creations under permitted areas are considered drift and will be rejected. Never declare the repository root `""` or `.` as a permitted area.
 - `tasks[].may_extend`: exact repository-relative files for known optional integration touchpoints that may be edited if needed, but are not required deliverables (optional, default `[]`). Cannot duplicate files already listed in `expected_files`.

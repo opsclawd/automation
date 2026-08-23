@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { TaskContextGenerator } from '../task-context-generator.js';
-import { TaskManifest, TaskManifestEntry } from '../../results/schemas/task-manifest.js';
+import {
+  TaskManifest,
+  TaskManifestEntry,
+  TaskManifestEntryV2,
+} from '../../results/schemas/task-manifest.js';
 
 describe('TaskContextGenerator', () => {
   const generator = new TaskContextGenerator();
@@ -348,5 +352,104 @@ Something else.
     );
     expect(result.content).not.toContain('### Permitted Areas');
     expect(result.content).not.toContain('packages/app/src\n');
+  });
+
+  it('includes execution semantics when present in V2 manifest', () => {
+    const generator = new TaskContextGenerator();
+    const task: TaskManifestEntryV2 = {
+      n: 1,
+      title: 'Red task',
+      task_type: 'red',
+      paired_with_task: 2,
+    };
+    const manifest: TaskManifest = { version: 2, task_count: 1, tasks: [task] };
+    const input = {
+      task,
+      manifest,
+      planMd: '## Task 1\n\nTask body.',
+      workspaceConstraints: 'No external changes.',
+      cwd: '/fake/cwd',
+      repoId: 'repo-1',
+      branchName: 'main',
+    };
+    const result = generator.generate(input);
+    expect(result.content).toContain('## Execution Semantics');
+    expect(result.content).toContain('Task Type: red');
+    expect(result.content).toContain('Paired With Task: 2');
+    expect(result.diagnostics.componentSizes['execution_semantics']).toBeGreaterThan(0);
+  });
+
+  it('renders only task_type or paired_with_task when only one is present', () => {
+    const generator = new TaskContextGenerator();
+    const taskOnlyType: TaskManifestEntryV2 = {
+      n: 1,
+      title: 'Type only task',
+      task_type: 'implementation',
+    };
+    const res1 = generator.generate({
+      task: taskOnlyType,
+      manifest: { version: 2, task_count: 1, tasks: [taskOnlyType] },
+      planMd: '## Task 1\n\nTask body.',
+      workspaceConstraints: '',
+      cwd: '/fake/cwd',
+      repoId: 'repo-1',
+      branchName: 'main',
+    });
+    expect(res1.content).toContain('## Execution Semantics');
+    expect(res1.content).toContain('Task Type: implementation');
+    expect(res1.content).not.toContain('Paired With Task');
+
+    const taskOnlyPaired: TaskManifestEntryV2 = {
+      n: 2,
+      title: 'Paired only task',
+      paired_with_task: 1,
+    };
+    const res2 = generator.generate({
+      task: taskOnlyPaired,
+      manifest: { version: 2, task_count: 1, tasks: [taskOnlyPaired] },
+      planMd: '## Task 2\n\nTask body.',
+      workspaceConstraints: '',
+      cwd: '/fake/cwd',
+      repoId: 'repo-1',
+      branchName: 'main',
+    });
+    expect(res2.content).toContain('## Execution Semantics');
+    expect(res2.content).not.toContain('Task Type');
+    expect(res2.content).toContain('Paired With Task: 1');
+  });
+
+  it('renders nothing for execution semantics when absent in V2 manifest or in V1 manifest', () => {
+    const generator = new TaskContextGenerator();
+    const taskWithoutSemantics: TaskManifestEntryV2 = {
+      n: 1,
+      title: 'Standard task',
+    };
+    const resV2 = generator.generate({
+      task: taskWithoutSemantics,
+      manifest: { version: 2, task_count: 1, tasks: [taskWithoutSemantics] },
+      planMd: '## Task 1\n\nTask body.',
+      workspaceConstraints: '',
+      cwd: '/fake/cwd',
+      repoId: 'repo-1',
+      branchName: 'main',
+    });
+    expect(resV2.content).not.toContain('## Execution Semantics');
+    expect(resV2.diagnostics.componentSizes['execution_semantics']).toBeUndefined();
+
+    const resV1 = generator.generate({
+      task: {
+        n: 1,
+        title: 'V1 Task',
+        task_type: 'red',
+      } as unknown as TaskManifestEntry,
+      manifest: { version: 1, task_count: 1, tasks: [] } as unknown as TaskManifest,
+      planMd: '## Task 1\n\nTask body.',
+      workspaceConstraints: '',
+      cwd: '/fake/cwd',
+      repoId: 'repo-1',
+      branchName: 'main',
+    });
+    expect(resV1.content).not.toContain('## Execution Semantics');
+    expect(resV1.diagnostics.componentSizes['execution_semantics']).toBeUndefined();
   });
 });

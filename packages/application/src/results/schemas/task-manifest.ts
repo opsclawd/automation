@@ -94,6 +94,8 @@ export const taskManifestEntryV2Schema = z
       )
       .nullish(),
     signature_changes: z.array(signatureChangeSchema).nullish(),
+    task_type: z.enum(['standard', 'red', 'implementation', 'verification']).nullish(),
+    paired_with_task: z.number().int().min(1).nullish(),
     files: z.array(repositoryRelativePathSchema).nullish(),
     validation: z.array(z.string()).nullish(),
   })

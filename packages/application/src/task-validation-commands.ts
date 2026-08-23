@@ -737,3 +737,55 @@ export function buildTaskValidationCommands(
 
   return allCommands.filter((cmd) => !isRedundantValidationCommand(cmd));
 }
+
+export function checkRedTaskValidationParity(manifest: TaskManifest): string | null {
+  if (manifest.version !== 2) return null;
+
+  const diagnostics: string[] = [];
+
+  const getNormalizedCommand = (cmd: ValidationCommand): string => {
+    const arr = Array.isArray(cmd) ? cmd : [cmd];
+    const joined = arr.join(' ').trim();
+    return joined.replace(/\s+/g, ' ');
+  };
+
+  const isNegatedCommand = (cmd: ValidationCommand): boolean => {
+    if (Array.isArray(cmd)) {
+      return cmd[0]?.trim().startsWith('!') ?? false;
+    }
+    return String(cmd).trim().startsWith('!');
+  };
+
+  for (const task of manifest.tasks) {
+    if (task.task_type === 'red') {
+      const commands = task.validation_commands ?? [];
+
+      const hasNegation = commands.some(isNegatedCommand);
+
+      if (commands.length === 0 || !hasNegation) {
+        diagnostics.push(
+          `Task ${task.n}: task_type is 'red' but it lacks '! ' negation in its validation_commands.`,
+        );
+      }
+
+      if (task.paired_with_task) {
+        const pairedTask = manifest.tasks.find((t) => t.n === task.paired_with_task);
+        if (pairedTask) {
+          const pairedCommands = pairedTask.validation_commands ?? [];
+          const taskNorms = commands.map(getNormalizedCommand);
+          const pairedNorms = pairedCommands.map(getNormalizedCommand);
+
+          const intersection = taskNorms.filter((cmd) => pairedNorms.includes(cmd));
+          if (intersection.length > 0 && commands.length > 0) {
+            diagnostics.push(
+              `Task ${task.n}: RED task shares logically identical validation commands with its paired implementation Task ${task.paired_with_task}.`,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  if (diagnostics.length === 0) return null;
+  return diagnostics.join('\n\n');
+}

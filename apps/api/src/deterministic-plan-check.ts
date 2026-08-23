@@ -12,6 +12,7 @@ import {
 import {
   parseTaskManifest,
   validatePlanTaskList,
+  checkRedTaskValidationParity,
   checkTaskValidationCommandsDeclarationMismatch,
   checkTaskValidationCommandsSatisfiability,
 } from '@ai-sdlc/application';
@@ -166,12 +167,15 @@ export function createDeterministicPlanCheck(options: CreateDeterministicPlanChe
     const validationCommandDeclarationDiagnostic =
       checkTaskValidationCommandsDeclarationMismatch(manifest);
 
+    const redParityDiagnostic = checkRedTaskValidationParity(manifest);
+
     const diagnostic = joinDiagnostics(
       structuralDiagnostic,
       forbiddenArtifactDiagnostic,
       blastRadiusDiagnostic,
       validationCommandDiagnostic,
       validationCommandDeclarationDiagnostic,
+      redParityDiagnostic,
     );
 
     return { diagnostic, signatureBlastRadiusFailures: blastRadiusFailures };
