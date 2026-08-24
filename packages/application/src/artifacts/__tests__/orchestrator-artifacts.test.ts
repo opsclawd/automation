@@ -95,6 +95,37 @@ describe('parseGitStatusPaths', () => {
       'src/quoted with space.ts',
     ]);
   });
+
+  it('does not split non-rename paths containing literal " -> "', () => {
+    const status = [
+      '?? foo -> bar.txt',
+      '?? "quoted -> arrow.txt"',
+      ' M "src/a -> b -> c.ts"',
+    ].join('\n');
+    expect(parseGitStatusPaths(status)).toEqual([
+      'foo -> bar.txt',
+      'quoted -> arrow.txt',
+      'src/a -> b -> c.ts',
+    ]);
+  });
+
+  it('correctly parses renames when paths contain " -> " or quotes', () => {
+    const status = [
+      'R  "old -> name.ts" -> "new -> name.ts"',
+      'R  old.ts -> "new -> arrow.ts"',
+      'R  "old -> arrow.ts" -> new.ts',
+      'RM "old\\"quote -> a.ts" -> new.ts',
+    ].join('\n');
+    expect(parseGitStatusPaths(status)).toEqual([
+      'new -> arrow.ts',
+      'new -> name.ts',
+      'new.ts',
+      'old -> arrow.ts',
+      'old -> name.ts',
+      'old"quote -> a.ts',
+      'old.ts',
+    ]);
+  });
 });
 
 describe('uncommittedSourcePaths', () => {
@@ -185,14 +216,33 @@ describe('unquoteGitPath', () => {
     expect(unquoteGitPath('"src/foo\\"bar\\\\baz.ts"')).toBe('src/foo"bar\\baz.ts');
   });
 
+  it('handles escaped backslashes followed by digits or escape characters without double-unescaping', () => {
+    expect(unquoteGitPath('"src/foo\\\\040bar.ts"')).toBe('src/foo\\040bar.ts');
+    expect(unquoteGitPath('"src/foo\\\\nbar.ts"')).toBe('src/foo\\nbar.ts');
+    expect(unquoteGitPath('"src/foo\\\\tbar.ts"')).toBe('src/foo\\tbar.ts');
+  });
+
   it('handles standard C-escapes', () => {
     expect(unquoteGitPath('"src/line\\nbreak.ts"')).toBe('src/line\nbreak.ts');
     expect(unquoteGitPath('"src/tab\\tfile.ts"')).toBe('src/tab\tfile.ts');
     expect(unquoteGitPath('"src/bell\\a.ts"')).toBe('src/bell\x07.ts');
+    expect(unquoteGitPath('"src/bs\\b.ts"')).toBe('src/bs\b.ts');
+    expect(unquoteGitPath('"src/ff\\f.ts"')).toBe('src/ff\f.ts');
+    expect(unquoteGitPath('"src/cr\\r.ts"')).toBe('src/cr\r.ts');
+    expect(unquoteGitPath('"src/vt\\v.ts"')).toBe('src/vt\v.ts');
   });
 
-  it('handles octal escapes', () => {
+  it('handles ASCII octal escapes', () => {
     expect(unquoteGitPath('"src/\\040file.ts"')).toBe('src/ file.ts');
+  });
+
+  it('decodes multi-byte UTF-8 octal escapes correctly', () => {
+    // 2-byte UTF-8: é (\303\251)
+    expect(unquoteGitPath('"src/\\303\\251.ts"')).toBe('src/é.ts');
+    // 3-byte UTF-8: 世界 (\344\270\226\347\225\214)
+    expect(unquoteGitPath('"src/\\344\\270\\226\\347\\225\\214.ts"')).toBe('src/世界.ts');
+    // 4-byte UTF-8: 🍕 (\360\237\215\225)
+    expect(unquoteGitPath('"src/\\360\\237\\215\\225.ts"')).toBe('src/🍕.ts');
   });
 });
 

@@ -77,42 +77,149 @@ export function isOrchestratorArtifactPattern(path: string): boolean {
 export function unquoteGitPath(path: string): string {
   const trimmed = path.trim();
   if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
-    return trimmed
-      .slice(1, -1)
-      .replace(/\\([0-7]{1,3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)))
-      .replace(/\\(.)/g, (_, char) => {
-        switch (char) {
-          case 'a':
-            return '\x07';
-          case 'b':
-            return '\b';
-          case 'f':
-            return '\f';
-          case 'n':
-            return '\n';
-          case 'r':
-            return '\r';
-          case 't':
-            return '\t';
-          case 'v':
-            return '\v';
-          case '\\':
-            return '\\';
-          case '"':
-            return '"';
-          default:
-            return char;
+    const inner = trimmed.slice(1, -1);
+    const bytes: number[] = [];
+    let i = 0;
+    while (i < inner.length) {
+      const char = inner.charAt(i);
+      if (char === '\\') {
+        i++;
+        if (i >= inner.length) {
+          bytes.push(0x5c);
+          break;
         }
-      });
+        const nextChar = inner.charAt(i);
+        if (nextChar >= '0' && nextChar <= '7') {
+          let octal = nextChar;
+          i++;
+          if (i < inner.length) {
+            const digit2 = inner.charAt(i);
+            if (digit2 >= '0' && digit2 <= '7') {
+              octal += digit2;
+              i++;
+              if (i < inner.length) {
+                const digit3 = inner.charAt(i);
+                if (digit3 >= '0' && digit3 <= '7') {
+                  octal += digit3;
+                  i++;
+                }
+              }
+            }
+          }
+          bytes.push(parseInt(octal, 8));
+          continue;
+        }
+        switch (nextChar) {
+          case 'a':
+            bytes.push(0x07);
+            break;
+          case 'b':
+            bytes.push(0x08);
+            break;
+          case 'f':
+            bytes.push(0x0c);
+            break;
+          case 'n':
+            bytes.push(0x0a);
+            break;
+          case 'r':
+            bytes.push(0x0d);
+            break;
+          case 't':
+            bytes.push(0x09);
+            break;
+          case 'v':
+            bytes.push(0x0b);
+            break;
+          case '\\':
+            bytes.push(0x5c);
+            break;
+          case '"':
+            bytes.push(0x22);
+            break;
+          default: {
+            const codePoint = inner.codePointAt(i);
+            if (codePoint !== undefined) {
+              const buf = Buffer.from(String.fromCodePoint(codePoint), 'utf8');
+              for (const b of buf) {
+                bytes.push(b);
+              }
+              if (codePoint > 0xffff) {
+                i++;
+              }
+            }
+            break;
+          }
+        }
+        i++;
+      } else {
+        const codePoint = inner.codePointAt(i);
+        if (codePoint !== undefined) {
+          const buf = Buffer.from(String.fromCodePoint(codePoint), 'utf8');
+          for (const b of buf) {
+            bytes.push(b);
+          }
+          if (codePoint > 0xffff) {
+            i++;
+          }
+        }
+        i++;
+      }
+    }
+    return Buffer.from(bytes).toString('utf8');
   }
   return trimmed;
+}
+
+function parseGitStatusLine(line: string): string[] {
+  if (!line || line.length <= 3) return [];
+  const statusX = line.charAt(0);
+  const statusY = line.charAt(1);
+  const payload = line.slice(3).trim();
+  if (!payload) return [];
+
+  const isRenameOrCopy = statusX === 'R' || statusX === 'C' || statusY === 'R' || statusY === 'C';
+
+  if (!isRenameOrCopy) {
+    return [payload];
+  }
+
+  if (payload.startsWith('"')) {
+    let i = 1;
+    while (i < payload.length) {
+      const c = payload.charAt(i);
+      if (c === '\\') {
+        i += 2;
+      } else if (c === '"') {
+        break;
+      } else {
+        i += 1;
+      }
+    }
+    if (i < payload.length && payload.charAt(i) === '"') {
+      const origPath = payload.slice(0, i + 1);
+      const remaining = payload.slice(i + 1);
+      const arrowIndex = remaining.indexOf(' -> ');
+      if (arrowIndex !== -1) {
+        const newPath = remaining.slice(arrowIndex + 4);
+        return [origPath, newPath];
+      }
+    }
+  }
+
+  const arrowIndex = payload.indexOf(' -> ');
+  if (arrowIndex !== -1) {
+    return [payload.slice(0, arrowIndex), payload.slice(arrowIndex + 4)];
+  }
+
+  return [payload];
 }
 
 export function parseGitStatusPaths(status: string): string[] {
   const paths = status
     .split('\n')
     .filter(Boolean)
-    .flatMap((line) => (line.length > 3 ? line.slice(3).split(' -> ') : []))
+    .flatMap((line) => parseGitStatusLine(line))
     .map((path) => unquoteGitPath(path))
     .map((path) => path.replace(/\\/g, '/'))
     .filter((path) => path.length > 0);
@@ -129,7 +236,7 @@ export function uncommittedSourcePaths(status: string): string[] {
 
 export function isUntrackedOrAddedStatusLine(line: string): boolean {
   if (!line || line.length < 3) return false;
-  return line.startsWith('?? ') || line[0] === 'A' || line[1] === 'A';
+  return line.startsWith('?? ') || line.charAt(0) === 'A' || line.charAt(1) === 'A';
 }
 
 export function formatDirtyPaths(paths: readonly string[], max = 10): string {
