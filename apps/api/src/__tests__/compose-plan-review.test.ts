@@ -58,6 +58,7 @@ describe('plan-review compose wiring', () => {
     expect(reviewFnMatch![0]).toContain('planReviewDeltaScopedReReview');
     expect(reviewFnMatch![0]).toContain('parsedFindings.findings');
     expect(reviewFnMatch![0]).toContain('parsedFindings.knownLimitations');
+    expect(reviewFnMatch![0]).toContain('rmSync(join(ctx.cwd, PLAN_REVIEW_FINDINGS_ARTIFACT)');
   });
 
   it('wires planReviewCheckDeterministicPlan into the PlanReviewLoop using validatePlanTaskList', () => {

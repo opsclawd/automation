@@ -16,12 +16,34 @@ import type {
   PlanReviewStepOptions,
   PlanReviewResult,
   PlanReviewSnapshot,
+  PlanReviewArbiterResult,
 } from './types.js';
 import type { ReviewMode } from '../review-state/types.js';
 import type { ReviewAttempt } from '../ports/review-state-repository-port.js';
+import { parseGitStatusPaths } from '../artifacts/orchestrator-artifacts.js';
 import { verifyPlanReviewArbiterGrounding } from './arbiter-grounding.js';
 
 export const DEFAULT_REVIEWER_MAX_RETRIES = 2;
+
+type GuardedReviewResult = { ok: true; review: PlanReviewResult } | { ok: false };
+
+type GuardedArbiterResult = { ok: true; result: PlanReviewArbiterResult } | { ok: false };
+
+function normalizeWorktreePath(p: string): string {
+  let normalized = p.trim().replace(/\\/g, '/');
+  if (normalized.startsWith('./')) {
+    normalized = normalized.slice(2);
+  }
+  if (normalized.startsWith('/')) {
+    normalized = normalized.slice(1);
+  }
+  return normalized;
+}
+
+function isPermittedStatusPath(rawPath: string, permittedPaths: ReadonlyArray<string>): boolean {
+  const normalized = normalizeWorktreePath(rawPath);
+  return permittedPaths.includes(normalized);
+}
 
 function buildPlanReviewAttempt(params: {
   attemptId: string;
@@ -435,11 +457,15 @@ export class PlanReviewLoop {
       );
 
       let review: PlanReviewResult | undefined;
-      const skippingRedundantReview = pendingReconciliationContext !== undefined && lastReview !== undefined;
+      const skippingRedundantReview =
+        pendingReconciliationContext !== undefined && lastReview !== undefined;
 
       if (skippingRedundantReview) {
         review = lastReview;
-        loop = startIteration(loop, { reviewInvocationId: review?.invocationId ?? '', now: deps.now() });
+        loop = startIteration(loop, {
+          reviewInvocationId: review?.invocationId ?? '',
+          now: deps.now(),
+        });
         this.emit(
           input,
           'plan-review.review.bypassed_for_arbitration',
@@ -453,7 +479,8 @@ export class PlanReviewLoop {
         let reviewAttempts = 0;
         while (reviewAttempts <= reviewerMaxRetries) {
           reviewAttempts += 1;
-          review = await deps.runReview(
+          const guardedResult = await this.runGuardedReview(
+            input,
             {
               ...ctx,
               metadata: {
@@ -464,6 +491,17 @@ export class PlanReviewLoop {
             },
             buildReviewStepOptions(iterationIndex, reviewMode),
           );
+          if (!guardedResult.ok) {
+            loop = startIteration(loop, {
+              reviewInvocationId: '',
+              now: deps.now(),
+            });
+            loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+            loop = exhaust(loop, deps.now());
+            deps.loops.update(loop);
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          }
+          review = guardedResult.review;
           if (review.agentOutcome === 'success' && review.verdict !== undefined) break;
           if (reviewAttempts <= reviewerMaxRetries) {
             this.emit(
@@ -750,7 +788,9 @@ export class PlanReviewLoop {
             outcome: 'success',
             loop,
             proceedWithConcerns: true,
-            ...(activeReview.knownLimitations ? { knownLimitations: activeReview.knownLimitations } : {}),
+            ...(activeReview.knownLimitations
+              ? { knownLimitations: activeReview.knownLimitations }
+              : {}),
           };
         }
         if (!deltaScopedReReview) {
@@ -767,7 +807,9 @@ export class PlanReviewLoop {
             outcome: 'success',
             loop,
             proceedWithConcerns: true,
-            ...(activeReview.knownLimitations ? { knownLimitations: activeReview.knownLimitations } : {}),
+            ...(activeReview.knownLimitations
+              ? { knownLimitations: activeReview.knownLimitations }
+              : {}),
           };
         }
         if (iterationIndex === loop.maxIterations) {
@@ -795,7 +837,9 @@ export class PlanReviewLoop {
               outcome: 'success',
               loop,
               proceedWithConcerns: true,
-              ...(activeReview.knownLimitations ? { knownLimitations: activeReview.knownLimitations } : {}),
+              ...(activeReview.knownLimitations
+                ? { knownLimitations: activeReview.knownLimitations }
+                : {}),
             };
           }
         }
@@ -978,13 +1022,22 @@ export class PlanReviewLoop {
             `escalating review/fix contradiction to arbiter at iteration ${iterationIndex}`,
             { reason: 'contradiction', iterationIndex },
           );
-          const arbiterResult = await deps.runArbiter(ctx, {
-            ...fix,
-            metadata: {
-              iteration: iterationIndex,
-              invocation_type: 'initial',
-            },
-          });
+          const guardedArbiter = await this.runGuardedArbiter(input, ctx, () =>
+            deps.runArbiter!(ctx, {
+              ...fix,
+              metadata: {
+                iteration: iterationIndex,
+                invocation_type: 'initial',
+              },
+            }),
+          );
+          if (!guardedArbiter.ok) {
+            loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+            loop = exhaust(loop, deps.now());
+            deps.loops.update(loop);
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          }
+          const arbiterResult = guardedArbiter.result;
           const grounding = verifyPlanReviewArbiterGrounding(arbiterResult);
           const effectiveArbiterResult =
             grounding.status === 'ungrounded'
@@ -1235,7 +1288,8 @@ export class PlanReviewLoop {
           let reviewAttempts = 0;
           while (reviewAttempts <= reviewerMaxRetries) {
             reviewAttempts += 1;
-            reviewResult = await deps.runReview(
+            const guardedResult = await this.runGuardedReview(
+              input,
               {
                 ...verificationCtx,
                 metadata: {
@@ -1249,6 +1303,23 @@ export class PlanReviewLoop {
                 ...(snapshot ? { snapshot } : {}),
               },
             );
+            if (!guardedResult.ok) {
+              const verificationIterationObj: import('@ai-sdlc/domain').LoopIteration = {
+                index: verificationIteration,
+                reviewInvocationId: '',
+                startedAt: deps.now(),
+                completedAt: deps.now(),
+                outcome: 'unresolved',
+              };
+              loop = {
+                ...loop,
+                iterations: [...loop.iterations, verificationIterationObj],
+              };
+              loop = exhaust(loop, deps.now());
+              deps.loops.update(loop);
+              return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+            }
+            reviewResult = guardedResult.review;
             if (reviewResult.agentOutcome === 'success' && reviewResult.verdict !== undefined)
               break;
             if (reviewAttempts <= reviewerMaxRetries) {
@@ -1471,7 +1542,8 @@ export class PlanReviewLoop {
         let finalReviewAttempts = 0;
         while (finalReviewAttempts <= reviewerMaxRetries) {
           finalReviewAttempts += 1;
-          finalReview = await deps.runReview(
+          const guardedResult = await this.runGuardedReview(
+            input,
             {
               ...finalCtx,
               metadata: {
@@ -1482,6 +1554,25 @@ export class PlanReviewLoop {
             },
             buildReviewStepOptions(finalIterationIndex, 'final_full'),
           );
+          if (!guardedResult.ok) {
+            loop = {
+              ...loop,
+              iterations: [
+                ...loop.iterations,
+                {
+                  index: finalIterationIndex,
+                  reviewInvocationId: '',
+                  startedAt: deps.now(),
+                  completedAt: deps.now(),
+                  outcome: 'unresolved',
+                },
+              ],
+            };
+            loop = exhaust(loop, deps.now());
+            deps.loops.update(loop);
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          }
+          finalReview = guardedResult.review;
           if (finalReview.agentOutcome === 'success' && finalReview.verdict !== undefined) break;
           if (finalReviewAttempts <= reviewerMaxRetries) {
             this.emit(
@@ -1689,13 +1780,32 @@ export class PlanReviewLoop {
             `escalating final review fail to arbiter at iteration ${finalIterationIndex}`,
             { reason: 'final_review_fail', iterationIndex: finalIterationIndex },
           );
-          const arbiterResult = await deps.runFinalReviewArbiter(finalCtx, {
-            ...finalReview,
-            metadata: {
-              iteration: finalIterationIndex,
-              invocation_type: 'initial',
-            },
-          });
+          const guardedArbiter = await this.runGuardedArbiter(input, finalCtx, () =>
+            deps.runFinalReviewArbiter!(finalCtx, {
+              ...finalReview,
+              metadata: {
+                iteration: finalIterationIndex,
+                invocation_type: 'initial',
+              },
+            }),
+          );
+          if (!guardedArbiter.ok) {
+            const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+              index: finalIterationIndex,
+              reviewInvocationId: finalReview.invocationId,
+              startedAt: deps.now(),
+              completedAt: deps.now(),
+              outcome: 'unresolved',
+            };
+            loop = {
+              ...loop,
+              iterations: [...loop.iterations, finalIteration],
+            };
+            loop = exhaust(loop, deps.now());
+            deps.loops.update(loop);
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          }
+          const arbiterResult = guardedArbiter.result;
           const grounding = verifyPlanReviewArbiterGrounding(arbiterResult);
           const effectiveArbiterResult =
             grounding.status === 'ungrounded'
@@ -1948,7 +2058,8 @@ export class PlanReviewLoop {
               let confirmAttempts = 0;
               while (confirmAttempts <= reviewerMaxRetries) {
                 confirmAttempts += 1;
-                confirmReview = await deps.runReview(
+                const guardedResult = await this.runGuardedReview(
+                  input,
                   {
                     ...confirmCtx,
                     metadata: {
@@ -1958,6 +2069,23 @@ export class PlanReviewLoop {
                   },
                   buildReviewStepOptions(confirmIterationIndex, 'final_full', true),
                 );
+                if (!guardedResult.ok) {
+                  const confirmIteration: import('@ai-sdlc/domain').LoopIteration = {
+                    index: confirmIterationIndex,
+                    reviewInvocationId: '',
+                    startedAt: deps.now(),
+                    completedAt: deps.now(),
+                    outcome: 'unresolved',
+                  };
+                  loop = {
+                    ...loop,
+                    iterations: [...loop.iterations, confirmIteration],
+                  };
+                  loop = exhaust(loop, deps.now());
+                  deps.loops.update(loop);
+                  return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+                }
+                confirmReview = guardedResult.review;
                 if (confirmReview.agentOutcome === 'success' && confirmReview.verdict !== undefined)
                   break;
                 if (confirmAttempts <= reviewerMaxRetries) {
@@ -2224,6 +2352,300 @@ export class PlanReviewLoop {
     }
 
     return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+  }
+
+  private async runGuardedInvocation<T>(params: {
+    input: PlanReviewLoopInput;
+    ctx: PlanReviewContext;
+    agentRole: 'reviewer' | 'arbiter';
+    permittedStatusPaths: ReadonlyArray<string>;
+    reviewMode?: ReviewMode;
+    invoke: () => Promise<T>;
+    extractInvocationId?: (res: T) => string | undefined;
+  }): Promise<{ ok: true; result: T } | { ok: false }> {
+    const { input, ctx, agentRole, permittedStatusPaths, reviewMode, invoke, extractInvocationId } =
+      params;
+    let baselineSha: string | undefined;
+    let baselineSnapshot: PlanReviewSnapshot | undefined;
+    let baselineError: string | undefined;
+
+    // 1. Capture baseline HEAD and the protected snapshot immediately before the Agent Invocation.
+    try {
+      baselineSha = await this.deps.git.headCommitSha(ctx.cwd);
+    } catch (err) {
+      baselineError = err instanceof Error ? err.message : String(err);
+    }
+    try {
+      baselineSnapshot = await this.deps.captureSnapshot(ctx);
+    } catch {
+      baselineSnapshot = undefined;
+    }
+
+    if (baselineError !== undefined) {
+      // Baseline capture failed: do not invoke agent, attempt safe cleanup without inventing a SHA.
+      const cleanAttempted = true;
+      let cleanSuccess = false;
+      let cleanError: string | undefined;
+      try {
+        await this.deps.git.cleanUntracked(ctx.cwd);
+        cleanSuccess = true;
+      } catch (err) {
+        cleanSuccess = false;
+        cleanError = err instanceof Error ? err.message : String(err);
+      }
+
+      this.emit(
+        input,
+        'plan-review.read_only_violation',
+        'error',
+        `read-only ${agentRole} guard baseline capture failed: ${baselineError}`,
+        {
+          phase: 'plan-review',
+          iteration: ctx.iterationIndex,
+          ...(reviewMode ? { reviewMode } : {}),
+          files: [],
+          detectionError: baselineError,
+          resetAttempted: false,
+          resetSuccess: false,
+          cleanAttempted,
+          cleanSuccess,
+          ...(cleanError ? { cleanError } : {}),
+        },
+      );
+      return { ok: false };
+    }
+
+    // 2. Invoke the agent exactly once.
+    let result: T;
+    try {
+      result = await invoke();
+    } catch (err) {
+      const invokeError = err instanceof Error ? err.message : String(err);
+      let resetAttempted = false;
+      let resetSuccess = false;
+      let resetError: string | undefined;
+      const cleanAttempted = true;
+      let cleanSuccess = false;
+      let cleanError: string | undefined;
+
+      if (baselineSha !== undefined) {
+        resetAttempted = true;
+        try {
+          await this.deps.git.resetHard(ctx.cwd, baselineSha);
+          resetSuccess = true;
+        } catch (rErr) {
+          resetSuccess = false;
+          resetError = rErr instanceof Error ? rErr.message : String(rErr);
+        }
+      }
+
+      try {
+        await this.deps.git.cleanUntracked(ctx.cwd);
+        cleanSuccess = true;
+      } catch (cErr) {
+        cleanSuccess = false;
+        cleanError = cErr instanceof Error ? cErr.message : String(cErr);
+      }
+
+      this.emit(
+        input,
+        'plan-review.read_only_violation',
+        'error',
+        `read-only ${agentRole} invocation failed: ${invokeError}`,
+        {
+          phase: 'plan-review',
+          iteration: ctx.iterationIndex,
+          ...(reviewMode ? { reviewMode } : {}),
+          ...(baselineSha !== undefined ? { baselineSha } : {}),
+          files: [],
+          detectionError: invokeError,
+          resetAttempted,
+          resetSuccess,
+          ...(resetError ? { resetError } : {}),
+          cleanAttempted,
+          cleanSuccess,
+          ...(cleanError ? { cleanError } : {}),
+        },
+      );
+      return { ok: false };
+    }
+
+    // 3. Before inspecting agent outcome or verdict,
+    // capture end HEAD, raw status paths through parseGitStatusPaths,
+    // committed paths through changedFiles(cwd, baselineSha, endSha) when HEAD changed,
+    // and a post-invocation protected snapshot.
+    let endSha: string | undefined;
+    let statusPaths: string[] = [];
+    let committedPaths: string[] = [];
+    let postSnapshot: PlanReviewSnapshot | undefined;
+    let inspectionError: string | undefined;
+
+    try {
+      endSha = await this.deps.git.headCommitSha(ctx.cwd);
+      const statusOutput = await this.deps.git.status(ctx.cwd);
+      statusPaths = parseGitStatusPaths(statusOutput);
+
+      if (baselineSha !== undefined && endSha !== baselineSha) {
+        committedPaths = await this.deps.git.changedFiles(ctx.cwd, baselineSha, endSha);
+      }
+    } catch (err) {
+      inspectionError = err instanceof Error ? err.message : String(err);
+    }
+
+    try {
+      postSnapshot = await this.deps.captureSnapshot(ctx);
+    } catch (err) {
+      postSnapshot = undefined;
+      if (baselineSnapshot !== undefined) {
+        inspectionError = inspectionError ?? (err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    // 4. Mark any HEAD transition as a violation even if changedFiles is empty.
+    // Combine all committed paths; all Git-visible paths except permitted paths;
+    // and plan.md, task-manifest.json, or design.md for changed available digests.
+    // Normalize, deduplicate, and sort the diagnostic list.
+    const violatingFilesSet = new Set<string>();
+
+    for (const p of committedPaths) {
+      violatingFilesSet.add(normalizeWorktreePath(p));
+    }
+
+    for (const rawPath of statusPaths) {
+      if (!isPermittedStatusPath(rawPath, permittedStatusPaths)) {
+        violatingFilesSet.add(normalizeWorktreePath(rawPath));
+      }
+    }
+
+    if (baselineSnapshot && postSnapshot) {
+      if (
+        baselineSnapshot.planMdDigest &&
+        postSnapshot.planMdDigest &&
+        baselineSnapshot.planMdDigest !== postSnapshot.planMdDigest
+      ) {
+        violatingFilesSet.add('plan.md');
+      }
+      if (
+        baselineSnapshot.manifestDigest &&
+        postSnapshot.manifestDigest &&
+        baselineSnapshot.manifestDigest !== postSnapshot.manifestDigest
+      ) {
+        violatingFilesSet.add('task-manifest.json');
+      }
+      if (
+        baselineSnapshot.designDigest &&
+        postSnapshot.designDigest &&
+        baselineSnapshot.designDigest !== postSnapshot.designDigest
+      ) {
+        violatingFilesSet.add('design.md');
+      }
+    }
+
+    const headTransition =
+      baselineSha !== undefined && endSha !== undefined && endSha !== baselineSha;
+    const isViolation =
+      inspectionError !== undefined || headTransition || violatingFilesSet.size > 0;
+
+    // 5. If state is clean, return the untouched result.
+    if (!isViolation) {
+      return { ok: true, result };
+    }
+
+    // 6. On a detected violation or post-invocation inspection failure, attempt
+    // resetHard(cwd, baselineSha) and then cleanUntracked(cwd) in independent try blocks.
+    let resetAttempted = false;
+    let resetSuccess = false;
+    let resetError: string | undefined;
+
+    if (baselineSha !== undefined) {
+      resetAttempted = true;
+      try {
+        await this.deps.git.resetHard(ctx.cwd, baselineSha);
+        resetSuccess = true;
+      } catch (err) {
+        resetSuccess = false;
+        resetError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    const cleanAttempted = true;
+    let cleanSuccess = false;
+    let cleanError: string | undefined;
+    try {
+      await this.deps.git.cleanUntracked(ctx.cwd);
+      cleanSuccess = true;
+    } catch (err) {
+      cleanSuccess = false;
+      cleanError = err instanceof Error ? err.message : String(err);
+    }
+
+    // 7. Emit exactly one plan-review.read_only_violation event at error level
+    const sortedViolatingFiles = Array.from(violatingFilesSet).sort();
+    const invocationId = extractInvocationId ? extractInvocationId(result) : undefined;
+
+    this.emit(
+      input,
+      'plan-review.read_only_violation',
+      'error',
+      inspectionError
+        ? `read-only ${agentRole} guard failed during inspection: ${inspectionError}`
+        : `read-only violation detected during plan-review ${agentRole} invocation: ${sortedViolatingFiles.join(', ')}`,
+      {
+        phase: 'plan-review',
+        ...(invocationId ? { invocationId } : {}),
+        ...(reviewMode ? { reviewMode } : {}),
+        iteration: ctx.iterationIndex,
+        ...(baselineSha !== undefined ? { baselineSha } : {}),
+        ...(endSha !== undefined ? { endSha } : {}),
+        files: sortedViolatingFiles,
+        ...(inspectionError ? { detectionError: inspectionError } : {}),
+        resetAttempted,
+        resetSuccess,
+        ...(resetError ? { resetError } : {}),
+        cleanAttempted,
+        cleanSuccess,
+        ...(cleanError ? { cleanError } : {}),
+      },
+    );
+
+    // 8. Return { ok: false }
+    return { ok: false };
+  }
+
+  private async runGuardedReview(
+    input: PlanReviewLoopInput,
+    ctx: PlanReviewContext,
+    opts?: PlanReviewStepOptions,
+  ): Promise<GuardedReviewResult> {
+    const reviewMode =
+      opts?.mode ?? (ctx.metadata?.reviewMode as ReviewMode | undefined) ?? 'initial_full';
+    const res = await this.runGuardedInvocation<PlanReviewResult>({
+      input,
+      ctx,
+      agentRole: 'reviewer',
+      permittedStatusPaths: ['plan-review-findings.md'],
+      reviewMode,
+      invoke: () => this.deps.runReview(ctx, opts),
+      extractInvocationId: (r) => r.invocationId,
+    });
+    if (!res.ok) {
+      return { ok: false };
+    }
+    return { ok: true, review: res.result };
+  }
+
+  private async runGuardedArbiter(
+    input: PlanReviewLoopInput,
+    ctx: PlanReviewContext,
+    invoke: () => Promise<PlanReviewArbiterResult>,
+  ): Promise<GuardedArbiterResult> {
+    return this.runGuardedInvocation<PlanReviewArbiterResult>({
+      input,
+      ctx,
+      agentRole: 'arbiter',
+      permittedStatusPaths: ['result.json'],
+      invoke,
+    });
   }
 
   private emit(

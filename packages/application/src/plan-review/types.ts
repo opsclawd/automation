@@ -5,6 +5,7 @@ import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { ArbiterResult } from '../implement-step/types.js';
 import type { ReviewMode } from '../review-state/types.js';
 import type { ReviewStateRepositoryPort } from '../ports/review-state-repository-port.js';
+import type { GitPort } from '../ports/git-port.js';
 import type { SignatureBlastRadiusFailure } from './signature-blast-radius.js';
 
 export interface DeterministicPlanCheckResult {
@@ -205,6 +206,7 @@ export interface PlanReviewLoopOptions {
 }
 
 export interface PlanReviewLoopDeps {
+  git: GitPort;
   runReview: (ctx: PlanReviewContext, opts?: PlanReviewStepOptions) => Promise<PlanReviewResult>;
   /**
    * Composition-root seam for refreshing the loop's internal

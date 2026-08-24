@@ -5105,6 +5105,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         })();
 
         const isSemanticRetry = ctx.iterationIndex > 1;
+        try {
+          rmSync(join(ctx.cwd, PLAN_REVIEW_FINDINGS_ARTIFACT), { force: true });
+        } catch {}
         let invokeResult;
         try {
           invokeResult = await artifactAgent.invoke({
@@ -5619,6 +5622,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
 
       const planReviewLoop = new PlanReviewLoop({
+        git: gitAdapter,
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
         checkDeterministicPlan: planReviewCheckDeterministicPlan,

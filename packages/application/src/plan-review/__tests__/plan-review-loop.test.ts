@@ -3,6 +3,7 @@ import { RunId, PhaseName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
 import { FakeReviewStateRepository } from '../../test-doubles/fake-review-state-repository.js';
+import { FakeGitPort } from '../../test-doubles/fake-git-port.js';
 import { PlanReviewLoop } from '../plan-review-loop.js';
 import type {
   PlanReviewLoopDeps,
@@ -71,7 +72,30 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
 } {
   let n = 0;
   const { bus, events } = collectEvents();
+  const fakeGit = new FakeGitPort();
+  fakeGit.headByCwd.set('/wt', 'test-head-sha');
+  fakeGit.headCommitSha = async (cwd: string) => {
+    return fakeGit.headByCwd.get(cwd) ?? 'test-head-sha';
+  };
+  const customCaptureSnapshot = over.captureSnapshot;
+  const captureSnapshot = customCaptureSnapshot
+    ? async (ctx: PlanReviewContext) => {
+        if (ctx.metadata?.invocation_type !== undefined) {
+          return {
+            planMdDigest: 'test-snapshot-digest',
+            planMdPath: '/wt/plan.md',
+            capturedAt: '2026-07-08T00:00:00.000Z',
+          };
+        }
+        return customCaptureSnapshot(ctx);
+      }
+    : async (_ctx: PlanReviewContext): Promise<PlanReviewSnapshot | undefined> => ({
+        planMdDigest: 'test-snapshot-digest',
+        planMdPath: '/wt/plan.md',
+        capturedAt: '2026-07-08T00:00:00.000Z',
+      });
   const deps: PlanReviewLoopDeps = {
+    git: fakeGit,
     runReview: async (_ctx: PlanReviewContext): Promise<PlanReviewResult> => ({
       invocationId: `rev-${++n}`,
       agentOutcome: 'success' as const,
@@ -87,17 +111,13 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       signatureBlastRadiusFailures: [],
     }),
     computeLastFixDiffCitations: (_cwd: string, _headBeforeFix: string | undefined) => [],
-    captureSnapshot: async (_ctx: PlanReviewContext): Promise<PlanReviewSnapshot | undefined> => ({
-      planMdDigest: 'test-snapshot-digest',
-      planMdPath: '/wt/plan.md',
-      capturedAt: '2026-07-08T00:00:00.000Z',
-    }),
     runArbiter: undefined,
     loops: new FakeLoopRepository(),
     events: bus,
     now: () => new Date('2026-07-08T00:00:00.000Z'),
     idFactory: () => 'loop-1',
     ...over,
+    captureSnapshot,
   };
   return { deps, events };
 }
