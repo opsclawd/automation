@@ -55,6 +55,7 @@ import {
   ReviewStateRepository,
   createPrReviewContextSource,
   revertScopeFiles,
+  WorktreeLifecycleAdapter,
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
@@ -2447,6 +2448,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const abortRegistry = new AbortRegistry();
   const gitAdapter = new GitWorktreeAdapter(orchestratorExcludePatterns());
+  const worktreeLifecycleAdapter = new WorktreeLifecycleAdapter();
 
   const cancelRun = new CancelRun({
     runRepository,
@@ -7018,6 +7020,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       idFactory,
       readWorktreeFile,
       deleteWorktreeFile,
+      worktreeLifecycle: worktreeLifecycleAdapter,
+      eventRepository,
       ...opts,
     };
   };

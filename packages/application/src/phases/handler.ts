@@ -6,6 +6,8 @@ import type { AgentPort } from '../ports/agent-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { ReadWorktreeFilePort } from '../ports/read-worktree-file-port.js';
 import type { DeleteWorktreeFilePort } from '../ports/delete-worktree-file-port.js';
+import type { WorktreeLifecyclePort } from '../ports/worktree-lifecycle-port.js';
+import type { EventRepositoryPort } from '../ports/event-repository-port.js';
 
 export interface PhaseHandlerContext {
   runId: string;
@@ -32,6 +34,10 @@ export interface PhaseHandlerContext {
   idFactory?: () => string;
   readWorktreeFile?: ReadWorktreeFilePort | undefined;
   deleteWorktreeFile?: DeleteWorktreeFilePort | undefined;
+  worktreeLifecycle?: WorktreeLifecyclePort | undefined;
+  eventRepository?: EventRepositoryPort | undefined;
+  inboundPreserveAllowance?: string[] | undefined;
+  approvedInboundPaths?: string[] | undefined;
   /**
    * Name of the phase that completed immediately before this one. Used by
    * phase boundary checks to attribute dirty-worktree failures to the phase
@@ -91,6 +97,10 @@ export type PhaseHandlerContextFactory = (
     | 'idFactory'
     | 'readWorktreeFile'
     | 'deleteWorktreeFile'
+    | 'worktreeLifecycle'
+    | 'eventRepository'
+    | 'inboundPreserveAllowance'
+    | 'approvedInboundPaths'
     | 'priorPhaseName'
   >,
   opts?: Partial<
@@ -104,6 +114,10 @@ export type PhaseHandlerContextFactory = (
       | 'idFactory'
       | 'readWorktreeFile'
       | 'deleteWorktreeFile'
+      | 'worktreeLifecycle'
+      | 'eventRepository'
+      | 'inboundPreserveAllowance'
+      | 'approvedInboundPaths'
       | 'priorPhaseName'
     >
   >,
@@ -120,6 +134,10 @@ export function buildPhaseHandlerContext(
     | 'idFactory'
     | 'readWorktreeFile'
     | 'deleteWorktreeFile'
+    | 'worktreeLifecycle'
+    | 'eventRepository'
+    | 'inboundPreserveAllowance'
+    | 'approvedInboundPaths'
     | 'priorPhaseName'
   >,
   opts?: Partial<
@@ -133,6 +151,10 @@ export function buildPhaseHandlerContext(
       | 'idFactory'
       | 'readWorktreeFile'
       | 'deleteWorktreeFile'
+      | 'worktreeLifecycle'
+      | 'eventRepository'
+      | 'inboundPreserveAllowance'
+      | 'approvedInboundPaths'
       | 'priorPhaseName'
     >
   >,
