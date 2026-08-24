@@ -87,6 +87,8 @@ export interface WorktreeLifecycleAdapterOptions {
   isPreserved?: (path: string) => boolean;
 }
 
+const CHECKOUT_CHUNK_SIZE = 500;
+
 export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
   private readonly customIsPreserved: ((path: string) => boolean) | undefined;
 
@@ -223,6 +225,7 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
     }
 
     const preservedSet = new Set(plan.preservedPaths);
+    const discardedSet = new Set(plan.discardedPaths);
 
     if (plan.mode === 'phase_boundary') {
       const preMutationHead = currentHead;
@@ -236,6 +239,7 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
       const statusAfterReset = await git(resolvedCwd, ['status', '--porcelain=v1', '-uall', '-z']);
       const resetEntries = statusAfterReset.split('\0').filter(Boolean);
       const filesToCheckout: string[] = [];
+      const filesToDelete: string[] = [];
 
       for (let i = 0; i < resetEntries.length; i++) {
         const entry = resetEntries[i];
@@ -254,27 +258,26 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
           if (statusCode.includes('D')) {
             filesToCheckout.push(normPath);
           }
-        } else if (plan.discardedPaths.includes(normPath)) {
+        } else if (discardedSet.has(normPath)) {
           if (statusCode === '??') {
-            const fullPath = resolve(resolvedCwd, normPath);
-            await rm(fullPath, { recursive: true, force: true });
+            filesToDelete.push(resolve(resolvedCwd, normPath));
           } else {
             filesToCheckout.push(normPath);
           }
         }
       }
 
-      // Also ensure any discarded untracked paths from the original plan are removed
-      for (const untrackedPath of plan.untrackedPaths) {
-        if (!preservedSet.has(untrackedPath) && plan.discardedPaths.includes(untrackedPath)) {
-          const fullPath = resolve(resolvedCwd, untrackedPath);
-          await rm(fullPath, { recursive: true, force: true });
-        }
+      if (filesToDelete.length > 0) {
+        const uniqueDelete = Array.from(new Set(filesToDelete));
+        await Promise.all(uniqueDelete.map((p) => rm(p, { recursive: true, force: true })));
       }
 
       if (filesToCheckout.length > 0) {
         const uniqueCheckout = Array.from(new Set(filesToCheckout)).sort();
-        await git(resolvedCwd, ['checkout', 'HEAD', '--', ...uniqueCheckout]);
+        for (let i = 0; i < uniqueCheckout.length; i += CHECKOUT_CHUNK_SIZE) {
+          const chunk = uniqueCheckout.slice(i, i + CHECKOUT_CHUNK_SIZE);
+          await git(resolvedCwd, ['checkout', 'HEAD', '--', ...chunk]);
+        }
       }
 
       // 3. Postcondition verification
@@ -320,6 +323,8 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
       // 2. Query status to delete untracked discarded files
       const statusAfterReset = await git(resolvedCwd, ['status', '--porcelain=v1', '-uall', '-z']);
       const resetEntries = statusAfterReset.split('\0').filter(Boolean);
+      const filesToDelete: string[] = [];
+
       for (const entry of resetEntries) {
         if (!entry || entry.length < 3) continue;
         const statusCode = entry.slice(0, 2);
@@ -327,22 +332,14 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
         const normPath = assertSafePath(resolvedCwd, rawFilePath);
         if (!normPath) continue;
 
-        if (
-          statusCode === '??' &&
-          !preservedSet.has(normPath) &&
-          plan.discardedPaths.includes(normPath)
-        ) {
-          const fullPath = resolve(resolvedCwd, normPath);
-          await rm(fullPath, { recursive: true, force: true });
+        if (statusCode === '??' && !preservedSet.has(normPath) && discardedSet.has(normPath)) {
+          filesToDelete.push(resolve(resolvedCwd, normPath));
         }
       }
 
-      // Also ensure any original untracked discarded paths are removed
-      for (const untrackedPath of plan.untrackedPaths) {
-        if (!preservedSet.has(untrackedPath) && plan.discardedPaths.includes(untrackedPath)) {
-          const fullPath = resolve(resolvedCwd, untrackedPath);
-          await rm(fullPath, { recursive: true, force: true });
-        }
+      if (filesToDelete.length > 0) {
+        const uniqueDelete = Array.from(new Set(filesToDelete));
+        await Promise.all(uniqueDelete.map((p) => rm(p, { recursive: true, force: true })));
       }
 
       // 3. Postcondition verification

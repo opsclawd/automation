@@ -551,6 +551,12 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     expect(result.outcome).toBe('passed');
     expect(setup).toHaveBeenCalled();
     expect(runStep).toHaveBeenCalled();
+    expect(lifecycle.executeCalls).toHaveLength(1);
+    expect(eventRepo.events).toHaveLength(1);
+    expect(eventRepo.events[0].type).toBe('implement.inbound_worktree_reset');
+    expect(eventRepo.events[0].message).toBe(
+      'implement reset ambient worktree residue from plan-review: unstaged tracked changes',
+    );
   });
 
   it('exempts preserved files like .gitignore when entered from non-plan-review phases without executing reset', async () => {

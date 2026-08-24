@@ -1532,9 +1532,12 @@ export class ImplementHandler implements PhaseHandler {
         if (
           ctx.priorPhaseName === 'plan-review' &&
           ctx.eventRepository &&
-          plan.discardedPaths.length > 0
+          (plan.discardedPaths.length > 0 || plan.trackedChanges.length > 0)
         ) {
-          const message = `implement reset ambient worktree residue from ${ctx.priorPhaseName}: discarded ${plan.discardedPaths.join(', ')}`;
+          const message =
+            plan.discardedPaths.length > 0
+              ? `implement reset ambient worktree residue from ${ctx.priorPhaseName}: discarded ${plan.discardedPaths.join(', ')}`
+              : `implement reset ambient worktree residue from ${ctx.priorPhaseName}: unstaged tracked changes`;
           const metadata = {
             reason: 'implement_inbound',
             priorPhaseName: ctx.priorPhaseName,

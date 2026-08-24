@@ -389,4 +389,70 @@ describe('WorktreeLifecycleAdapter', () => {
     expect(existsSync(join(repoDir, '.gitignore'))).toBe(true);
     expect(readFileSync(join(repoDir, '.gitignore'), 'utf8')).toBe('node_modules\n');
   });
+
+  it('handles chunked checkout when reverting over 500 modified tracked files', async () => {
+    const { repoDir, execGit } = initRepo();
+    const adapter = new WorktreeLifecycleAdapter();
+
+    const fileCount = 520;
+    mkdirSync(join(repoDir, 'bulk'), { recursive: true });
+    for (let i = 0; i < fileCount; i++) {
+      writeFileSync(join(repoDir, 'bulk', `file-${i}.txt`), `v1-${i}\n`);
+    }
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'chore: add bulk files']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    // Modify all 520 files
+    for (let i = 0; i < fileCount; i++) {
+      writeFileSync(join(repoDir, 'bulk', `file-${i}.txt`), `modified-${i}\n`);
+    }
+
+    const plan = await adapter.inspect({
+      cwd: repoDir,
+      mode: 'phase_boundary',
+    });
+
+    expect(plan.discardedPaths).toHaveLength(fileCount);
+
+    const result = await adapter.execute({ plan });
+
+    expect(result.success).toBe(true);
+    expect(execGit(['rev-parse', 'HEAD'])).toBe(baselineSha);
+    expect(readFileSync(join(repoDir, 'bulk', 'file-0.txt'), 'utf8')).toBe('v1-0\n');
+    expect(readFileSync(join(repoDir, 'bulk', `file-${fileCount - 1}.txt`), 'utf8')).toBe(
+      `v1-${fileCount - 1}\n`,
+    );
+  });
+
+  it('deletes multiple untracked files concurrently in resume_baseline mode', async () => {
+    const { repoDir, execGit } = initRepo();
+    const adapter = new WorktreeLifecycleAdapter();
+
+    writeFileSync(join(repoDir, 'base.txt'), 'base\n');
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'initial']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    // Create untracked files
+    mkdirSync(join(repoDir, 'temp'), { recursive: true });
+    for (let i = 0; i < 20; i++) {
+      writeFileSync(join(repoDir, 'temp', `temp-${i}.txt`), `temp-${i}\n`);
+    }
+
+    const plan = await adapter.inspect({
+      cwd: repoDir,
+      mode: 'resume_baseline',
+      targetBaseline: baselineSha,
+    });
+
+    expect(plan.untrackedPaths).toHaveLength(20);
+
+    const result = await adapter.execute({ plan });
+
+    expect(result.success).toBe(true);
+    for (let i = 0; i < 20; i++) {
+      expect(existsSync(join(repoDir, 'temp', `temp-${i}.txt`))).toBe(false);
+    }
+  });
 });
