@@ -2,6 +2,8 @@ import type { JobId, RepositoryId, RunId, WorkerId, IssueNumber } from './ids.js
 
 export type JobStatus = 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
+export type ResumeDisposition = 'preserve_working_tree' | 'reset_to_baseline';
+
 export type ClaimToken = string & { readonly __brand: 'ClaimToken' };
 
 export interface JobOwnership {
@@ -25,6 +27,7 @@ export interface Job {
   startedAt?: Date;
   completedAt?: Date;
   claimExpiresAt?: Date;
+  resumeDisposition?: ResumeDisposition;
 }
 
 export interface CreateJobInput {
@@ -34,6 +37,7 @@ export interface CreateJobInput {
   issueNumber: IssueNumber;
   priority?: number;
   createdAt: Date;
+  resumeDisposition?: ResumeDisposition;
 }
 
 export class JobStateError extends Error {
@@ -86,6 +90,9 @@ export function createJob(input: CreateJobInput): Job {
     priority: input.priority ?? 0,
     attempts: 0,
     createdAt: input.createdAt,
+    ...(input.resumeDisposition !== undefined
+      ? { resumeDisposition: input.resumeDisposition }
+      : {}),
   };
 }
 

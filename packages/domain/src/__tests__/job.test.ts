@@ -16,7 +16,9 @@ import {
   markJobFailedWithOwnership,
   markJobCancelledWithOwnership,
   releaseClaimWithOwnership,
+  resetJobToQueued,
   resetJobToQueuedWithOwnership,
+  type ResumeDisposition,
 } from '../job.js';
 
 const base = {
@@ -188,5 +190,65 @@ describe('Job claim ownership generations', () => {
     expect(() => releaseClaimWithOwnership(claimed2, ownership1)).toThrow(JobStateError);
     // Verify stale ownership1 cannot reset to queued claimed2
     expect(() => resetJobToQueuedWithOwnership(claimed2, ownership1)).toThrow(JobStateError);
+  });
+});
+
+describe('Job resumeDisposition preservation', () => {
+  const dispositions: ResumeDisposition[] = ['preserve_working_tree', 'reset_to_baseline'];
+
+  it.each(dispositions)(
+    'preserves resumeDisposition (%s) across all lifecycle transitions',
+    (disp) => {
+      const now = new Date('2026-01-01T00:00:00Z');
+      // 1. createJob
+      let job = createJob({ ...base, resumeDisposition: disp });
+      expect(job.resumeDisposition).toBe(disp);
+
+      // 2. claimJob
+      job = claimJob(job, WorkerId('w1'), now);
+      expect(job.resumeDisposition).toBe(disp);
+
+      // 3. unclaimJob
+      job = unclaimJob(job);
+      expect(job.resumeDisposition).toBe(disp);
+
+      // 4. reclaim and markJobRunning
+      job = claimJob(job, WorkerId('w1'), now);
+      job = markJobRunning(job, now);
+      expect(job.resumeDisposition).toBe(disp);
+
+      // 5. resetJobToQueued from running
+      job = resetJobToQueued(job);
+      expect(job.resumeDisposition).toBe(disp);
+
+      // 6. reclaim, mark running, then mark succeeded
+      job = claimJob(job, WorkerId('w1'), now);
+      job = markJobRunning(job, now);
+      const succeeded = markJobSucceeded(job, now);
+      expect(succeeded.resumeDisposition).toBe(disp);
+
+      // 7. mark failed
+      const failed = markJobFailed(job, now);
+      expect(failed.resumeDisposition).toBe(disp);
+
+      // 8. mark cancelled
+      const cancelled = markJobCancelled(job, now);
+      expect(cancelled.resumeDisposition).toBe(disp);
+    },
+  );
+
+  it('leaves resumeDisposition undefined when not provided', () => {
+    const now = new Date('2026-01-01T00:00:00Z');
+    let job = createJob(base);
+    expect(job.resumeDisposition).toBeUndefined();
+
+    job = claimJob(job, WorkerId('w1'), now);
+    expect(job.resumeDisposition).toBeUndefined();
+
+    job = markJobRunning(job, now);
+    expect(job.resumeDisposition).toBeUndefined();
+
+    const succeeded = markJobSucceeded(job, now);
+    expect(succeeded.resumeDisposition).toBeUndefined();
   });
 });

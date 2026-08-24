@@ -18,6 +18,7 @@ import {
   DuplicateJobIdError,
   type JobStatus,
   JobOwnershipLostError,
+  type ResumeDisposition,
   JobId as mkJobId,
   RepositoryId as mkRepositoryId,
   RunId as mkRunId,
@@ -46,6 +47,7 @@ interface JobRow {
   started_at: string | null;
   completed_at: string | null;
   claim_expires_at: string | null;
+  resume_disposition: string | null;
 }
 
 function toJob(row: JobRow): Job {
@@ -76,6 +78,9 @@ function toJob(row: JobRow): Job {
   }
   if (row.claim_expires_at !== null) {
     job.claimExpiresAt = new Date(row.claim_expires_at);
+  }
+  if (row.resume_disposition !== null && row.resume_disposition !== undefined) {
+    job.resumeDisposition = row.resume_disposition as ResumeDisposition;
   }
   return job;
 }
@@ -154,8 +159,8 @@ export class JobQueueRepository implements JobQueuePort {
 
     this.db
       .prepare(
-        `INSERT INTO jobs (id, run_id, repo_id, issue_number, status, priority, attempts, claimed_by, claim_token, created_at, claimed_at, started_at, completed_at, claim_expires_at)
-       VALUES (@id, @run_id, @repo_id, @issue_number, @status, @priority, @attempts, @claimed_by, @claim_token, @created_at, @claimed_at, @started_at, @completed_at, @claim_expires_at)`,
+        `INSERT INTO jobs (id, run_id, repo_id, issue_number, status, priority, attempts, claimed_by, claim_token, created_at, claimed_at, started_at, completed_at, claim_expires_at, resume_disposition)
+       VALUES (@id, @run_id, @repo_id, @issue_number, @status, @priority, @attempts, @claimed_by, @claim_token, @created_at, @claimed_at, @started_at, @completed_at, @claim_expires_at, @resume_disposition)`,
       )
       .run({
         id: input.job.id,
@@ -172,6 +177,7 @@ export class JobQueueRepository implements JobQueuePort {
         started_at: input.job.startedAt?.toISOString() ?? null,
         completed_at: input.job.completedAt?.toISOString() ?? null,
         claim_expires_at: input.job.claimExpiresAt?.toISOString() ?? null,
+        resume_disposition: input.job.resumeDisposition ?? null,
       });
   }
 
