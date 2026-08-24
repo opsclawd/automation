@@ -4,10 +4,16 @@ import {
   checkRedTaskValidationParity,
   checkTaskValidationCommandsDeclarationMismatch,
   checkTaskValidationCommandsSatisfiability,
+  evaluateRevalidationWithInvertedCommands,
   expandTaskValidationCommandsWithNewTests,
+  extractFailedTestFilesFromOutput,
+  extractTargetTestFilesFromInvertedCommands,
   globToRegex,
+  isNegatedValidationCommand,
+  isPathMatchedByExpectedTarget,
   isTestFileCoveredByCommands,
   parseRunnerConfigExclusions,
+  stripNegationPrefix,
 } from '../task-validation-commands.js';
 import type { TaskManifest } from '../phases/index.js';
 
@@ -749,6 +755,231 @@ describe('checkRedTaskValidationParity', () => {
     };
     expect(checkRedTaskValidationParity(manifest)).toContain(
       'logically identical validation commands',
+    );
+  });
+});
+
+describe('inverted validation commands revalidation evaluation', () => {
+  it('isNegatedValidationCommand detects leading ! prefix in string and argv forms', () => {
+    expect(isNegatedValidationCommand('! pnpm test')).toBe(true);
+    expect(isNegatedValidationCommand('!pnpm test')).toBe(true);
+    expect(isNegatedValidationCommand(['!', 'pnpm', 'test'])).toBe(true);
+    expect(isNegatedValidationCommand(['! pnpm', 'test'])).toBe(true);
+
+    expect(isNegatedValidationCommand('pnpm test')).toBe(false);
+    expect(isNegatedValidationCommand(['pnpm', 'test'])).toBe(false);
+  });
+
+  it('stripNegationPrefix removes leading ! prefix cleanly', () => {
+    expect(stripNegationPrefix('! pnpm vitest run src/foo.test.ts')).toBe(
+      'pnpm vitest run src/foo.test.ts',
+    );
+    expect(stripNegationPrefix('!pnpm vitest run src/foo.test.ts')).toBe(
+      'pnpm vitest run src/foo.test.ts',
+    );
+    expect(
+      stripNegationPrefix(['!', 'pnpm', 'vitest', 'run', 'src/foo.test.ts']),
+    ).toEqual(['pnpm', 'vitest', 'run', 'src/foo.test.ts']);
+    expect(
+      stripNegationPrefix(['! pnpm', 'vitest', 'run', 'src/foo.test.ts']),
+    ).toEqual(['pnpm', 'vitest', 'run', 'src/foo.test.ts']);
+  });
+
+  it('extractTargetTestFilesFromInvertedCommands extracts target paths from inverted commands', () => {
+    const commands: ValidationCommand[] = [
+      'pnpm -r test',
+      '! pnpm vitest run packages/application/src/__tests__/my-proof.test.ts',
+      ['!', 'pnpm', 'vitest', 'run', 'packages/infrastructure/src/__tests__/other-proof.spec.ts'],
+    ];
+
+    const targets = extractTargetTestFilesFromInvertedCommands(commands);
+    expect(targets).toEqual([
+      'packages/application/src/__tests__/my-proof.test.ts',
+      'packages/infrastructure/src/__tests__/other-proof.spec.ts',
+    ]);
+  });
+
+  it('extractFailedTestFilesFromOutput parses test runner outputs accurately', () => {
+    const vitestOutput = `
+ RUN  v2.1.9 /app/packages/application
+
+ ❯ packages/application/src/__tests__/my-proof.test.ts (1)
+   × proof fails as expected
+
+ FAIL  packages/application/src/__tests__/my-proof.test.ts [ packages/application/src/__tests__/my-proof.test.ts ]
+Error: expected false to be true
+`;
+
+    expect(extractFailedTestFilesFromOutput(vitestOutput)).toEqual([
+      'packages/application/src/__tests__/my-proof.test.ts',
+    ]);
+
+    const jestOutput = `
+FAIL packages/foo/src/bar.spec.tsx
+  ● Bar component › renders error
+`;
+    expect(extractFailedTestFilesFromOutput(jestOutput)).toEqual([
+      'packages/foo/src/bar.spec.tsx',
+    ]);
+
+    const batsOutput = `
+not ok 1 scripts/lib/__tests__/fix-review-task-loop.bats
+`;
+    expect(extractFailedTestFilesFromOutput(batsOutput)).toEqual([
+      'scripts/lib/__tests__/fix-review-task-loop.bats',
+    ]);
+  });
+
+  it('isPathMatchedByExpectedTarget handles exact, suffix, and relative matches', () => {
+    expect(
+      isPathMatchedByExpectedTarget(
+        'packages/application/src/__tests__/my-proof.test.ts',
+        'packages/application/src/__tests__/my-proof.test.ts',
+      ),
+    ).toBe(true);
+
+    expect(
+      isPathMatchedByExpectedTarget(
+        'src/__tests__/my-proof.test.ts',
+        'packages/application/src/__tests__/my-proof.test.ts',
+      ),
+    ).toBe(true);
+
+    expect(
+      isPathMatchedByExpectedTarget(
+        'packages/application/src/__tests__/my-proof.test.ts',
+        'src/__tests__/my-proof.test.ts',
+      ),
+    ).toBe(true);
+
+    expect(
+      isPathMatchedByExpectedTarget(
+        'packages/application/src/__tests__/other.test.ts',
+        'packages/application/src/__tests__/my-proof.test.ts',
+      ),
+    ).toBe(false);
+  });
+
+  it('evaluateRevalidationWithInvertedCommands excuses full-suite test failure when caused solely by inverted RED tests', async () => {
+    const taskValidationCommands: ValidationCommand[] = [
+      '! pnpm vitest run packages/application/src/__tests__/my-proof.test.ts',
+    ];
+
+    const validationRunCommands = [
+      { command: 'pnpm -r build', outcome: 'passed' },
+      { command: 'pnpm -r typecheck', outcome: 'passed' },
+      { command: 'pnpm lint', outcome: 'passed' },
+      { command: 'pnpm boundaries', outcome: 'passed' },
+      {
+        command: 'pnpm -r test',
+        outcome: 'failed',
+        stdoutPath: '/tmp/test-stdout.log',
+        stderrPath: '/tmp/test-stderr.log',
+      },
+      {
+        command: '! pnpm vitest run packages/application/src/__tests__/my-proof.test.ts',
+        outcome: 'passed',
+      },
+    ];
+
+    const mockLogs: Record<string, string> = {
+      '/tmp/test-stdout.log': `
+ FAIL  packages/application/src/__tests__/my-proof.test.ts [ packages/application/src/__tests__/my-proof.test.ts ]
+Error: expected false to be true
+`,
+      '/tmp/test-stderr.log': '',
+    };
+
+    const res = await evaluateRevalidationWithInvertedCommands({
+      validationRunCommands,
+      taskValidationCommands,
+      readTail: async (p) => mockLogs[p] ?? '',
+    });
+
+    expect(res.passed).toBe(true);
+    expect(res.failingCommands).toEqual([]);
+  });
+
+  it('evaluateRevalidationWithInvertedCommands fails when an unrelated test file also fails', async () => {
+    const taskValidationCommands: ValidationCommand[] = [
+      '! pnpm vitest run packages/application/src/__tests__/my-proof.test.ts',
+    ];
+
+    const validationRunCommands = [
+      {
+        command: 'pnpm -r test',
+        outcome: 'failed',
+        stdoutPath: '/tmp/test-stdout.log',
+      },
+    ];
+
+    const mockLogs: Record<string, string> = {
+      '/tmp/test-stdout.log': `
+ FAIL  packages/application/src/__tests__/my-proof.test.ts
+ FAIL  packages/application/src/review-fix/__tests__/unrelated.test.ts
+`,
+    };
+
+    const res = await evaluateRevalidationWithInvertedCommands({
+      validationRunCommands,
+      taskValidationCommands,
+      readTail: async (p) => mockLogs[p] ?? '',
+    });
+
+    expect(res.passed).toBe(false);
+    expect(res.failingCommands).toHaveLength(1);
+    expect(res.failingCommands[0]?.command).toBe('pnpm -r test');
+  });
+
+  it('evaluateRevalidationWithInvertedCommands fails when a build/syntax error causes 0 test files to be identified', async () => {
+    const taskValidationCommands: ValidationCommand[] = [
+      '! pnpm vitest run packages/application/src/__tests__/my-proof.test.ts',
+    ];
+
+    const validationRunCommands = [
+      {
+        command: 'pnpm -r test',
+        outcome: 'failed',
+        stdoutPath: '/tmp/test-stdout.log',
+      },
+    ];
+
+    const mockLogs: Record<string, string> = {
+      '/tmp/test-stdout.log': 'SyntaxError: Unexpected token export in src/index.ts',
+    };
+
+    const res = await evaluateRevalidationWithInvertedCommands({
+      validationRunCommands,
+      taskValidationCommands,
+      readTail: async (p) => mockLogs[p] ?? '',
+    });
+
+    expect(res.passed).toBe(false);
+    expect(res.failingCommands).toHaveLength(1);
+  });
+
+  it('evaluateRevalidationWithInvertedCommands fails when an inverted command itself fails', async () => {
+    const taskValidationCommands: ValidationCommand[] = [
+      '! pnpm vitest run packages/application/src/__tests__/my-proof.test.ts',
+    ];
+
+    const validationRunCommands = [
+      {
+        command: '! pnpm vitest run packages/application/src/__tests__/my-proof.test.ts',
+        outcome: 'failed',
+      },
+    ];
+
+    const res = await evaluateRevalidationWithInvertedCommands({
+      validationRunCommands,
+      taskValidationCommands,
+      readTail: async () => '',
+    });
+
+    expect(res.passed).toBe(false);
+    expect(res.failingCommands).toHaveLength(1);
+    expect(res.failingCommands[0]?.command).toBe(
+      '! pnpm vitest run packages/application/src/__tests__/my-proof.test.ts',
     );
   });
 });

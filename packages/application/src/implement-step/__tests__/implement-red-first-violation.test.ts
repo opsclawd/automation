@@ -677,4 +677,56 @@ describe('ImplementStepLoop RED-first scope violation regression proof', () => {
     expect(harness.runQualityReview).not.toHaveBeenCalled();
     expect(harness.runFix).not.toHaveBeenCalled();
   });
+
+  it('allows a RED-first task to survive review-fix iterations when revalidation passes', async () => {
+    const harness = createHarness({
+      manifest: baseManifest,
+      initialPreStepHead: 'before-step',
+      changedFiles: ['src/proof.test.ts'],
+      createdFiles: ['src/proof.test.ts'],
+      revalidationResult: {
+        validationRunId: 'val-excused-red',
+        passed: true,
+      },
+    });
+    harness.input.maxIterations = 5;
+
+    let specCount = 0;
+    harness.runSpecReview.mockImplementation(async () => {
+      specCount++;
+      if (specCount === 1) {
+        return {
+          invocationId: 'spec-1',
+          agentOutcome: 'success',
+          verdict: 'fail',
+          findings: [{ severity: 'P2', summary: 'Minor spec issue in proof comment' }],
+          snapshot: { snapshot: 'spec-snap-1' },
+        };
+      }
+      return {
+        invocationId: 'spec-2',
+        agentOutcome: 'success',
+        verdict: 'pass',
+        snapshot: { snapshot: 'spec-snap-2' },
+      };
+    });
+
+    harness.runFix.mockImplementation(async () => {
+      harness.git.headByCwd.set('/wt', 'after-fix');
+      harness.git.changedFilesResults.set('before-step|after-fix', ['src/proof.test.ts']);
+      harness.git.createdFilesResults.set('before-step|after-fix', ['src/proof.test.ts']);
+      return {
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'after-implement',
+      };
+    });
+
+    const result: ImplementStepLoopResult = await harness.loop.execute(harness.input);
+
+    expect(result.outcome).toBe('success');
+    expect(result.loop.status).toBe('converged');
+    expect(harness.runRevalidation).toHaveBeenCalled();
+  });
 });
