@@ -4852,6 +4852,12 @@ describe('mid-task test discovery and validation command expansion', () => {
         {
           n: 1,
           title: 'Extract Shared Scratch File Remediation Module',
+          expected_files: [
+            'src/existing.test.ts',
+            'src/existing.ts',
+            'packages/infrastructure/src/git/delete-worktree-file.ts',
+            'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
+          ],
           validation_commands: initialCommands,
         },
       ],
