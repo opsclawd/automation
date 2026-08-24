@@ -455,4 +455,74 @@ describe('WorktreeLifecycleAdapter', () => {
       expect(existsSync(join(repoDir, 'temp', `temp-${i}.txt`))).toBe(false);
     }
   });
+
+  it('preserves uncommitted modifications to tracked preserved files in resume_baseline mode', async () => {
+    const { repoDir, execGit } = initRepo();
+    const adapter = new WorktreeLifecycleAdapter();
+
+    writeFileSync(join(repoDir, '.gitignore'), 'node_modules\n');
+    writeFileSync(join(repoDir, 'file.ts'), 'baseline content\n');
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'initial baseline']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    // Advance HEAD with a step commit
+    writeFileSync(join(repoDir, 'file.ts'), 'step commit content\n');
+    writeFileSync(join(repoDir, 'new-step-file.ts'), 'step file\n');
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'feat: step changes']);
+
+    // Dirty the worktree with uncommitted changes to preserved .gitignore and disposable probe
+    writeFileSync(join(repoDir, '.gitignore'), 'node_modules\n.ai-tmp/\n');
+    writeFileSync(join(repoDir, 'uncommitted-probe.ts'), 'probe\n');
+
+    const plan = await adapter.inspect({
+      cwd: repoDir,
+      mode: 'resume_baseline',
+      targetBaseline: baselineSha,
+    });
+
+    expect(plan.preservedPaths).toEqual(['.gitignore']);
+    expect(plan.discardedPaths).toEqual(['uncommitted-probe.ts']);
+
+    const result = await adapter.execute({ plan });
+
+    expect(result.success).toBe(true);
+    expect(execGit(['rev-parse', 'HEAD'])).toBe(baselineSha);
+    expect(readFileSync(join(repoDir, 'file.ts'), 'utf8')).toBe('baseline content\n');
+    expect(existsSync(join(repoDir, 'new-step-file.ts'))).toBe(false);
+    expect(existsSync(join(repoDir, 'uncommitted-probe.ts'))).toBe(false);
+    // Uncommitted changes to .gitignore must be preserved
+    expect(readFileSync(join(repoDir, '.gitignore'), 'utf8')).toBe('node_modules\n.ai-tmp/\n');
+  });
+
+  it('handles chunked deletion when discarding over 500 untracked files', async () => {
+    const { repoDir, execGit } = initRepo();
+    const adapter = new WorktreeLifecycleAdapter();
+
+    writeFileSync(join(repoDir, 'base.txt'), 'base\n');
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'initial']);
+    const baselineSha = execGit(['rev-parse', 'HEAD']);
+
+    const fileCount = 520;
+    mkdirSync(join(repoDir, 'bulk-untracked'), { recursive: true });
+    for (let i = 0; i < fileCount; i++) {
+      writeFileSync(join(repoDir, 'bulk-untracked', `file-${i}.txt`), `probe-${i}\n`);
+    }
+
+    const plan = await adapter.inspect({
+      cwd: repoDir,
+      mode: 'phase_boundary',
+    });
+
+    expect(plan.discardedPaths).toHaveLength(fileCount);
+
+    const result = await adapter.execute({ plan });
+
+    expect(result.success).toBe(true);
+    expect(execGit(['rev-parse', 'HEAD'])).toBe(baselineSha);
+    expect(existsSync(join(repoDir, 'bulk-untracked', 'file-0.txt'))).toBe(false);
+    expect(existsSync(join(repoDir, 'bulk-untracked', `file-${fileCount - 1}.txt`))).toBe(false);
+  });
 });

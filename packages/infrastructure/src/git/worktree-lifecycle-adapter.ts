@@ -88,6 +88,51 @@ export interface WorktreeLifecycleAdapterOptions {
 }
 
 const CHECKOUT_CHUNK_SIZE = 500;
+const DELETE_CHUNK_SIZE = 500;
+
+async function deleteFilesChunked(paths: string[]): Promise<void> {
+  if (paths.length === 0) return;
+  const uniqueDelete = Array.from(new Set(paths)).sort();
+  for (let i = 0; i < uniqueDelete.length; i += DELETE_CHUNK_SIZE) {
+    const chunk = uniqueDelete.slice(i, i + DELETE_CHUNK_SIZE);
+    await Promise.all(chunk.map((p) => rm(p, { recursive: true, force: true })));
+  }
+}
+
+async function checkoutFilesChunked(cwd: string, files: string[]): Promise<void> {
+  if (files.length === 0) return;
+  const uniqueCheckout = Array.from(new Set(files)).sort();
+  for (let i = 0; i < uniqueCheckout.length; i += CHECKOUT_CHUNK_SIZE) {
+    const chunk = uniqueCheckout.slice(i, i + CHECKOUT_CHUNK_SIZE);
+    await git(cwd, ['checkout', 'HEAD', '--', ...chunk]);
+  }
+}
+
+function extractStatusPaths(resolvedCwd: string, statusOutput: string): string[] {
+  const entries = statusOutput.split('\0').filter(Boolean);
+  const paths: string[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (!entry || entry.length < 3) continue;
+    const statusCode = entry.slice(0, 2);
+    const rawFilePath = entry.slice(3);
+    const normPath = assertSafePath(resolvedCwd, rawFilePath);
+    if (normPath) {
+      paths.push(normPath);
+    }
+    if (statusCode.includes('R') || statusCode.includes('C')) {
+      i++; // skip and capture original path for renames/copies
+      const rawOrigPath = entries[i];
+      if (rawOrigPath) {
+        const normOrig = assertSafePath(resolvedCwd, rawOrigPath);
+        if (normOrig) {
+          paths.push(normOrig);
+        }
+      }
+    }
+  }
+  return Array.from(new Set(paths));
+}
 
 export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
   private readonly customIsPreserved: ((path: string) => boolean) | undefined;
@@ -267,18 +312,8 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
         }
       }
 
-      if (filesToDelete.length > 0) {
-        const uniqueDelete = Array.from(new Set(filesToDelete));
-        await Promise.all(uniqueDelete.map((p) => rm(p, { recursive: true, force: true })));
-      }
-
-      if (filesToCheckout.length > 0) {
-        const uniqueCheckout = Array.from(new Set(filesToCheckout)).sort();
-        for (let i = 0; i < uniqueCheckout.length; i += CHECKOUT_CHUNK_SIZE) {
-          const chunk = uniqueCheckout.slice(i, i + CHECKOUT_CHUNK_SIZE);
-          await git(resolvedCwd, ['checkout', 'HEAD', '--', ...chunk]);
-        }
-      }
+      await deleteFilesChunked(filesToDelete);
+      await checkoutFilesChunked(resolvedCwd, filesToCheckout);
 
       // 3. Postcondition verification
       const postMutationHead = await git(resolvedCwd, ['rev-parse', 'HEAD']);
@@ -289,10 +324,7 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
       }
 
       const postStatus = await git(resolvedCwd, ['status', '--porcelain=v1', '-uall', '-z']);
-      const postEntries = postStatus.split('\0').filter(Boolean);
-      const postDirtyPaths: string[] = postEntries
-        .map((e) => assertSafePath(resolvedCwd, e.slice(3)))
-        .filter((p): p is string => Boolean(p));
+      const postDirtyPaths = extractStatusPaths(resolvedCwd, postStatus);
       const stillDirtyDiscarded = plan.discardedPaths.filter((p: string) =>
         postDirtyPaths.includes(p),
       );
@@ -317,30 +349,43 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
 
       const targetSha = await git(resolvedCwd, ['rev-parse', `${plan.targetBaseline}^{commit}`]);
 
-      // 1. Reset hard to target baseline
-      await git(resolvedCwd, ['reset', '--hard', plan.targetBaseline]);
+      // 1. Mixed reset to target baseline - moves HEAD and index without destroying uncommitted preserved files
+      await git(resolvedCwd, ['reset', plan.targetBaseline]);
 
-      // 2. Query status to delete untracked discarded files
+      // 2. Query status to delete untracked discarded files and checkout modified/deleted unpreserved files
       const statusAfterReset = await git(resolvedCwd, ['status', '--porcelain=v1', '-uall', '-z']);
       const resetEntries = statusAfterReset.split('\0').filter(Boolean);
+      const filesToCheckout: string[] = [];
       const filesToDelete: string[] = [];
 
-      for (const entry of resetEntries) {
+      for (let i = 0; i < resetEntries.length; i++) {
+        const entry = resetEntries[i];
         if (!entry || entry.length < 3) continue;
         const statusCode = entry.slice(0, 2);
         const rawFilePath = entry.slice(3);
         const normPath = assertSafePath(resolvedCwd, rawFilePath);
         if (!normPath) continue;
 
-        if (statusCode === '??' && !preservedSet.has(normPath) && discardedSet.has(normPath)) {
-          filesToDelete.push(resolve(resolvedCwd, normPath));
+        if (statusCode.includes('R') || statusCode.includes('C')) {
+          i++; // skip orig path if porcelain reported rename
+        }
+
+        if (preservedSet.has(normPath)) {
+          // If a tracked preserved file was deleted on disk or renamed away, restore it from HEAD
+          if (statusCode.includes('D')) {
+            filesToCheckout.push(normPath);
+          }
+        } else {
+          if (statusCode === '??') {
+            filesToDelete.push(resolve(resolvedCwd, normPath));
+          } else {
+            filesToCheckout.push(normPath);
+          }
         }
       }
 
-      if (filesToDelete.length > 0) {
-        const uniqueDelete = Array.from(new Set(filesToDelete));
-        await Promise.all(uniqueDelete.map((p) => rm(p, { recursive: true, force: true })));
-      }
+      await deleteFilesChunked(filesToDelete);
+      await checkoutFilesChunked(resolvedCwd, filesToCheckout);
 
       // 3. Postcondition verification
       const postMutationHead = await git(resolvedCwd, ['rev-parse', 'HEAD']);
@@ -351,10 +396,7 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
       }
 
       const postStatus = await git(resolvedCwd, ['status', '--porcelain=v1', '-uall', '-z']);
-      const postEntries = postStatus.split('\0').filter(Boolean);
-      const postDirtyPaths: string[] = postEntries
-        .map((e) => assertSafePath(resolvedCwd, e.slice(3)))
-        .filter((p): p is string => Boolean(p));
+      const postDirtyPaths = extractStatusPaths(resolvedCwd, postStatus);
       const stillDirtyDiscarded = plan.discardedPaths.filter((p: string) =>
         postDirtyPaths.includes(p),
       );
