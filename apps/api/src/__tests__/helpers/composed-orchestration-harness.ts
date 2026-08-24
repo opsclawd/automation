@@ -531,7 +531,15 @@ export function createComposedOrchestrationHarness(
   const context = container.buildRunContext!(runRecord);
 
   const worktreeIssueDir = path.join(worktreeRoot, `issue-${runRecord.issueNumber}`);
-  mkdirSync(worktreeIssueDir, { recursive: true });
+  try {
+    execFileSync(
+      'git',
+      ['worktree', 'add', worktreeIssueDir, '-b', `issue-${runRecord.issueNumber}`],
+      { cwd: targetRoot, stdio: 'ignore' },
+    );
+  } catch {
+    mkdirSync(worktreeIssueDir, { recursive: true });
+  }
 
   const cleanup = () => {
     try {

@@ -66,65 +66,169 @@ function getOrchestratorRegexes(): readonly RegExp[] {
 
 export function isOrchestratorArtifactPattern(path: string): boolean {
   if (!path || typeof path !== 'string') return false;
-  const normalized = path
-    .trim()
-    .replace(/\\/g, '/')
-    .replace(/^(\.\/|\/)+/, '');
+  const normalized = path.replace(/\r$/, '').replace(/^(\.\/|\/)+/, '');
   if (!normalized) return false;
   return getOrchestratorRegexes().some((regex) => regex.test(normalized));
 }
 
+const utf8Decoder = new TextDecoder('utf-8');
+
 export function unquoteGitPath(path: string): string {
-  const trimmed = path.trim();
-  if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
-    return trimmed
-      .slice(1, -1)
-      .replace(/\\([0-7]{1,3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)))
-      .replace(/\\(.)/g, (_, char) => {
-        switch (char) {
-          case 'a':
-            return '\x07';
-          case 'b':
-            return '\b';
-          case 'f':
-            return '\f';
-          case 'n':
-            return '\n';
-          case 'r':
-            return '\r';
-          case 't':
-            return '\t';
-          case 'v':
-            return '\v';
-          case '\\':
-            return '\\';
-          case '"':
-            return '"';
-          default:
-            return char;
+  if (path.startsWith('"') && path.endsWith('"') && path.length >= 2) {
+    const inner = path.slice(1, -1);
+    let result = '';
+    let i = 0;
+    const len = inner.length;
+
+    while (i < len) {
+      const char = inner.charAt(i);
+      if (char === '\\') {
+        i++;
+        if (i >= len) {
+          result += '\\';
+          break;
         }
-      });
+        const nextChar = inner.charAt(i);
+        if (nextChar >= '0' && nextChar <= '7') {
+          const octalBytes: number[] = [];
+          while (i < len && inner.charAt(i) >= '0' && inner.charAt(i) <= '7') {
+            let octal = inner.charAt(i);
+            i++;
+            if (i < len && inner.charAt(i) >= '0' && inner.charAt(i) <= '7') {
+              octal += inner.charAt(i);
+              i++;
+              if (i < len && inner.charAt(i) >= '0' && inner.charAt(i) <= '7') {
+                octal += inner.charAt(i);
+                i++;
+              }
+            }
+            octalBytes.push(parseInt(octal, 8));
+            if (
+              i < len - 1 &&
+              inner.charAt(i) === '\\' &&
+              inner.charAt(i + 1) >= '0' &&
+              inner.charAt(i + 1) <= '7'
+            ) {
+              i++;
+            } else {
+              break;
+            }
+          }
+          result += utf8Decoder.decode(new Uint8Array(octalBytes));
+          continue;
+        }
+
+        switch (nextChar) {
+          case 'a':
+            result += '\x07';
+            break;
+          case 'b':
+            result += '\b';
+            break;
+          case 'f':
+            result += '\f';
+            break;
+          case 'n':
+            result += '\n';
+            break;
+          case 'r':
+            result += '\r';
+            break;
+          case 't':
+            result += '\t';
+            break;
+          case 'v':
+            result += '\v';
+            break;
+          case '\\':
+            result += '\\';
+            break;
+          case '"':
+            result += '"';
+            break;
+          default:
+            result += nextChar;
+            break;
+        }
+        i++;
+      } else {
+        result += char;
+        i++;
+      }
+    }
+    return result;
   }
-  return trimmed;
+  return path;
+}
+
+function parseGitStatusLine(rawLine: string): string[] {
+  const line = rawLine.replace(/\r$/, '');
+  if (!line || line.length <= 3) return [];
+  const statusX = line.charAt(0);
+  const statusY = line.charAt(1);
+  const payload = line.slice(3);
+  if (!payload) return [];
+
+  const isRenameOrCopy = statusX === 'R' || statusX === 'C' || statusY === 'R' || statusY === 'C';
+
+  if (!isRenameOrCopy) {
+    return [payload];
+  }
+
+  if (payload.startsWith('"')) {
+    let i = 1;
+    while (i < payload.length) {
+      const c = payload.charAt(i);
+      if (c === '\\') {
+        i += 2;
+      } else if (c === '"') {
+        break;
+      } else {
+        i += 1;
+      }
+    }
+    if (i < payload.length && payload.charAt(i) === '"') {
+      const origPath = payload.slice(0, i + 1);
+      const remaining = payload.slice(i + 1);
+      const arrowIndex = remaining.indexOf(' -> ');
+      if (arrowIndex !== -1) {
+        const newPath = remaining.slice(arrowIndex + 4);
+        return [origPath, newPath];
+      }
+    }
+  }
+
+  // Note: When git core.quotePath is disabled (or for unquoted paths), if an original
+  // filename contains literal ' -> ', splitting on the first ' -> ' is ambiguous without -z output.
+  const arrowIndex = payload.indexOf(' -> ');
+  if (arrowIndex !== -1) {
+    return [payload.slice(0, arrowIndex), payload.slice(arrowIndex + 4)];
+  }
+
+  return [payload];
+}
+
+export function parseGitStatusPaths(status: string): string[] {
+  const paths = status
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((line) => parseGitStatusLine(line))
+    .map((path) => unquoteGitPath(path))
+    .filter((path) => path.length > 0);
+
+  return [...new Set(paths)].sort();
 }
 
 export function uncommittedSourcePaths(status: string): string[] {
   const compiledRegexes = getOrchestratorRegexes();
-  const sourcePaths = status
-    .split('\n')
-    .filter(Boolean)
-    .flatMap((line) => (line.length > 3 ? line.slice(3).split(' -> ') : []))
-    .map((path) => unquoteGitPath(path))
-    .map((path) => path.replace(/\\/g, '/'))
-    .filter((path) => path.length > 0)
-    .filter((path) => !compiledRegexes.some((regex) => regex.test(path)));
-
-  return [...new Set(sourcePaths)].sort();
+  return parseGitStatusPaths(status).filter(
+    (path) => !compiledRegexes.some((regex) => regex.test(path)),
+  );
 }
 
 export function isUntrackedOrAddedStatusLine(line: string): boolean {
   if (!line || line.length < 3) return false;
-  return line.startsWith('?? ') || line[0] === 'A' || line[1] === 'A';
+  return line.startsWith('?? ') || line.charAt(0) === 'A' || line.charAt(1) === 'A';
 }
 
 export function formatDirtyPaths(paths: readonly string[], max = 10): string {
@@ -154,7 +258,7 @@ export const PROMPT_ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
 export function getGitCommitExcludePathspecs(): readonly string[] {
   const allPatterns = orchestratorExcludePatterns();
   const unique = Array.from(new Set(allPatterns));
-  return Object.freeze(unique.map((p) => `':!${p}'`));
+  return Object.freeze(unique.map((p) => `':(exclude,glob)${p.replace(/'/g, "'\\''")}'`));
 }
 
 export function getGitCommitExcludePathspecsString(): string {

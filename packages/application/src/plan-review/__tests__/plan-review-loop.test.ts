@@ -3,6 +3,7 @@ import { RunId, PhaseName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
 import { FakeReviewStateRepository } from '../../test-doubles/fake-review-state-repository.js';
+import { FakeGitPort } from '../../test-doubles/fake-git-port.js';
 import { PlanReviewLoop } from '../plan-review-loop.js';
 import type {
   PlanReviewLoopDeps,
@@ -71,7 +72,30 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
 } {
   let n = 0;
   const { bus, events } = collectEvents();
+  const fakeGit = new FakeGitPort();
+  fakeGit.headByCwd.set('/wt', 'test-head-sha');
+  fakeGit.headCommitSha = async (cwd: string) => {
+    return fakeGit.headByCwd.get(cwd) ?? 'test-head-sha';
+  };
+  const customCaptureSnapshot = over.captureSnapshot;
+  const captureSnapshot = customCaptureSnapshot
+    ? async (ctx: PlanReviewContext) => {
+        if (ctx.metadata?.invocation_type !== undefined) {
+          return {
+            planMdDigest: 'test-snapshot-digest',
+            planMdPath: '/wt/plan.md',
+            capturedAt: '2026-07-08T00:00:00.000Z',
+          };
+        }
+        return customCaptureSnapshot(ctx);
+      }
+    : async (_ctx: PlanReviewContext): Promise<PlanReviewSnapshot | undefined> => ({
+        planMdDigest: 'test-snapshot-digest',
+        planMdPath: '/wt/plan.md',
+        capturedAt: '2026-07-08T00:00:00.000Z',
+      });
   const deps: PlanReviewLoopDeps = {
+    git: fakeGit,
     runReview: async (_ctx: PlanReviewContext): Promise<PlanReviewResult> => ({
       invocationId: `rev-${++n}`,
       agentOutcome: 'success' as const,
@@ -87,17 +111,13 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       signatureBlastRadiusFailures: [],
     }),
     computeLastFixDiffCitations: (_cwd: string, _headBeforeFix: string | undefined) => [],
-    captureSnapshot: async (_ctx: PlanReviewContext): Promise<PlanReviewSnapshot | undefined> => ({
-      planMdDigest: 'test-snapshot-digest',
-      planMdPath: '/wt/plan.md',
-      capturedAt: '2026-07-08T00:00:00.000Z',
-    }),
     runArbiter: undefined,
     loops: new FakeLoopRepository(),
     events: bus,
     now: () => new Date('2026-07-08T00:00:00.000Z'),
     idFactory: () => 'loop-1',
     ...over,
+    captureSnapshot,
   };
   return { deps, events };
 }
@@ -138,7 +158,7 @@ describe('PlanReviewLoop', () => {
       expect(fixCalls).toBe(0);
     });
 
-    it('review result with P2 finding triggers fix iteration', async () => {
+    it('review result with P1 finding triggers fix iteration', async () => {
       let reviewCalls = 0;
       let fixCalls = 0;
       const { deps } = makeDeps({
@@ -148,12 +168,12 @@ describe('PlanReviewLoop', () => {
             return {
               invocationId: 'rev-1',
               agentOutcome: 'success',
-              verdict: 'p2_only',
+              verdict: 'p1_found',
               findings: [
                 {
-                  severity: 'P2',
+                  severity: 'P1',
                   citation: 'plan.md:10',
-                  failureScenario: 'blocking P2 defect',
+                  failureScenario: 'blocking P1 defect',
                   evidence: 'grounded',
                 },
               ],
@@ -1761,7 +1781,7 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
     expect(out.loop.status).toBe('converged');
   });
 
-  it('AC #3 — ungrounded P1 cannot produce p1_found (downgrades to p2_only)', async () => {
+  it('AC #3 — ungrounded P1 cannot produce p1_found (downgrades to p2_only or pass)', async () => {
     const { runReview } = makeRecordingRunReview(
       ['p1_found', 'pass'],
       [
@@ -1778,11 +1798,62 @@ describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
     );
     const { deps } = makeDeps({ runReview });
     const out = await new PlanReviewLoop(deps).execute(baseInput());
-    // Iter 1: reviewer says p1_found, but no grounded P0/P1 → downgrade to
-    // p2_only → resolve (no fix needed).
+    // Iter 1: reviewer says p1_found, but no grounded P0/P1 and no P2 → downgrade to
+    // pass → resolve (no fix needed).
     expect(out.outcome).toBe('success');
     expect(out.loop.iterations).toHaveLength(1);
     expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+  });
+
+  it('p2_only verdict with grounded P2 findings converges and is not upgraded to p1_found', async () => {
+    const { runReview } = makeRecordingRunReview(
+      ['p2_only'],
+      [
+        [
+          {
+            severity: 'P2',
+            citation: 'plan.md:10',
+            failureScenario: 'minor styling issue',
+            evidence: 'grounded',
+          },
+        ],
+      ],
+    );
+    const { deps } = makeDeps({ runReview });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+  });
+
+  it('p1_found with ungrounded P1 and grounded P2 downgrades to p2_only and converges', async () => {
+    const { runReview } = makeRecordingRunReview(
+      ['p1_found'],
+      [
+        [
+          {
+            severity: 'P1',
+            citation: '',
+            failureScenario: 'no citation',
+            evidence: 'ungrounded',
+          },
+          {
+            severity: 'P2',
+            citation: 'plan.md:15',
+            failureScenario: 'nitpick',
+            evidence: 'grounded',
+          },
+        ],
+      ],
+    );
+    const { deps, events } = makeDeps({ runReview });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+    const gateEvent = events.find((e) => e.type === 'plan-review.review.evidence.gate_applied');
+    expect(gateEvent).toBeDefined();
+    expect(gateEvent?.metadata?.adjustedVerdict).toBe('p2_only');
   });
 
   it('AC #4 — finding-set is frozen at iteration 1', async () => {

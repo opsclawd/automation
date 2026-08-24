@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PhaseName, AgentProfileName } from '@ai-sdlc/domain';
@@ -150,6 +151,12 @@ p1_found
       writeFileSync(path.join(worktreeDir, 'design.md'), VALID_DESIGN_MD);
       writeFileSync(path.join(worktreeDir, 'plan.md'), VALID_PLAN_MD);
       writeFileSync(path.join(worktreeDir, 'task-manifest.json'), VALID_TASK_MANIFEST_V2);
+      execFileSync('git', ['add', 'design.md', 'plan.md', 'task-manifest.json'], {
+        cwd: worktreeDir,
+      });
+      execFileSync('git', ['commit', '-m', 'feat: initial plan artifacts'], {
+        cwd: worktreeDir,
+      });
 
       await harness.context.artifacts.write({
         runId: harness.run.uuid,

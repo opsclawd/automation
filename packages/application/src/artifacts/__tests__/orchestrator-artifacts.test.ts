@@ -7,10 +7,13 @@ import {
   isOrchestratorArtifactPath,
   isOrchestratorArtifactPattern,
   orchestratorExcludePatterns,
+  parseGitStatusPaths,
   uncommittedSourcePaths,
   unquoteGitPath,
   formatDirtyPaths,
   isUntrackedOrAddedStatusLine,
+  getGitCommitExcludePathspecs,
+  getGitCommitExcludePathspecsString,
 } from '../orchestrator-artifacts.js';
 
 describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => {
@@ -71,7 +74,104 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
   });
 });
 
+describe('parseGitStatusPaths', () => {
+  it('returns empty array when status is empty', () => {
+    expect(parseGitStatusPaths('')).toEqual([]);
+  });
+
+  it('parseGitStatusPaths returns every normalized path without artifact filtering', () => {
+    const status = [
+      ' M plan.md',
+      '?? plan-review-findings.md',
+      ' M src/nested/file.ts',
+      ' M src/nested/file.ts',
+      '?? "file\\\\with\\\\backslash.ts"',
+      '?? "src/quoted with space.ts"',
+      'R  old.ts -> new.ts',
+    ].join('\n');
+    expect(parseGitStatusPaths(status)).toEqual([
+      'file\\with\\backslash.ts',
+      'new.ts',
+      'old.ts',
+      'plan-review-findings.md',
+      'plan.md',
+      'src/nested/file.ts',
+      'src/quoted with space.ts',
+    ]);
+  });
+
+  it('preserves leading and trailing spaces in unquoted and quoted filenames', () => {
+    const status = [
+      '??  leading-space.ts',
+      '?? trailing-space.ts ',
+      '?? " quoted with leading and trailing.ts "',
+    ].join('\n');
+    expect(parseGitStatusPaths(status)).toEqual([
+      ' leading-space.ts',
+      ' quoted with leading and trailing.ts ',
+      'trailing-space.ts ',
+    ]);
+  });
+
+  it('handles CRLF line endings from git status output', () => {
+    const status = ' M plan.md\r\n?? src/app.ts\r\n M src/nested/index.ts\r\n';
+    expect(parseGitStatusPaths(status)).toEqual(['plan.md', 'src/app.ts', 'src/nested/index.ts']);
+  });
+
+  it('does not split non-rename paths containing literal " -> "', () => {
+    const status = [
+      '?? foo -> bar.txt',
+      '?? "quoted -> arrow.txt"',
+      ' M "src/a -> b -> c.ts"',
+    ].join('\n');
+    expect(parseGitStatusPaths(status)).toEqual([
+      'foo -> bar.txt',
+      'quoted -> arrow.txt',
+      'src/a -> b -> c.ts',
+    ]);
+  });
+
+  it('correctly parses renames when paths contain " -> " or quotes', () => {
+    const status = [
+      'R  "old -> name.ts" -> "new -> name.ts"',
+      'R  old.ts -> "new -> arrow.ts"',
+      'R  "old -> arrow.ts" -> new.ts',
+      'RM "old\\"quote -> a.ts" -> new.ts',
+    ].join('\n');
+    expect(parseGitStatusPaths(status)).toEqual([
+      'new -> arrow.ts',
+      'new -> name.ts',
+      'new.ts',
+      'old -> arrow.ts',
+      'old -> name.ts',
+      'old"quote -> a.ts',
+      'old.ts',
+    ]);
+  });
+});
+
 describe('uncommittedSourcePaths', () => {
+  it('uncommittedSourcePaths preserves global orchestrator artifact filtering', () => {
+    const status = [
+      ' M plan.md',
+      '?? plan-review-findings.md',
+      '?? implementation-log.md',
+      ' M pr-summary.md',
+      '?? pr-url.txt',
+      '?? changes.patch',
+      '?? fix.diff',
+      ' M src/plan.md',
+      '?? nested/design.md',
+      'R  old.ts -> new.ts',
+    ].join('\n');
+    expect(uncommittedSourcePaths(status)).toEqual([
+      'nested/design.md',
+      'new.ts',
+      'old.ts',
+      'src/plan.md',
+    ]);
+  });
+
   it('returns empty array when status is empty', () => {
     expect(uncommittedSourcePaths('')).toEqual([]);
   });
@@ -95,15 +195,17 @@ describe('uncommittedSourcePaths', () => {
     expect(uncommittedSourcePaths(status)).toEqual(['docs/changes.patch', 'src/plan.md']);
   });
 
-  it('handles renames, backslashes, duplicates and sorts the output', () => {
+  it('handles renames, duplicates, preserves backslashes and sorts the output', () => {
     const status = [
-      'R  old\\path.ts -> new\\path.ts',
-      ' M packages\\app.ts',
+      'R  old.ts -> new.ts',
       ' M packages/app.ts',
+      ' M packages/app.ts',
+      '?? "file\\\\with\\\\backslash.ts"',
     ].join('\n');
     expect(uncommittedSourcePaths(status)).toEqual([
-      'new/path.ts',
-      'old/path.ts',
+      'file\\with\\backslash.ts',
+      'new.ts',
+      'old.ts',
       'packages/app.ts',
     ]);
   });
@@ -138,14 +240,33 @@ describe('unquoteGitPath', () => {
     expect(unquoteGitPath('"src/foo\\"bar\\\\baz.ts"')).toBe('src/foo"bar\\baz.ts');
   });
 
+  it('handles escaped backslashes followed by digits or escape characters without double-unescaping', () => {
+    expect(unquoteGitPath('"src/foo\\\\040bar.ts"')).toBe('src/foo\\040bar.ts');
+    expect(unquoteGitPath('"src/foo\\\\nbar.ts"')).toBe('src/foo\\nbar.ts');
+    expect(unquoteGitPath('"src/foo\\\\tbar.ts"')).toBe('src/foo\\tbar.ts');
+  });
+
   it('handles standard C-escapes', () => {
     expect(unquoteGitPath('"src/line\\nbreak.ts"')).toBe('src/line\nbreak.ts');
     expect(unquoteGitPath('"src/tab\\tfile.ts"')).toBe('src/tab\tfile.ts');
     expect(unquoteGitPath('"src/bell\\a.ts"')).toBe('src/bell\x07.ts');
+    expect(unquoteGitPath('"src/bs\\b.ts"')).toBe('src/bs\b.ts');
+    expect(unquoteGitPath('"src/ff\\f.ts"')).toBe('src/ff\f.ts');
+    expect(unquoteGitPath('"src/cr\\r.ts"')).toBe('src/cr\r.ts');
+    expect(unquoteGitPath('"src/vt\\v.ts"')).toBe('src/vt\v.ts');
   });
 
-  it('handles octal escapes', () => {
+  it('handles ASCII octal escapes', () => {
     expect(unquoteGitPath('"src/\\040file.ts"')).toBe('src/ file.ts');
+  });
+
+  it('decodes multi-byte UTF-8 octal escapes correctly', () => {
+    // 2-byte UTF-8: é (\303\251)
+    expect(unquoteGitPath('"src/\\303\\251.ts"')).toBe('src/é.ts');
+    // 3-byte UTF-8: 世界 (\344\270\226\347\225\214)
+    expect(unquoteGitPath('"src/\\344\\270\\226\\347\\225\\214.ts"')).toBe('src/世界.ts');
+    // 4-byte UTF-8: 🍕 (\360\237\215\225)
+    expect(unquoteGitPath('"src/\\360\\237\\215\\225.ts"')).toBe('src/🍕.ts');
   });
 });
 
@@ -185,6 +306,17 @@ describe('isOrchestratorArtifactPattern', () => {
     expect(isOrchestratorArtifactPattern('src/plan.md')).toBe(false);
     expect(isOrchestratorArtifactPattern('nested/design.md')).toBe(false);
     expect(isOrchestratorArtifactPattern('')).toBe(false);
+  });
+
+  it('does not match filenames with leading or trailing spaces as orchestrator artifacts', () => {
+    expect(isOrchestratorArtifactPattern(' plan.md')).toBe(false);
+    expect(isOrchestratorArtifactPattern('plan.md ')).toBe(false);
+    expect(isOrchestratorArtifactPattern(' task-manifest.json ')).toBe(false);
+  });
+
+  it('strips trailing carriage return when matching artifact pattern', () => {
+    expect(isOrchestratorArtifactPattern('plan.md\r')).toBe(true);
+    expect(isOrchestratorArtifactPattern('.ai-tmp/scratch-files.json\r')).toBe(true);
   });
 });
 
@@ -233,5 +365,25 @@ describe('isUntrackedOrAddedStatusLine', () => {
     expect(isUntrackedOrAddedStatusLine('RM src/old.ts -> src/new.ts')).toBe(false);
     expect(isUntrackedOrAddedStatusLine('')).toBe(false);
     expect(isUntrackedOrAddedStatusLine('??')).toBe(false);
+  });
+});
+
+describe('getGitCommitExcludePathspecs', () => {
+  it('formats all patterns with :(exclude,glob) magic signature', () => {
+    const pathspecs = getGitCommitExcludePathspecs();
+    expect(Object.isFrozen(pathspecs)).toBe(true);
+    expect(pathspecs.length).toBeGreaterThan(0);
+    for (const spec of pathspecs) {
+      expect(spec).toMatch(/^':\(exclude,glob\).+'$/);
+    }
+    expect(pathspecs).toContain("':(exclude,glob)*.patch'");
+    expect(pathspecs).toContain("':(exclude,glob)plan.md'");
+    expect(pathspecs).toContain("':(exclude,glob).ai-tmp/scratch-files.json'");
+  });
+
+  it('formats pathspecs string joined with spaces', () => {
+    const str = getGitCommitExcludePathspecsString();
+    const pathspecs = getGitCommitExcludePathspecs();
+    expect(str).toBe(pathspecs.join(' '));
   });
 });
