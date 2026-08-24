@@ -1519,60 +1519,63 @@ export class ImplementHandler implements PhaseHandler {
 
     let implicitPreserved: string[] = [];
 
-    // When entering from plan-review without a preserve allowance, perform audited ambient cleanup
-    if (ctx.priorPhaseName === 'plan-review' && preserveAllowance === undefined) {
-      if (ctx.worktreeLifecycle && ctx.eventRepository) {
-        try {
-          const plan = await ctx.worktreeLifecycle.inspect({
-            cwd: ctx.cwd,
-            mode: 'phase_boundary',
+    // When preserveAllowance is undefined, inspect worktree lifecycle to identify implicitly preserved paths
+    if (preserveAllowance === undefined && ctx.worktreeLifecycle) {
+      try {
+        const plan = await ctx.worktreeLifecycle.inspect({
+          cwd: ctx.cwd,
+          mode: 'phase_boundary',
+        });
+        implicitPreserved = plan.preservedPaths;
+
+        // When entering from plan-review without a preserve allowance, perform audited ambient cleanup
+        if (
+          ctx.priorPhaseName === 'plan-review' &&
+          ctx.eventRepository &&
+          plan.discardedPaths.length > 0
+        ) {
+          const message = `implement reset ambient worktree residue from ${ctx.priorPhaseName}: discarded ${plan.discardedPaths.join(', ')}`;
+          const metadata = {
+            reason: 'implement_inbound',
+            priorPhaseName: ctx.priorPhaseName,
+            discardedPaths: plan.discardedPaths,
+            preservedPaths: plan.preservedPaths,
+          };
+
+          // Synchronously insert audit event BEFORE mutating Git state
+          ctx.eventRepository.insert({
+            runUuid: ctx.runUuid,
+            phase: 'implement',
+            level: 'info',
+            type: 'implement.inbound_worktree_reset',
+            message,
+            metadata,
+            timestamp: ctx.now(),
           });
-          implicitPreserved = plan.preservedPaths;
 
-          if (plan.discardedPaths.length > 0) {
-            const message = `implement reset ambient worktree residue from ${ctx.priorPhaseName}: discarded ${plan.discardedPaths.join(', ')}`;
-            const metadata = {
-              reason: 'implement_inbound',
-              priorPhaseName: ctx.priorPhaseName,
-              discardedPaths: plan.discardedPaths,
-              preservedPaths: plan.preservedPaths,
-            };
+          // Emit to event bus
+          emit('implement.inbound_worktree_reset', 'info', message, metadata);
 
-            // Synchronously insert audit event BEFORE mutating Git state
-            ctx.eventRepository.insert({
-              runUuid: ctx.runUuid,
-              phase: 'implement',
-              level: 'info',
-              type: 'implement.inbound_worktree_reset',
-              message,
-              metadata,
-              timestamp: ctx.now(),
-            });
-
-            // Emit to event bus
-            emit('implement.inbound_worktree_reset', 'info', message, metadata);
-
-            // Execute the exact inspected plan
-            await ctx.worktreeLifecycle.execute({ plan });
-          }
-        } catch (e) {
-          const message = e instanceof Error ? e.message : String(e);
-          emit(
-            'implement.phase_boundary_violation',
-            'error',
-            `inbound worktree reset failed: ${message}`,
-            {
-              priorPhaseName: ctx.priorPhaseName,
-              error: message,
-            },
-          );
-          return this.fail(
-            ctx,
-            emit,
-            'phase_boundary_violation',
-            `inbound worktree reset failed: ${message}`,
-          );
+          // Execute the exact inspected plan
+          await ctx.worktreeLifecycle.execute({ plan });
         }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        emit(
+          'implement.phase_boundary_violation',
+          'error',
+          `inbound worktree reset failed: ${message}`,
+          {
+            priorPhaseName: ctx.priorPhaseName,
+            error: message,
+          },
+        );
+        return this.fail(
+          ctx,
+          emit,
+          'phase_boundary_violation',
+          `inbound worktree reset failed: ${message}`,
+        );
       }
     }
 

@@ -552,4 +552,97 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     expect(setup).toHaveBeenCalled();
     expect(runStep).toHaveBeenCalled();
   });
+
+  it('exempts preserved files like .gitignore when entered from non-plan-review phases without executing reset', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: work']),
+    });
+    const steps = new FakeStepRepository();
+    const git = new FakeGitPort();
+    git.headByCwd.set('/tmp/wt', 'head-sha');
+    git.statusByCwd.set('/tmp/wt', ' M .gitignore\n');
+
+    const lifecycle = new FakeWorktreeLifecycle();
+    const eventRepo = new FakeEventRepository();
+    lifecycle.planToReturn = {
+      mode: 'phase_boundary',
+      cwd: '/tmp/wt',
+      fingerprint: 'fp-1',
+      discardedPaths: [],
+      preservedPaths: ['.gitignore'],
+      trackedChanges: ['.gitignore'],
+      untrackedPaths: [],
+    };
+
+    const setup = vi.fn(async () => ({ ok: true }));
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      git.statusByCwd.set('/tmp/wt', '');
+      return { outcome: 'success' };
+    });
+    const { ctx } = makeCtx(artifacts, git, {
+      priorPhaseName: 'plan-write',
+      worktreeLifecycle: lifecycle,
+      eventRepository: eventRepo,
+    });
+
+    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(setup).toHaveBeenCalled();
+    expect(runStep).toHaveBeenCalled();
+    expect(lifecycle.executeCalls).toHaveLength(0);
+    expect(eventRepo.events).toHaveLength(0);
+  });
+
+  it('rejects unpermitted dirty paths from non-plan-review phases while exempting preserved files', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: work']),
+    });
+    const steps = new FakeStepRepository();
+    const git = new FakeGitPort();
+    git.headByCwd.set('/tmp/wt', 'head-sha');
+    git.statusByCwd.set('/tmp/wt', ' M .gitignore\n?? rogue.ts\n');
+
+    const lifecycle = new FakeWorktreeLifecycle();
+    const eventRepo = new FakeEventRepository();
+    lifecycle.planToReturn = {
+      mode: 'phase_boundary',
+      cwd: '/tmp/wt',
+      fingerprint: 'fp-1',
+      discardedPaths: ['rogue.ts'],
+      preservedPaths: ['.gitignore'],
+      trackedChanges: ['.gitignore'],
+      untrackedPaths: ['rogue.ts'],
+    };
+
+    const setup = vi.fn(async () => ({ ok: true }));
+    const runStep = vi.fn(
+      async (_sctx: StepRunContext): Promise<StepRunResult> => ({ outcome: 'success' }),
+    );
+    const { ctx } = makeCtx(artifacts, git, {
+      priorPhaseName: 'plan-write',
+      worktreeLifecycle: lifecycle,
+      eventRepository: eventRepo,
+    });
+
+    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('phase_boundary_violation');
+      expect(result.failure.message).toContain('plan-write');
+      expect(result.failure.message).toContain('rogue.ts');
+      expect(result.failure.message).not.toContain('.gitignore');
+    }
+    expect(setup).not.toHaveBeenCalled();
+    expect(runStep).not.toHaveBeenCalled();
+    expect(lifecycle.executeCalls).toHaveLength(0);
+    expect(eventRepo.events).toHaveLength(0);
+  });
 });
