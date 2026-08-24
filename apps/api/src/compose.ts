@@ -703,20 +703,7 @@ export interface Container {
   cancelRun: CancelRun;
   checkMergeReadiness: CheckMergeReadiness;
   stepRepository: StepRepositoryPort;
-  resumeRun: {
-    execute(input: {
-      runId: RunId;
-      fromPhase?: string;
-      workerId: import('@ai-sdlc/domain').WorkerId;
-      attempt?: number;
-    }): Promise<void>;
-    transition(input: {
-      runId: RunId;
-      fromPhase?: string;
-      workerId: import('@ai-sdlc/domain').WorkerId;
-      attempt?: number;
-    }): ReturnType<ResumeRun['transition']>;
-  };
+  resumeRun: ResumeRun;
   retryFailedPhase: RetryFailedPhase;
   runsDir: string;
   baseTmpDir: string;
@@ -6525,7 +6512,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     stepRepo: stepRepository,
     phaseRepo: phaseRepository,
     logger,
-  }) as unknown as Container['resumeRun'];
+    worktreeLifecycle: worktreeLifecycleAdapter,
+  });
 
   const retryFailedPhase = new RetryFailedPhase({
     runRepository,

@@ -1,4 +1,11 @@
-import type { Run, Phase, PhaseName, PhaseStatus, Failure } from '@ai-sdlc/domain';
+import type {
+  Run,
+  Phase,
+  PhaseName,
+  PhaseStatus,
+  Failure,
+  ResumeDisposition,
+} from '@ai-sdlc/domain';
 import {
   startPhase,
   completePhase,
@@ -37,6 +44,7 @@ export interface ExecuteRunInput {
   run: Run;
   skip: PhaseName[];
   presentArtifacts: string[];
+  resumeDisposition?: ResumeDisposition;
 }
 
 export interface PhaseRecord {

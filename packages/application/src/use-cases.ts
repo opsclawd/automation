@@ -1,4 +1,12 @@
-import type { RepositoryId, IssueNumber, RunId, JobId, WorkerId, RunStatus } from '@ai-sdlc/domain';
+import type {
+  RepositoryId,
+  IssueNumber,
+  RunId,
+  JobId,
+  WorkerId,
+  RunStatus,
+  ResumeDisposition,
+} from '@ai-sdlc/domain';
 import type { AbortResult } from './ports/run-abort-port.js';
 
 export interface StartIssueRunUseCase {
@@ -15,11 +23,12 @@ export interface ResumeRunUseCase {
     fromPhase?: string;
     workerId: WorkerId;
     attempt?: number;
+    resumeDisposition?: ResumeDisposition;
   }): Promise<{ jobId: JobId; jobStatus: 'queued' }>;
 }
 
 export interface RetryFailedPhaseUseCase {
-  execute(input: { runId: RunId; workerId: WorkerId }): Promise<void>;
+  execute(input: { runId: RunId; workerId: WorkerId }): Promise<unknown>;
 }
 
 export interface CancelRunResult {

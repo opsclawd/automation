@@ -11,8 +11,13 @@ import {
   RepositoryValidationError,
   RunRepositoryMismatchError,
   RunRepositoryMissingError,
+  type ResumeDisposition,
 } from '@ai-sdlc/domain';
-import { planRunRecoveryAction, UnknownPhaseError } from '@ai-sdlc/application';
+import {
+  planRunRecoveryAction,
+  UnknownPhaseError,
+  ResumeDispositionRequiredError,
+} from '@ai-sdlc/application';
 import { resolveRepoContext, canonicalizeRepoContext, guardRead } from './_lib.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -24,6 +29,7 @@ interface ResumeRunUseCaseWithJob {
     fromPhase?: string;
     workerId: WorkerId;
     attempt?: number;
+    resumeDisposition?: ResumeDisposition;
   }): Promise<{ jobId: import('@ai-sdlc/domain').JobId; jobStatus: string }>;
 }
 
@@ -349,6 +355,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         workerId: apiWorkerId(),
         ...(plan.targetPhase !== undefined ? { fromPhase: plan.targetPhase } : {}),
         ...(plan.attempt !== undefined ? { attempt: plan.attempt } : {}),
+        resumeDisposition: 'reset_to_baseline',
       });
 
       const refetchedRun = c.runRepository.findByUuid(req.params.runId);
@@ -362,6 +369,14 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         job: job ? serializeJob(job) : null,
       });
     } catch (err) {
+      if (err instanceof ResumeDispositionRequiredError) {
+        return reply.code(409).send({
+          error: 'resume_disposition_required',
+          message: err.message,
+          allowed: ['preserve_working_tree', 'reset_to_baseline'],
+          allowedDispositions: ['preserve_working_tree', 'reset_to_baseline'],
+        });
+      }
       if (err instanceof UnknownPhaseError) {
         return reply.code(400).send({ error: 'unknown_phase', message: err.message });
       }
@@ -397,6 +412,26 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     if (body.confirm !== undefined && typeof body.confirm !== 'boolean') {
       return reply.code(400).send({ error: 'invalid_body' });
     }
+    if (body.disposition !== undefined) {
+      if (
+        typeof body.disposition !== 'string' ||
+        (body.disposition !== 'preserve_working_tree' && body.disposition !== 'reset_to_baseline')
+      ) {
+        return reply.code(400).send({ error: 'invalid_body' });
+      }
+    }
+    if (body.resumeDisposition !== undefined) {
+      if (
+        typeof body.resumeDisposition !== 'string' ||
+        (body.resumeDisposition !== 'preserve_working_tree' &&
+          body.resumeDisposition !== 'reset_to_baseline')
+      ) {
+        return reply.code(400).send({ error: 'invalid_body' });
+      }
+    }
+    const disposition = (body.disposition ?? body.resumeDisposition) as
+      | ResumeDisposition
+      | undefined;
 
     try {
       const run = await guardMutation(req, reply);
@@ -432,6 +467,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         workerId: apiWorkerId(),
         ...(hasFromPhase && plan.targetPhase !== undefined ? { fromPhase: plan.targetPhase } : {}),
         ...(hasFromPhase && plan.attempt !== undefined ? { attempt: plan.attempt } : {}),
+        ...(disposition !== undefined ? { resumeDisposition: disposition } : {}),
       });
 
       const refetchedRun = c.runRepository.findByUuid(req.params.runId);
@@ -445,6 +481,14 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         job: job ? serializeJob(job) : null,
       });
     } catch (err) {
+      if (err instanceof ResumeDispositionRequiredError) {
+        return reply.code(409).send({
+          error: 'resume_disposition_required',
+          message: err.message,
+          allowed: ['preserve_working_tree', 'reset_to_baseline'],
+          allowedDispositions: ['preserve_working_tree', 'reset_to_baseline'],
+        });
+      }
       if (err instanceof UnknownPhaseError) {
         return reply.code(400).send({ error: 'unknown_phase', message: err.message });
       }

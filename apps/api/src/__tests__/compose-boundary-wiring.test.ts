@@ -321,4 +321,23 @@ describe('ValidateFixLoop and ReviewFixLoop wiring in composeRoot', () => {
 
     expect(container.runExecutor).toBeDefined();
   });
+
+  it('wires worktreeLifecycle into ResumeRun', () => {
+    const root = trackDir(() =>
+      mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-resumewire-')),
+    );
+    const scriptPath = fakeScript(0);
+    writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(makeAgentConfig()));
+
+    const container = composeRoot({
+      repoRoot: root,
+      scriptPath,
+      metadataResolver: FAKE_METADATA_RESOLVER,
+    });
+
+    expect(container.resumeRun).toBeDefined();
+    expect(container.resumeRun.deps.worktreeLifecycle).toBeDefined();
+    expect(typeof container.resumeRun.deps.worktreeLifecycle?.inspect).toBe('function');
+    expect(typeof container.resumeRun.deps.worktreeLifecycle?.execute).toBe('function');
+  });
 });

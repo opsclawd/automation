@@ -6,7 +6,6 @@ coverage/
 .tsbuildinfo
 .cache/eslint/
 .ai-runs/
-.ai-tmp/
 .ai-worktrees/
 ai/
 .review-context/
@@ -14,26 +13,7 @@ ai/
 # scratch output, not source. Untracked files in read-only review phases trip
 # the orchestrator's mutation guard (see #338 false-positive), so ignore it.
 .context/
-*.result
 *.log
-# Per-run orchestrator artifacts written at the repo/worktree root. These must
-# never be tracked: the validate phase rewrites *.headsha each run, which would
-# otherwise dirty the tree and trip the read-only phase mutation guards.
-# Canonical list: scripts/lib/artifacts.sh → orchestrator_artifact_paths()
-*.headsha
-/review-fix-plan.json
-/review-task-manifest.json
-/review-triage.md
-/code-review.md
-/review-loop-history.json
-/implement-step-history-*.json
-/arbiter-result.json
-/compound-draft.md
-/fix-validate-done.marker
-/plan-review-passed.marker
-/review.md
-/task-manifest.json
-.review-context/
 .ai/
 changes/
 review-reports/
@@ -47,42 +27,17 @@ cache/
 .ai-orchestrator.db
 .openclaw.db
 /orchestrator.sqlite
-/result.json
-/scratch-files.json
 task-*-complete.md
-
-# Stray agent/orchestrator scratch that has leaked into commits before
-# (full_diff.patch #161, review-plan-task-5.md #334). See #280/#314/#405.
-# Canonical exclude list lives in scripts/lib/artifacts.sh → orchestrator_artifact_paths();
-# these patterns are belt-and-suspenders against per-task scratch leaking from worktree roots.
-/full_diff.patch
-/diff.patch
-/diff.txt
-/*-diff.txt
-/*.diff
-/review-plan-task-*.md
-/quality-review-task-*.md
-/quality-review-task-*.result
-/spec-review-task-*.md
-/spec-review-task-*.result
-/fix-review-task-*.md
-/fix-review-task-*.result
-/implementation-log.md
-/implementation-log-task-*.md
-/task-context-step-*.md
-/plan.md
-/design.md
-/prompt.md
-/compound.md
-/plan-fix-result.json
-/implementation-log*.md
-/issue.md
-/issue-comments.md
-/plan-review-findings.md
-/quality-review-result*.json
-/spec-review-result*.json
-/fix-result*.json
-/pr-summary.md
-/pr-url.txt
 /validate/
+!/design.md
+!/issue-comments.md
+!/issue.md
+!/plan-fix-result.json
+!/plan-review-findings.md
+!/plan.md
+!/prompt.md
+!/task-manifest.json
+!/validation.result
+!/.ai-tmp
+
 
