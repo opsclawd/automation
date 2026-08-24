@@ -265,16 +265,6 @@ export class ResumeRun implements ResumeRunUseCase {
       throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
     }
 
-    const meaningfulDirtyPaths = await this.getMeaningfulDirtyPaths(
-      repo.localBasePath,
-      run.issueNumber,
-    );
-    const effectiveDisposition = resolveResumeDisposition(
-      run.status,
-      meaningfulDirtyPaths,
-      input.resumeDisposition,
-    );
-
     let leaseAcquired = false;
     let acquiredLease;
     try {
@@ -293,10 +283,7 @@ export class ResumeRun implements ResumeRunUseCase {
     }
 
     try {
-      const transitionState = await this.transition({
-        ...input,
-        resumeDisposition: effectiveDisposition,
-      });
+      const transitionState = await this.transition(input);
       const job = createJob({
         id: `resume-${input.runId}-${now().getTime()}` as JobId,
         runId: input.runId,
@@ -304,7 +291,7 @@ export class ResumeRun implements ResumeRunUseCase {
         issueNumber: IssueNumber(run.issueNumber),
         priority: RESUME_JOB_PRIORITY,
         createdAt: now(),
-        resumeDisposition: effectiveDisposition,
+        resumeDisposition: transitionState.effectiveDisposition,
       });
 
       try {

@@ -28,7 +28,11 @@ export interface ResumeRunUseCase {
 }
 
 export interface RetryFailedPhaseUseCase {
-  execute(input: { runId: RunId; workerId: WorkerId }): Promise<unknown>;
+  execute(input: {
+    runId: RunId;
+    workerId: WorkerId;
+    resumeDisposition?: ResumeDisposition;
+  }): Promise<unknown>;
 }
 
 export interface CancelRunResult {

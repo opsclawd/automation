@@ -1875,6 +1875,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   const transitionState = await c.retryFailedPhase.execute({
                     runId: RunId(opts.uuid),
                     workerId,
+                    ...(opts.disposition
+                      ? { resumeDisposition: opts.disposition as ResumeDisposition }
+                      : {}),
                   });
                   if (
                     transitionState &&

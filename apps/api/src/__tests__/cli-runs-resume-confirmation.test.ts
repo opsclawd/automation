@@ -823,4 +823,198 @@ describe('CLI runs resume confirmation tests', () => {
       process.chdir(savedCwd);
     }
   });
+
+  it('rejects omitted disposition for dirty needs_human_review without --from-phase with exit 1 and causes no mutations', async () => {
+    const uuid = 'dirty-human-review-no-from-phase-no-disposition-uuid';
+    const issueNumber = 123;
+    const root = setupTempRepo(uuid, 'validate', 'needs_human_review');
+
+    const wtDir = join(root, '.ai-worktrees', `issue-${issueNumber}`);
+    mkdirSync(wtDir, { recursive: true });
+    execSync('git init', { cwd: wtDir });
+    execSync('git config user.name "Test"', { cwd: wtDir });
+    execSync('git config user.email "test@test.com"', { cwd: wtDir });
+    writeFileSync(join(wtDir, 'file.txt'), 'initial');
+    execSync('git add . && git commit -m "initial"', { cwd: wtDir });
+    writeFileSync(join(wtDir, 'dirty.txt'), 'dirty uncommitted');
+
+    vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockImplementation(() => ({
+      repoId: RepositoryId('owner/repo'),
+      workerId: WorkerId(`cli-${process.pid}`),
+      runId: RunId(uuid),
+      acquiredAt: new Date(),
+      heartbeatAt: new Date(),
+      expiresAt: new Date(Date.now() + 120_000),
+      leaseToken: 'mocked-token' as LeaseToken,
+    }));
+
+    const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute');
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+
+    try {
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+
+      await expect(
+        runsCmd.parseAsync(['resume', '--uuid', uuid], { from: 'user' }),
+      ).rejects.toThrow(/process.exit: 1/);
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      const errMsgs = consoleErrorSpy.mock.calls.map((c) => c[0]).join(' ');
+      expect(errMsgs).toMatch(
+        /explicit resume disposition is required for dirty needs_human_review runs/i,
+      );
+
+      expect(executeSpy).not.toHaveBeenCalled();
+
+      const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+      const db = openDatabase(dbPath);
+      const runRow = db.prepare('SELECT status FROM runs WHERE uuid = ?').get(uuid) as {
+        status: string;
+      };
+      expect(runRow.status).toBe('needs_human_review');
+      db.close();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('passes explicit --disposition preserve_working_tree without --from-phase to retryFailedPhase and executor', async () => {
+    const uuid = 'preserve-nofp-disposition-uuid';
+    const root = setupTempRepo(uuid, 'validate', 'failed');
+
+    vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockImplementation(() => ({
+      repoId: RepositoryId('owner/repo'),
+      workerId: WorkerId(`cli-${process.pid}`),
+      runId: RunId(uuid),
+      acquiredAt: new Date(),
+      heartbeatAt: new Date(),
+      expiresAt: new Date(Date.now() + 120_000),
+      leaseToken: 'mocked-token' as LeaseToken,
+    }));
+
+    const retrySpy = vi.spyOn(RetryFailedPhase.prototype, 'execute').mockResolvedValue({
+      savedStatus: 'failed',
+      savedCompletedAt: null,
+      savedFailureReason: null,
+      savedCurrentPhase: null,
+      savedCompletedPhases: [],
+      savedSkippedPhases: [],
+      savedSteps: [],
+      effectiveDisposition: 'preserve_working_tree',
+    });
+    const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+      run: {
+        uuid,
+        status: 'passed' as const,
+        displayId: 'issue-123-20260622-000000',
+        issueNumber: 123,
+        type: 'issue_to_pr' as const,
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      },
+      phases: [],
+    });
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+
+    try {
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+
+      await expect(
+        runsCmd.parseAsync(['resume', '--uuid', uuid, '--disposition', 'preserve_working_tree'], {
+          from: 'user',
+        }),
+      ).rejects.toThrow(/process.exit: 0/);
+
+      expect(retrySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: RunId(uuid),
+          resumeDisposition: 'preserve_working_tree',
+        }),
+      );
+      expect(executeSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resumeDisposition: 'preserve_working_tree',
+        }),
+      );
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('passes explicit --disposition reset_to_baseline without --from-phase to retryFailedPhase and executor', async () => {
+    const uuid = 'reset-nofp-disposition-uuid';
+    const root = setupTempRepo(uuid, 'validate', 'failed');
+
+    vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockImplementation(() => ({
+      repoId: RepositoryId('owner/repo'),
+      workerId: WorkerId(`cli-${process.pid}`),
+      runId: RunId(uuid),
+      acquiredAt: new Date(),
+      heartbeatAt: new Date(),
+      expiresAt: new Date(Date.now() + 120_000),
+      leaseToken: 'mocked-token' as LeaseToken,
+    }));
+
+    const retrySpy = vi.spyOn(RetryFailedPhase.prototype, 'execute').mockResolvedValue({
+      savedStatus: 'failed',
+      savedCompletedAt: null,
+      savedFailureReason: null,
+      savedCurrentPhase: null,
+      savedCompletedPhases: [],
+      savedSkippedPhases: [],
+      savedSteps: [],
+      effectiveDisposition: 'reset_to_baseline',
+    });
+    const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+      run: {
+        uuid,
+        status: 'passed' as const,
+        displayId: 'issue-123-20260622-000000',
+        issueNumber: 123,
+        type: 'issue_to_pr' as const,
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      },
+      phases: [],
+    });
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+
+    try {
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+
+      await expect(
+        runsCmd.parseAsync(['resume', '--uuid', uuid, '--disposition', 'reset_to_baseline'], {
+          from: 'user',
+        }),
+      ).rejects.toThrow(/process.exit: 0/);
+
+      expect(retrySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: RunId(uuid),
+          resumeDisposition: 'reset_to_baseline',
+        }),
+      );
+      expect(executeSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resumeDisposition: 'reset_to_baseline',
+        }),
+      );
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
 });

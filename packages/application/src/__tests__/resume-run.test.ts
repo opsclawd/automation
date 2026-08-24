@@ -828,4 +828,31 @@ describe('ResumeRun', () => {
     expect(run.failureReason).toBe('manual review');
     expect(leases.current(repoid('run-1'))).toBeUndefined();
   });
+
+  it('computes meaningfulDirtyPaths only once when execute delegates to transition', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'failed' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const worktreeLifecycle = new FakeWorktreeLifecycle();
+    worktreeLifecycle.discardedPaths = [];
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      worktreeLifecycle,
+      now: fixedNow,
+    });
+
+    await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    expect(worktreeLifecycle.inspectCalls).toHaveLength(1);
+  });
 });

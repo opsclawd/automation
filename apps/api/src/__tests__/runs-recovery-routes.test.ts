@@ -752,6 +752,141 @@ describe('Recovery REST Endpoints', () => {
       expect(res.statusCode).toBe(202);
       expect(res.json().job.resumeDisposition).toBe('reset_to_baseline');
     });
+
+    it('rejects omitted disposition for dirty needs_human_review retry with 409 and causes no mutations', async () => {
+      const tempDir = createTempDir();
+      const c = compose(tempDir);
+      const app = await buildServer(c);
+      const uuid = '00000000-0000-0000-0000-000000000112';
+      const issueNumber = 28;
+
+      const wtDir = path.join(tempDir, '.ai-worktrees', `issue-${issueNumber}`);
+      mkdirSync(wtDir, { recursive: true });
+      execSync('git init', { cwd: wtDir });
+      execSync('git config user.name "Test"', { cwd: wtDir });
+      execSync('git config user.email "test@test.com"', { cwd: wtDir });
+      writeFileSync(path.join(wtDir, 'file.txt'), 'initial');
+      execSync('git add . && git commit -m "initial"', { cwd: wtDir });
+      writeFileSync(path.join(wtDir, 'dirty.txt'), 'dirty uncommitted');
+
+      c.runRepository.insertIfNoActive({
+        uuid,
+        displayId: 'run-112',
+        repoId: RepositoryId('owner/repo'),
+        issueNumber,
+        type: 'issue',
+        status: 'needs_human_review',
+        currentPhase: 'validate',
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      } as unknown as import('@ai-sdlc/domain').Run);
+
+      c.phaseRepository.insert({
+        id: `${uuid}-validate`,
+        runUuid: uuid,
+        name: 'validate',
+        status: 'needs_human_review',
+        attempt: 1,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/runs/${uuid}/retry`,
+        headers: { 'x-repository-id': 'owner/repo' },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(409);
+      const body = res.json();
+      expect(body.error).toBe('resume_disposition_required');
+      expect(body.allowed).toEqual(['preserve_working_tree', 'reset_to_baseline']);
+
+      // Assert no run mutation occurred
+      const runAfter = c.runRepository.findByUuid(uuid);
+      expect(runAfter?.status).toBe('needs_human_review');
+      expect(c.jobQueue.listForRun(RunId(uuid))).toHaveLength(0);
+    });
+
+    it('accepts explicit preserve_working_tree disposition for dirty human review retry', async () => {
+      const tempDir = createTempDir();
+      const c = compose(tempDir);
+      const app = await buildServer(c);
+      const uuid = '00000000-0000-0000-0000-000000000113';
+      const issueNumber = 29;
+
+      const wtDir = path.join(tempDir, '.ai-worktrees', `issue-${issueNumber}`);
+      mkdirSync(wtDir, { recursive: true });
+      execSync('git init', { cwd: wtDir });
+      execSync('git config user.name "Test"', { cwd: wtDir });
+      execSync('git config user.email "test@test.com"', { cwd: wtDir });
+      writeFileSync(path.join(wtDir, 'file.txt'), 'initial');
+      execSync('git add . && git commit -m "initial"', { cwd: wtDir });
+      writeFileSync(path.join(wtDir, 'dirty.txt'), 'dirty uncommitted');
+
+      c.runRepository.insertIfNoActive({
+        uuid,
+        displayId: 'run-113',
+        repoId: RepositoryId('owner/repo'),
+        issueNumber,
+        type: 'issue',
+        status: 'needs_human_review',
+        currentPhase: 'validate',
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      } as unknown as import('@ai-sdlc/domain').Run);
+
+      c.phaseRepository.insert({
+        id: `${uuid}-validate`,
+        runUuid: uuid,
+        name: 'validate',
+        status: 'needs_human_review',
+        attempt: 1,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/runs/${uuid}/retry`,
+        headers: { 'x-repository-id': 'owner/repo' },
+        payload: { disposition: 'preserve_working_tree' },
+      });
+
+      expect(res.statusCode).toBe(202);
+      const body = res.json();
+      expect(body.job).toBeDefined();
+      expect(body.job.resumeDisposition).toBe('preserve_working_tree');
+    });
+
+    it('returns 400 for invalid disposition on retry', async () => {
+      const tempDir = createTempDir();
+      const c = compose(tempDir);
+      const app = await buildServer(c);
+      const uuid = '00000000-0000-0000-0000-000000000114';
+
+      c.runRepository.insertIfNoActive({
+        uuid,
+        displayId: 'run-114',
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: 30,
+        type: 'issue',
+        status: 'failed',
+        currentPhase: 'validate',
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      } as unknown as import('@ai-sdlc/domain').Run);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/runs/${uuid}/retry`,
+        headers: { 'x-repository-id': 'owner/repo' },
+        payload: { disposition: 'invalid_mode' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('invalid_body');
+    });
   });
 
   describe('Strict Context Mismatch Tests', () => {

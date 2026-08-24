@@ -326,6 +326,26 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     if (body.confirm !== undefined && typeof body.confirm !== 'boolean') {
       return reply.code(400).send({ error: 'invalid_body' });
     }
+    if (body.disposition !== undefined) {
+      if (
+        typeof body.disposition !== 'string' ||
+        (body.disposition !== 'preserve_working_tree' && body.disposition !== 'reset_to_baseline')
+      ) {
+        return reply.code(400).send({ error: 'invalid_body' });
+      }
+    }
+    if (body.resumeDisposition !== undefined) {
+      if (
+        typeof body.resumeDisposition !== 'string' ||
+        (body.resumeDisposition !== 'preserve_working_tree' &&
+          body.resumeDisposition !== 'reset_to_baseline')
+      ) {
+        return reply.code(400).send({ error: 'invalid_body' });
+      }
+    }
+    const disposition = (body.disposition ?? body.resumeDisposition) as
+      | ResumeDisposition
+      | undefined;
 
     try {
       const run = await guardMutation(req, reply);
@@ -355,7 +375,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         workerId: apiWorkerId(),
         ...(plan.targetPhase !== undefined ? { fromPhase: plan.targetPhase } : {}),
         ...(plan.attempt !== undefined ? { attempt: plan.attempt } : {}),
-        resumeDisposition: 'reset_to_baseline',
+        ...(disposition !== undefined ? { resumeDisposition: disposition } : {}),
       });
 
       const refetchedRun = c.runRepository.findByUuid(req.params.runId);
