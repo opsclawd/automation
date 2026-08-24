@@ -79,15 +79,18 @@ describe('parseGitStatusPaths', () => {
     expect(parseGitStatusPaths('')).toEqual([]);
   });
 
-  it('parseGitStatusPaths returns every path without artifact filtering', () => {
+  it('parseGitStatusPaths returns every normalized path without artifact filtering', () => {
     const status = [
       ' M plan.md',
       '?? plan-review-findings.md',
       ' M src/nested/file.ts',
+      ' M src/nested/file.ts',
+      '?? "file\\\\with\\\\backslash.ts"',
       '?? "src/quoted with space.ts"',
       'R  old.ts -> new.ts',
     ].join('\n');
     expect(parseGitStatusPaths(status)).toEqual([
+      'file\\with\\backslash.ts',
       'new.ts',
       'old.ts',
       'plan-review-findings.md',
