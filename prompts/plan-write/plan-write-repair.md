@@ -84,6 +84,12 @@ scratch. For example:
     local-cast/widened-type workaround anticipating that same signature, so it has permission to replace
     the workaround with direct typed access once the signature is real — an optional touchpoint, not a
     required deliverable.
+- SIBLING IMPLEMENTERS AND TEST DOUBLES OF CHANGED SIGNATURES: If a task declares a `signature_changes`
+  entry for an interface, port, or type, search the affected packages (e.g. `implements <InterfaceName>`,
+  `extends <InterfaceName>`, or direct references to the changed type) for any sibling concrete classes,
+  adapters, fakes, mocks, or test doubles that implement or extend that interface/shape. Ensure all such
+  files are included in the same task's `expected_files` (not `reference_files`) so they can be updated
+  and pass typechecking (`TS2416`).
 
 ## CRITICAL RULES
 

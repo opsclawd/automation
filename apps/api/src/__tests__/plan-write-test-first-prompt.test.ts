@@ -33,6 +33,9 @@ describe('plan-write test-first task ordering', () => {
     );
     expect(prompt).toContain('Finalizing a deferred signature');
     expect(prompt).toContain('may_extend');
+    expect(prompt).toContain('SIBLING IMPLEMENTERS AND TEST DOUBLES OF CHANGED SIGNATURES');
+    expect(prompt).toContain('implements <InterfaceName>');
+    expect(prompt).toContain('expected_files');
   });
 
   it('preserves test-first task separation during plan repair', () => {
@@ -52,5 +55,8 @@ describe('plan-write test-first task ordering', () => {
     expect(repairPrompt).toContain('the split itself is the defect');
     expect(repairPrompt).toContain('Finalizing a deferred signature');
     expect(repairPrompt).toContain('may_extend');
+    expect(repairPrompt).toContain('SIBLING IMPLEMENTERS AND TEST DOUBLES OF CHANGED SIGNATURES');
+    expect(repairPrompt).toContain('implements <InterfaceName>');
+    expect(repairPrompt).toContain('expected_files');
   });
 });
