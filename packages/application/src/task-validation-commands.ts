@@ -738,6 +738,204 @@ export function buildTaskValidationCommands(
   return allCommands.filter((cmd) => !isRedundantValidationCommand(cmd));
 }
 
+export function isNegatedValidationCommand(command: ValidationCommand): boolean {
+  if (Array.isArray(command)) {
+    return command[0]?.trim().startsWith('!') ?? false;
+  }
+  return String(command).trim().startsWith('!');
+}
+
+export function stripNegationPrefix(command: ValidationCommand): ValidationCommand {
+  if (Array.isArray(command)) {
+    if (command.length === 0) return command;
+    const first = command[0]!.trim();
+    if (first.startsWith('!')) {
+      const restFirst = first.slice(1).trim();
+      return restFirst ? [restFirst, ...command.slice(1)] : command.slice(1);
+    }
+    return command;
+  }
+  const str = String(command).trim();
+  if (str.startsWith('!')) {
+    return str.slice(1).trim();
+  }
+  return command;
+}
+
+export function extractTargetTestFilesFromInvertedCommands(
+  commands: ValidationCommand[],
+): string[] {
+  const targetFiles = new Set<string>();
+
+  for (const cmd of commands) {
+    if (!isNegatedValidationCommand(cmd)) continue;
+    const stripped = stripNegationPrefix(cmd);
+    const argv = parseCommandArgv(stripped);
+    if (argv.length === 0) continue;
+
+    const target = extractTargetTestFilePath(argv);
+    if (target) {
+      const norm = normalizeTaskPath(target);
+      if (norm) targetFiles.add(norm);
+    } else {
+      for (const arg of argv.slice(1)) {
+        if (arg.startsWith('-')) continue;
+        const cleanArg = arg.replace(/^["']|["']$/g, '');
+        if (
+          LITERAL_TEST_FILE.test(cleanArg) ||
+          /\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(cleanArg) ||
+          /\.bats$/i.test(cleanArg) ||
+          /\.py$/i.test(cleanArg)
+        ) {
+          const norm = normalizeTaskPath(cleanArg);
+          if (norm) targetFiles.add(norm);
+        }
+      }
+    }
+  }
+
+  return Array.from(targetFiles);
+}
+
+export function extractFailedTestFilesFromOutput(output: string): string[] {
+  if (!output || !output.trim()) return [];
+
+  const found = new Set<string>();
+  const lines = output.split('\n');
+
+  const failPatterns = [
+    /(?:FAIL|FAILED)\s+([^\s:]+\.(?:test|spec)\.[cm]?[jt]sx?|[^\s:]+\.bats|[^\s:]+test_[\w.-]+\.py|[^\s:]+[\w.-]+_test\.py)/gi,
+    /(?:×|❯)\s+([^\s:]+\.(?:test|spec)\.[cm]?[jt]sx?|[^\s:]+\.bats)/gi,
+    /\d+\)\s+(?:\[[^\]]+\]\s+›\s+)?([^\s:]+\.(?:test|spec)\.[cm]?[jt]sx?)/gi,
+    /FAILED\s+([^\s:]+\.py)/gi,
+    /not ok\s+\d+\s+([^\s:]+\.bats)/gi,
+  ];
+
+  for (const pattern of failPatterns) {
+    let match;
+    while ((match = pattern.exec(output)) !== null) {
+      const file = match[1];
+      if (file) {
+        const norm = normalizeTaskPath(file);
+        if (norm) found.add(norm);
+      }
+    }
+  }
+
+  const fileCandidateRegex =
+    /([^\s:]+\.(?:test|spec)\.[cm]?[jt]sx?|[^\s:]+\.bats|[^\s:]+test_[\w.-]+\.py|[^\s:]+[\w.-]+_test\.py)/gi;
+
+  for (const line of lines) {
+    if (
+      /(?:FAIL|FAILED|not ok|Error:|×|│\s*×)/i.test(line) &&
+      !line.includes('ERR_PNPM_RECURSIVE')
+    ) {
+      let match;
+      while ((match = fileCandidateRegex.exec(line)) !== null) {
+        const file = match[1];
+        if (file) {
+          const norm = normalizeTaskPath(file);
+          if (norm) found.add(norm);
+        }
+      }
+    }
+  }
+
+  return Array.from(found);
+}
+
+export function isPathMatchedByExpectedTarget(
+  actualPath: string,
+  expectedPath: string,
+): boolean {
+  const normActual = normalizeTaskPath(actualPath) ?? actualPath;
+  const normExpected = normalizeTaskPath(expectedPath) ?? expectedPath;
+
+  if (normActual === normExpected) return true;
+  if (normActual.endsWith('/' + normExpected) || normExpected.endsWith('/' + normActual)) {
+    return true;
+  }
+  return false;
+}
+
+export interface ValidationRunCommandItem {
+  command: ValidationCommand;
+  outcome: string;
+  kind?: string;
+  stdoutPath?: string;
+  stderrPath?: string;
+}
+
+export interface EvaluateRevalidationInput {
+  validationRunCommands: ValidationRunCommandItem[];
+  taskValidationCommands: ValidationCommand[];
+  readTail: (filePath: string) => Promise<string>;
+}
+
+export interface EvaluateRevalidationResult {
+  passed: boolean;
+  failingCommands: ValidationRunCommandItem[];
+}
+
+export async function evaluateRevalidationWithInvertedCommands(
+  input: EvaluateRevalidationInput,
+): Promise<EvaluateRevalidationResult> {
+  const { validationRunCommands, taskValidationCommands, readTail } = input;
+
+  const failingCommands = validationRunCommands.filter((c) => c.outcome !== 'passed');
+  if (failingCommands.length === 0) {
+    return { passed: true, failingCommands: [] };
+  }
+
+  const invertedCommands = taskValidationCommands.filter(isNegatedValidationCommand);
+  if (invertedCommands.length === 0) {
+    return { passed: false, failingCommands };
+  }
+
+  const expectedFailingTestFiles = extractTargetTestFilesFromInvertedCommands(invertedCommands);
+  if (expectedFailingTestFiles.length === 0) {
+    return { passed: false, failingCommands };
+  }
+
+  const unexcusedFailing: ValidationRunCommandItem[] = [];
+
+  for (const c of failingCommands) {
+    if (isNegatedValidationCommand(c.command)) {
+      unexcusedFailing.push(c);
+      continue;
+    }
+
+    let logs = '';
+    if (c.stdoutPath) {
+      logs += (await readTail(c.stdoutPath)) + '\n';
+    }
+    if (c.stderrPath) {
+      logs += (await readTail(c.stderrPath)) + '\n';
+    }
+
+    const actualFailedTestFiles = extractFailedTestFilesFromOutput(logs);
+    if (actualFailedTestFiles.length === 0) {
+      unexcusedFailing.push(c);
+      continue;
+    }
+
+    const allAccountedFor = actualFailedTestFiles.every((actualPath) =>
+      expectedFailingTestFiles.some((expectedPath) =>
+        isPathMatchedByExpectedTarget(actualPath, expectedPath),
+      ),
+    );
+
+    if (!allAccountedFor) {
+      unexcusedFailing.push(c);
+    }
+  }
+
+  return {
+    passed: unexcusedFailing.length === 0,
+    failingCommands: unexcusedFailing,
+  };
+}
+
 export function checkRedTaskValidationParity(manifest: TaskManifest): string | null {
   if (manifest.version !== 2) return null;
 

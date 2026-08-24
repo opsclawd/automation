@@ -175,6 +175,7 @@ import {
   type ValidationCommand,
   buildTaskValidationCommands,
   expandTaskValidationCommandsWithNewTests,
+  evaluateRevalidationWithInvertedCommands,
   uncommittedSourcePaths,
   CONTRACT_VIOLATION_CODES,
   type RunWorkspaceTypecheckPort,
@@ -208,6 +209,7 @@ import {
   RepositoryId,
   generateJobOwnership,
   type PrReviewComment,
+  type ValidationCommandOutcome,
 } from '@ai-sdlc/domain';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- forward reference for Task 5 runtime factory
 import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
@@ -3058,25 +3060,48 @@ export function composeRoot(opts: ComposeOptions): Container {
           String(ctx.phaseId),
           `iter-${ctx.iterationIndex}`,
         );
+        let taskValidationCommands: ValidationCommand[] = [];
+        const stepIndex = (ctx as Partial<StepLoopContext>).stepIndex;
+        if (typeof stepIndex === 'number' && stepIndex > 0) {
+          try {
+            const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+            const manifestRaw = await artifacts.read(String(ctx.runId), 'task-manifest.json');
+            const manifest = parseTaskManifest(manifestRaw);
+            if (manifest.success) {
+              taskValidationCommands = buildTaskValidationCommands(manifest.manifest, stepIndex);
+            }
+          } catch {
+            // Task manifest might not be present or parseable
+          }
+        }
         const vr = await runValidation.execute({
           runId: RunId(String(ctx.runId)),
           phaseId: PhaseName('validate'),
           cwd: ctx.cwd,
           logDir: revalidateLogDir,
-          commands: config.validation.commands,
+          commands: [...config.validation.commands, ...taskValidationCommands],
           ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
           timeoutSeconds: config.validation.timeout,
           env: {
             GITHUB_REPOSITORY: ctx.repoId,
           },
         });
-        const failingCommands = vr.validationRun.commands.filter((c) => c.outcome !== 'passed');
+        const evalResult = await evaluateRevalidationWithInvertedCommands({
+          validationRunCommands: vr.validationRun.commands,
+          taskValidationCommands,
+          readTail: async (path) => {
+            const absPath = isAbsolute(path) ? path : join(revalidateLogDir, basename(path));
+            return readTail(absPath);
+          },
+        });
+        const failingCommands = evalResult.failingCommands;
+        const revalPassed = evalResult.passed;
         let failureDetail: string | undefined;
         if (failingCommands.length > 0) {
           const details = await Promise.all(
             failingCommands.map(async (c) => {
-              const stdoutAbs = join(revalidateLogDir, basename(c.stdoutPath));
-              const stderrAbs = join(revalidateLogDir, basename(c.stderrPath));
+              const stdoutAbs = c.stdoutPath ? join(revalidateLogDir, basename(c.stdoutPath)) : '';
+              const stderrAbs = c.stderrPath ? join(revalidateLogDir, basename(c.stderrPath)) : '';
               const [stdoutTail, stderrTail] = await Promise.all([
                 readTail(stdoutAbs),
                 readTail(stderrAbs),
@@ -3091,14 +3116,16 @@ export function composeRoot(opts: ComposeOptions): Container {
           runId: String(ctx.runId),
           phaseId: 'validate',
           relativePath: 'validation.result',
-          contents: vr.passed ? 'passed\n' : 'failed\n',
+          contents: revalPassed ? 'passed\n' : 'failed\n',
         });
         return {
           validationRunId: vr.validationRun.id,
-          passed: vr.passed,
+          passed: revalPassed,
           ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
-          ...(failedCommand?.outcome ? { outcome: failedCommand.outcome } : {}),
-          failureDetail,
+          ...(failedCommand?.outcome
+            ? { outcome: failedCommand.outcome as ValidationCommandOutcome }
+            : {}),
+          ...(failureDetail ? { failureDetail } : {}),
         };
       };
 
@@ -4895,13 +4922,22 @@ export function composeRoot(opts: ComposeOptions): Container {
               GITHUB_REPOSITORY: (ctx as StepLoopContext).repoId,
             },
           });
-          const failingCommands = vr.validationRun.commands.filter((c) => c.outcome !== 'passed');
+          const evalResult = await evaluateRevalidationWithInvertedCommands({
+            validationRunCommands: vr.validationRun.commands,
+            taskValidationCommands,
+            readTail: async (path) => {
+              const absPath = isAbsolute(path) ? path : join(revalidateLogDir, basename(path));
+              return readTail(absPath);
+            },
+          });
+          const failingCommands = evalResult.failingCommands;
+          const revalPassed = evalResult.passed;
           let failureDetail: string | undefined;
           if (failingCommands.length > 0) {
             const details = await Promise.all(
               failingCommands.map(async (c) => {
-                const stdoutAbs = join(revalidateLogDir, basename(c.stdoutPath));
-                const stderrAbs = join(revalidateLogDir, basename(c.stderrPath));
+                const stdoutAbs = c.stdoutPath ? join(revalidateLogDir, basename(c.stdoutPath)) : '';
+                const stderrAbs = c.stderrPath ? join(revalidateLogDir, basename(c.stderrPath)) : '';
                 const [stdoutTail, stderrTail] = await Promise.all([
                   readTail(stdoutAbs),
                   readTail(stderrAbs),
@@ -4916,17 +4952,23 @@ export function composeRoot(opts: ComposeOptions): Container {
             runId: String(ctx.runId),
             phaseId: 'validate',
             relativePath: 'validation.result',
-            contents: vr.passed ? 'passed\n' : 'failed\n',
+            contents: revalPassed ? 'passed\n' : 'failed\n',
           });
           return {
             validationRunId: vr.validationRun.id,
-            passed: vr.passed,
+            passed: revalPassed,
             ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
-            ...(failedCommand?.outcome ? { outcome: failedCommand.outcome } : {}),
-            ...(failingCommands.length > 0
-              ? { failedCommands: failingCommands.map((command) => command.command) }
+            ...(failedCommand?.outcome
+            ? { outcome: failedCommand.outcome as ValidationCommandOutcome }
               : {}),
-            failureDetail,
+            ...(failingCommands.length > 0
+            ? {
+                failedCommands: failingCommands.map((c) =>
+                  Array.isArray(c.command) ? c.command.join(' ') : c.command,
+                ),
+              }
+              : {}),
+            ...(failureDetail ? { failureDetail } : {}),
           };
         },
         ...(runArbiter ? { runArbiter } : {}),
