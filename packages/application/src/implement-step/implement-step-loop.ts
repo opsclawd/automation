@@ -158,7 +158,7 @@ async function captureUntrackedDigest(
     status
       .split('\n')
       .filter((line) => line.startsWith('?? '))
-      .map((line) => unquoteGitPath(line.slice(3)).replace(/\\/g, '/')),
+      .map((line) => unquoteGitPath(line.replace(/\r$/, '').slice(3))),
   );
   const targetPaths = uncommittedSourcePaths(status)
     .filter((path) => untrackedPaths.has(path))
@@ -914,7 +914,7 @@ export class ImplementStepLoop {
         statusOutput
           .split('\n')
           .filter(isUntrackedOrAddedStatusLine)
-          .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
+          .map((line) => unquoteGitPath(line.replace(/\r$/, '').slice(3)))
           .map(normalizeTaskPath)
           .filter(Boolean),
       );

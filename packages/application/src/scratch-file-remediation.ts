@@ -49,7 +49,7 @@ export function undeclaredUntrackedFiles(
   const paths = status
     .split('\n')
     .filter((line) => line.startsWith('?? '))
-    .map((line) => normalizeTaskPath(unquoteGitPath(line.slice(3))))
+    .map((line) => normalizeTaskPath(unquoteGitPath(line.replace(/\r$/, '').slice(3))))
     .filter((p) => p.length > 0)
     .filter(
       (p) =>

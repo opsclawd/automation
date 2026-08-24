@@ -77,12 +77,11 @@ describe('parseGitStatusPaths', () => {
     expect(parseGitStatusPaths('')).toEqual([]);
   });
 
-  it('parseGitStatusPaths returns every normalized path without artifact filtering', () => {
+  it('parseGitStatusPaths returns every path without artifact filtering', () => {
     const status = [
       ' M plan.md',
       '?? plan-review-findings.md',
       ' M src/nested/file.ts',
-      ' M src\\nested/file.ts',
       '?? "src/quoted with space.ts"',
       'R  old.ts -> new.ts',
     ].join('\n');
@@ -94,6 +93,24 @@ describe('parseGitStatusPaths', () => {
       'src/nested/file.ts',
       'src/quoted with space.ts',
     ]);
+  });
+
+  it('preserves leading and trailing spaces in unquoted and quoted filenames', () => {
+    const status = [
+      '??  leading-space.ts',
+      '?? trailing-space.ts ',
+      '?? " quoted with leading and trailing.ts "',
+    ].join('\n');
+    expect(parseGitStatusPaths(status)).toEqual([
+      ' leading-space.ts',
+      ' quoted with leading and trailing.ts ',
+      'trailing-space.ts ',
+    ]);
+  });
+
+  it('handles CRLF line endings from git status output', () => {
+    const status = ' M plan.md\r\n?? src/app.ts\r\n M src/nested/index.ts\r\n';
+    expect(parseGitStatusPaths(status)).toEqual(['plan.md', 'src/app.ts', 'src/nested/index.ts']);
   });
 
   it('does not split non-rename paths containing literal " -> "', () => {
@@ -173,15 +190,17 @@ describe('uncommittedSourcePaths', () => {
     expect(uncommittedSourcePaths(status)).toEqual(['docs/changes.patch', 'src/plan.md']);
   });
 
-  it('handles renames, backslashes, duplicates and sorts the output', () => {
+  it('handles renames, duplicates, preserves backslashes and sorts the output', () => {
     const status = [
-      'R  old\\path.ts -> new\\path.ts',
-      ' M packages\\app.ts',
+      'R  old.ts -> new.ts',
       ' M packages/app.ts',
+      ' M packages/app.ts',
+      '?? "file\\\\with\\\\backslash.ts"',
     ].join('\n');
     expect(uncommittedSourcePaths(status)).toEqual([
-      'new/path.ts',
-      'old/path.ts',
+      'file\\with\\backslash.ts',
+      'new.ts',
+      'old.ts',
       'packages/app.ts',
     ]);
   });
@@ -282,6 +301,17 @@ describe('isOrchestratorArtifactPattern', () => {
     expect(isOrchestratorArtifactPattern('src/plan.md')).toBe(false);
     expect(isOrchestratorArtifactPattern('nested/design.md')).toBe(false);
     expect(isOrchestratorArtifactPattern('')).toBe(false);
+  });
+
+  it('does not match filenames with leading or trailing spaces as orchestrator artifacts', () => {
+    expect(isOrchestratorArtifactPattern(' plan.md')).toBe(false);
+    expect(isOrchestratorArtifactPattern('plan.md ')).toBe(false);
+    expect(isOrchestratorArtifactPattern(' task-manifest.json ')).toBe(false);
+  });
+
+  it('strips trailing carriage return when matching artifact pattern', () => {
+    expect(isOrchestratorArtifactPattern('plan.md\r')).toBe(true);
+    expect(isOrchestratorArtifactPattern('.ai-tmp/scratch-files.json\r')).toBe(true);
   });
 });
 

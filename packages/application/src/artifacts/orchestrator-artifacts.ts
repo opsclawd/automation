@@ -66,116 +66,107 @@ function getOrchestratorRegexes(): readonly RegExp[] {
 
 export function isOrchestratorArtifactPattern(path: string): boolean {
   if (!path || typeof path !== 'string') return false;
-  const normalized = path
-    .trim()
-    .replace(/\\/g, '/')
-    .replace(/^(\.\/|\/)+/, '');
+  const normalized = path.replace(/\r$/, '').replace(/^(\.\/|\/)+/, '');
   if (!normalized) return false;
   return getOrchestratorRegexes().some((regex) => regex.test(normalized));
 }
 
+const utf8Decoder = new TextDecoder('utf-8');
+
 export function unquoteGitPath(path: string): string {
-  const trimmed = path.trim();
-  if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
-    const inner = trimmed.slice(1, -1);
-    const bytes: number[] = [];
+  if (path.startsWith('"') && path.endsWith('"') && path.length >= 2) {
+    const inner = path.slice(1, -1);
+    let result = '';
     let i = 0;
-    while (i < inner.length) {
+    const len = inner.length;
+
+    while (i < len) {
       const char = inner.charAt(i);
       if (char === '\\') {
         i++;
-        if (i >= inner.length) {
-          bytes.push(0x5c);
+        if (i >= len) {
+          result += '\\';
           break;
         }
         const nextChar = inner.charAt(i);
         if (nextChar >= '0' && nextChar <= '7') {
-          let octal = nextChar;
-          i++;
-          if (i < inner.length) {
-            const digit2 = inner.charAt(i);
-            if (digit2 >= '0' && digit2 <= '7') {
-              octal += digit2;
+          const octalBytes: number[] = [];
+          while (i < len && inner.charAt(i) >= '0' && inner.charAt(i) <= '7') {
+            let octal = inner.charAt(i);
+            i++;
+            if (i < len && inner.charAt(i) >= '0' && inner.charAt(i) <= '7') {
+              octal += inner.charAt(i);
               i++;
-              if (i < inner.length) {
-                const digit3 = inner.charAt(i);
-                if (digit3 >= '0' && digit3 <= '7') {
-                  octal += digit3;
-                  i++;
-                }
-              }
-            }
-          }
-          bytes.push(parseInt(octal, 8));
-          continue;
-        }
-        switch (nextChar) {
-          case 'a':
-            bytes.push(0x07);
-            break;
-          case 'b':
-            bytes.push(0x08);
-            break;
-          case 'f':
-            bytes.push(0x0c);
-            break;
-          case 'n':
-            bytes.push(0x0a);
-            break;
-          case 'r':
-            bytes.push(0x0d);
-            break;
-          case 't':
-            bytes.push(0x09);
-            break;
-          case 'v':
-            bytes.push(0x0b);
-            break;
-          case '\\':
-            bytes.push(0x5c);
-            break;
-          case '"':
-            bytes.push(0x22);
-            break;
-          default: {
-            const codePoint = inner.codePointAt(i);
-            if (codePoint !== undefined) {
-              const buf = Buffer.from(String.fromCodePoint(codePoint), 'utf8');
-              for (const b of buf) {
-                bytes.push(b);
-              }
-              if (codePoint > 0xffff) {
+              if (i < len && inner.charAt(i) >= '0' && inner.charAt(i) <= '7') {
+                octal += inner.charAt(i);
                 i++;
               }
             }
-            break;
+            octalBytes.push(parseInt(octal, 8));
+            if (
+              i < len - 1 &&
+              inner.charAt(i) === '\\' &&
+              inner.charAt(i + 1) >= '0' &&
+              inner.charAt(i + 1) <= '7'
+            ) {
+              i++;
+            } else {
+              break;
+            }
           }
+          result += utf8Decoder.decode(new Uint8Array(octalBytes));
+          continue;
+        }
+
+        switch (nextChar) {
+          case 'a':
+            result += '\x07';
+            break;
+          case 'b':
+            result += '\b';
+            break;
+          case 'f':
+            result += '\f';
+            break;
+          case 'n':
+            result += '\n';
+            break;
+          case 'r':
+            result += '\r';
+            break;
+          case 't':
+            result += '\t';
+            break;
+          case 'v':
+            result += '\v';
+            break;
+          case '\\':
+            result += '\\';
+            break;
+          case '"':
+            result += '"';
+            break;
+          default:
+            result += nextChar;
+            break;
         }
         i++;
       } else {
-        const codePoint = inner.codePointAt(i);
-        if (codePoint !== undefined) {
-          const buf = Buffer.from(String.fromCodePoint(codePoint), 'utf8');
-          for (const b of buf) {
-            bytes.push(b);
-          }
-          if (codePoint > 0xffff) {
-            i++;
-          }
-        }
+        result += char;
         i++;
       }
     }
-    return Buffer.from(bytes).toString('utf8');
+    return result;
   }
-  return trimmed;
+  return path;
 }
 
-function parseGitStatusLine(line: string): string[] {
+function parseGitStatusLine(rawLine: string): string[] {
+  const line = rawLine.replace(/\r$/, '');
   if (!line || line.length <= 3) return [];
   const statusX = line.charAt(0);
   const statusY = line.charAt(1);
-  const payload = line.slice(3).trim();
+  const payload = line.slice(3);
   if (!payload) return [];
 
   const isRenameOrCopy = statusX === 'R' || statusX === 'C' || statusY === 'R' || statusY === 'C';
@@ -221,7 +212,6 @@ export function parseGitStatusPaths(status: string): string[] {
     .filter(Boolean)
     .flatMap((line) => parseGitStatusLine(line))
     .map((path) => unquoteGitPath(path))
-    .map((path) => path.replace(/\\/g, '/'))
     .filter((path) => path.length > 0);
 
   return [...new Set(paths)].sort();
