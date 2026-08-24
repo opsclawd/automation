@@ -112,6 +112,18 @@ export class ResumeRun implements ResumeRunUseCase {
     }
   }
 
+  private async resolveEffectiveDisposition(
+    repoBasePath: string,
+    run: { status: RunStatus; issueNumber: number },
+    requestedDisposition?: ResumeDisposition,
+  ): Promise<ResumeDisposition> {
+    if (requestedDisposition !== undefined) {
+      return requestedDisposition;
+    }
+    const meaningfulDirtyPaths = await this.getMeaningfulDirtyPaths(repoBasePath, run.issueNumber);
+    return resolveResumeDisposition(run.status, meaningfulDirtyPaths, requestedDisposition);
+  }
+
   async transition(input: {
     runId: RunId;
     fromPhase?: string;
@@ -137,13 +149,9 @@ export class ResumeRun implements ResumeRunUseCase {
       throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
     }
 
-    const meaningfulDirtyPaths = await this.getMeaningfulDirtyPaths(
+    const effectiveDisposition = await this.resolveEffectiveDisposition(
       repo.localBasePath,
-      run.issueNumber,
-    );
-    const effectiveDisposition = resolveResumeDisposition(
-      run.status,
-      meaningfulDirtyPaths,
+      run,
       input.resumeDisposition,
     );
 
@@ -265,6 +273,12 @@ export class ResumeRun implements ResumeRunUseCase {
       throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
     }
 
+    const effectiveDisposition = await this.resolveEffectiveDisposition(
+      repo.localBasePath,
+      run,
+      input.resumeDisposition,
+    );
+
     let leaseAcquired = false;
     let acquiredLease;
     try {
@@ -283,7 +297,10 @@ export class ResumeRun implements ResumeRunUseCase {
     }
 
     try {
-      const transitionState = await this.transition(input);
+      const transitionState = await this.transition({
+        ...input,
+        resumeDisposition: effectiveDisposition,
+      });
       const job = createJob({
         id: `resume-${input.runId}-${now().getTime()}` as JobId,
         runId: input.runId,

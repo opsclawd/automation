@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { RunId, WorkerId, RepositoryId } from '@ai-sdlc/domain';
 import { ResumeRun, ResumeDispositionRequiredError } from '../resume-run.js';
 import { FakeRepositoryPort } from '../test-doubles/fake-repository-port.js';
@@ -660,10 +660,13 @@ describe('ResumeRun', () => {
       now: fixedNow,
     });
 
+    const acquireSpy = vi.spyOn(leases, 'acquire');
+
     await expect(usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') })).rejects.toThrow(
       ResumeDispositionRequiredError,
     );
 
+    expect(acquireSpy).not.toHaveBeenCalled();
     expect(runRepo.updates).toHaveLength(0);
     expect(queue.listForRun(rid('run-1'))).toHaveLength(0);
     expect(leases.current(repoid('run-1'))).toBeUndefined();
