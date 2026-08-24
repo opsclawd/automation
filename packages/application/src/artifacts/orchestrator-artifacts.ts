@@ -198,6 +198,8 @@ function parseGitStatusLine(rawLine: string): string[] {
     }
   }
 
+  // Note: When git core.quotePath is disabled (or for unquoted paths), if an original
+  // filename contains literal ' -> ', splitting on the first ' -> ' is ambiguous without -z output.
   const arrowIndex = payload.indexOf(' -> ');
   if (arrowIndex !== -1) {
     return [payload.slice(0, arrowIndex), payload.slice(arrowIndex + 4)];
@@ -256,7 +258,7 @@ export const PROMPT_ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
 export function getGitCommitExcludePathspecs(): readonly string[] {
   const allPatterns = orchestratorExcludePatterns();
   const unique = Array.from(new Set(allPatterns));
-  return Object.freeze(unique.map((p) => `':!${p}'`));
+  return Object.freeze(unique.map((p) => `':(exclude,glob)${p}'`));
 }
 
 export function getGitCommitExcludePathspecsString(): string {

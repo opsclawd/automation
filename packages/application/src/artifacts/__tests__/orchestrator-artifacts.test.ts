@@ -12,6 +12,8 @@ import {
   unquoteGitPath,
   formatDirtyPaths,
   isUntrackedOrAddedStatusLine,
+  getGitCommitExcludePathspecs,
+  getGitCommitExcludePathspecsString,
 } from '../orchestrator-artifacts.js';
 
 describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => {
@@ -360,5 +362,25 @@ describe('isUntrackedOrAddedStatusLine', () => {
     expect(isUntrackedOrAddedStatusLine('RM src/old.ts -> src/new.ts')).toBe(false);
     expect(isUntrackedOrAddedStatusLine('')).toBe(false);
     expect(isUntrackedOrAddedStatusLine('??')).toBe(false);
+  });
+});
+
+describe('getGitCommitExcludePathspecs', () => {
+  it('formats all patterns with :(exclude,glob) magic signature', () => {
+    const pathspecs = getGitCommitExcludePathspecs();
+    expect(Object.isFrozen(pathspecs)).toBe(true);
+    expect(pathspecs.length).toBeGreaterThan(0);
+    for (const spec of pathspecs) {
+      expect(spec).toMatch(/^':\(exclude,glob\).+'$/);
+    }
+    expect(pathspecs).toContain("':(exclude,glob)*.patch'");
+    expect(pathspecs).toContain("':(exclude,glob)plan.md'");
+    expect(pathspecs).toContain("':(exclude,glob).ai-tmp/scratch-files.json'");
+  });
+
+  it('formats pathspecs string joined with spaces', () => {
+    const str = getGitCommitExcludePathspecsString();
+    const pathspecs = getGitCommitExcludePathspecs();
+    expect(str).toBe(pathspecs.join(' '));
   });
 });
