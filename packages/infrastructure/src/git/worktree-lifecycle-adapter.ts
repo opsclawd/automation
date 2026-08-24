@@ -56,6 +56,12 @@ const DEFAULT_PRESERVED_PATTERNS = [
   /^\.ai-tmp\/.*/,
 ];
 
+function globPatternToRegExp(pattern: string): RegExp {
+  const regexString =
+    '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$';
+  return new RegExp(regexString);
+}
+
 function normalizePosixPath(path: string): string {
   if (!path || typeof path !== 'string') return '';
   return path
@@ -141,13 +147,16 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
     this.customIsPreserved = options?.isPreserved;
   }
 
-  private isPreservedPath(path: string): boolean {
+  private isPreservedPath(path: string, callerPatterns?: readonly RegExp[]): boolean {
     if (this.customIsPreserved?.(path)) {
       return true;
     }
     const norm = normalizePosixPath(path);
     if (!norm) return false;
     const basename = norm.includes('/') ? norm.slice(norm.lastIndexOf('/') + 1) : norm;
+    if (callerPatterns && callerPatterns.some((re) => re.test(norm) || re.test(basename))) {
+      return true;
+    }
     if (DEFAULT_PRESERVED_EXACT.has(norm) || DEFAULT_PRESERVED_EXACT.has(basename)) {
       return true;
     }
@@ -155,8 +164,9 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
   }
 
   async inspect(input: InspectWorktreeLifecycleInput): Promise<WorktreeLifecyclePlan> {
-    const { cwd, mode, targetBaseline } = input;
+    const { cwd, mode, targetBaseline, preservedPatterns } = input;
     const resolvedCwd = resolve(cwd);
+    const callerPatterns = preservedPatterns?.map(globPatternToRegExp);
 
     if (mode === 'resume_baseline') {
       if (!targetBaseline || targetBaseline.trim() === '') {
@@ -197,7 +207,7 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
           const normOrig = assertSafePath(resolvedCwd, rawOrigPath);
           if (normOrig) {
             trackedChanges.push(normOrig);
-            if (this.isPreservedPath(normOrig)) {
+            if (this.isPreservedPath(normOrig, callerPatterns)) {
               preservedPaths.push(normOrig);
             } else {
               discardedPaths.push(normOrig);
@@ -208,14 +218,14 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
 
       if (statusCode === '??') {
         untrackedPaths.push(normPath);
-        if (this.isPreservedPath(normPath)) {
+        if (this.isPreservedPath(normPath, callerPatterns)) {
           preservedPaths.push(normPath);
         } else {
           discardedPaths.push(normPath);
         }
       } else {
         trackedChanges.push(normPath);
-        if (this.isPreservedPath(normPath)) {
+        if (this.isPreservedPath(normPath, callerPatterns)) {
           preservedPaths.push(normPath);
         } else {
           discardedPaths.push(normPath);

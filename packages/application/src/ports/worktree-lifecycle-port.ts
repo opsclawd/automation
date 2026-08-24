@@ -4,6 +4,13 @@ export interface InspectWorktreeLifecycleInput {
   cwd: string;
   mode: WorktreeLifecycleMode;
   targetBaseline?: string;
+  /**
+   * Glob-style patterns (as produced by orchestratorExcludePatterns()) identifying
+   * application-level artifact paths that must be treated as preserved rather than
+   * discarded. Keeps orchestrator artifact knowledge in the application layer instead
+   * of hardcoded in the infrastructure adapter.
+   */
+  preservedPatterns?: readonly string[];
 }
 
 export interface WorktreeLifecyclePlan {

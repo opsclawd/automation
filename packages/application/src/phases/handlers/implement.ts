@@ -15,6 +15,7 @@ import {
   formatDirtyPaths,
   unquoteGitPath,
   isUntrackedOrAddedStatusLine,
+  orchestratorExcludePatterns,
 } from '../../artifacts/orchestrator-artifacts.js';
 
 import {
@@ -1525,6 +1526,7 @@ export class ImplementHandler implements PhaseHandler {
         const plan = await ctx.worktreeLifecycle.inspect({
           cwd: ctx.cwd,
           mode: 'phase_boundary',
+          preservedPatterns: orchestratorExcludePatterns(),
         });
         implicitPreserved = plan.preservedPaths;
 
