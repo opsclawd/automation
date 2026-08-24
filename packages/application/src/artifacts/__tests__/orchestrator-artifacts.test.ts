@@ -7,6 +7,7 @@ import {
   isOrchestratorArtifactPath,
   isOrchestratorArtifactPattern,
   orchestratorExcludePatterns,
+  parseGitStatusPaths,
   uncommittedSourcePaths,
   unquoteGitPath,
   formatDirtyPaths,
@@ -71,7 +72,53 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
   });
 });
 
+describe('parseGitStatusPaths', () => {
+  it('returns empty array when status is empty', () => {
+    expect(parseGitStatusPaths('')).toEqual([]);
+  });
+
+  it('parseGitStatusPaths returns every normalized path without artifact filtering', () => {
+    const status = [
+      ' M plan.md',
+      '?? plan-review-findings.md',
+      ' M src/nested/file.ts',
+      ' M src\\nested/file.ts',
+      '?? "src/quoted with space.ts"',
+      'R  old.ts -> new.ts',
+    ].join('\n');
+    expect(parseGitStatusPaths(status)).toEqual([
+      'new.ts',
+      'old.ts',
+      'plan-review-findings.md',
+      'plan.md',
+      'src/nested/file.ts',
+      'src/quoted with space.ts',
+    ]);
+  });
+});
+
 describe('uncommittedSourcePaths', () => {
+  it('uncommittedSourcePaths preserves global orchestrator artifact filtering', () => {
+    const status = [
+      ' M plan.md',
+      '?? plan-review-findings.md',
+      '?? implementation-log.md',
+      ' M pr-summary.md',
+      '?? pr-url.txt',
+      '?? changes.patch',
+      '?? fix.diff',
+      ' M src/plan.md',
+      '?? nested/design.md',
+      'R  old.ts -> new.ts',
+    ].join('\n');
+    expect(uncommittedSourcePaths(status)).toEqual([
+      'nested/design.md',
+      'new.ts',
+      'old.ts',
+      'src/plan.md',
+    ]);
+  });
+
   it('returns empty array when status is empty', () => {
     expect(uncommittedSourcePaths('')).toEqual([]);
   });

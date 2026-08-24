@@ -108,18 +108,23 @@ export function unquoteGitPath(path: string): string {
   return trimmed;
 }
 
-export function uncommittedSourcePaths(status: string): string[] {
-  const compiledRegexes = getOrchestratorRegexes();
-  const sourcePaths = status
+export function parseGitStatusPaths(status: string): string[] {
+  const paths = status
     .split('\n')
     .filter(Boolean)
     .flatMap((line) => (line.length > 3 ? line.slice(3).split(' -> ') : []))
     .map((path) => unquoteGitPath(path))
     .map((path) => path.replace(/\\/g, '/'))
-    .filter((path) => path.length > 0)
-    .filter((path) => !compiledRegexes.some((regex) => regex.test(path)));
+    .filter((path) => path.length > 0);
 
-  return [...new Set(sourcePaths)].sort();
+  return [...new Set(paths)].sort();
+}
+
+export function uncommittedSourcePaths(status: string): string[] {
+  const compiledRegexes = getOrchestratorRegexes();
+  return parseGitStatusPaths(status).filter(
+    (path) => !compiledRegexes.some((regex) => regex.test(path)),
+  );
 }
 
 export function isUntrackedOrAddedStatusLine(line: string): boolean {
