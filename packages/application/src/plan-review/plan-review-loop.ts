@@ -2750,14 +2750,14 @@ export class PlanReviewLoop {
     const hasP0 = eligible.some((f) => f.severity === 'P0');
     const hasP1 = eligible.some((f) => f.severity === 'P1');
     const hasP2 = eligible.some((f) => f.severity === 'P2');
-    if (hasP0 || hasP1 || hasP2) return 'p1_found';
+    if (hasP0 || hasP1) return 'p1_found';
 
     if (
       reviewerVerdict === 'p1_found' ||
       reviewerVerdict === 'p2_only' ||
       reviewerVerdict === 'proceed_with_concerns'
     ) {
-      return 'pass';
+      return hasP2 ? 'p2_only' : 'pass';
     }
     return reviewerVerdict;
   }
