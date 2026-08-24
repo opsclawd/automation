@@ -285,6 +285,7 @@ export interface ReviewFixLoopInput {
   architectPlan?: ArchitectPlan;
   options?: ReviewFixLoopOptions;
   manifest?: TaskManifest;
+  currentTaskNumber?: number;
   scopeContractEnforcement?: boolean;
 }
 

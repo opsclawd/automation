@@ -275,6 +275,7 @@ describe('revertScopeFiles', () => {
     const stepHeadSha = execGit(['rev-parse', 'HEAD']);
 
     // Create a post-commit hook that re-creates the unauthorized file after commit --amend
+    execGit(['config', 'core.hooksPath', '.git/hooks']);
     mkdirSync(join(repoDir, '.git', 'hooks'), { recursive: true });
     const hookPath = join(repoDir, '.git', 'hooks', 'post-commit');
     writeFileSync(

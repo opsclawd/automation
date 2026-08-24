@@ -20,11 +20,12 @@ import { extractEvidence } from './extract-evidence.js';
 import { appendRebuttalToCodeReview } from './append-rebuttal.js';
 import { verifyFixCommit } from '../fix-commit-verifier.js';
 import {
-  checkTaskBoundaries,
+  classifyTaskChanges,
   classifyUndeclaredFiles,
   getManifestBoundaries,
   loadManifest,
   normalizeTaskPath,
+  resolveEffectiveTaskScope,
   type ManifestLoadResult,
 } from '../task-file-boundaries.js';
 import { isProtectedFilePath } from '../scratch-file-remediation.js';
@@ -2808,12 +2809,83 @@ export class ReviewFixLoop {
 
     const scopeContractEnforcement = loopInput.scopeContractEnforcement ?? true;
 
-    let classification;
     if (scopeContractEnforcement) {
-      classification = checkTaskBoundaries(committedFiles, manifestResult.manifest);
+      const manifestObj = manifestResult.manifest as Record<string, unknown> | undefined;
+      const manifestTasks =
+        manifestObj && Array.isArray(manifestObj.tasks) ? manifestObj.tasks : undefined;
+
+      const currentTaskNumber = loopInput.currentTaskNumber;
+      let currentScope;
+
+      if (currentTaskNumber !== undefined && Array.isArray(manifestTasks)) {
+        const currentTask = manifestTasks.find((t, i) => {
+          if (t && typeof t === 'object') {
+            const rec = t as Record<string, unknown>;
+            if (rec.n === currentTaskNumber || rec.task_number === currentTaskNumber) return true;
+          }
+          return i + 1 === currentTaskNumber;
+        });
+        currentScope = resolveEffectiveTaskScope(currentTask);
+      } else {
+        const scopes = (manifestTasks ?? []).map((t) => resolveEffectiveTaskScope(t));
+        currentScope = {
+          requiredFiles: [...new Set(scopes.flatMap((s) => s.requiredFiles))],
+          mayExtendFiles: [...new Set(scopes.flatMap((s) => s.mayExtendFiles))],
+          permittedAreas: [...new Set(scopes.flatMap((s) => s.permittedAreas))],
+          nonGoals: [...new Set(scopes.flatMap((s) => s.nonGoals))],
+          referenceFiles: [...new Set(scopes.flatMap((s) => s.referenceFiles))],
+        };
+      }
+
+      const scopeClassification = classifyTaskChanges({
+        candidates: committedFiles,
+        currentScope,
+        ...(currentTaskNumber !== undefined && manifestTasks
+          ? { manifestTasks, currentTaskNumber }
+          : {}),
+      });
+
+      const prematurePaths = scopeClassification.prematureImplementation.map((p) => p.path);
+      const violatingFiles = [
+        ...new Set([
+          ...scopeClassification.modifiedReferenceFiles,
+          ...scopeClassification.nonGoalFiles,
+          ...prematurePaths,
+          ...scopeClassification.driftFiles,
+          ...(scopeClassification.protectedFiles ?? []),
+        ]),
+      ].sort();
+
+      if (violatingFiles.length > 0) {
+        let message = `${loopInput.phaseId} modified undeclared files: ${violatingFiles.join(', ')}`;
+        if (scopeClassification.prematureImplementation.length > 0) {
+          const prematureDetails = scopeClassification.prematureImplementation
+            .map((p) => `${p.path} (owned by task ${p.taskNumber})`)
+            .join(', ');
+          message += `; premature implementation of files owned by downstream tasks: ${prematureDetails}`;
+        }
+        const undeclaredFiles = [
+          ...new Set([
+            ...scopeClassification.driftFiles,
+            ...prematurePaths,
+            ...scopeClassification.nonGoalFiles,
+            ...(scopeClassification.protectedFiles ?? []),
+          ]),
+        ].sort();
+
+        this.emit(loopInput, 'task_boundary.violated', 'warn', message, {
+          phase: loopInput.phaseId,
+          files: violatingFiles,
+          modifiedReferenceFiles: scopeClassification.modifiedReferenceFiles,
+          undeclaredFiles,
+          prematureImplementation: scopeClassification.prematureImplementation,
+          iterationIndex: ctx.iterationIndex,
+        });
+        return { ok: false, message, files: violatingFiles };
+      }
     } else {
       const { writableSet, referenceSet } = getManifestBoundaries(manifestResult.manifest);
-      classification = classifyUndeclaredFiles(
+      const classification = classifyUndeclaredFiles(
         committedFiles,
         writableSet,
         referenceSet,
@@ -2823,22 +2895,22 @@ export class ReviewFixLoop {
         // feature of this loop, so there's nothing to thread through here.
         new Set(),
       );
-    }
 
-    const violatingFiles = [
-      ...classification.modifiedReferenceFiles,
-      ...classification.undeclaredFiles,
-    ];
-    if (violatingFiles.length > 0) {
-      const message = `${loopInput.phaseId} modified undeclared files: ${violatingFiles.join(', ')}`;
-      this.emit(loopInput, 'task_boundary.violated', 'warn', message, {
-        phase: loopInput.phaseId,
-        files: violatingFiles,
-        modifiedReferenceFiles: classification.modifiedReferenceFiles,
-        undeclaredFiles: classification.undeclaredFiles,
-        iterationIndex: ctx.iterationIndex,
-      });
-      return { ok: false, message, files: violatingFiles };
+      const violatingFiles = [
+        ...classification.modifiedReferenceFiles,
+        ...classification.undeclaredFiles,
+      ];
+      if (violatingFiles.length > 0) {
+        const message = `${loopInput.phaseId} modified undeclared files: ${violatingFiles.join(', ')}`;
+        this.emit(loopInput, 'task_boundary.violated', 'warn', message, {
+          phase: loopInput.phaseId,
+          files: violatingFiles,
+          modifiedReferenceFiles: classification.modifiedReferenceFiles,
+          undeclaredFiles: classification.undeclaredFiles,
+          iterationIndex: ctx.iterationIndex,
+        });
+        return { ok: false, message, files: violatingFiles };
+      }
     }
 
     return { ok: true, changedFiles: committedFiles };
