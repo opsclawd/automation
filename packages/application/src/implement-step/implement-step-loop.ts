@@ -361,6 +361,7 @@ export class ImplementStepLoop {
     let lastFixInvocationId: string | undefined;
     let lastFixHeadBeforeFix: string | undefined;
     let pendingTypecheckErrors: string | TypescriptError[] | undefined;
+    let pendingDeterministicDiagnostic: string | undefined;
     let contradictionRetriedThisStep = false;
     let arbiterInvokedThisStep = false;
     let pendingReconciliationContext: string | undefined;
@@ -2046,11 +2047,15 @@ export class ImplementStepLoop {
                   ? { historyContext: bonusFixHistoryContext }
                   : {}),
                 reconciliationContext: pendingReconciliationContext,
+                ...(pendingDeterministicDiagnostic !== undefined
+                  ? { deterministicDiagnostic: pendingDeterministicDiagnostic }
+                  : {}),
                 ...(bonusHolisticFindings ? { holisticFindings: bonusHolisticFindings } : {}),
                 ...(scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : {}),
               },
             );
             pendingReconciliationContext = undefined;
+            pendingDeterministicDiagnostic = undefined;
             lastFixInvocationId = bonusFix.invocationId;
             lastFixHeadBeforeFix = bonusFix.headBeforeFix;
 
@@ -2113,6 +2118,35 @@ export class ImplementStepLoop {
                     undefined,
                     'unresolved',
                     verification.kind !== 'verification_error' ? verification : undefined,
+                  ),
+                );
+                this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+                break;
+              }
+
+              const headAfterFix = verification.headAfterFix;
+              const boundaryCheck = await this.checkTaskBoundary(
+                ctx,
+                input,
+                bonusFix.headBeforeFix,
+                headAfterFix,
+              );
+              if (!boundaryCheck.ok) {
+                pendingDeterministicDiagnostic = boundaryCheck.message;
+                loop = completeIteration(loop, {
+                  outcome: 'unresolved',
+                  fixInvocationId: bonusFix.invocationId,
+                  now: deps.now(),
+                });
+                deps.loops.update(loop);
+                await appendHistory(
+                  buildHistoryEntry(
+                    iterationIndex,
+                    specReview,
+                    qualityReview,
+                    bonusFix,
+                    undefined,
+                    'unresolved',
                   ),
                 );
                 this.emitIterationCompleted(input, iterationIndex, 'unresolved');
@@ -2209,6 +2243,9 @@ export class ImplementStepLoop {
           ...(pendingReconciliationContext !== undefined
             ? { reconciliationContext: pendingReconciliationContext }
             : {}),
+          ...(pendingDeterministicDiagnostic !== undefined
+            ? { deterministicDiagnostic: pendingDeterministicDiagnostic }
+            : {}),
           ...(pendingTypecheckErrors !== undefined
             ? { typecheckErrors: pendingTypecheckErrors }
             : {}),
@@ -2220,6 +2257,7 @@ export class ImplementStepLoop {
         },
       );
       pendingReconciliationContext = undefined;
+      pendingDeterministicDiagnostic = undefined;
       pendingTypecheckErrors = undefined;
       lastFixInvocationId = fix.invocationId;
       lastFixHeadBeforeFix = fix.headBeforeFix;
@@ -2542,6 +2580,35 @@ export class ImplementStepLoop {
                 { sha: committedSha, iterationIndex },
               );
               autoCommitted = true;
+              const boundaryCheck = await this.checkTaskBoundary(
+                ctx,
+                input,
+                fix.headBeforeFix,
+                committedSha,
+              );
+              if (!boundaryCheck.ok) {
+                pendingDeterministicDiagnostic = boundaryCheck.message;
+                consecutiveFixFailures += 1;
+                loop = completeIteration(loop, {
+                  outcome: 'unresolved',
+                  fixInvocationId: fix.invocationId,
+                  now: deps.now(),
+                });
+                deps.loops.update(loop);
+                await appendHistory(
+                  buildHistoryEntry(
+                    iterationIndex,
+                    specReview,
+                    qualityReview,
+                    fix,
+                    undefined,
+                    'unresolved',
+                  ),
+                );
+                lastFixHeadBeforeFix = undefined;
+                this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+                continue;
+              }
               // Success: treat this as a productive fix that advanced HEAD.
               consecutiveFixFailures = 0;
               lastFixHeadBeforeFix = undefined;
@@ -2656,6 +2723,38 @@ export class ImplementStepLoop {
             },
           );
           // Fall through to normal success path — verifier could not read the tree.
+        }
+
+        const headAfterFix = verification.kind === 'advanced' ? verification.headAfterFix : undefined;
+        if (headAfterFix) {
+          const boundaryCheck = await this.checkTaskBoundary(
+            ctx,
+            input,
+            fix.headBeforeFix,
+            headAfterFix,
+          );
+          if (!boundaryCheck.ok) {
+            pendingDeterministicDiagnostic = boundaryCheck.message;
+            consecutiveFixFailures += 1;
+            loop = completeIteration(loop, {
+              outcome: 'unresolved',
+              fixInvocationId: fix.invocationId,
+              now: deps.now(),
+            });
+            deps.loops.update(loop);
+            await appendHistory(
+              buildHistoryEntry(
+                iterationIndex,
+                specReview,
+                qualityReview,
+                fix,
+                undefined,
+                'unresolved',
+              ),
+            );
+            this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+            continue;
+          }
         }
       }
 
@@ -2775,11 +2874,15 @@ export class ImplementStepLoop {
           useFallback: false,
           isTerminalFix: true,
           ...(terminalDeterministicFailures !== undefined ? { terminalDeterministicFailures } : {}),
+          ...(pendingDeterministicDiagnostic !== undefined
+            ? { deterministicDiagnostic: pendingDeterministicDiagnostic }
+            : {}),
           ...(historyContext !== undefined ? { historyContext } : {}),
           ...(terminalHolisticFindings ? { holisticFindings: terminalHolisticFindings } : {}),
           ...(scopeSet.size > 0 ? { additionalEditableFiles: [...scopeSet].sort() } : {}),
         },
       );
+      pendingDeterministicDiagnostic = undefined;
 
       // cannot_fix is an explicit surrender — respect it without salvage.
       if (terminalFix.verdict === 'cannot_fix') {
@@ -2895,6 +2998,31 @@ export class ImplementStepLoop {
           },
         );
         return { outcome: 'needs_human_review', loop };
+      }
+
+      if (deps.git && terminalFix.headBeforeFix !== undefined) {
+        const headAfterFix = await deps.git.headCommitSha(baseCtx.cwd);
+        const boundaryCheck = await this.checkTaskBoundary(
+          baseCtx,
+          input,
+          terminalFix.headBeforeFix,
+          headAfterFix,
+        );
+        if (!boundaryCheck.ok) {
+          this.emit(
+            input,
+            'step.terminal_fix.rejected',
+            'warn',
+            terminalVerificationFailureMessage(boundaryCheck.message, undefined),
+            {
+              profile: deps.terminalFixProfile,
+              priorIterations: loop.iterations.length,
+              headAdvanced,
+              autoCommitted,
+            },
+          );
+          return { outcome: 'needs_human_review', loop };
+        }
       }
 
       // Deterministic verification: typecheck + validation commands + tests.
@@ -3030,6 +3158,93 @@ export class ImplementStepLoop {
     }
 
     return result;
+  }
+
+  private async checkTaskBoundary(
+    ctx: StepLoopContext,
+    input: ImplementStepLoopInput,
+    headBeforeFix: string,
+    headAfterFix: string,
+  ): Promise<
+    { ok: true; changedFiles: string[] } | { ok: false; message: string; files?: string[] }
+  > {
+    if (!this.deps.git || typeof this.deps.git.changedFiles !== 'function') {
+      return { ok: true, changedFiles: [] };
+    }
+
+    if (headBeforeFix === headAfterFix) {
+      return { ok: true, changedFiles: [] };
+    }
+
+    let committedFiles: string[];
+    try {
+      committedFiles = await this.deps.git.changedFiles(ctx.cwd, headBeforeFix, headAfterFix);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.emit(
+        input,
+        'task_boundary.check_failed',
+        'warn',
+        `task boundary check failed: ${errorMsg}`,
+        { iterationIndex: ctx.iterationIndex, reason: 'check_error', error: errorMsg },
+      );
+      return { ok: false, message: `task boundary check failed: ${errorMsg}` };
+    }
+
+    const task =
+      input.manifest?.tasks?.find((t) => (t as { n?: number }).n === input.stepIndex) ??
+      input.manifest?.tasks?.[input.stepIndex - 1];
+    const currentScope = resolveEffectiveTaskScope(task);
+
+    const scopeClassification = classifyTaskChanges({
+      candidates: committedFiles,
+      currentScope,
+      ...(input.manifest?.tasks ? { manifestTasks: input.manifest.tasks } : {}),
+      ...(input.manifest ? { manifest: input.manifest } : {}),
+      currentTaskNumber: input.stepIndex,
+      ...(input.exemptUndeclaredFiles ? { exemptFiles: input.exemptUndeclaredFiles } : {}),
+    });
+
+    const prematurePaths = scopeClassification.prematureImplementation.map((p) => p.path);
+    const violatingFiles = [
+      ...new Set([
+        ...scopeClassification.modifiedReferenceFiles,
+        ...scopeClassification.nonGoalFiles,
+        ...prematurePaths,
+        ...scopeClassification.driftFiles,
+        ...(scopeClassification.protectedFiles ?? []),
+      ]),
+    ].sort();
+
+    if (violatingFiles.length > 0) {
+      let message = `${input.phaseId} modified undeclared files: ${violatingFiles.join(', ')}`;
+      if (scopeClassification.prematureImplementation.length > 0) {
+        const prematureDetails = scopeClassification.prematureImplementation
+          .map((p) => `${p.path} (owned by task ${p.taskNumber})`)
+          .join(', ');
+        message += `; premature implementation of files owned by downstream tasks: ${prematureDetails}`;
+      }
+      const undeclaredFiles = [
+        ...new Set([
+          ...scopeClassification.driftFiles,
+          ...prematurePaths,
+          ...scopeClassification.nonGoalFiles,
+          ...(scopeClassification.protectedFiles ?? []),
+        ]),
+      ].sort();
+
+      this.emit(input, 'task_boundary.violated', 'warn', message, {
+        phase: input.phaseId,
+        files: violatingFiles,
+        modifiedReferenceFiles: scopeClassification.modifiedReferenceFiles,
+        undeclaredFiles,
+        prematureImplementation: scopeClassification.prematureImplementation,
+        iterationIndex: ctx.iterationIndex,
+      });
+      return { ok: false, message, files: violatingFiles };
+    }
+
+    return { ok: true, changedFiles: committedFiles };
   }
 
   private emitEscalation(

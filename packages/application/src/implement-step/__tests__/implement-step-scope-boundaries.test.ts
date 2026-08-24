@@ -479,4 +479,155 @@ describe('ImplementStepLoop Scope Boundaries', () => {
       failedInvertedCommands: ['! pnpm test -- src/proof.test.ts'],
     });
   });
+
+  it('rejects per-iteration fix commit touching a downstream task file immediately', async () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: Add helper',
+          expected_files: ['src/helper.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2: Add downstream component',
+          expected_files: ['src/downstream.ts'],
+        },
+      ],
+    };
+
+    const harness = createHarness({
+      manifest,
+      stepIndex: 1,
+      stepTitle: 'Task 1: Add helper',
+      initialPreStepHead: 'head-0',
+      headSha: 'head-1',
+    });
+
+    // Spec review fails for iterations 1 and 2 -> runFix triggered in both iterations
+    let specCallCount = 0;
+    harness.runSpecReview.mockImplementation(async () => {
+      specCallCount++;
+      if (specCallCount <= 2) {
+        return {
+          invocationId: `spec-${specCallCount}`,
+          agentOutcome: 'success',
+          verdict: 'fail',
+          findings: [{ severity: 'high', summary: 'Missing helper export' }],
+        };
+      }
+      return {
+        invocationId: `spec-${specCallCount}`,
+        agentOutcome: 'success',
+        verdict: 'pass',
+      };
+    });
+
+    const fixOptsPassed: ImplementFixStepOptions[] = [];
+    let fixCallCount = 0;
+    harness.runFix.mockImplementation(async (_ctx, opts) => {
+      fixCallCount++;
+      fixOptsPassed.push(opts);
+      if (fixCallCount === 1) {
+        // Fix 1 advances HEAD to head-2, touching downstream.ts (owned by task 2)
+        harness.git.headByCwd.set('/wt', 'head-2');
+        harness.git.changedFilesResults.set('head-1|head-2', ['src/downstream.ts']);
+        return {
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'head-1',
+        };
+      }
+      // Fix 2 advances HEAD to head-3, touching helper.ts (task 1 expected file)
+      harness.git.headByCwd.set('/wt', 'head-3');
+      harness.git.changedFilesResults.set('head-2|head-3', ['src/helper.ts']);
+      return {
+        invocationId: 'fix-2',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'head-2',
+      };
+    });
+
+    await harness.loop.execute(harness.input);
+
+    const boundaryEvent = harness.events.find((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvent).toBeDefined();
+    expect(boundaryEvent?.message).toContain(
+      'implement modified undeclared files: src/downstream.ts; premature implementation of files owned by downstream tasks: src/downstream.ts (owned by task 2)',
+    );
+
+    // Verify fix 2 received the boundary diagnostic in opts.deterministicDiagnostic
+    expect(fixOptsPassed.length).toBeGreaterThanOrEqual(2);
+    expect(fixOptsPassed[1]?.deterministicDiagnostic).toContain(
+      'premature implementation of files owned by downstream tasks: src/downstream.ts (owned by task 2)',
+    );
+  });
+
+  it('rejects terminal fix commit touching a downstream task file immediately', async () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: Add helper',
+          expected_files: ['src/helper.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2: Add downstream component',
+          expected_files: ['src/downstream.ts'],
+        },
+      ],
+    };
+
+    const harness = createHarness({
+      manifest,
+      stepIndex: 1,
+      stepTitle: 'Task 1: Add helper',
+      initialPreStepHead: 'head-0',
+      headSha: 'head-1',
+    });
+
+    harness.deps.terminalFixProfile = AgentProfileName('terminal-fix-profile');
+
+    // Spec review always fails to exhaust regular iterations
+    harness.runSpecReview.mockImplementation(async () => ({
+      invocationId: 'spec-fail',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      findings: [{ severity: 'high', summary: 'Persistent defect' }],
+    }));
+
+    harness.runFix.mockImplementation(async (_ctx, opts) => {
+      if (opts.isTerminalFix) {
+        harness.git.headByCwd.set('/wt', 'head-term');
+        harness.git.changedFilesResults.set('head-1|head-term', ['src/downstream.ts']);
+        return {
+          invocationId: 'fix-term',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'head-1',
+        };
+      }
+      return {
+        invocationId: 'fix-regular',
+        agentOutcome: 'success',
+        verdict: 'cannot_fix',
+      };
+    });
+
+    const result = await harness.loop.execute(harness.input);
+
+    expect(result.outcome).toBe('needs_human_review');
+    const rejectedEvent = harness.events.find((e) => e.type === 'step.terminal_fix.rejected');
+    expect(rejectedEvent).toBeDefined();
+    expect(rejectedEvent?.message).toContain(
+      'premature implementation of files owned by downstream tasks: src/downstream.ts (owned by task 2)',
+    );
+  });
 });
