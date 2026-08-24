@@ -194,7 +194,7 @@ async function evaluateWorktreeState({
       statusOutput
         .split('\n')
         .filter(isUntrackedOrAddedStatusLine)
-        .map((line) => unquoteGitPath(line.replace(/\r$/, '').slice(3)))
+        .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
         .map(normalizeTaskPath)
         .filter(Boolean),
     );

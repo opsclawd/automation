@@ -258,7 +258,7 @@ export const PROMPT_ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
 export function getGitCommitExcludePathspecs(): readonly string[] {
   const allPatterns = orchestratorExcludePatterns();
   const unique = Array.from(new Set(allPatterns));
-  return Object.freeze(unique.map((p) => `':(exclude,glob)${p}'`));
+  return Object.freeze(unique.map((p) => `':(exclude,glob)${p.replace(/'/g, "'\\''")}'`));
 }
 
 export function getGitCommitExcludePathspecsString(): string {
