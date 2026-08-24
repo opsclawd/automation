@@ -95,21 +95,21 @@ describe('WorktreeLifecycleAdapter', () => {
     expect(plan.preservedPaths).toEqual([]);
   });
 
-  it('preserves canonical orchestrator artifacts and .gitignore during inspection and execution', async () => {
+  it('preserves explicit patterns and files during inspection and execution', async () => {
     const { repoDir, execGit } = initRepo();
     const adapter = new WorktreeLifecycleAdapter();
 
     // Baseline commit
-    writeFileSync(join(repoDir, '.gitignore'), 'node_modules\n');
+    writeFileSync(join(repoDir, 'config.json'), '{"version": 1}\n');
     writeFileSync(join(repoDir, 'src-file.ts'), 'export const v = 1;\n');
     execGit(['add', '.']);
     execGit(['commit', '-m', 'chore: baseline']);
     const baselineSha = execGit(['rev-parse', 'HEAD']);
 
-    // Create untracked artifacts and .gitignore change and disposable probe
-    writeFileSync(join(repoDir, 'task-manifest.json'), '{"version": 2}\n');
-    writeFileSync(join(repoDir, 'plan.md'), '# Plan\n');
-    writeFileSync(join(repoDir, 'review-triage.md'), '# Triage\n');
+    // Create untracked preserved files and disposable probes
+    writeFileSync(join(repoDir, 'keep-data.json'), '{"data": true}\n');
+    writeFileSync(join(repoDir, 'notes.md'), '# Notes\n');
+    writeFileSync(join(repoDir, 'summary.txt'), 'Summary\n');
     writeFileSync(join(repoDir, 'scratch-probe.ts'), 'export const probe = true;\n');
     mkdirSync(join(repoDir, 'apps', 'web'), { recursive: true });
     writeFileSync(join(repoDir, 'apps', 'web', 'test-probe.ts'), 'export const webProbe = true;\n');
@@ -120,9 +120,10 @@ describe('WorktreeLifecycleAdapter', () => {
     const plan = await adapter.inspect({
       cwd: repoDir,
       mode: 'phase_boundary',
+      preservedPatterns: ['config.json', 'keep-data.json', 'notes.md', 'summary.txt'],
     });
 
-    expect(plan.preservedPaths).toEqual(['plan.md', 'review-triage.md', 'task-manifest.json']);
+    expect(plan.preservedPaths).toEqual(['keep-data.json', 'notes.md', 'summary.txt']);
     expect(plan.discardedPaths).toEqual([
       'apps/web/test-probe.ts',
       'scratch-probe.ts',
@@ -137,13 +138,13 @@ describe('WorktreeLifecycleAdapter', () => {
       'scratch-probe.ts',
       'src-file.ts',
     ]);
-    expect(result.preservedPaths).toEqual(['plan.md', 'review-triage.md', 'task-manifest.json']);
+    expect(result.preservedPaths).toEqual(['keep-data.json', 'notes.md', 'summary.txt']);
 
     // Preserved files must still exist on disk
-    expect(existsSync(join(repoDir, '.gitignore'))).toBe(true);
-    expect(existsSync(join(repoDir, 'task-manifest.json'))).toBe(true);
-    expect(existsSync(join(repoDir, 'plan.md'))).toBe(true);
-    expect(existsSync(join(repoDir, 'review-triage.md'))).toBe(true);
+    expect(existsSync(join(repoDir, 'config.json'))).toBe(true);
+    expect(existsSync(join(repoDir, 'keep-data.json'))).toBe(true);
+    expect(existsSync(join(repoDir, 'notes.md'))).toBe(true);
+    expect(existsSync(join(repoDir, 'summary.txt'))).toBe(true);
 
     // Discarded untracked files must be removed from disk
     expect(existsSync(join(repoDir, 'scratch-probe.ts'))).toBe(false);
@@ -289,34 +290,37 @@ describe('WorktreeLifecycleAdapter', () => {
     expect(existsSync(join(repoDir, 'probe2.ts'))).toBe(true);
   });
 
-  it('preserves modifications to tracked files like .gitignore while reverting discarded tracked changes', async () => {
+  it('preserves modifications to tracked preserved files while reverting discarded tracked changes', async () => {
     const { repoDir, execGit } = initRepo();
     const adapter = new WorktreeLifecycleAdapter();
 
-    writeFileSync(join(repoDir, '.gitignore'), 'node_modules\n');
+    writeFileSync(join(repoDir, 'config.json'), '{"keep": true}\n');
     writeFileSync(join(repoDir, 'src-file.ts'), 'export const v = 1;\n');
     execGit(['add', '.']);
     execGit(['commit', '-m', 'chore: baseline']);
     const baselineSha = execGit(['rev-parse', 'HEAD']);
 
-    // Modify tracked .gitignore (preserved) and tracked src-file.ts (discarded)
-    writeFileSync(join(repoDir, '.gitignore'), 'node_modules\n.ai-tmp/\n');
+    // Modify tracked config.json (preserved) and tracked src-file.ts (discarded)
+    writeFileSync(join(repoDir, 'config.json'), '{"keep": true, "updated": true}\n');
     writeFileSync(join(repoDir, 'src-file.ts'), 'export const v = 99;\n');
 
     const plan = await adapter.inspect({
       cwd: repoDir,
       mode: 'phase_boundary',
+      preservedPatterns: ['config.json'],
     });
 
-    expect(plan.preservedPaths).toEqual(['.gitignore']);
+    expect(plan.preservedPaths).toEqual(['config.json']);
     expect(plan.discardedPaths).toEqual(['src-file.ts']);
 
     const result = await adapter.execute({ plan });
 
     expect(result.success).toBe(true);
     expect(execGit(['rev-parse', 'HEAD'])).toBe(baselineSha);
-    // .gitignore modifications must be preserved
-    expect(readFileSync(join(repoDir, '.gitignore'), 'utf8')).toBe('node_modules\n.ai-tmp/\n');
+    // config.json modifications must be preserved
+    expect(readFileSync(join(repoDir, 'config.json'), 'utf8')).toBe(
+      '{"keep": true, "updated": true}\n',
+    );
     // src-file.ts must be reverted to baseline
     expect(readFileSync(join(repoDir, 'src-file.ts'), 'utf8')).toBe('export const v = 1;\n');
   });
@@ -365,29 +369,30 @@ describe('WorktreeLifecycleAdapter', () => {
     const { repoDir, execGit } = initRepo();
     const adapter = new WorktreeLifecycleAdapter();
 
-    writeFileSync(join(repoDir, '.gitignore'), 'node_modules\n');
+    writeFileSync(join(repoDir, 'preserved-file.txt'), 'preserved content\n');
     execGit(['add', '.']);
     execGit(['commit', '-m', 'chore: baseline']);
     const baselineSha = execGit(['rev-parse', 'HEAD']);
 
     // Staged rename of preserved file
-    execGit(['mv', '.gitignore', 'unpreserved-gitignore.txt']);
+    execGit(['mv', 'preserved-file.txt', 'unpreserved-renamed.txt']);
 
     const plan = await adapter.inspect({
       cwd: repoDir,
       mode: 'phase_boundary',
+      preservedPatterns: ['preserved-file.txt'],
     });
 
-    expect(plan.preservedPaths).toEqual(['.gitignore']);
-    expect(plan.discardedPaths).toEqual(['unpreserved-gitignore.txt']);
+    expect(plan.preservedPaths).toEqual(['preserved-file.txt']);
+    expect(plan.discardedPaths).toEqual(['unpreserved-renamed.txt']);
 
     const result = await adapter.execute({ plan });
 
     expect(result.success).toBe(true);
     expect(execGit(['rev-parse', 'HEAD'])).toBe(baselineSha);
-    expect(existsSync(join(repoDir, 'unpreserved-gitignore.txt'))).toBe(false);
-    expect(existsSync(join(repoDir, '.gitignore'))).toBe(true);
-    expect(readFileSync(join(repoDir, '.gitignore'), 'utf8')).toBe('node_modules\n');
+    expect(existsSync(join(repoDir, 'unpreserved-renamed.txt'))).toBe(false);
+    expect(existsSync(join(repoDir, 'preserved-file.txt'))).toBe(true);
+    expect(readFileSync(join(repoDir, 'preserved-file.txt'), 'utf8')).toBe('preserved content\n');
   });
 
   it('handles chunked checkout when reverting over 500 modified tracked files', async () => {
@@ -460,7 +465,7 @@ describe('WorktreeLifecycleAdapter', () => {
     const { repoDir, execGit } = initRepo();
     const adapter = new WorktreeLifecycleAdapter();
 
-    writeFileSync(join(repoDir, '.gitignore'), 'node_modules\n');
+    writeFileSync(join(repoDir, 'config.json'), '{"base": true}\n');
     writeFileSync(join(repoDir, 'file.ts'), 'baseline content\n');
     execGit(['add', '.']);
     execGit(['commit', '-m', 'initial baseline']);
@@ -472,17 +477,18 @@ describe('WorktreeLifecycleAdapter', () => {
     execGit(['add', '.']);
     execGit(['commit', '-m', 'feat: step changes']);
 
-    // Dirty the worktree with uncommitted changes to preserved .gitignore and disposable probe
-    writeFileSync(join(repoDir, '.gitignore'), 'node_modules\n.ai-tmp/\n');
+    // Dirty the worktree with uncommitted changes to preserved config.json and disposable probe
+    writeFileSync(join(repoDir, 'config.json'), '{"base": true, "uncommitted": true}\n');
     writeFileSync(join(repoDir, 'uncommitted-probe.ts'), 'probe\n');
 
     const plan = await adapter.inspect({
       cwd: repoDir,
       mode: 'resume_baseline',
       targetBaseline: baselineSha,
+      preservedPatterns: ['config.json'],
     });
 
-    expect(plan.preservedPaths).toEqual(['.gitignore']);
+    expect(plan.preservedPaths).toEqual(['config.json']);
     expect(plan.discardedPaths).toEqual(['uncommitted-probe.ts']);
 
     const result = await adapter.execute({ plan });
@@ -492,8 +498,10 @@ describe('WorktreeLifecycleAdapter', () => {
     expect(readFileSync(join(repoDir, 'file.ts'), 'utf8')).toBe('baseline content\n');
     expect(existsSync(join(repoDir, 'new-step-file.ts'))).toBe(false);
     expect(existsSync(join(repoDir, 'uncommitted-probe.ts'))).toBe(false);
-    // Uncommitted changes to .gitignore must be preserved
-    expect(readFileSync(join(repoDir, '.gitignore'), 'utf8')).toBe('node_modules\n.ai-tmp/\n');
+    // Uncommitted changes to config.json must be preserved
+    expect(readFileSync(join(repoDir, 'config.json'), 'utf8')).toBe(
+      '{"base": true, "uncommitted": true}\n',
+    );
   });
 
   it('handles chunked deletion when discarding over 500 untracked files', async () => {
@@ -524,5 +532,61 @@ describe('WorktreeLifecycleAdapter', () => {
     expect(execGit(['rev-parse', 'HEAD'])).toBe(baselineSha);
     expect(existsSync(join(repoDir, 'bulk-untracked', 'file-0.txt'))).toBe(false);
     expect(existsSync(join(repoDir, 'bulk-untracked', `file-${fileCount - 1}.txt`))).toBe(false);
+  });
+
+  it('supports custom isPreserved predicate option in constructor', async () => {
+    const { repoDir, execGit } = initRepo();
+    const adapter = new WorktreeLifecycleAdapter({
+      isPreserved: (path) => path.endsWith('.keep'),
+    });
+
+    writeFileSync(join(repoDir, 'base.txt'), 'base\n');
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'initial']);
+
+    writeFileSync(join(repoDir, 'test.keep'), 'preserve me\n');
+    writeFileSync(join(repoDir, 'test.drop'), 'drop me\n');
+
+    const plan = await adapter.inspect({
+      cwd: repoDir,
+      mode: 'phase_boundary',
+    });
+
+    expect(plan.preservedPaths).toEqual(['test.keep']);
+    expect(plan.discardedPaths).toEqual(['test.drop']);
+
+    const result = await adapter.execute({ plan });
+    expect(result.success).toBe(true);
+    expect(existsSync(join(repoDir, 'test.keep'))).toBe(true);
+    expect(existsSync(join(repoDir, 'test.drop'))).toBe(false);
+  });
+
+  it('matches glob wildcard preserved patterns like *.cache or nested directories', async () => {
+    const { repoDir, execGit } = initRepo();
+    const adapter = new WorktreeLifecycleAdapter();
+
+    writeFileSync(join(repoDir, 'base.txt'), 'base\n');
+    execGit(['add', '.']);
+    execGit(['commit', '-m', 'initial']);
+
+    mkdirSync(join(repoDir, 'logs'), { recursive: true });
+    writeFileSync(join(repoDir, 'logs', 'app.log'), 'log data\n');
+    writeFileSync(join(repoDir, 'state.cache'), 'cache data\n');
+    writeFileSync(join(repoDir, 'unrelated.tmp'), 'tmp data\n');
+
+    const plan = await adapter.inspect({
+      cwd: repoDir,
+      mode: 'phase_boundary',
+      preservedPatterns: ['logs/*', '*.cache'],
+    });
+
+    expect(plan.preservedPaths).toEqual(['logs/app.log', 'state.cache']);
+    expect(plan.discardedPaths).toEqual(['unrelated.tmp']);
+
+    const result = await adapter.execute({ plan });
+    expect(result.success).toBe(true);
+    expect(existsSync(join(repoDir, 'logs', 'app.log'))).toBe(true);
+    expect(existsSync(join(repoDir, 'state.cache'))).toBe(true);
+    expect(existsSync(join(repoDir, 'unrelated.tmp'))).toBe(false);
   });
 });

@@ -10,52 +10,6 @@ import type {
 } from '@ai-sdlc/application/ports';
 import { git } from './git-runner.js';
 
-const DEFAULT_PRESERVED_EXACT = new Set([
-  '.gitignore',
-  '.ai-orchestrator.json',
-  'validation.headsha',
-  'review-fix-plan.json',
-  'review-task-manifest.json',
-  'review-triage.md',
-  'code-review.md',
-  'review.md',
-  'task-manifest.json',
-  'implementation-log.md',
-  'arbiter-result.json',
-  'review-loop-history.json',
-  'compound-draft.md',
-  'compound.md',
-  'validation.result',
-  'result.json',
-  'scratch-files.json',
-  '.ai-tmp/scratch-files.json',
-  'fix-validate-done.marker',
-  'plan-review-passed.marker',
-  'pr-summary.md',
-  'pr-url.txt',
-  'issue.md',
-  'issue-comments.md',
-  'design.md',
-  'plan.md',
-  'prompt.md',
-  'plan-fix-result.json',
-  'plan-review-findings.md',
-  'diff.txt',
-]);
-
-const DEFAULT_PRESERVED_PATTERNS = [
-  /^implement-step-history-.*\.json$/,
-  /^quality-review-result.*\.json$/,
-  /^spec-review-result.*\.json$/,
-  /^fix-result.*\.json$/,
-  /^task-context-step-.*\.md$/,
-  /^implementation-log.*\.md$/,
-  /\.patch$/,
-  /\.diff$/,
-  /-diff\.txt$/,
-  /^\.ai-tmp\/.*/,
-];
-
 function globPatternToRegExp(pattern: string): RegExp {
   const regexString =
     '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$';
@@ -157,10 +111,7 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
     if (callerPatterns && callerPatterns.some((re) => re.test(norm) || re.test(basename))) {
       return true;
     }
-    if (DEFAULT_PRESERVED_EXACT.has(norm) || DEFAULT_PRESERVED_EXACT.has(basename)) {
-      return true;
-    }
-    return DEFAULT_PRESERVED_PATTERNS.some((re) => re.test(norm) || re.test(basename));
+    return false;
   }
 
   async inspect(input: InspectWorktreeLifecycleInput): Promise<WorktreeLifecyclePlan> {
