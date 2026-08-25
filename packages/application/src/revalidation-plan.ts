@@ -10,6 +10,7 @@ export interface WorkspacePackageDescriptor {
 
 export type FullValidationReason =
   | 'first_iteration'
+  | 'pr_ready'
   | 'missing_baseline'
   | 'empty_changed_files'
   | 'multiple_packages'
@@ -40,6 +41,7 @@ export interface PlanRevalidationInput {
   changedPaths: string[];
   iterationIndex: number;
   hasStepBaseline: boolean;
+  isPrReady?: boolean;
   descriptors: WorkspacePackageDescriptor[];
   commands: ValidationCommand[];
   tiers?: string[][];
@@ -149,7 +151,7 @@ function rewriteCommand(
   hasBatsInClosure: boolean,
 ): ValidationCommand | null {
   const isLeaf = narrowedPackages.length === 1 && narrowedPackages[0] === seedPackage;
-  const filter = isLeaf ? seedPackage : `"...${seedPackage}"`;
+  const filter = isLeaf ? seedPackage : `...${seedPackage}`;
   const isArray = Array.isArray(cmd);
 
   switch (role.role) {
@@ -191,7 +193,8 @@ function rewriteCommand(
  * workspace package and its reverse transitive dependents, or whether it must fall back to full validation.
  */
 export function planRevalidation(input: PlanRevalidationInput): RevalidationPlan {
-  const { changedPaths, iterationIndex, hasStepBaseline, descriptors, commands, tiers } = input;
+  const { changedPaths, iterationIndex, hasStepBaseline, isPrReady, descriptors, commands, tiers } =
+    input;
 
   const fullPlan = (reason: FullValidationReason): RevalidationPlan => ({
     mode: 'full',
@@ -199,6 +202,11 @@ export function planRevalidation(input: PlanRevalidationInput): RevalidationPlan
     commands,
     ...(tiers !== undefined ? { tiers } : {}),
   });
+
+  // 0. Eligibility: pr-ready iteration must run full validation
+  if (isPrReady) {
+    return fullPlan('pr_ready');
+  }
 
   // 1. Eligibility: must have baseline
   if (!hasStepBaseline) {
@@ -250,7 +258,7 @@ export function planRevalidation(input: PlanRevalidationInput): RevalidationPlan
   }
 
   for (const desc of descriptorMap.values()) {
-    const deps = desc.workspaceDependencies ?? [];
+    const deps = new Set(desc.workspaceDependencies ?? []);
     for (const dep of deps) {
       if (!descriptorMap.has(dep)) {
         return fullPlan('unresolved_dependency');
@@ -262,7 +270,7 @@ export function planRevalidation(input: PlanRevalidationInput): RevalidationPlan
   // Cycle detection across whole workspace graph using Kahn's algorithm
   const inDegrees = new Map<string, number>();
   for (const desc of descriptorMap.values()) {
-    inDegrees.set(desc.name, (desc.workspaceDependencies ?? []).length);
+    inDegrees.set(desc.name, new Set(desc.workspaceDependencies ?? []).size);
   }
   const queue: string[] = [];
   for (const [name, deg] of inDegrees.entries()) {
@@ -360,8 +368,10 @@ export function planRevalidation(input: PlanRevalidationInput): RevalidationPlan
     if (!desc) {
       return fullPlan('invalid_descriptor');
     }
-    const depsInClosure = (desc.workspaceDependencies ?? []).filter((dep) => closureSet.has(dep));
-    closureInDegrees.set(pkgName, depsInClosure.length);
+    const depsInClosure = new Set(
+      (desc.workspaceDependencies ?? []).filter((dep) => closureSet.has(dep)),
+    );
+    closureInDegrees.set(pkgName, depsInClosure.size);
   }
 
   const readyQueue: string[] = [];

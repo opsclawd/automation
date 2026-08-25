@@ -86,18 +86,18 @@ describe('Revalidation Scope Planner', () => {
         '@ai-sdlc/cli',
       ]);
       expect(result.commands).toEqual([
-        'pnpm --filter "...@ai-sdlc/application" build',
+        'pnpm --filter ...@ai-sdlc/application build',
         'pnpm exec eslint packages/application packages/infrastructure apps/api apps/cli --max-warnings=0',
-        'pnpm --filter "...@ai-sdlc/application" typecheck',
-        'pnpm --filter "...@ai-sdlc/application" test',
+        'pnpm --filter ...@ai-sdlc/application typecheck',
+        'pnpm --filter ...@ai-sdlc/application test',
         'pnpm boundaries',
       ]);
       expect(result.tiers).toEqual([
-        ['pnpm --filter "...@ai-sdlc/application" build'],
+        ['pnpm --filter ...@ai-sdlc/application build'],
         [
           'pnpm exec eslint packages/application packages/infrastructure apps/api apps/cli --max-warnings=0',
-          'pnpm --filter "...@ai-sdlc/application" typecheck',
-          'pnpm --filter "...@ai-sdlc/application" test',
+          'pnpm --filter ...@ai-sdlc/application typecheck',
+          'pnpm --filter ...@ai-sdlc/application test',
           'pnpm boundaries',
         ],
       ]);
@@ -123,10 +123,10 @@ describe('Revalidation Scope Planner', () => {
         '@ai-sdlc/cli',
       ]);
       expect(infraResult.commands).toEqual([
-        'pnpm --filter "...@ai-sdlc/infrastructure" build',
+        'pnpm --filter ...@ai-sdlc/infrastructure build',
         'pnpm exec eslint packages/infrastructure apps/api apps/cli --max-warnings=0',
-        'pnpm --filter "...@ai-sdlc/infrastructure" typecheck',
-        'pnpm --filter "...@ai-sdlc/infrastructure" test',
+        'pnpm --filter ...@ai-sdlc/infrastructure typecheck',
+        'pnpm --filter ...@ai-sdlc/infrastructure test',
         'pnpm boundaries',
       ]);
     }
@@ -145,10 +145,10 @@ describe('Revalidation Scope Planner', () => {
       expect(apiResult.changedPackage).toBe('@ai-sdlc/api');
       expect(apiResult.narrowedPackages).toEqual(['@ai-sdlc/api', '@ai-sdlc/cli']);
       expect(apiResult.commands).toEqual([
-        'pnpm --filter "...@ai-sdlc/api" build',
+        'pnpm --filter ...@ai-sdlc/api build',
         'pnpm exec eslint apps/api apps/cli --max-warnings=0',
-        'pnpm --filter "...@ai-sdlc/api" typecheck',
-        'pnpm --filter "...@ai-sdlc/api" test',
+        'pnpm --filter ...@ai-sdlc/api typecheck',
+        'pnpm --filter ...@ai-sdlc/api test',
         'pnpm boundaries',
       ]);
     }
@@ -198,6 +198,25 @@ describe('Revalidation Scope Planner', () => {
         'pnpm boundaries',
       ]);
     }
+  });
+
+  it('pr-ready iteration forces full validation', () => {
+    const prReadyResult = planRevalidation({
+      changedPaths: ['packages/application/src/foo.ts'],
+      iterationIndex: 2,
+      hasStepBaseline: true,
+      isPrReady: true,
+      descriptors: standardDescriptors,
+      commands: standardCommands,
+      tiers: standardTiers,
+    });
+
+    expect(prReadyResult).toEqual({
+      mode: 'full',
+      reason: 'pr_ready',
+      commands: standardCommands,
+      tiers: standardTiers,
+    });
   });
 
   it('first iteration or missing baseline remains full', () => {
@@ -467,6 +486,32 @@ describe('Revalidation Scope Planner', () => {
     });
   });
 
+  it('duplicate entries in workspaceDependencies do not falsely detect cycles', () => {
+    const dupDepsDescriptors: WorkspacePackageDescriptor[] = [
+      { name: 'pkg-a', directory: 'packages/a', workspaceDependencies: [] },
+      { name: 'pkg-b', directory: 'packages/b', workspaceDependencies: ['pkg-a', 'pkg-a'] },
+      {
+        name: 'pkg-c',
+        directory: 'packages/c',
+        workspaceDependencies: ['pkg-b', 'pkg-b', 'pkg-a'],
+      },
+    ];
+    const result = planRevalidation({
+      changedPaths: ['packages/b/src/index.ts'],
+      iterationIndex: 2,
+      hasStepBaseline: true,
+      descriptors: dupDepsDescriptors,
+      commands: standardCommands,
+      tiers: standardTiers,
+    });
+
+    expect(result.mode).toBe('narrow');
+    if (result.mode === 'narrow') {
+      expect(result.changedPackage).toBe('pkg-b');
+      expect(result.narrowedPackages).toEqual(['pkg-b', 'pkg-c']);
+    }
+  });
+
   it('narrow commands preserve all safety gates', () => {
     // 1. Array-based commands and with Bats files present
     const descriptorsWithBats: WorkspacePackageDescriptor[] = standardDescriptors.map((desc) =>
@@ -495,19 +540,19 @@ describe('Revalidation Scope Planner', () => {
     expect(resultWithBats.mode).toBe('narrow');
     if (resultWithBats.mode === 'narrow') {
       expect(resultWithBats.commands).toEqual([
-        'pnpm --filter "...@ai-sdlc/application" build',
+        'pnpm --filter ...@ai-sdlc/application build',
         'pnpm exec eslint packages/application packages/infrastructure apps/api apps/cli --max-warnings=0',
-        'pnpm --filter "...@ai-sdlc/application" typecheck',
-        'pnpm --filter "...@ai-sdlc/application" test',
+        'pnpm --filter ...@ai-sdlc/application typecheck',
+        'pnpm --filter ...@ai-sdlc/application test',
         'pnpm test:bash',
         'pnpm boundaries',
       ]);
       expect(resultWithBats.tiers).toEqual([
-        ['pnpm --filter "...@ai-sdlc/application" build'],
+        ['pnpm --filter ...@ai-sdlc/application build'],
         [
           'pnpm exec eslint packages/application packages/infrastructure apps/api apps/cli --max-warnings=0',
-          'pnpm --filter "...@ai-sdlc/application" typecheck',
-          'pnpm --filter "...@ai-sdlc/application" test',
+          'pnpm --filter ...@ai-sdlc/application typecheck',
+          'pnpm --filter ...@ai-sdlc/application test',
           'pnpm test:bash',
           'pnpm boundaries',
         ],
@@ -537,6 +582,35 @@ describe('Revalidation Scope Planner', () => {
         ['pnpm', 'exec', 'eslint', 'apps/cli', '--max-warnings=0'],
         ['pnpm', '--filter', '@ai-sdlc/cli', 'typecheck'],
         ['pnpm', '--filter', '@ai-sdlc/cli', 'test'],
+        ['pnpm', 'boundaries'],
+      ]);
+    }
+
+    // 3. Array command shapes for non-leaf packages (no literal quotes in filter)
+    const nonLeafArrayResult = planRevalidation({
+      changedPaths: ['packages/application/src/index.ts'],
+      iterationIndex: 2,
+      hasStepBaseline: true,
+      descriptors: standardDescriptors,
+      commands: arrayCommands,
+    });
+
+    expect(nonLeafArrayResult.mode).toBe('narrow');
+    if (nonLeafArrayResult.mode === 'narrow') {
+      expect(nonLeafArrayResult.commands).toEqual([
+        ['pnpm', '--filter', '...@ai-sdlc/application', 'build'],
+        [
+          'pnpm',
+          'exec',
+          'eslint',
+          'packages/application',
+          'packages/infrastructure',
+          'apps/api',
+          'apps/cli',
+          '--max-warnings=0',
+        ],
+        ['pnpm', '--filter', '...@ai-sdlc/application', 'typecheck'],
+        ['pnpm', '--filter', '...@ai-sdlc/application', 'test'],
         ['pnpm', 'boundaries'],
       ]);
     }
