@@ -877,29 +877,3 @@ describe('changedFiles()', () => {
     expect(files).toEqual([]);
   });
 });
-
-describe('checkout()', () => {
-  it('checks out specific files at ref without resetting the whole worktree', async () => {
-    const repo = await makeTempRepo();
-    await writeFile(join(repo, 'a.txt'), 'initial a\n');
-    await writeFile(join(repo, 'b.txt'), 'initial b\n');
-    await git(repo, ['add', '.']);
-    await git(repo, ['commit', '-m', 'initial']);
-    const initialSha = await git(repo, ['rev-parse', 'HEAD']);
-
-    await writeFile(join(repo, 'a.txt'), 'modified a\n');
-    await writeFile(join(repo, 'b.txt'), 'modified b\n');
-
-    await adapter.checkout(repo, initialSha, ['a.txt']);
-
-    const aContent = await readFile(join(repo, 'a.txt'), 'utf8');
-    const bContent = await readFile(join(repo, 'b.txt'), 'utf8');
-    expect(aContent).toBe('initial a\n');
-    expect(bContent).toBe('modified b\n');
-  });
-
-  it('no-ops when files array is empty', async () => {
-    const repo = await makeTempRepo();
-    await expect(adapter.checkout(repo, 'HEAD', [])).resolves.toBeUndefined();
-  });
-});

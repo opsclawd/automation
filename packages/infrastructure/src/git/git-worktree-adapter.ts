@@ -236,11 +236,6 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     return git(cwd, ['show', `${ref}:${path}`], undefined, undefined, { preserveOutput: true });
   }
 
-  async checkout(cwd: string, ref: string, files: string[]): Promise<void> {
-    if (files.length === 0) return;
-    await git(cwd, ['checkout', ref, '--', ...files]);
-  }
-
   async seedArtifactExcludes(cwd: string): Promise<void> {
     const gitCommonDir = await git(cwd, ['rev-parse', '--git-common-dir']);
     const excludeFile = isAbsolute(gitCommonDir)

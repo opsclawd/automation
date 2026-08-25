@@ -91,11 +91,3 @@ describe('FakeGitPort.fileContent()', () => {
     expect(defaultContent).toBe('fake content for HEAD:src/b.ts');
   });
 });
-
-describe('FakeGitPort.checkout()', () => {
-  it('records checkout calls and paths', async () => {
-    const fakeGit = new FakeGitPort();
-    await fakeGit.checkout('/test', 'HEAD', ['src/a.ts']);
-    expect(fakeGit.checkoutCalls).toEqual([{ cwd: '/test', ref: 'HEAD', files: ['src/a.ts'] }]);
-  });
-});

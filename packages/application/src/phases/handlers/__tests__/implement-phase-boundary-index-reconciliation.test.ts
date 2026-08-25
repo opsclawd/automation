@@ -76,13 +76,8 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
       `M  ${path}\n`, // staged status check before commit
       '', // clean final status
     ];
-    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
-
-    const origCheckout = git.checkout.bind(git);
-    const checkoutSpy = vi.fn(async (cwd: string, ref: string, files: string[]) => {
-      return origCheckout(cwd, ref, files);
-    });
-    git.checkout = checkoutSpy;
+    vi.spyOn(git, 'status').mockImplementation(async () => statusOutputs.shift() ?? '');
+    const resetHardSpy = vi.spyOn(git, 'resetHard');
 
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -104,7 +99,8 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
         ),
       ),
     ).toBe(true);
-    expect(checkoutSpy).toHaveBeenCalledWith('/tmp/wt', 'HEAD', [path]);
+    const postCommitHead = await git.headCommitSha('/tmp/wt');
+    expect(resetHardSpy).toHaveBeenCalledWith('/tmp/wt', postCommitHead);
     expect(
       events.some(
         (e) =>
@@ -142,13 +138,8 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
       `M  ${path}\n`, // staged status check
       '', // clean final status
     ];
-    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
-
-    const origCheckout = git.checkout.bind(git);
-    const checkoutSpy = vi.fn(async (cwd: string, ref: string, files: string[]) => {
-      return origCheckout(cwd, ref, files);
-    });
-    git.checkout = checkoutSpy;
+    vi.spyOn(git, 'status').mockImplementation(async () => statusOutputs.shift() ?? '');
+    const resetHardSpy = vi.spyOn(git, 'resetHard');
 
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -169,7 +160,7 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
         ),
       ),
     ).toBe(true);
-    expect(checkoutSpy).not.toHaveBeenCalled();
+    expect(resetHardSpy).not.toHaveBeenCalled();
   });
 
   it('stages unstaged formatting when index still equals HEAD', async () => {
@@ -200,13 +191,8 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
       `M  ${path}\n`, // staged status check after add
       '', // clean final status
     ];
-    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
-
-    const origCheckout = git.checkout.bind(git);
-    const checkoutSpy = vi.fn(async (cwd: string, ref: string, files: string[]) => {
-      return origCheckout(cwd, ref, files);
-    });
-    git.checkout = checkoutSpy;
+    vi.spyOn(git, 'status').mockImplementation(async () => statusOutputs.shift() ?? '');
+    const resetHardSpy = vi.spyOn(git, 'resetHard');
 
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -227,10 +213,10 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
         ),
       ),
     ).toBe(true);
-    expect(checkoutSpy).not.toHaveBeenCalled();
+    expect(resetHardSpy).not.toHaveBeenCalled();
   });
 
-  it('falls back to worktree formatting when the index entry is missing', async () => {
+  it('escalates when the index entry is missing for a HEAD-tracked file (staged deletion)', async () => {
     const artifacts = new FakeArtifactStore();
     await artifacts.write({
       runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -251,7 +237,7 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
     worktreeFiles.set(path, formatted);
 
     const origFileContent = git.fileContent.bind(git);
-    git.fileContent = vi.fn(async (cwd: string, ref: string, p: string) => {
+    vi.spyOn(git, 'fileContent').mockImplementation(async (cwd: string, ref: string, p: string) => {
       if (ref === ':0') {
         throw new Error(`fatal: path '${p}' does not exist in the index`);
       }
@@ -261,11 +247,8 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
     const statusOutputs = [
       '', // step scratch-file / baseline check
       ` M ${path}\n`, // phase-boundary snapshot
-      ` M ${path}\n`, // action-time recheck
-      `M  ${path}\n`, // staged status check after add
-      '', // clean final status
     ];
-    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
+    vi.spyOn(git, 'status').mockImplementation(async () => statusOutputs.shift() ?? '');
 
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -277,15 +260,12 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
 
     const result = await new ImplementHandler({ steps, runStep }).run(ctx);
 
-    expect(result.outcome).toBe('passed');
-    expect(git.addCalls).toContainEqual({ cwd: '/tmp/wt', files: [path] });
-    expect(
-      git.commits.some((c) =>
-        c.message.includes(
-          'auto-commit formatting debt and exempt files at implement phase boundary',
-        ),
-      ),
-    ).toBe(true);
+    expect(result.outcome).toBe('needs_human_review');
+    expect(git.commits).toHaveLength(0);
+    expect(git.addCalls.some((c) => c.files.includes(path))).toBe(false);
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.message).toContain(path);
+    }
   });
 
   it('escalates staged substantive content when the worktree matches HEAD', async () => {
@@ -313,13 +293,8 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
       '', // step scratch-file / baseline check
       `MM ${path}\n`, // phase-boundary snapshot
     ];
-    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
-
-    const origCheckout = git.checkout.bind(git);
-    const checkoutSpy = vi.fn(async (cwd: string, ref: string, files: string[]) => {
-      return origCheckout(cwd, ref, files);
-    });
-    git.checkout = checkoutSpy;
+    vi.spyOn(git, 'status').mockImplementation(async () => statusOutputs.shift() ?? '');
+    const resetHardSpy = vi.spyOn(git, 'resetHard');
 
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -334,7 +309,7 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
     expect(result.outcome).toBe('needs_human_review');
     expect(git.commits).toHaveLength(0);
     expect(git.addCalls.some((c) => c.files.includes(path))).toBe(false);
-    expect(checkoutSpy).not.toHaveBeenCalled();
+    expect(resetHardSpy).not.toHaveBeenCalled();
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.message).toContain(path);
     }
@@ -366,13 +341,8 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
       '', // step scratch-file / baseline check
       `MM ${path}\n`, // phase-boundary snapshot
     ];
-    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
-
-    const origCheckout = git.checkout.bind(git);
-    const checkoutSpy = vi.fn(async (cwd: string, ref: string, files: string[]) => {
-      return origCheckout(cwd, ref, files);
-    });
-    git.checkout = checkoutSpy;
+    vi.spyOn(git, 'status').mockImplementation(async () => statusOutputs.shift() ?? '');
+    const resetHardSpy = vi.spyOn(git, 'resetHard');
 
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -387,13 +357,13 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
     expect(result.outcome).toBe('needs_human_review');
     expect(git.commits).toHaveLength(0);
     expect(git.addCalls.some((c) => c.files.includes(path))).toBe(false);
-    expect(checkoutSpy).not.toHaveBeenCalled();
+    expect(resetHardSpy).not.toHaveBeenCalled();
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.message).toContain(path);
     }
   });
 
-  it('fails when post-commit checkout cannot synchronize the worktree', async () => {
+  it('fails when post-commit reset cannot synchronize the worktree', async () => {
     const artifacts = new FakeArtifactStore();
     await artifacts.write({
       runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -421,20 +391,15 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
       `M  ${path}\n`, // staged status check before commit
       '',
     ];
-    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
-
-    const checkoutSpy = vi.fn(async (cwd: string, ref: string, _files: string[]) => {
-      if (ref === 'HEAD') {
-        throw new Error('checkout failed due to lock');
-      }
-    });
-    git.checkout = checkoutSpy;
+    vi.spyOn(git, 'status').mockImplementation(async () => statusOutputs.shift() ?? '');
 
     const origResetHard = git.resetHard.bind(git);
-    const resetHardSpy = vi.fn(async (cwd: string, ref: string) => {
+    const resetHardSpy = vi.spyOn(git, 'resetHard').mockImplementation(async (cwd, ref) => {
+      if (ref !== 'step-1') {
+        throw new Error('reset hard failed due to lock');
+      }
       return origResetHard(cwd, ref);
     });
-    git.resetHard = resetHardSpy;
 
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -450,7 +415,6 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
     if (result.outcome === 'failed') {
       expect(result.failure.message).toContain('phase-boundary auto-commit failed');
     }
-    expect(checkoutSpy).toHaveBeenCalledWith('/tmp/wt', 'HEAD', [path]);
     expect(resetHardSpy).toHaveBeenCalledWith('/tmp/wt', 'step-1');
   });
 
@@ -482,7 +446,7 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
       `M  ${path}\n`, // staged status check before commit
       '?? residual-dirty.ts\n', // dirty final status!
     ];
-    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
+    vi.spyOn(git, 'status').mockImplementation(async () => statusOutputs.shift() ?? '');
 
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
@@ -529,7 +493,7 @@ describe('ImplementHandler phase-boundary index reconciliation', () => {
       ` M ${path}\n`, // statusAfterAdd returns unchanged (hasStaged = false)
       ` M ${path}\n`, // final status check shows still dirty
     ];
-    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
+    vi.spyOn(git, 'status').mockImplementation(async () => statusOutputs.shift() ?? '');
 
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()

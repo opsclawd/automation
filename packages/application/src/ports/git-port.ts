@@ -63,7 +63,6 @@ export interface GitPort {
   changedFiles(cwd: string, base: string, head?: string): Promise<string[]>;
   createdFiles(cwd: string, base: string, head?: string): Promise<string[]>;
   fileContent(cwd: string, ref: string, path: string): Promise<string>;
-  checkout(cwd: string, ref: string, files: string[]): Promise<void>;
 }
 
 export interface ArtifactGuardPort {

@@ -129,17 +129,9 @@ async function classifyPhaseBoundaryDirtyPaths({
       }
 
       if (indexContent === undefined) {
-        // Missing index entry -> fall back to worktree content
-        if (worktreeContent === headContent) {
-          // Stat-cache drift or clean
-          continue;
-        }
-        if (isFormattingOnlyChange(norm, headContent, worktreeContent)) {
-          formattingDebt.push(norm);
-          permitted.push(norm);
-        } else {
-          unpermitted.push(norm);
-        }
+        // Since headContent is defined, missing index content represents a staged deletion (e.g. git rm --cached)
+        unpermitted.push(norm);
+        continue;
       } else if (indexContent === headContent) {
         // Index is identical to HEAD
         if (worktreeContent === headContent) {
@@ -1602,19 +1594,14 @@ export class ImplementHandler implements PhaseHandler {
 
                 if (resetAfterCommitAtActionTime.size > 0) {
                   try {
-                    await ctx.git.checkout(
-                      ctx.cwd,
-                      'HEAD',
-                      Array.from(resetAfterCommitAtActionTime),
-                    );
-                  } catch (checkoutErr) {
+                    await ctx.git.resetHard(ctx.cwd, await ctx.git.headCommitSha(ctx.cwd));
+                  } catch (resetErr) {
                     try {
                       await ctx.git.resetHard(ctx.cwd, preCommitHead);
                     } catch {
                       // Best-effort rollback
                     }
-                    const msg =
-                      checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr);
+                    const msg = resetErr instanceof Error ? resetErr.message : String(resetErr);
                     return this.fail(
                       ctx,
                       emit,
