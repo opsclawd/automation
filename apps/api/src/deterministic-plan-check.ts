@@ -15,6 +15,7 @@ import {
   checkRedTaskValidationParity,
   checkTaskValidationCommandsDeclarationMismatch,
   checkTaskValidationCommandsSatisfiability,
+  checkTaskValidationCommandsDoubleInversion,
 } from '@ai-sdlc/application';
 
 export interface DeterministicPlanCheckResult {
@@ -164,10 +165,27 @@ export function createDeterministicPlanCheck(options: CreateDeterministicPlanChe
       },
     });
 
+    const readWorktreeFileFn = (relativePath: string) => {
+      const fullPath = join(ctx.cwd, relativePath);
+      if (existsSync(fullPath)) {
+        try {
+          return readFileSync(fullPath, 'utf-8');
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    };
+
     const validationCommandDeclarationDiagnostic =
       checkTaskValidationCommandsDeclarationMismatch(manifest);
 
     const redParityDiagnostic = checkRedTaskValidationParity(manifest);
+
+    const doubleInversionDiagnostic = await checkTaskValidationCommandsDoubleInversion(manifest, {
+      worktreeRoot: ctx.cwd,
+      readWorktreeFile: readWorktreeFileFn,
+    });
 
     const diagnostic = joinDiagnostics(
       structuralDiagnostic,
@@ -176,6 +194,7 @@ export function createDeterministicPlanCheck(options: CreateDeterministicPlanChe
       validationCommandDiagnostic,
       validationCommandDeclarationDiagnostic,
       redParityDiagnostic,
+      doubleInversionDiagnostic,
     );
 
     return { diagnostic, signatureBlastRadiusFailures: blastRadiusFailures };

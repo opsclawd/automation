@@ -58,10 +58,19 @@ export class TaskContextGenerator {
     // 1.5 Execution Semantics
     if (input.manifest.version === 2) {
       const t2 = task as TaskManifestEntryV2;
-      if (t2.task_type || t2.paired_with_task) {
+      const hasInvertedCommand = t2.validation_commands?.some((cmd) =>
+        Array.isArray(cmd)
+          ? cmd[0]?.trim().startsWith('!')
+          : String(cmd).trim().startsWith('!'),
+      );
+      if (t2.task_type || t2.paired_with_task || hasInvertedCommand) {
         let execContent = '## Execution Semantics\n\n';
         if (t2.task_type) execContent += `Task Type: ${t2.task_type}\n`;
         if (t2.paired_with_task) execContent += `Paired With Task: ${t2.paired_with_task}\n`;
+        if (t2.task_type === 'red' || hasInvertedCommand) {
+          execContent +=
+            '\nCRITICAL GUIDANCE FOR RED TASKS: Do NOT use test-runner-level inversion helpers (such as Vitest\'s `it.fails()` or `test.fails()`, or equivalent test runner inversion primitives) in test files for this task. The task\'s validation command already applies command-level `!` inversion (expecting a non-zero exit code). Combining runner-level inversion helpers like `it.fails()` with `!` command-level inversion causes the test runner to report exit code 0 when the test fails, which inverts the `!` validation wrapper into a validation failure. Write tests using standard direct assertions (e.g., `it(...)` or `test(...)`) of the expected correct behavior so that the test body throws and exits non-zero naturally.\n';
+        }
         execContent += '\n';
         sections.push(execContent);
         diagnostics.componentSizes['execution_semantics'] = execContent.length;

@@ -1,3 +1,6 @@
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { createDeterministicPlanCheck } from '../deterministic-plan-check.js';
 import type { PlanReviewContext } from '@ai-sdlc/application';
@@ -549,5 +552,45 @@ describe('createDeterministicPlanCheck', () => {
 
     const result = await check(dummyCtx);
     expect(result.diagnostic).toContain("task_type is 'red' but it lacks '! ' negation");
+  });
+
+  it('includes double inversion diagnostic when test file contains runner-level inversion', async () => {
+    const readPlanMd = vi.fn().mockResolvedValue('some plan markdown');
+    const manifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'task 1',
+          task_type: 'red',
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    };
+    const readManifest = vi.fn().mockResolvedValue(JSON.stringify(manifest));
+    const validatePlanTaskList = vi.fn().mockReturnValue({ success: true });
+    const signatureAnalyzer: SignatureReferenceAnalyzerPort = {
+      analyze: vi.fn(),
+    };
+
+    const check = createDeterministicPlanCheck({
+      readPlanMd,
+      readManifest,
+      validatePlanTaskList,
+      signatureAnalyzer,
+    });
+
+    // Create temporary worktree directory with test file
+    const tmpDir = mkdtempSync(join(tmpdir(), 'det-check-double-inv-'));
+    try {
+      mkdirSync(join(tmpDir, 'src'), { recursive: true });
+      writeFileSync(join(tmpDir, 'src/proof.test.ts'), 'it.fails("should fail", () => {});');
+
+      const result = await check({ ...dummyCtx, cwd: tmpDir });
+      expect(result.diagnostic).toContain('uses test-runner inversion helper (`it.fails`)');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

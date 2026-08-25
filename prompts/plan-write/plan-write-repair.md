@@ -56,7 +56,9 @@ scratch. For example:
 - TEST-FIRST COMMIT ORDER: Do not merge a regression-proof task into its implementation task. If the
   plan reproduces a bug with a failing test in an earlier numbered task and fixes it in a later one,
   preserve that separation while repairing — renumber them if required, but keep the proof ahead of
-  the fix and keep the implementation source change out of the proof task. For additive feature work,
+  the fix and keep the implementation source change out of the proof task. Do not use runner-level
+  inversion helpers (such as Vitest's `it.fails()` or `test.fails()`) in RED tasks targeted by
+  `!`-prefixed validation commands. For additive feature work,
   preserve unit tests co-located within the same task as their implementation code.
 - MISAPPLIED TEST-FIRST SPLIT ON NEW CAPABILITY: If you find a RED-only task (or a chain of them) whose
   tests assert a new outcome, port, or capability that does not exist anywhere in the current codebase —

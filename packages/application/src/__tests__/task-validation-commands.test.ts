@@ -3,6 +3,7 @@ import {
   buildTaskValidationCommands,
   checkRedTaskValidationParity,
   checkTaskValidationCommandsDeclarationMismatch,
+  checkTaskValidationCommandsDoubleInversion,
   checkTaskValidationCommandsSatisfiability,
   evaluateRevalidationWithInvertedCommands,
   expandTaskValidationCommandsWithNewTests,
@@ -756,6 +757,126 @@ describe('checkRedTaskValidationParity', () => {
     expect(checkRedTaskValidationParity(manifest)).toContain(
       'logically identical validation commands',
     );
+  });
+});
+
+describe('checkTaskValidationCommandsDoubleInversion', () => {
+  it('flags it.fails() and test.fails() in test files targeted by inverted validation commands', async () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Red task',
+          task_type: 'red',
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    };
+
+    const files: Record<string, string> = {
+      'src/proof.test.ts': `
+        import { describe, it } from 'vitest';
+        describe('proof', () => {
+          it.fails('reproduces bug', () => {
+            expect(1).toBe(2);
+          });
+        });
+      `,
+    };
+
+    const diagnostic = await checkTaskValidationCommandsDoubleInversion(manifest, {
+      worktreeRoot: '/fake',
+      readWorktreeFile: (p) => files[p] ?? null,
+    });
+
+    expect(diagnostic).not.toBeNull();
+    expect(diagnostic).toContain('Task 1');
+    expect(diagnostic).toContain('src/proof.test.ts');
+    expect(diagnostic).toContain('uses test-runner inversion helper (`it.fails`)');
+  });
+
+  it('returns null when targeted test file contains standard direct assertions without runner-level inversion', async () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Red task',
+          task_type: 'red',
+          validation_commands: ['! pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    };
+
+    const files: Record<string, string> = {
+      'src/proof.test.ts': `
+        import { describe, it, expect } from 'vitest';
+        describe('proof', () => {
+          it('reproduces bug', () => {
+            expect(1).toBe(2);
+          });
+        });
+      `,
+    };
+
+    const diagnostic = await checkTaskValidationCommandsDoubleInversion(manifest, {
+      worktreeRoot: '/fake',
+      readWorktreeFile: (p) => files[p] ?? null,
+    });
+
+    expect(diagnostic).toBeNull();
+  });
+
+  it('returns null when validation command is not inverted', async () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Standard task',
+          validation_commands: ['pnpm test -- src/proof.test.ts'],
+        },
+      ],
+    };
+
+    const files: Record<string, string> = {
+      'src/proof.test.ts': `
+        it.fails('known permanent limitation', () => { expect(1).toBe(2); });
+      `,
+    };
+
+    const diagnostic = await checkTaskValidationCommandsDoubleInversion(manifest, {
+      worktreeRoot: '/fake',
+      readWorktreeFile: (p) => files[p] ?? null,
+    });
+
+    expect(diagnostic).toBeNull();
+  });
+
+  it('returns null when targeted file is missing', async () => {
+    const manifest: TaskManifest = {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Red task',
+          task_type: 'red',
+          validation_commands: ['! pnpm test -- src/missing.test.ts'],
+        },
+      ],
+    };
+
+    const diagnostic = await checkTaskValidationCommandsDoubleInversion(manifest, {
+      worktreeRoot: '/fake',
+      readWorktreeFile: () => null,
+    });
+
+    expect(diagnostic).toBeNull();
   });
 });
 
