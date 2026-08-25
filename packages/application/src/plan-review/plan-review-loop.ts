@@ -2429,24 +2429,238 @@ export class PlanReviewLoop {
   }): Promise<{ ok: true; result: T } | { ok: false }> {
     const { input, ctx, agentRole, permittedStatusPaths, reviewMode, invoke, extractInvocationId } =
       params;
-    let baselineSha: string | undefined;
-    let baselineSnapshot: PlanReviewSnapshot | undefined;
-    let baselineError: string | undefined;
 
-    // 1. Capture baseline HEAD and the protected snapshot immediately before the Agent Invocation.
-    try {
-      baselineSha = await this.deps.git.headCommitSha(ctx.cwd);
-    } catch (err) {
-      baselineError = err instanceof Error ? err.message : String(err);
-    }
-    try {
-      baselineSnapshot = await this.deps.captureSnapshot(ctx);
-    } catch {
-      baselineSnapshot = undefined;
-    }
+    const maxAttempts = 2; // Initial attempt + at most 1 automatic retry after verified cleanup
 
-    if (baselineError !== undefined) {
-      // Baseline capture failed: do not invoke agent, attempt safe cleanup without inventing a SHA.
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let baselineSha: string | undefined;
+      let baselineSnapshot: PlanReviewSnapshot | undefined;
+      let baselineError: string | undefined;
+
+      // 1. Capture baseline HEAD and the protected snapshot immediately before the Agent Invocation.
+      try {
+        baselineSha = await this.deps.git.headCommitSha(ctx.cwd);
+      } catch (err) {
+        baselineError = err instanceof Error ? err.message : String(err);
+      }
+      try {
+        baselineSnapshot = await this.deps.captureSnapshot(ctx);
+      } catch {
+        // Baseline snapshot capture is a best-effort signal: tolerate failure here and
+        // fall back to git-status-based violation detection, matching the tolerance
+        // already applied to a failed post-invocation snapshot capture below.
+        baselineSnapshot = undefined;
+      }
+
+      if (baselineError !== undefined) {
+        // Baseline capture failed: do not invoke agent, attempt safe cleanup without inventing a SHA.
+        const cleanAttempted = true;
+        let cleanSuccess = false;
+        let cleanError: string | undefined;
+        try {
+          await this.deps.git.cleanUntracked(ctx.cwd);
+          cleanSuccess = true;
+        } catch (err) {
+          cleanSuccess = false;
+          cleanError = err instanceof Error ? err.message : String(err);
+        }
+
+        this.emit(
+          input,
+          'plan-review.read_only_violation',
+          'error',
+          `read-only ${agentRole} guard baseline capture failed: ${baselineError}`,
+          {
+            phase: 'plan-review',
+            iteration: ctx.iterationIndex,
+            ...(reviewMode ? { reviewMode } : {}),
+            files: [],
+            detectionError: baselineError,
+            resetAttempted: false,
+            resetSuccess: false,
+            cleanAttempted,
+            cleanSuccess,
+            ...(cleanError ? { cleanError } : {}),
+          },
+        );
+        return { ok: false };
+      }
+
+      // 2. Invoke the agent.
+      let result: T | undefined;
+      let invokeError: string | undefined;
+      try {
+        result = await invoke();
+      } catch (err) {
+        invokeError = err instanceof Error ? err.message : String(err);
+      }
+
+      if (invokeError !== undefined) {
+        let resetAttempted = false;
+        let resetSuccess = false;
+        let resetError: string | undefined;
+        const cleanAttempted = true;
+        let cleanSuccess = false;
+        let cleanError: string | undefined;
+
+        if (baselineSha !== undefined) {
+          resetAttempted = true;
+          try {
+            await this.deps.git.resetHard(ctx.cwd, baselineSha);
+            resetSuccess = true;
+          } catch (rErr) {
+            resetSuccess = false;
+            resetError = rErr instanceof Error ? rErr.message : String(rErr);
+          }
+        }
+
+        try {
+          await this.deps.git.cleanUntracked(ctx.cwd);
+          cleanSuccess = true;
+        } catch (cErr) {
+          cleanSuccess = false;
+          cleanError = cErr instanceof Error ? cErr.message : String(cErr);
+        }
+
+        this.emit(
+          input,
+          'plan-review.read_only_violation',
+          'error',
+          `read-only ${agentRole} invocation failed: ${invokeError}`,
+          {
+            phase: 'plan-review',
+            iteration: ctx.iterationIndex,
+            ...(reviewMode ? { reviewMode } : {}),
+            ...(baselineSha !== undefined ? { baselineSha } : {}),
+            files: [],
+            detectionError: invokeError,
+            resetAttempted,
+            resetSuccess,
+            ...(resetError ? { resetError } : {}),
+            cleanAttempted,
+            cleanSuccess,
+            ...(cleanError ? { cleanError } : {}),
+          },
+        );
+
+        if (resetSuccess && cleanSuccess && attempt < maxAttempts) {
+          this.emit(
+            input,
+            'plan-review.read_only_violation.retry',
+            'info',
+            `read-only violation cleanup succeeded for ${agentRole}; retrying invocation (attempt ${attempt + 1}/${maxAttempts})`,
+            {
+              phase: 'plan-review',
+              iteration: ctx.iterationIndex,
+              agentRole,
+              attempt: attempt + 1,
+            },
+          );
+          continue;
+        }
+
+        return { ok: false };
+      }
+
+      // 3. Before inspecting agent outcome or verdict,
+      // capture end HEAD, raw status paths through parseGitStatusPaths,
+      // committed paths through changedFiles(cwd, baselineSha, endSha) when HEAD changed,
+      // and a post-invocation protected snapshot.
+      let endSha: string | undefined;
+      let statusPaths: string[] = [];
+      let committedPaths: string[] = [];
+      let postSnapshot: PlanReviewSnapshot | undefined;
+      let inspectionError: string | undefined;
+
+      try {
+        endSha = await this.deps.git.headCommitSha(ctx.cwd);
+        const statusOutput = await this.deps.git.status(ctx.cwd);
+        statusPaths = parseGitStatusPaths(statusOutput);
+
+        if (baselineSha !== undefined && endSha !== baselineSha) {
+          committedPaths = await this.deps.git.changedFiles(ctx.cwd, baselineSha, endSha);
+        }
+      } catch (err) {
+        inspectionError = err instanceof Error ? err.message : String(err);
+      }
+
+      try {
+        postSnapshot = await this.deps.captureSnapshot(ctx);
+      } catch (err) {
+        postSnapshot = undefined;
+        if (baselineSnapshot !== undefined) {
+          inspectionError = inspectionError ?? (err instanceof Error ? err.message : String(err));
+        }
+      }
+
+      // 4. Mark any HEAD transition as a violation even if changedFiles is empty.
+      // Combine all committed paths; all Git-visible paths except permitted paths;
+      // and plan.md, task-manifest.json, or design.md for changed available digests.
+      // Normalize, deduplicate, and sort the diagnostic list.
+      const violatingFilesSet = new Set<string>();
+
+      for (const p of committedPaths) {
+        violatingFilesSet.add(normalizeWorktreePath(p));
+      }
+
+      for (const rawPath of statusPaths) {
+        if (!isPermittedStatusPath(rawPath, permittedStatusPaths)) {
+          violatingFilesSet.add(normalizeWorktreePath(rawPath));
+        }
+      }
+
+      if (baselineSnapshot && postSnapshot) {
+        if (
+          baselineSnapshot.planMdDigest &&
+          postSnapshot.planMdDigest &&
+          baselineSnapshot.planMdDigest !== postSnapshot.planMdDigest
+        ) {
+          violatingFilesSet.add('plan.md');
+        }
+        if (
+          baselineSnapshot.manifestDigest &&
+          postSnapshot.manifestDigest &&
+          baselineSnapshot.manifestDigest !== postSnapshot.manifestDigest
+        ) {
+          violatingFilesSet.add('task-manifest.json');
+        }
+        if (
+          baselineSnapshot.designDigest &&
+          postSnapshot.designDigest &&
+          baselineSnapshot.designDigest !== postSnapshot.designDigest
+        ) {
+          violatingFilesSet.add('design.md');
+        }
+      }
+
+      const headTransition =
+        baselineSha !== undefined && endSha !== undefined && endSha !== baselineSha;
+      const effectiveInspectionError = inspectionError;
+      const isViolation =
+        effectiveInspectionError !== undefined || headTransition || violatingFilesSet.size > 0;
+
+      // 5. If state is clean, return the untouched result.
+      if (!isViolation && result !== undefined) {
+        return { ok: true, result };
+      }
+
+      // 6. On a detected violation or post-invocation inspection failure, attempt
+      // resetHard(cwd, baselineSha) and then cleanUntracked(cwd) in independent try blocks.
+      let resetAttempted = false;
+      let resetSuccess = false;
+      let resetError: string | undefined;
+
+      if (baselineSha !== undefined) {
+        resetAttempted = true;
+        try {
+          await this.deps.git.resetHard(ctx.cwd, baselineSha);
+          resetSuccess = true;
+        } catch (err) {
+          resetSuccess = false;
+          resetError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
       const cleanAttempted = true;
       let cleanSuccess = false;
       let cleanError: string | undefined;
@@ -2458,71 +2672,27 @@ export class PlanReviewLoop {
         cleanError = err instanceof Error ? err.message : String(err);
       }
 
-      this.emit(
-        input,
-        'plan-review.read_only_violation',
-        'error',
-        `read-only ${agentRole} guard baseline capture failed: ${baselineError}`,
-        {
-          phase: 'plan-review',
-          iteration: ctx.iterationIndex,
-          ...(reviewMode ? { reviewMode } : {}),
-          files: [],
-          detectionError: baselineError,
-          resetAttempted: false,
-          resetSuccess: false,
-          cleanAttempted,
-          cleanSuccess,
-          ...(cleanError ? { cleanError } : {}),
-        },
-      );
-      return { ok: false };
-    }
-
-    // 2. Invoke the agent exactly once.
-    let result: T;
-    try {
-      result = await invoke();
-    } catch (err) {
-      const invokeError = err instanceof Error ? err.message : String(err);
-      let resetAttempted = false;
-      let resetSuccess = false;
-      let resetError: string | undefined;
-      const cleanAttempted = true;
-      let cleanSuccess = false;
-      let cleanError: string | undefined;
-
-      if (baselineSha !== undefined) {
-        resetAttempted = true;
-        try {
-          await this.deps.git.resetHard(ctx.cwd, baselineSha);
-          resetSuccess = true;
-        } catch (rErr) {
-          resetSuccess = false;
-          resetError = rErr instanceof Error ? rErr.message : String(rErr);
-        }
-      }
-
-      try {
-        await this.deps.git.cleanUntracked(ctx.cwd);
-        cleanSuccess = true;
-      } catch (cErr) {
-        cleanSuccess = false;
-        cleanError = cErr instanceof Error ? cErr.message : String(cErr);
-      }
+      // 7. Emit exactly one plan-review.read_only_violation event at error level
+      const sortedViolatingFiles = Array.from(violatingFilesSet).sort();
+      const invocationId =
+        result !== undefined && extractInvocationId ? extractInvocationId(result) : undefined;
 
       this.emit(
         input,
         'plan-review.read_only_violation',
         'error',
-        `read-only ${agentRole} invocation failed: ${invokeError}`,
+        effectiveInspectionError
+          ? `read-only ${agentRole} guard failed during inspection: ${effectiveInspectionError}`
+          : `read-only violation detected during plan-review ${agentRole} invocation: ${sortedViolatingFiles.join(', ')}`,
         {
           phase: 'plan-review',
-          iteration: ctx.iterationIndex,
+          ...(invocationId ? { invocationId } : {}),
           ...(reviewMode ? { reviewMode } : {}),
+          iteration: ctx.iterationIndex,
           ...(baselineSha !== undefined ? { baselineSha } : {}),
-          files: [],
-          detectionError: invokeError,
+          ...(endSha !== undefined ? { endSha } : {}),
+          files: sortedViolatingFiles,
+          ...(effectiveInspectionError ? { detectionError: effectiveInspectionError } : {}),
           resetAttempted,
           resetSuccess,
           ...(resetError ? { resetError } : {}),
@@ -2531,148 +2701,27 @@ export class PlanReviewLoop {
           ...(cleanError ? { cleanError } : {}),
         },
       );
+
+      // 8. If cleanup succeeded and we have not exceeded maxAttempts, attempt retry.
+      if (resetSuccess && cleanSuccess && attempt < maxAttempts) {
+        this.emit(
+          input,
+          'plan-review.read_only_violation.retry',
+          'info',
+          `read-only violation cleanup succeeded for ${agentRole}; retrying invocation (attempt ${attempt + 1}/${maxAttempts})`,
+          {
+            phase: 'plan-review',
+            iteration: ctx.iterationIndex,
+            agentRole,
+            attempt: attempt + 1,
+          },
+        );
+        continue;
+      }
+
       return { ok: false };
     }
 
-    // 3. Before inspecting agent outcome or verdict,
-    // capture end HEAD, raw status paths through parseGitStatusPaths,
-    // committed paths through changedFiles(cwd, baselineSha, endSha) when HEAD changed,
-    // and a post-invocation protected snapshot.
-    let endSha: string | undefined;
-    let statusPaths: string[] = [];
-    let committedPaths: string[] = [];
-    let postSnapshot: PlanReviewSnapshot | undefined;
-    let inspectionError: string | undefined;
-
-    try {
-      endSha = await this.deps.git.headCommitSha(ctx.cwd);
-      const statusOutput = await this.deps.git.status(ctx.cwd);
-      statusPaths = parseGitStatusPaths(statusOutput);
-
-      if (baselineSha !== undefined && endSha !== baselineSha) {
-        committedPaths = await this.deps.git.changedFiles(ctx.cwd, baselineSha, endSha);
-      }
-    } catch (err) {
-      inspectionError = err instanceof Error ? err.message : String(err);
-    }
-
-    try {
-      postSnapshot = await this.deps.captureSnapshot(ctx);
-    } catch (err) {
-      postSnapshot = undefined;
-      if (baselineSnapshot !== undefined) {
-        inspectionError = inspectionError ?? (err instanceof Error ? err.message : String(err));
-      }
-    }
-
-    // 4. Mark any HEAD transition as a violation even if changedFiles is empty.
-    // Combine all committed paths; all Git-visible paths except permitted paths;
-    // and plan.md, task-manifest.json, or design.md for changed available digests.
-    // Normalize, deduplicate, and sort the diagnostic list.
-    const violatingFilesSet = new Set<string>();
-
-    for (const p of committedPaths) {
-      violatingFilesSet.add(normalizeWorktreePath(p));
-    }
-
-    for (const rawPath of statusPaths) {
-      if (!isPermittedStatusPath(rawPath, permittedStatusPaths)) {
-        violatingFilesSet.add(normalizeWorktreePath(rawPath));
-      }
-    }
-
-    if (baselineSnapshot && postSnapshot) {
-      if (
-        baselineSnapshot.planMdDigest &&
-        postSnapshot.planMdDigest &&
-        baselineSnapshot.planMdDigest !== postSnapshot.planMdDigest
-      ) {
-        violatingFilesSet.add('plan.md');
-      }
-      if (
-        baselineSnapshot.manifestDigest &&
-        postSnapshot.manifestDigest &&
-        baselineSnapshot.manifestDigest !== postSnapshot.manifestDigest
-      ) {
-        violatingFilesSet.add('task-manifest.json');
-      }
-      if (
-        baselineSnapshot.designDigest &&
-        postSnapshot.designDigest &&
-        baselineSnapshot.designDigest !== postSnapshot.designDigest
-      ) {
-        violatingFilesSet.add('design.md');
-      }
-    }
-
-    const headTransition =
-      baselineSha !== undefined && endSha !== undefined && endSha !== baselineSha;
-    const isViolation =
-      inspectionError !== undefined || headTransition || violatingFilesSet.size > 0;
-
-    // 5. If state is clean, return the untouched result.
-    if (!isViolation) {
-      return { ok: true, result };
-    }
-
-    // 6. On a detected violation or post-invocation inspection failure, attempt
-    // resetHard(cwd, baselineSha) and then cleanUntracked(cwd) in independent try blocks.
-    let resetAttempted = false;
-    let resetSuccess = false;
-    let resetError: string | undefined;
-
-    if (baselineSha !== undefined) {
-      resetAttempted = true;
-      try {
-        await this.deps.git.resetHard(ctx.cwd, baselineSha);
-        resetSuccess = true;
-      } catch (err) {
-        resetSuccess = false;
-        resetError = err instanceof Error ? err.message : String(err);
-      }
-    }
-
-    const cleanAttempted = true;
-    let cleanSuccess = false;
-    let cleanError: string | undefined;
-    try {
-      await this.deps.git.cleanUntracked(ctx.cwd);
-      cleanSuccess = true;
-    } catch (err) {
-      cleanSuccess = false;
-      cleanError = err instanceof Error ? err.message : String(err);
-    }
-
-    // 7. Emit exactly one plan-review.read_only_violation event at error level
-    const sortedViolatingFiles = Array.from(violatingFilesSet).sort();
-    const invocationId = extractInvocationId ? extractInvocationId(result) : undefined;
-
-    this.emit(
-      input,
-      'plan-review.read_only_violation',
-      'error',
-      inspectionError
-        ? `read-only ${agentRole} guard failed during inspection: ${inspectionError}`
-        : `read-only violation detected during plan-review ${agentRole} invocation: ${sortedViolatingFiles.join(', ')}`,
-      {
-        phase: 'plan-review',
-        ...(invocationId ? { invocationId } : {}),
-        ...(reviewMode ? { reviewMode } : {}),
-        iteration: ctx.iterationIndex,
-        ...(baselineSha !== undefined ? { baselineSha } : {}),
-        ...(endSha !== undefined ? { endSha } : {}),
-        files: sortedViolatingFiles,
-        ...(inspectionError ? { detectionError: inspectionError } : {}),
-        resetAttempted,
-        resetSuccess,
-        ...(resetError ? { resetError } : {}),
-        cleanAttempted,
-        cleanSuccess,
-        ...(cleanError ? { cleanError } : {}),
-      },
-    );
-
-    // 8. Return { ok: false }
     return { ok: false };
   }
 

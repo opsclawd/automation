@@ -96,6 +96,136 @@ function makeDeps(
 }
 
 describe('PlanReviewLoop Read-Only Guard', () => {
+  it('automatically retries once when read-only violation cleanup succeeds, unblocking the run if retry is clean', async () => {
+    const customGit = new FakeGitPort();
+    customGit.headByCwd.set('/wt', 'base-sha-1');
+
+    let reviewCallCount = 0;
+    const { deps, events, reviewStateRepository } = makeDeps(
+      {
+        runReview: async () => {
+          reviewCallCount++;
+          if (reviewCallCount === 1) {
+            // First attempt: reviewer creates untracked file
+            customGit.statusByCwd.set('/wt', '?? apps/web/src/app/api/route.test.ts\n');
+            return {
+              invocationId: 'rev-1',
+              agentOutcome: 'success',
+              verdict: 'pass',
+            };
+          }
+          // Retry attempt: worktree is clean, reviewer returns pass
+          customGit.statusByCwd.set('/wt', '');
+          return {
+            invocationId: 'rev-2',
+            agentOutcome: 'success',
+            verdict: 'pass',
+          };
+        },
+      },
+      customGit,
+    );
+
+    const loop = new PlanReviewLoop(deps);
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('success');
+    expect(reviewCallCount).toBe(2);
+
+    const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
+    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents[0]?.metadata.invocationId).toBe('rev-1');
+    expect(violationEvents[0]?.metadata.files).toEqual(['apps/web/src/app/api/route.test.ts']);
+    expect(violationEvents[0]?.metadata.resetSuccess).toBe(true);
+    expect(violationEvents[0]?.metadata.cleanSuccess).toBe(true);
+
+    const retryEvents = events.filter((e) => e.type === 'plan-review.read_only_violation.retry');
+    expect(retryEvents).toHaveLength(1);
+    expect(retryEvents[0]?.metadata.attempt).toBe(2);
+
+    const attempts = reviewStateRepository.listAttempts(
+      'run-1',
+      'plan-review',
+      'plan-review',
+      'plan',
+    );
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.attemptId).toBe('rev-2');
+  });
+
+  it('escalates to needs_human_review when retry also produces a read-only violation', async () => {
+    const customGit = new FakeGitPort();
+    customGit.headByCwd.set('/wt', 'base-sha-1');
+
+    let reviewCallCount = 0;
+    const { deps, events } = makeDeps(
+      {
+        runReview: async () => {
+          reviewCallCount++;
+          customGit.statusByCwd.set('/wt', `?? leak-${reviewCallCount}.txt\n`);
+          return {
+            invocationId: `rev-${reviewCallCount}`,
+            agentOutcome: 'success',
+            verdict: 'pass',
+          };
+        },
+      },
+      customGit,
+    );
+
+    const loop = new PlanReviewLoop(deps);
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('needs_human_review');
+    expect(reviewCallCount).toBe(2);
+
+    const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
+    expect(violationEvents).toHaveLength(2);
+    expect(violationEvents[0]?.metadata.invocationId).toBe('rev-1');
+    expect(violationEvents[1]?.metadata.invocationId).toBe('rev-2');
+
+    const retryEvents = events.filter((e) => e.type === 'plan-review.read_only_violation.retry');
+    expect(retryEvents).toHaveLength(1);
+  });
+
+  it('escalates immediately without retrying when cleanup fails', async () => {
+    const customGit = new FakeGitPort();
+    customGit.headByCwd.set('/wt', 'base-sha-1');
+    customGit.statusByCwd.set('/wt', '?? dirty.txt\n');
+
+    customGit.resetHard = async () => {
+      throw new Error('reset hard failure');
+    };
+
+    let reviewCallCount = 0;
+    const { deps, events } = makeDeps(
+      {
+        runReview: async () => {
+          reviewCallCount++;
+          return {
+            invocationId: `rev-${reviewCallCount}`,
+            agentOutcome: 'success',
+            verdict: 'pass',
+          };
+        },
+      },
+      customGit,
+    );
+
+    const loop = new PlanReviewLoop(deps);
+    const result = await loop.execute(baseInput());
+
+    expect(result.outcome).toBe('needs_human_review');
+    expect(reviewCallCount).toBe(1);
+
+    const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
+    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents[0]?.metadata.resetSuccess).toBe(false);
+
+    const retryEvents = events.filter((e) => e.type === 'plan-review.read_only_violation.retry');
+    expect(retryEvents).toHaveLength(0);
+  });
+
   it('allows findings-only output and consumes the reviewer verdict', async () => {
     const callOrder: string[] = [];
     const customGit = new FakeGitPort();
@@ -185,13 +315,13 @@ describe('PlanReviewLoop Read-Only Guard', () => {
       {
         runReview: async () => {
           reviewCallCount++;
-          // Simulate reviewer mutating worktree
+          // Simulate reviewer mutating worktree on every call
           customGit.statusByCwd.set(
             '/wt',
             ' M src/index.ts\n?? some-file.ts\n?? plan-review-findings.md\n',
           );
           return {
-            invocationId: 'rev-1',
+            invocationId: `rev-${reviewCallCount}`,
             agentOutcome: 'success',
             verdict: 'pass',
           };
@@ -218,7 +348,7 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     expect(result.outcome).toBe('needs_human_review');
     expect(fixCalled).toBe(false);
     expect(arbiterCalled).toBe(false);
-    expect(reviewCallCount).toBe(1);
+    expect(reviewCallCount).toBe(2);
 
     expect(callOrder).toContain('resetHard:base-sha-1');
     expect(callOrder).toContain('cleanUntracked');
@@ -227,7 +357,7 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     expect(resetIdx).toBeLessThan(cleanIdx);
 
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents).toHaveLength(2);
     const violation = violationEvents[0]!;
     expect(violation.level).toBe('error');
     expect(violation.metadata.phase).toBe('plan-review');
@@ -256,15 +386,18 @@ describe('PlanReviewLoop Read-Only Guard', () => {
   it('restores reviewer commits even when the net file diff is empty', async () => {
     const customGit = new FakeGitPort();
     customGit.headByCwd.set('/wt', 'base-sha-1');
-    customGit.changedFilesResults.set('base-sha-1|commit-sha-2', []);
 
+    let reviewCallCount = 0;
     const { deps, events } = makeDeps(
       {
         runReview: async () => {
-          // Reviewer made a commit (e.g. empty commit or net-zero diff commit)
-          customGit.headByCwd.set('/wt', 'commit-sha-2');
+          reviewCallCount++;
+          // Reviewer made a commit on each invocation
+          const newSha = `commit-sha-${reviewCallCount + 1}`;
+          customGit.headByCwd.set('/wt', newSha);
+          customGit.changedFilesResults.set(`base-sha-1|${newSha}`, []);
           return {
-            invocationId: 'rev-1',
+            invocationId: `rev-${reviewCallCount}`,
             agentOutcome: 'success',
             verdict: 'pass',
           };
@@ -277,10 +410,11 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     const result = await loop.execute(baseInput());
 
     expect(result.outcome).toBe('needs_human_review');
+    expect(reviewCallCount).toBe(2);
     expect(customGit.headByCwd.get('/wt')).toBe('base-sha-1');
 
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents).toHaveLength(2);
     const violation = violationEvents[0]!;
     expect(violation.metadata.baselineSha).toBe('base-sha-1');
     expect(violation.metadata.endSha).toBe('commit-sha-2');
@@ -295,7 +429,8 @@ describe('PlanReviewLoop Read-Only Guard', () => {
       {
         captureSnapshot: async () => {
           snapshotCount++;
-          if (snapshotCount === 1) {
+          // Every post-invocation snapshot call (even calls) returns a modified digest
+          if (snapshotCount % 2 === 1) {
             return {
               planMdDigest: 'plan-digest-before',
               manifestDigest: 'manifest-digest-before',
@@ -326,7 +461,7 @@ describe('PlanReviewLoop Read-Only Guard', () => {
 
     expect(result.outcome).toBe('needs_human_review');
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents).toHaveLength(2);
     const violation = violationEvents[0]!;
     expect(violation.metadata.files).toEqual(['design.md', 'plan.md']);
     expect(customGit.cleanUntrackedCalls.length).toBeGreaterThan(0);
@@ -336,22 +471,22 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     const customGit = new FakeGitPort();
     customGit.headByCwd.set('/wt', 'base-sha-1');
 
-    let attempts = 0;
+    let reviewInvocations = 0;
     const { deps, events } = makeDeps(
       {
         runReview: async () => {
-          attempts++;
-          if (attempts === 1) {
-            // First attempt: clean failure (agent failed, no forbidden writes)
+          reviewInvocations++;
+          if (reviewInvocations === 1) {
+            // First outer reviewer retry loop attempt: clean failure (agent failed, no forbidden writes)
             return {
               invocationId: 'rev-1',
               agentOutcome: 'error',
             };
           }
-          // Second attempt: writes forbidden file
-          customGit.statusByCwd.set('/wt', '?? leak.txt\n');
+          // Second outer reviewer retry loop invocation: writes forbidden file on both guard attempt 1 and guard attempt 2
+          customGit.statusByCwd.set('/wt', `?? leak-${reviewInvocations}.txt\n`);
           return {
-            invocationId: 'rev-2',
+            invocationId: `rev-${reviewInvocations}`,
             agentOutcome: 'success',
             verdict: 'pass',
           };
@@ -364,7 +499,7 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     const result = await loop.execute(baseInput());
 
     expect(result.outcome).toBe('needs_human_review');
-    expect(attempts).toBe(2);
+    expect(reviewInvocations).toBe(3); // 1 initial failure + 2 guard attempts on the second reviewer invocation
 
     const retryEvents = events.filter((e) => e.type === 'plan-review.reviewer.retry');
     expect(retryEvents).toHaveLength(1);
@@ -373,9 +508,8 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     expect(failedEvents).toHaveLength(0);
 
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents).toHaveLength(2);
     expect(violationEvents[0]?.metadata.invocationId).toBe('rev-2');
-    expect(violationEvents[0]?.metadata.files).toEqual(['leak.txt']);
   });
 
   it('guards post-reopen verification before consuming its result', async () => {
@@ -428,10 +562,10 @@ describe('PlanReviewLoop Read-Only Guard', () => {
               ],
             };
           }
-          // Review 4: Post-reopen verification review writes forbidden file
-          customGit.statusByCwd.set('/wt', '?? leaked.js\n');
+          // Review 4+: Post-reopen verification review writes forbidden file
+          customGit.statusByCwd.set('/wt', `?? leaked-${reviewInvocation}.js\n`);
           return {
-            invocationId: 'rev-post-reopen',
+            invocationId: `rev-post-reopen-${reviewInvocation}`,
             agentOutcome: 'success',
             verdict: 'pass',
           };
@@ -445,9 +579,8 @@ describe('PlanReviewLoop Read-Only Guard', () => {
 
     expect(result.outcome).toBe('needs_human_review');
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
-    expect(violationEvents[0]?.metadata.invocationId).toBe('rev-post-reopen');
-    expect(violationEvents[0]?.metadata.files).toEqual(['leaked.js']);
+    expect(violationEvents).toHaveLength(2);
+    expect(violationEvents[0]?.metadata.invocationId).toBe('rev-post-reopen-4');
   });
 
   it('guards final full review before consuming its result', async () => {
@@ -484,10 +617,10 @@ describe('PlanReviewLoop Read-Only Guard', () => {
               findings: [],
             };
           }
-          // Review 3: Final full review writes forbidden file
-          customGit.statusByCwd.set('/wt', '?? leaked.ts\n');
+          // Review 3+: Final full review writes forbidden file
+          customGit.statusByCwd.set('/wt', `?? leaked-${reviewInvocation}.ts\n`);
           return {
-            invocationId: 'rev-final-full',
+            invocationId: `rev-final-full-${reviewInvocation}`,
             agentOutcome: 'success',
             verdict: 'pass',
           };
@@ -501,9 +634,8 @@ describe('PlanReviewLoop Read-Only Guard', () => {
 
     expect(result.outcome).toBe('needs_human_review');
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
-    expect(violationEvents[0]?.metadata.invocationId).toBe('rev-final-full');
-    expect(violationEvents[0]?.metadata.files).toEqual(['leaked.ts']);
+    expect(violationEvents).toHaveLength(2);
+    expect(violationEvents[0]?.metadata.invocationId).toBe('rev-final-full-3');
   });
 
   it('guards bonus-fix confirmation before consuming its result', async () => {
@@ -548,9 +680,9 @@ describe('PlanReviewLoop Read-Only Guard', () => {
             };
           }
           // Confirmation review after bonus fix writes forbidden file
-          customGit.statusByCwd.set('/wt', '?? bonus_leaked.txt\n');
+          customGit.statusByCwd.set('/wt', `?? bonus_leaked-${reviewInvocation}.txt\n`);
           return {
-            invocationId: 'rev-confirm',
+            invocationId: `rev-confirm-${reviewInvocation}`,
             agentOutcome: 'success',
             verdict: 'pass',
           };
@@ -569,9 +701,8 @@ describe('PlanReviewLoop Read-Only Guard', () => {
 
     expect(result.outcome).toBe('needs_human_review');
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
-    expect(violationEvents[0]?.metadata.invocationId).toBe('rev-confirm');
-    expect(violationEvents[0]?.metadata.files).toEqual(['bonus_leaked.txt']);
+    expect(violationEvents).toHaveLength(2);
+    expect(violationEvents[0]?.metadata.invocationId).toBe('rev-confirm-3');
   });
 
   it('attempts untracked cleanup when reset fails and reports both outcomes', async () => {
@@ -670,7 +801,7 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     expect(customGit.cleanUntrackedCalls).toContain('/wt');
 
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents).toHaveLength(2);
     const violation = violationEvents[0]!;
     expect(violation.metadata.detectionError).toBe('git status failed unexpectedly');
   });
@@ -684,7 +815,7 @@ describe('PlanReviewLoop Read-Only Guard', () => {
       {
         captureSnapshot: async () => {
           captureCount++;
-          if (captureCount === 1) {
+          if (captureCount % 2 === 1) {
             return {
               planMdDigest: 'digest-1',
               planMdPath: '/wt/plan.md',
@@ -709,7 +840,7 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     expect(customGit.cleanUntrackedCalls).toContain('/wt');
 
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents).toHaveLength(2);
     const violation = violationEvents[0]!;
     expect(violation.metadata.detectionError).toBe('snapshot disk read failure');
   });
@@ -735,7 +866,7 @@ describe('PlanReviewLoop Read-Only Guard', () => {
 
     expect(result.outcome).toBe('needs_human_review');
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents).toHaveLength(2);
     const violation = violationEvents[0]!;
     expect(violation.metadata.files).toEqual(['.ai-runs/log.txt', 'sub/plan-review-findings.md']);
   });
@@ -744,7 +875,7 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     const customGit = new FakeGitPort();
     customGit.headByCwd.set('/wt', 'base-sha-1');
 
-    let arbiterCalled = false;
+    let arbiterCallCount = 0;
     const { deps, events } = makeDeps(
       {
         runReview: async () => ({
@@ -767,9 +898,9 @@ describe('PlanReviewLoop Read-Only Guard', () => {
           rebuttal: 'Disagreed with finding',
         }),
         runArbiter: async () => {
-          arbiterCalled = true;
-          // Arbiter writes forbidden file
-          customGit.statusByCwd.set('/wt', '?? arbiter-leak.txt\n');
+          arbiterCallCount++;
+          // Arbiter writes forbidden file on each invocation
+          customGit.statusByCwd.set('/wt', `?? arbiter-leak-${arbiterCallCount}.txt\n`);
           return {
             outcome: 'finding_valid',
             rationale: 'Finding is valid',
@@ -785,20 +916,20 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     const result = await loop.execute(baseInput());
 
     expect(result.outcome).toBe('needs_human_review');
-    expect(arbiterCalled).toBe(true);
+    expect(arbiterCallCount).toBe(2);
     expect(customGit.cleanUntrackedCalls).toContain('/wt');
 
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents).toHaveLength(2);
     const violation = violationEvents[0]!;
-    expect(violation.metadata.files).toEqual(['arbiter-leak.txt']);
+    expect(violation.metadata.files).toEqual(['arbiter-leak-1.txt']);
   });
 
   it('guards final review arbiter against worktree mutations and cleans up', async () => {
     const customGit = new FakeGitPort();
     customGit.headByCwd.set('/wt', 'base-sha-1');
 
-    let finalArbiterCalled = false;
+    let finalArbiterCalls = 0;
     let reviewCalls = 0;
     const { deps, events } = makeDeps(
       {
@@ -824,9 +955,9 @@ describe('PlanReviewLoop Read-Only Guard', () => {
           verdict: 'done_with_fixes',
         }),
         runFinalReviewArbiter: async () => {
-          finalArbiterCalled = true;
-          // Final arbiter writes forbidden file
-          customGit.statusByCwd.set('/wt', '?? final-arbiter-leak.txt\n');
+          finalArbiterCalls++;
+          // Final arbiter writes forbidden file on each invocation
+          customGit.statusByCwd.set('/wt', `?? final-arbiter-leak-${finalArbiterCalls}.txt\n`);
           return {
             outcome: 'finding_valid',
             rationale: 'Final defect is valid',
@@ -842,13 +973,13 @@ describe('PlanReviewLoop Read-Only Guard', () => {
     const result = await loop.execute({ ...baseInput(), maxIterations: 2 });
 
     expect(result.outcome).toBe('needs_human_review');
-    expect(finalArbiterCalled).toBe(true);
+    expect(finalArbiterCalls).toBe(2);
     expect(customGit.cleanUntrackedCalls).toContain('/wt');
 
     const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
-    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents).toHaveLength(2);
     const violation = violationEvents[0]!;
-    expect(violation.metadata.files).toEqual(['final-arbiter-leak.txt']);
+    expect(violation.metadata.files).toEqual(['final-arbiter-leak-1.txt']);
   });
 
   it('permits result.json output during arbiter invocation', async () => {

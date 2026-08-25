@@ -1058,8 +1058,9 @@ describe('resume worktree lifecycle integration', () => {
     // -------------------------------------------------------------
     const contractViolationReviewScript: ScriptedAgentScript = {
       phaseId: 'plan-review',
-      handle: async (_request) => {
-        // Agent violates contract: returns contract_violation outcome without writing findings artifact
+      handle: async (request) => {
+        // Agent violates contract and writes forbidden residue into worktree
+        writeFileSync(path.join(request.cwd, 'violating-agent-residue.tmp'), 'probe residue');
         return {
           runtime: 'test' as const,
           provider: 'test',
