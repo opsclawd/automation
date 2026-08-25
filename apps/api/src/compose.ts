@@ -300,6 +300,7 @@ import {
   PLAN_REVIEW_FINDINGS_ARTIFACT,
   PLAN_FIX_RESULT_ARTIFACT,
   buildPlanReviewFixPrompt,
+  buildPlanReviewValidationErrorBlock,
 } from './plan-review-prompts.js';
 import {
   getPostPrReviewCommitPolicy,
@@ -515,10 +516,7 @@ export async function maybeRetryTransientRevalidationFlake(
         ? c.stderrPath
         : join(input.revalidateLogDir, basename(c.stderrPath))
       : '';
-    const [stdoutTail, stderrTail] = await Promise.all([
-      readTail(stdoutAbs),
-      readTail(stderrAbs),
-    ]);
+    const [stdoutTail, stderrTail] = await Promise.all([readTail(stdoutAbs), readTail(stderrAbs)]);
     const extracted = extractFailedTestFilesFromOutput(stdoutTail + '\n' + stderrTail);
     for (const f of extracted) {
       failedTestFiles.add(f);
@@ -5316,6 +5314,14 @@ export function composeRoot(opts: ComposeOptions): Container {
             promptBody = `${promptBody}\n\n${scopeBlock}`;
           }
         }
+        const validationError =
+          typeof ctx.metadata?.validationError === 'string'
+            ? ctx.metadata.validationError
+            : undefined;
+        const validationBlock = buildPlanReviewValidationErrorBlock(validationError);
+        if (validationBlock.length > 0) {
+          promptBody = `${promptBody}\n\n${validationBlock}`;
+        }
         writeFileSync(promptPath, promptBody, 'utf-8');
 
         const startCommitSha = (() => {
@@ -5426,8 +5432,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             ...(snapshot ? { snapshot } : {}),
             ...(mode ? { mode } : {}),
           };
-        } catch {
-          return { invocationId, agentOutcome: 'failed' };
+        } catch (error) {
+          return {
+            invocationId,
+            agentOutcome: 'failed',
+            validationError: error instanceof Error ? error.message : String(error),
+          };
         }
       };
 

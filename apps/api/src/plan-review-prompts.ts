@@ -301,14 +301,38 @@ export function buildPlanReviewFinalReviewArbiterPrompt(
   ].join('\n');
 }
 
+export function buildPlanReviewValidationErrorBlock(diagnostic?: string): string {
+  if (!diagnostic || diagnostic.trim().length === 0) {
+    return '';
+  }
+  const sanitized = diagnostic.slice(0, 8192).replace(/```/g, "'''");
+  return [
+    '## Output Validation Failure',
+    '',
+    'Your previous response was rejected by the system. Correct the response and write a replacement findings artifact.',
+    '',
+    '```text',
+    sanitized,
+    '```',
+  ].join('\n');
+}
+
 export function buildPlanReviewReviewPrompt(
   basePrompt: string,
   opts?: PlanReviewStepOptions,
+  validationError?: string,
 ): string {
   const scopeBlock = opts ? buildPlanReviewReviewScopeBlock(opts) : '';
-  const withScope = scopeBlock ? [basePrompt, scopeBlock].join('\n\n') : basePrompt;
-  if (withScope.includes(SCRATCH_FILE_POLICY)) return withScope;
-  return [withScope, '', '## SCRATCH WORKSPACE POLICY', '', SCRATCH_FILE_POLICY].join('\n');
+  const validationBlock = buildPlanReviewValidationErrorBlock(validationError);
+  let prompt = basePrompt;
+  if (scopeBlock) {
+    prompt = `${prompt}\n\n${scopeBlock}`;
+  }
+  if (validationBlock) {
+    prompt = `${prompt}\n\n${validationBlock}`;
+  }
+  if (prompt.includes(SCRATCH_FILE_POLICY)) return prompt;
+  return [prompt, '', '## SCRATCH WORKSPACE POLICY', '', SCRATCH_FILE_POLICY].join('\n');
 }
 
 /**

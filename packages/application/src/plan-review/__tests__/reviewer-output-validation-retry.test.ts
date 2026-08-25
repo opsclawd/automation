@@ -16,11 +16,7 @@ import type {
 import type { ArbiterResult } from '../../implement-step/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
 
-interface ValidationFailureResult extends PlanReviewResult {
-  validationError?: string;
-}
-
-const failedReview: ValidationFailureResult = {
+const failedReview: PlanReviewResult = {
   invocationId: 'review-invalid-1',
   agentOutcome: 'failed',
   validationError:
@@ -340,6 +336,55 @@ describe('reviewer output validation retry regression coverage', () => {
     expect(out.loop.status).toBe('converged');
     expect(reviewCalls).toBe(2);
     expect(capturedValidationError).toBeUndefined();
+  });
+
+  it('does not leak validation feedback after a successful retry', async () => {
+    let reviewCalls = 0;
+    let fixCalls = 0;
+    const capturedValidationErrors: Array<unknown> = [];
+
+    const { deps } = makeDeps({
+      reviewerMaxRetries: 2,
+      runReview: async (ctx: PlanReviewContext): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        capturedValidationErrors.push(ctx.metadata?.validationError);
+        if (reviewCalls === 1) {
+          return failedReview;
+        }
+        if (reviewCalls === 2) {
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success',
+            verdict: 'p1_found',
+            findings: groundedP1Findings(),
+          };
+        }
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success',
+          verdict: 'pass',
+          findings: [],
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+        };
+      },
+    });
+
+    const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+    expect(out.outcome).toBe('success');
+    expect(out.loop.status).toBe('converged');
+    expect(reviewCalls).toBe(4);
+    expect(fixCalls).toBe(1);
+    expect(capturedValidationErrors[0]).toBeUndefined();
+    expect(capturedValidationErrors[1]).toBe(failedReview.validationError);
+    expect(capturedValidationErrors[2]).toBeUndefined();
+    expect(capturedValidationErrors[3]).toBeUndefined();
   });
 
   it('still stops immediately after duplicate_retry_suppressed', async () => {
