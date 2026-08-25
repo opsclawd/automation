@@ -478,6 +478,7 @@ export class PlanReviewLoop {
       } else {
         arbiterAlreadyRuledValid = false;
         // --- REVIEWER (with retry budget per parity #297) ---
+        let lastValidationError: string | undefined;
         let reviewAttempts = 0;
         while (reviewAttempts <= reviewerMaxRetries) {
           reviewAttempts += 1;
@@ -489,6 +490,7 @@ export class PlanReviewLoop {
                 iteration: iterationIndex,
                 invocation_type: reviewAttempts === 1 ? 'initial' : 'retry',
                 reviewMode,
+                ...(lastValidationError ? { validationError: lastValidationError } : {}),
               },
             },
             buildReviewStepOptions(iterationIndex, reviewMode),
@@ -514,6 +516,7 @@ export class PlanReviewLoop {
           // of burning the retry budget on guaranteed-repeat suppressions
           // (#1027).
           if (review.agentOutcome === 'duplicate_retry_suppressed') break;
+          lastValidationError = review.validationError;
           if (reviewAttempts <= reviewerMaxRetries) {
             this.emit(
               input,
@@ -1303,6 +1306,7 @@ export class PlanReviewLoop {
         } else {
           const snapshot = await deps.captureSnapshot(verificationCtx);
 
+          let lastValidationError: string | undefined;
           let reviewAttempts = 0;
           while (reviewAttempts <= reviewerMaxRetries) {
             reviewAttempts += 1;
@@ -1314,6 +1318,7 @@ export class PlanReviewLoop {
                   iteration: verificationIteration,
                   invocation_type: reviewAttempts === 1 ? 'initial' : 'retry',
                   reviewMode: 'final_full',
+                  ...(lastValidationError ? { validationError: lastValidationError } : {}),
                 },
               },
               {
@@ -1344,6 +1349,7 @@ export class PlanReviewLoop {
             // suppression is deterministic and can never resolve by
             // retrying, so stop immediately rather than burning budget.
             if (reviewResult.agentOutcome === 'duplicate_retry_suppressed') break;
+            lastValidationError = reviewResult.validationError;
             if (reviewAttempts <= reviewerMaxRetries) {
               this.emit(
                 input,
@@ -1572,6 +1578,7 @@ export class PlanReviewLoop {
 
         // --- REVIEWER (with retry budget per parity #297) ---
         let finalReview: PlanReviewResult | undefined;
+        let lastValidationError: string | undefined;
         let finalReviewAttempts = 0;
         while (finalReviewAttempts <= reviewerMaxRetries) {
           finalReviewAttempts += 1;
@@ -1581,8 +1588,9 @@ export class PlanReviewLoop {
               ...finalCtx,
               metadata: {
                 iteration: finalIterationIndex,
-                invocation_type: 'initial',
+                invocation_type: finalReviewAttempts === 1 ? 'initial' : 'retry',
                 reviewMode: 'final_full',
+                ...(lastValidationError ? { validationError: lastValidationError } : {}),
               },
             },
             buildReviewStepOptions(finalIterationIndex, 'final_full'),
@@ -1611,6 +1619,7 @@ export class PlanReviewLoop {
           // suppression is deterministic and can never resolve by
           // retrying, so stop immediately rather than burning budget.
           if (finalReview.agentOutcome === 'duplicate_retry_suppressed') break;
+          lastValidationError = finalReview.validationError;
           if (finalReviewAttempts <= reviewerMaxRetries) {
             this.emit(
               input,
@@ -2103,6 +2112,7 @@ export class PlanReviewLoop {
               );
 
               let confirmReview: PlanReviewResult | undefined;
+              let lastValidationError: string | undefined;
               let confirmAttempts = 0;
               while (confirmAttempts <= reviewerMaxRetries) {
                 confirmAttempts += 1;
@@ -2113,6 +2123,7 @@ export class PlanReviewLoop {
                     metadata: {
                       iteration: confirmIterationIndex,
                       invocation_type: confirmAttempts === 1 ? 'initial' : 'retry',
+                      ...(lastValidationError ? { validationError: lastValidationError } : {}),
                     },
                   },
                   buildReviewStepOptions(confirmIterationIndex, 'final_full', true),
@@ -2140,6 +2151,7 @@ export class PlanReviewLoop {
                 // suppression is deterministic and can never resolve by
                 // retrying, so stop immediately rather than burning budget.
                 if (confirmReview.agentOutcome === 'duplicate_retry_suppressed') break;
+                lastValidationError = confirmReview.validationError;
                 if (confirmAttempts <= reviewerMaxRetries) {
                   this.emit(
                     input,

@@ -59,6 +59,48 @@ describe('plan-review compose wiring', () => {
     expect(reviewFnMatch![0]).toContain('parsedFindings.findings');
     expect(reviewFnMatch![0]).toContain('parsedFindings.knownLimitations');
     expect(reviewFnMatch![0]).toContain('rmSync(join(ctx.cwd, PLAN_REVIEW_FINDINGS_ARTIFACT)');
+    expect(reviewFnMatch![0]).toContain('buildPlanReviewValidationErrorBlock');
+    expect(reviewFnMatch![0]).toContain(
+      'validationError: error instanceof Error ? error.message : String(error)',
+    );
+  });
+
+  it('captures only findings validation exceptions as retry feedback', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const reviewFnMatch = composeSrc.match(
+      /const planReviewRunReview[\s\S]*?(?=const planReviewRunFix)/,
+    );
+    expect(reviewFnMatch).toBeTruthy();
+    const fnSrc = reviewFnMatch![0];
+
+    // Ensure ctx.metadata?.validationError is read and passed to helper
+    expect(fnSrc).toContain('ctx.metadata?.validationError');
+    expect(fnSrc).toContain('buildPlanReviewValidationErrorBlock(validationError)');
+
+    // Ensure promptBody appends validationBlock if non-empty
+    expect(fnSrc).toContain('if (validationBlock.length > 0)');
+    expect(fnSrc).toContain('promptBody = `${promptBody}\\n\\n${validationBlock}`');
+
+    // Ensure findings read / parse catch captures the normalized error
+    expect(fnSrc).toContain('catch (error)');
+    expect(fnSrc).toContain(
+      'validationError: error instanceof Error ? error.message : String(error)',
+    );
+
+    // Ensure artifactAgent.invoke catch does NOT return validationError
+    const invokeCatchMatch = fnSrc.match(/artifactAgent\.invoke[\s\S]*?catch[\s\S]*?\{([\s\S]*?)\}/);
+    expect(invokeCatchMatch).toBeTruthy();
+    expect(invokeCatchMatch![1]).not.toContain('validationError');
+
+    // Ensure non-success outcome return does NOT include validationError
+    const nonSuccessMatch = fnSrc.match(
+      /if\s*\(\s*invokeResult\.outcome\s*!==\s*'success'\s*\)\s*\{([\s\S]*?)\}/,
+    );
+    expect(nonSuccessMatch).toBeTruthy();
+    expect(nonSuccessMatch![1]).not.toContain('validationError');
   });
 
   it('wires planReviewCheckDeterministicPlan into the PlanReviewLoop using validatePlanTaskList', () => {

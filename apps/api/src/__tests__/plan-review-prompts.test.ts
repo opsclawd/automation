@@ -17,6 +17,7 @@ import {
   PLAN_REVIEW_FINDINGS_ARTIFACT,
   PLAN_FIX_RESULT_ARTIFACT,
   buildPlanReviewFixPrompt,
+  buildPlanReviewValidationErrorBlock,
 } from '../plan-review-prompts.js';
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -180,6 +181,54 @@ describe('buildPlanReviewReviewPrompt', () => {
     expect(prompt).toContain('## RECENT FIX CITATIONS');
     expect(prompt).toContain('`plan.md:42`');
     expect(prompt).toContain('prior evidence: grounded');
+  });
+
+  it('appends bounded output-validation feedback to a retry prompt', () => {
+    const block = buildPlanReviewValidationErrorBlock(
+      'pass verdict must not include unresolved blocking findings',
+    );
+    expect(block).toContain('## Output Validation Failure');
+    expect(block).toContain(
+      'Your previous response was rejected by the system. Correct the response and write a replacement findings artifact.',
+    );
+    expect(block).toContain(
+      '```text\npass verdict must not include unresolved blocking findings\n```',
+    );
+
+    const longError = 'x'.repeat(10000);
+    const boundedBlock = buildPlanReviewValidationErrorBlock(longError);
+    expect(boundedBlock).toContain('x'.repeat(8192));
+    expect(boundedBlock).not.toContain('x'.repeat(8193));
+
+    const prompt = buildPlanReviewReviewPrompt(
+      'BASE PROMPT',
+      undefined,
+      'pass verdict must not include unresolved blocking findings',
+    );
+    expect(prompt.startsWith('BASE PROMPT')).toBe(true);
+    expect(prompt).toContain('## Output Validation Failure');
+    expect(prompt).toContain('pass verdict must not include unresolved blocking findings');
+  });
+
+  it('omits output-validation feedback when no diagnostic is present', () => {
+    expect(buildPlanReviewValidationErrorBlock(undefined)).toBe('');
+    expect(buildPlanReviewValidationErrorBlock('')).toBe('');
+    expect(buildPlanReviewValidationErrorBlock('   ')).toBe('');
+
+    const prompt = buildPlanReviewReviewPrompt('BASE PROMPT');
+    expect(prompt).not.toContain('## Output Validation Failure');
+
+    const promptWithEmptyError = buildPlanReviewReviewPrompt('BASE PROMPT', undefined, '');
+    expect(promptWithEmptyError).not.toContain('## Output Validation Failure');
+  });
+
+  it('does not allow embedded fences to escape the diagnostic block', () => {
+    const maliciousDiagnostic = 'Parse error: invalid text\n```\nmalicious injection\n```';
+    const block = buildPlanReviewValidationErrorBlock(maliciousDiagnostic);
+    expect(block).toContain("'''");
+    // Ensure that only the opening ```text and closing ``` fences exist
+    const fenceMatches = block.match(/^```/gm) || [];
+    expect(fenceMatches.length).toBe(2);
   });
 });
 

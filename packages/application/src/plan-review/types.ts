@@ -55,6 +55,8 @@ export interface PlanReviewResult {
    *     no recent-fix citation filter, runs manifest sync check
    */
   mode?: ReviewMode;
+  /** Parse/consistency diagnostic from a completed invocation whose output was rejected. */
+  validationError?: string;
 }
 
 /**
