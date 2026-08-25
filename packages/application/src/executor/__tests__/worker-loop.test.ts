@@ -922,4 +922,99 @@ describe('workerLoop', () => {
     expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   });
+
+  it('propagates resumeDisposition to executeRun for resumed jobs', async () => {
+    const s = setup();
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+        resumeDisposition: 'reset_to_baseline',
+      }),
+    });
+
+    let capturedResumeDisposition: string | undefined;
+    const executeRun = vi.fn(
+      async (input: {
+        run: Run;
+        workerId: WorkerId;
+        cwd: string;
+        signal: AbortSignal;
+        resumeDisposition?: import('@ai-sdlc/domain').ResumeDisposition;
+      }) => {
+        capturedResumeDisposition = input.resumeDisposition;
+        return { ok: true as const };
+      },
+    );
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun,
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
+    });
+
+    expect(executeRun).toHaveBeenCalled();
+    expect(capturedResumeDisposition).toBe('reset_to_baseline');
+  });
+
+  it('passes undefined resumeDisposition to executeRun for fresh jobs', async () => {
+    const s = setup();
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    let capturedResumeDisposition: string | undefined = 'initial';
+    const executeRun = vi.fn(
+      async (input: {
+        run: Run;
+        workerId: WorkerId;
+        cwd: string;
+        signal: AbortSignal;
+        resumeDisposition?: import('@ai-sdlc/domain').ResumeDisposition;
+      }) => {
+        capturedResumeDisposition = input.resumeDisposition;
+        return { ok: true as const };
+      },
+    );
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun,
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
+    });
+
+    expect(executeRun).toHaveBeenCalled();
+    expect(capturedResumeDisposition).toBeUndefined();
+  });
 });

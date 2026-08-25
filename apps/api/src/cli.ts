@@ -411,7 +411,7 @@ function buildSchedulerDeps(
       leases: runtime.workerLeaseRepository,
       repos: runtime.workerLoopDeps.repos,
       repoId: runtime.repository.id,
-      executeRun: async ({ run: r, signal }) => {
+      executeRun: async ({ run: r, signal, resumeDisposition }) => {
         runtime.runRepository.update(r.uuid, { pid: process.pid });
         const controller = new AbortController();
         const onAbort = () => {
@@ -430,7 +430,12 @@ function buildSchedulerDeps(
         });
         c.runAbort.register(RunId(r.uuid), controller, donePromise);
         try {
-          const result = await runExecutor.execute({ run: r, skip: [], presentArtifacts: [] });
+          const result = await runExecutor.execute({
+            run: r,
+            skip: [],
+            presentArtifacts: [],
+            ...(resumeDisposition !== undefined ? { resumeDisposition } : {}),
+          });
           return { ok: result.run.status === 'passed' };
         } finally {
           doneResolve();

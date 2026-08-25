@@ -1,4 +1,12 @@
-import type { WorkerId, JobId, RepositoryId, RunId, Run, Job } from '@ai-sdlc/domain';
+import type {
+  WorkerId,
+  JobId,
+  RepositoryId,
+  RunId,
+  Run,
+  Job,
+  ResumeDisposition,
+} from '@ai-sdlc/domain';
 import type {
   WorkerRegistryPort,
   JobQueuePort,
@@ -28,6 +36,7 @@ export interface WorkerLoopDeps {
     workerId: WorkerId;
     cwd: string;
     signal: AbortSignal;
+    resumeDisposition?: ResumeDisposition;
   }) => Promise<{ ok: boolean }>;
   prepareWorktree: (input: {
     repoId: RepositoryId;
@@ -170,6 +179,9 @@ export async function runClaimedJob(
         workerId,
         cwd: worktree.cwd,
         signal: abortController.signal,
+        ...(job.resumeDisposition !== undefined
+          ? { resumeDisposition: job.resumeDisposition }
+          : {}),
       });
 
       const result = await new Promise<{ ok: boolean }>((resolve, reject) => {
