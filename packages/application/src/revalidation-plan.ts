@@ -151,7 +151,7 @@ function rewriteCommand(
   hasBatsInClosure: boolean,
 ): ValidationCommand | null {
   const isLeaf = narrowedPackages.length === 1 && narrowedPackages[0] === seedPackage;
-  const filter = isLeaf ? seedPackage : `...${seedPackage}`;
+  const filter = isLeaf ? seedPackage : `${seedPackage}...`;
   const isArray = Array.isArray(cmd);
 
   switch (role.role) {
