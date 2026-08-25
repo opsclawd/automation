@@ -123,7 +123,7 @@ describe('CLI run command', () => {
       return true;
     }) as never);
 
-    const program = buildProgram();
+    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
     await program.parseAsync([
       'node',
       'orchestrator',
@@ -161,7 +161,7 @@ describe('CLI run command', () => {
       return true;
     }) as never);
 
-    const program = buildProgram();
+    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
     await program.parseAsync([
       'node',
       'orchestrator',
@@ -265,6 +265,7 @@ describe('CLI runs cancel command', () => {
 
   it('rejects cancel without --issue or --uuid', async () => {
     const program = buildProgram();
+    program.exitOverride();
     const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
     runsCmd.exitOverride();
     const consoleErrs: string[] = [];
@@ -1207,14 +1208,23 @@ describe('CLI run command signal handlers', () => {
       child.on('exit', (code) => resolve(code));
     });
 
-    const db = openDatabase(dbPath);
-    const run = db
-      .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 77')
-      .get() as { status: string; failure_reason: string | null };
-    db.close();
+    let run: { status: string; failure_reason: string | null } | undefined;
+    const pollStart77 = Date.now();
+    while (Date.now() - pollStart77 < 5000) {
+      const db = openDatabase(dbPath);
+      try {
+        run = db
+          .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 77')
+          .get() as { status: string; failure_reason: string | null };
+        if (run?.status === 'cancelled') break;
+      } finally {
+        db.close();
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
 
-    expect(run.status).toBe('cancelled');
-    expect(run.failure_reason).toMatch(/interrupted by SIGTERM/i);
+    expect(run?.status).toBe('cancelled');
+    expect(run?.failure_reason).toMatch(/interrupted by SIGTERM/i);
   }, 45_000);
 
   it('marks run as cancelled when process receives SIGINT', async () => {
@@ -1296,14 +1306,23 @@ describe('CLI run command signal handlers', () => {
       child.on('exit', (code) => resolve(code));
     });
 
-    const db = openDatabase(dbPath);
-    const run = db
-      .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 78')
-      .get() as { status: string; failure_reason: string | null };
-    db.close();
+    let run: { status: string; failure_reason: string | null } | undefined;
+    const pollStart78 = Date.now();
+    while (Date.now() - pollStart78 < 5000) {
+      const db = openDatabase(dbPath);
+      try {
+        run = db
+          .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 78')
+          .get() as { status: string; failure_reason: string | null };
+        if (run?.status === 'cancelled') break;
+      } finally {
+        db.close();
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
 
-    expect(run.status).toBe('cancelled');
-    expect(run.failure_reason).toMatch(/interrupted by SIGINT/i);
+    expect(run?.status).toBe('cancelled');
+    expect(run?.failure_reason).toMatch(/interrupted by SIGINT/i);
   }, 45_000);
 
   it('SIGINT while job is claimed releases claim and finalizes run to cancelled', async () => {
@@ -1391,18 +1410,27 @@ describe('CLI run command signal handlers', () => {
       child.on('exit', (code) => resolve(code));
     });
 
-    const db = openDatabase(dbPath);
-    const run = db
-      .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 79')
-      .get() as { status: string; failure_reason: string | null };
-    db.close();
+    let run: { status: string; failure_reason: string | null } | undefined;
+    const pollStart79 = Date.now();
+    while (Date.now() - pollStart79 < 5000) {
+      const db = openDatabase(dbPath);
+      try {
+        run = db
+          .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 79')
+          .get() as { status: string; failure_reason: string | null };
+        if (run?.status === 'cancelled') break;
+      } finally {
+        db.close();
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
 
     // The job status depends on timing. If SIGINT arrives early, it releases the claim (queued).
     // If it arrives after claiming starts, handleSignal marks it as cancelled (running) or
     // it might already be failed if execution completes before signal.
     // The key test is that the run is properly cancelled on signal.
-    expect(run.status).toBe('cancelled');
-    expect(run.failure_reason).toMatch(/interrupted by SIGINT/i);
+    expect(run?.status).toBe('cancelled');
+    expect(run?.failure_reason).toMatch(/interrupted by SIGINT/i);
   }, 45_000);
 
   it('SIGINT while job is queued leaves the job queued and finalizes run to cancelled', async () => {
@@ -1486,15 +1514,24 @@ describe('CLI run command signal handlers', () => {
       child.on('exit', (code) => resolve(code));
     });
 
-    const db = openDatabase(dbPath);
-    const run = db
-      .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 80')
-      .get() as { status: string; failure_reason: string | null };
-    db.close();
+    let run: { status: string; failure_reason: string | null } | undefined;
+    const pollStart80 = Date.now();
+    while (Date.now() - pollStart80 < 5000) {
+      const db = openDatabase(dbPath);
+      try {
+        run = db
+          .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 80')
+          .get() as { status: string; failure_reason: string | null };
+        if (run?.status === 'cancelled') break;
+      } finally {
+        db.close();
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
 
     // The key is that the run is cancelled. Job status depends on timing.
-    expect(run.status).toBe('cancelled');
-    expect(run.failure_reason).toMatch(/interrupted by SIGINT/i);
+    expect(run?.status).toBe('cancelled');
+    expect(run?.failure_reason).toMatch(/interrupted by SIGINT/i);
   }, 45_000);
 });
 

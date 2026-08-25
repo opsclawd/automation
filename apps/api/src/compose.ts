@@ -177,6 +177,9 @@ import {
   buildTaskValidationCommands,
   expandTaskValidationCommandsWithNewTests,
   evaluateRevalidationWithInvertedCommands,
+  extractFailedTestFilesFromOutput,
+  buildTargetedTestCommand,
+  type ValidationRunCommandItem,
   uncommittedSourcePaths,
   CONTRACT_VIOLATION_CODES,
   type RunWorkspaceTypecheckPort,
@@ -475,6 +478,134 @@ export function extractTaskText(
     text: '',
     error: `Task ${taskIndex} has no matching heading in plan.md`,
     reason: result.reason,
+  };
+}
+
+export interface MaybeRetryTransientRevalidationFlakeInput {
+  runId: string;
+  stepIndex?: number | undefined;
+  manifest?: TaskManifest | undefined;
+  taskValidationCommands: ValidationCommand[];
+  failingCommands: ValidationRunCommandItem[];
+  revalidateLogDir: string;
+  cwd: string;
+  repoId: string;
+  config: OrchestratorConfig;
+  runValidation: RunValidation;
+  validationAdapter: ValidationPort;
+  eventBus?: EventBusPort | undefined;
+}
+
+export async function maybeRetryTransientRevalidationFlake(
+  input: MaybeRetryTransientRevalidationFlakeInput,
+): Promise<{
+  passed: boolean;
+  failingCommands: ValidationRunCommandItem[];
+  retried: boolean;
+}> {
+  const failedTestFiles = new Set<string>();
+  for (const c of input.failingCommands) {
+    const stdoutAbs = c.stdoutPath
+      ? isAbsolute(c.stdoutPath)
+        ? c.stdoutPath
+        : join(input.revalidateLogDir, basename(c.stdoutPath))
+      : '';
+    const stderrAbs = c.stderrPath
+      ? isAbsolute(c.stderrPath)
+        ? c.stderrPath
+        : join(input.revalidateLogDir, basename(c.stderrPath))
+      : '';
+    const [stdoutTail, stderrTail] = await Promise.all([
+      readTail(stdoutAbs),
+      readTail(stderrAbs),
+    ]);
+    const extracted = extractFailedTestFilesFromOutput(stdoutTail + '\n' + stderrTail);
+    for (const f of extracted) {
+      failedTestFiles.add(f);
+    }
+  }
+
+  if (failedTestFiles.size === 0 || failedTestFiles.size > 5) {
+    return { passed: false, failingCommands: input.failingCommands, retried: false };
+  }
+
+  let taskDeclaredFiles: string[] = [];
+  if (input.manifest && typeof input.stepIndex === 'number' && input.stepIndex > 0) {
+    taskDeclaredFiles = declaredFilesForStep(input.manifest, input.stepIndex);
+  }
+
+  const taskCommandTargets = new Set<string>();
+  for (const cmd of input.taskValidationCommands) {
+    const cmdStr = Array.isArray(cmd) ? cmd.join(' ') : String(cmd);
+    for (const f of failedTestFiles) {
+      if (cmdStr.includes(f)) {
+        taskCommandTargets.add(f);
+      }
+    }
+  }
+
+  const inScopeFiles = new Set([...taskDeclaredFiles, ...taskCommandTargets]);
+  for (const f of failedTestFiles) {
+    if (inScopeFiles.has(f)) {
+      return { passed: false, failingCommands: input.failingCommands, retried: false };
+    }
+  }
+
+  const isolatedLogDir = join(input.revalidateLogDir, 'isolation-check');
+  for (const testFile of failedTestFiles) {
+    const isolatedCmd = buildTargetedTestCommand(testFile, input.config.validation.commands);
+    try {
+      const isolationRes = await input.validationAdapter.run({
+        cwd: input.cwd,
+        logDir: isolatedLogDir,
+        commands: [isolatedCmd],
+        timeoutSeconds: input.config.validation.timeout,
+        env: { GITHUB_REPOSITORY: input.repoId },
+      });
+      if (isolationRes.some((res) => res.outcome !== 'passed')) {
+        return { passed: false, failingCommands: input.failingCommands, retried: false };
+      }
+    } catch {
+      return { passed: false, failingCommands: input.failingCommands, retried: false };
+    }
+  }
+
+  if (input.eventBus) {
+    input.eventBus.publish(input.runId, {
+      runId: input.runId,
+      level: 'warn',
+      type: 'revalidation.transient_flake_retry',
+      message: `Mid-implement revalidation failure on out-of-scope test(s) [${Array.from(failedTestFiles).join(', ')}] passed in isolation; retrying revalidation once`,
+      timestamp: new Date().toISOString(),
+      metadata: { failedTestFiles: Array.from(failedTestFiles) },
+    });
+  }
+
+  const retryLogDir = join(input.revalidateLogDir, 'flake-retry');
+  const vrRetry = await input.runValidation.execute({
+    runId: RunId(input.runId),
+    phaseId: PhaseName('validate'),
+    cwd: input.cwd,
+    logDir: retryLogDir,
+    commands: [...input.config.validation.commands, ...input.taskValidationCommands],
+    ...(input.config.validation.tiers ? { tiers: input.config.validation.tiers } : {}),
+    timeoutSeconds: input.config.validation.timeout,
+    env: { GITHUB_REPOSITORY: input.repoId },
+  });
+
+  const evalRetry = await evaluateRevalidationWithInvertedCommands({
+    validationRunCommands: vrRetry.validationRun.commands,
+    taskValidationCommands: input.taskValidationCommands,
+    readTail: async (path) => {
+      const absPath = isAbsolute(path) ? path : join(retryLogDir, basename(path));
+      return readTail(absPath);
+    },
+  });
+
+  return {
+    passed: evalRetry.passed,
+    failingCommands: evalRetry.failingCommands,
+    retried: true,
   };
 }
 
@@ -3086,8 +3217,33 @@ export function composeRoot(opts: ComposeOptions): Container {
             return readTail(absPath);
           },
         });
-        const failingCommands = evalResult.failingCommands;
-        const revalPassed = evalResult.passed;
+        let failingCommands = evalResult.failingCommands;
+        let revalPassed = evalResult.passed;
+
+        if (!revalPassed && failingCommands.length > 0) {
+          const manifestRaw = await artifactStoreForRun(String(ctx.runId), ctx.cwd)
+            .read(String(ctx.runId), 'task-manifest.json')
+            .catch(() => undefined);
+          const manifest = manifestRaw ? parseTaskManifest(manifestRaw) : undefined;
+          const flakeResult = await maybeRetryTransientRevalidationFlake({
+            runId: String(ctx.runId),
+            stepIndex: (ctx as Partial<StepLoopContext>).stepIndex,
+            manifest: manifest?.success ? manifest.manifest : undefined,
+            taskValidationCommands,
+            failingCommands,
+            revalidateLogDir,
+            cwd: ctx.cwd,
+            repoId: ctx.repoId,
+            config,
+            runValidation,
+            validationAdapter,
+            eventBus: persistingEventBus,
+          });
+          if (flakeResult.retried) {
+            revalPassed = flakeResult.passed;
+            failingCommands = flakeResult.failingCommands;
+          }
+        }
         let failureDetail: string | undefined;
         if (failingCommands.length > 0) {
           const details = await Promise.all(
@@ -4922,8 +5078,39 @@ export function composeRoot(opts: ComposeOptions): Container {
               return readTail(absPath);
             },
           });
-          const failingCommands = evalResult.failingCommands;
-          const revalPassed = evalResult.passed;
+          let failingCommands = evalResult.failingCommands;
+          let revalPassed = evalResult.passed;
+
+          if (!revalPassed && failingCommands.length > 0) {
+            let manifest: TaskManifest | undefined;
+            try {
+              const manifestRaw = await artifacts.read(String(ctx.runId), 'task-manifest.json');
+              const parsed = parseTaskManifest(manifestRaw);
+              if (parsed.success) {
+                manifest = parsed.manifest;
+              }
+            } catch {
+              // Task manifest might not be present or parseable
+            }
+            const flakeResult = await maybeRetryTransientRevalidationFlake({
+              runId: String(ctx.runId),
+              stepIndex: (ctx as StepLoopContext).stepIndex,
+              manifest,
+              taskValidationCommands,
+              failingCommands,
+              revalidateLogDir,
+              cwd: ctx.cwd,
+              repoId: (ctx as StepLoopContext).repoId,
+              config,
+              runValidation,
+              validationAdapter,
+              eventBus: persistingEventBus,
+            });
+            if (flakeResult.retried) {
+              revalPassed = flakeResult.passed;
+              failingCommands = flakeResult.failingCommands;
+            }
+          }
           let failureDetail: string | undefined;
           if (failingCommands.length > 0) {
             const details = await Promise.all(
