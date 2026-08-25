@@ -472,6 +472,46 @@ describe('PlanReviewLoop', () => {
     expect(fixCalls).toBe(1);
   });
 
+  it('#1027 — a duplicate_retry_suppressed reviewer outcome escalates to needs_human_review without burning the retry budget', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      maxIterations: 3,
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        if (reviewCalls === 1) {
+          return {
+            invocationId: 'rev-1',
+            agentOutcome: 'success' as const,
+            verdict: 'p1_found' as const,
+            findings: groundedP1Findings(),
+          };
+        }
+        // Iteration 2's reviewer invocation was suppressed as a duplicate of
+        // a prior identical invocation (retry-identity collision). Every
+        // subsequent retry in this same iteration would compute the exact
+        // same identity and also be suppressed — this call must only happen
+        // once for iteration 2, never retried.
+        return {
+          invocationId: 'rev-2',
+          agentOutcome: 'duplicate_retry_suppressed' as const,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('needs_human_review');
+    // One call for iteration 1, exactly one call for iteration 2 — the
+    // duplicate suppression must not trigger any retries.
+    expect(reviewCalls).toBe(2);
+    const failedEvent = events.find((e) => e.type === 'plan-review.reviewer.failed');
+    expect(failedEvent?.message).toContain('suppressed as a duplicate');
+    expect(failedEvent?.metadata?.isDuplicateSuppressed).toBe(true);
+  });
+
   it('AC #5.5 — exhaustion → needs_human_review', async () => {
     const { deps } = makeDeps({
       maxIterations: 2,
