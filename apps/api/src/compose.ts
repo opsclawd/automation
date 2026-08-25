@@ -156,6 +156,7 @@ import {
   parseTypescriptErrors,
   renderStructuredTypecheckErrors,
   type TaskManifest,
+  type TaskManifestEntryV2,
   PHASE_DEFINITIONS,
   RegisterRepository,
   RefreshRepository,
@@ -1328,6 +1329,12 @@ export interface BuildImplementStepFixPromptInput {
   cwd: string;
   stepIndex: number;
   stepTitle: string;
+  expectedFiles?: string[];
+  permittedAreas?: string[];
+  mayExtend?: string[];
+  nonGoals?: string[];
+  referenceFiles?: string[];
+  hasInvertedCommand?: boolean;
   /**
    * Optional arbiter rationale from a prior `finding_valid` ruling.
    * Rendered as a labeled, instruction-bearing section so the fixer
@@ -1456,6 +1463,14 @@ export async function buildImplementStepFixPrompt(
     readFindings(QUALITY_REVIEW_RESULT_ARTIFACT),
   ]);
 
+  const hasScopeInfo = Boolean(
+    (input.expectedFiles && input.expectedFiles.length > 0) ||
+      (input.permittedAreas && input.permittedAreas.length > 0) ||
+      (input.mayExtend && input.mayExtend.length > 0) ||
+      (input.nonGoals && input.nonGoals.length > 0) ||
+      (input.referenceFiles && input.referenceFiles.length > 0),
+  );
+
   return [
     '# TASK',
     `Fix implementation issues for step ${input.stepIndex}: ${input.stepTitle}`,
@@ -1470,8 +1485,9 @@ export async function buildImplementStepFixPrompt(
           'coherent pass. Prefer re-deriving the affected functions so every finding',
           'is satisfied simultaneously over minimal point-patches — point-patches are',
           'how the previous rounds kept introducing adjacent regressions.',
-          'Your work is accepted on deterministic verification (typecheck, validation',
-          'commands, tests) — make sure they pass before committing.',
+          input.hasInvertedCommand
+            ? 'Your work is accepted on deterministic verification (typecheck, validation commands, tests). NOTE: This task uses inverted validation commands (! -prefixed), expecting test failure as the target outcome. Do NOT modify files outside scope (such as non-goals or downstream files) to make inverted tests pass.'
+            : 'Your work is accepted on deterministic verification (typecheck, validation commands, tests) — make sure they pass before committing.',
           '',
         ]
       : []),
@@ -1568,6 +1584,29 @@ export async function buildImplementStepFixPrompt(
     '',
     SCRATCH_FILE_POLICY,
     '',
+    ...(hasScopeInfo
+      ? [
+          '## TASK SCOPE CONTRACT',
+          '',
+          "You MUST respect the task's scope boundaries when applying fixes:",
+          '',
+          ...(input.expectedFiles && input.expectedFiles.length > 0
+            ? ['### Expected Files (must modify and commit)', ...input.expectedFiles.map((f) => `- ${f}`), '']
+            : []),
+          ...(input.permittedAreas && input.permittedAreas.length > 0
+            ? ['### Permitted Areas (may modify tracked files)', ...input.permittedAreas.map((f) => `- ${f}`), '']
+            : []),
+          ...(input.mayExtend && input.mayExtend.length > 0
+            ? ['### May Extend (may modify exact files)', ...input.mayExtend.map((f) => `- ${f}`), '']
+            : []),
+          ...(input.nonGoals && input.nonGoals.length > 0
+            ? ['### Non-Goals (must not modify)', ...input.nonGoals.map((f) => `- ${f}`), '']
+            : []),
+          ...(input.referenceFiles && input.referenceFiles.length > 0
+            ? ['### Reference Files (read-only)', ...input.referenceFiles.map((f) => `- ${f}`), '']
+            : []),
+        ]
+      : []),
     `Working directory: ${input.cwd}`,
     '',
     '## OUTPUT',
@@ -4521,11 +4560,46 @@ export function composeRoot(opts: ComposeOptions): Container {
             : opts.useFallback && implFixFallbackProfileName
               ? implFixFallbackProfileName
               : implFixProfileName;
+        const task = ctx.manifest?.tasks?.find((t) => t.n === ctx.stepIndex) as
+          | TaskManifestEntryV2
+          | undefined;
+        const expectedFiles =
+          task?.expected_files && task.expected_files.length > 0
+            ? task.expected_files
+            : task?.files && task.files.length > 0
+              ? task.files
+              : undefined;
+        const taskValidationCmds = buildTaskValidationCommands(ctx.manifest, ctx.stepIndex);
+        const hasInvertedCommand =
+          task?.task_type === 'red' ||
+          task?.validation_commands?.some((cmd: ValidationCommand) =>
+            Array.isArray(cmd)
+              ? cmd[0]?.trim().startsWith('!')
+              : String(cmd).trim().startsWith('!'),
+          ) ||
+          taskValidationCmds.some((cmd: ValidationCommand) =>
+            Array.isArray(cmd)
+              ? cmd[0]?.trim().startsWith('!')
+              : String(cmd).trim().startsWith('!'),
+          );
+
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const fixPrompt = await buildImplementStepFixPrompt(artifacts, String(ctx.runId), {
           cwd: ctx.cwd,
           stepIndex: ctx.stepIndex,
           stepTitle: ctx.stepTitle,
+          ...(expectedFiles && expectedFiles.length > 0 ? { expectedFiles } : {}),
+          ...(task?.permitted_areas && task.permitted_areas.length > 0
+            ? { permittedAreas: task.permitted_areas }
+            : {}),
+          ...(task?.may_extend && task.may_extend.length > 0
+            ? { mayExtend: task.may_extend }
+            : {}),
+          ...(task?.non_goals && task.non_goals.length > 0 ? { nonGoals: task.non_goals } : {}),
+          ...(task?.reference_files && task.reference_files.length > 0
+            ? { referenceFiles: task.reference_files }
+            : {}),
+          ...(hasInvertedCommand ? { hasInvertedCommand: true } : {}),
           ...(opts.reconciliationContext !== undefined
             ? { reconciliationContext: opts.reconciliationContext }
             : {}),

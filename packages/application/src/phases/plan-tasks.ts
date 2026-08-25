@@ -1,8 +1,8 @@
 import type { EventBusPort } from '../ports.js';
 import { taskManifestV1Schema, taskManifestV2Schema } from '../results/schemas/task-manifest.js';
-import type { TaskManifest, TaskManifestEntry } from '../results/schemas/task-manifest.js';
+import type { TaskManifest, TaskManifestEntry, TaskManifestEntryV2 } from '../results/schemas/task-manifest.js';
 
-export { TaskManifest, TaskManifestEntry };
+export type { TaskManifest, TaskManifestEntry, TaskManifestEntryV2 };
 
 export type TaskManifestValidationResult =
   | { success: true; manifest: TaskManifest }
