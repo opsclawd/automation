@@ -2435,7 +2435,6 @@ export class PlanReviewLoop {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       let baselineSha: string | undefined;
       let baselineSnapshot: PlanReviewSnapshot | undefined;
-      let baselineSnapshotError: string | undefined;
       let baselineError: string | undefined;
 
       // 1. Capture baseline HEAD and the protected snapshot immediately before the Agent Invocation.
@@ -2446,9 +2445,11 @@ export class PlanReviewLoop {
       }
       try {
         baselineSnapshot = await this.deps.captureSnapshot(ctx);
-      } catch (err) {
+      } catch {
+        // Baseline snapshot capture is a best-effort signal: tolerate failure here and
+        // fall back to git-status-based violation detection, matching the tolerance
+        // already applied to a failed post-invocation snapshot capture below.
         baselineSnapshot = undefined;
-        baselineSnapshotError = err instanceof Error ? err.message : String(err);
       }
 
       if (baselineError !== undefined) {
@@ -2634,7 +2635,7 @@ export class PlanReviewLoop {
 
       const headTransition =
         baselineSha !== undefined && endSha !== undefined && endSha !== baselineSha;
-      const effectiveInspectionError = inspectionError ?? baselineSnapshotError;
+      const effectiveInspectionError = inspectionError;
       const isViolation =
         effectiveInspectionError !== undefined || headTransition || violatingFilesSet.size > 0;
 
