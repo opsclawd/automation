@@ -50,6 +50,8 @@ interface DirtyClassification {
   protected: string[];
   exempt: string[];
   formattingDebt: string[];
+  preserveIndex: string[];
+  resetAfterCommit: string[];
 }
 
 async function classifyPhaseBoundaryDirtyPaths({
@@ -70,6 +72,8 @@ async function classifyPhaseBoundaryDirtyPaths({
   const protectedFiles: string[] = [];
   const exempt: string[] = [];
   const formattingDebt: string[] = [];
+  const preserveIndex: string[] = [];
+  const resetAfterCommit: string[] = [];
 
   for (const p of dirtyPaths) {
     const norm = normalizeTaskPath(p);
@@ -81,37 +85,109 @@ async function classifyPhaseBoundaryDirtyPaths({
       exempt.push(norm);
       permitted.push(norm);
     } else {
-      // Check if formatting-only change by comparing worktree to HEAD via readWorktreeFile port
-      let isFormattingOnly = false;
-      let isIdenticalToHead = false;
+      let headContent: string | undefined;
+      let indexContent: string | undefined;
+      let worktreeContent: string | undefined;
+      let headReadFailed = false;
+      let worktreeReadFailed = false;
+
+      if (!git?.fileContent || !readWorktreeFile) {
+        unpermitted.push(norm);
+        continue;
+      }
+
       try {
-        if (git?.fileContent && readWorktreeFile) {
-          const worktreeContent = await readWorktreeFile(cwd, norm);
-          if (worktreeContent !== undefined) {
-            const headContent = await git.fileContent(cwd, 'HEAD', norm);
-            if (headContent === worktreeContent) {
-              isIdenticalToHead = true;
+        headContent = await git.fileContent(cwd, 'HEAD', norm);
+      } catch {
+        headReadFailed = true;
+      }
+
+      try {
+        indexContent = await git.fileContent(cwd, ':0', norm);
+      } catch {
+        // Fallback when stage zero lookup fails or is missing
+        indexContent = undefined;
+      }
+
+      try {
+        worktreeContent = await readWorktreeFile(cwd, norm);
+        if (worktreeContent === undefined) {
+          worktreeReadFailed = true;
+        }
+      } catch {
+        worktreeReadFailed = true;
+      }
+
+      if (
+        headReadFailed ||
+        worktreeReadFailed ||
+        headContent === undefined ||
+        worktreeContent === undefined
+      ) {
+        unpermitted.push(norm);
+        continue;
+      }
+
+      if (indexContent === undefined) {
+        // Since headContent is defined, missing index content represents a staged deletion (e.g. git rm --cached)
+        unpermitted.push(norm);
+        continue;
+      } else if (indexContent === headContent) {
+        // Index is identical to HEAD
+        if (worktreeContent === headContent) {
+          // Stat-cache drift (both index and worktree match HEAD)
+          continue;
+        }
+        if (isFormattingOnlyChange(norm, headContent, worktreeContent)) {
+          formattingDebt.push(norm);
+          permitted.push(norm);
+        } else {
+          unpermitted.push(norm);
+        }
+      } else {
+        // Index differs from HEAD
+        const isIndexFormatting = isFormattingOnlyChange(norm, headContent, indexContent);
+        if (!isIndexFormatting) {
+          // Substantive staged content -> escalate immediately
+          unpermitted.push(norm);
+        } else {
+          // Index is formatting-only relative to HEAD
+          if (worktreeContent === headContent) {
+            // Worktree equals HEAD, staged index has formatting debt (MM case)
+            formattingDebt.push(norm);
+            permitted.push(norm);
+            preserveIndex.push(norm);
+            resetAfterCommit.push(norm);
+          } else if (worktreeContent === indexContent) {
+            // Index and worktree agree on formatting change
+            formattingDebt.push(norm);
+            permitted.push(norm);
+            preserveIndex.push(norm);
+          } else {
+            // Index and worktree both differ from HEAD and from each other
+            const isWorktreeFormatting = isFormattingOnlyChange(norm, headContent, worktreeContent);
+            if (!isWorktreeFormatting) {
+              unpermitted.push(norm);
             } else {
-              isFormattingOnly = isFormattingOnlyChange(norm, headContent, worktreeContent);
+              // Both are formatting-only relative to HEAD
+              formattingDebt.push(norm);
+              permitted.push(norm);
             }
           }
         }
-      } catch {
-        // Cannot determine — treat as unpermitted
-      }
-      if (isIdenticalToHead) {
-        continue;
-      }
-      if (isFormattingOnly) {
-        formattingDebt.push(norm);
-        permitted.push(norm);
-      } else {
-        unpermitted.push(norm);
       }
     }
   }
 
-  return { permitted, unpermitted, protected: protectedFiles, exempt, formattingDebt };
+  return {
+    permitted,
+    unpermitted,
+    protected: protectedFiles,
+    exempt,
+    formattingDebt,
+    preserveIndex,
+    resetAfterCommit,
+  };
 }
 
 function formatProtectedDiagnostic(record: {
@@ -1456,6 +1532,13 @@ export class ImplementHandler implements PhaseHandler {
           // Auto-commit permitted formatting debt and exempt files
           try {
             let permittedAtActionTime = classification.permitted;
+            let preserveIndexAtActionTime = new Set(
+              classification.preserveIndex.map(normalizeTaskPath).filter(Boolean),
+            );
+            let resetAfterCommitAtActionTime = new Set(
+              classification.resetAfterCommit.map(normalizeTaskPath).filter(Boolean),
+            );
+
             try {
               const recheckStatusOutput = await ctx.git.status(ctx.cwd);
               const stillDirty = new Set(
@@ -1465,13 +1548,30 @@ export class ImplementHandler implements PhaseHandler {
                 const norm = normalizeTaskPath(p);
                 return norm && stillDirty.has(norm);
               });
+              preserveIndexAtActionTime = new Set(
+                classification.preserveIndex.filter((p) => {
+                  const norm = normalizeTaskPath(p);
+                  return norm && stillDirty.has(norm);
+                }),
+              );
+              resetAfterCommitAtActionTime = new Set(
+                classification.resetAfterCommit.filter((p) => {
+                  const norm = normalizeTaskPath(p);
+                  return norm && stillDirty.has(norm);
+                }),
+              );
             } catch {
               // If re-check fails, fall back to the originally-classified list.
               permittedAtActionTime = classification.permitted;
             }
 
             if (permittedAtActionTime.length > 0) {
-              await ctx.git.add(ctx.cwd, permittedAtActionTime);
+              const stageFromWorktree = permittedAtActionTime.filter(
+                (p) => !preserveIndexAtActionTime.has(normalizeTaskPath(p)),
+              );
+              if (stageFromWorktree.length > 0) {
+                await ctx.git.add(ctx.cwd, stageFromWorktree);
+              }
               const statusAfterAdd = await ctx.git.status(ctx.cwd);
               const hasStaged = statusAfterAdd
                 .split('\n')
@@ -1480,6 +1580,7 @@ export class ImplementHandler implements PhaseHandler {
                     line.length >= 2 && line[0] !== ' ' && line[0] !== '?' && line[0] !== '!',
                 );
               if (hasStaged) {
+                const preCommitHead = await ctx.git.headCommitSha(ctx.cwd);
                 await ctx.git.commit(
                   ctx.cwd,
                   'chore: auto-commit formatting debt and exempt files at implement phase boundary',
@@ -1489,6 +1590,36 @@ export class ImplementHandler implements PhaseHandler {
                   'info',
                   `auto-committed ${permittedAtActionTime.length} permitted file(s) at phase boundary`,
                   { files: permittedAtActionTime },
+                );
+
+                if (resetAfterCommitAtActionTime.size > 0) {
+                  try {
+                    await ctx.git.resetHard(ctx.cwd, await ctx.git.headCommitSha(ctx.cwd));
+                  } catch (resetErr) {
+                    try {
+                      await ctx.git.resetHard(ctx.cwd, preCommitHead);
+                    } catch {
+                      // Best-effort rollback
+                    }
+                    const msg = resetErr instanceof Error ? resetErr.message : String(resetErr);
+                    return this.fail(
+                      ctx,
+                      emit,
+                      'unknown',
+                      `phase-boundary auto-commit failed: ${msg}`,
+                    );
+                  }
+                }
+              }
+
+              const finalStatusOutput = await ctx.git.status(ctx.cwd);
+              const remainingSourcePaths = uncommittedSourcePaths(finalStatusOutput);
+              if (remainingSourcePaths.length > 0) {
+                return this.fail(
+                  ctx,
+                  emit,
+                  'unknown',
+                  `phase-boundary reconciliation left uncommitted source paths: ${remainingSourcePaths.join(', ')}`,
                 );
               }
             }

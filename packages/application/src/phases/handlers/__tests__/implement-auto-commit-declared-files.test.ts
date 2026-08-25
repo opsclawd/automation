@@ -107,8 +107,17 @@ describe('ImplementHandler Auto-Commit Declared Files State Machine', () => {
       expectedFiles: ['src/a.ts', 'src/b.ts'],
     });
 
+    let scratchStaged = false;
+    add.mockImplementation(async (_cwd, files) => {
+      if (files.includes('scratch.md')) {
+        scratchStaged = true;
+      }
+    });
     git.status = vi.fn(async () => {
       const bCommitted = git.commits.some((c) => c.files?.includes('src/b.ts'));
+      const scratchCommitted = git.commits.some((c) => !c.files || c.files.includes('scratch.md'));
+      if (scratchCommitted) return '';
+      if (scratchStaged) return 'M  scratch.md';
       return bCommitted ? ' M scratch.md' : ' M src/b.ts\n M scratch.md';
     });
     git.changedFilesResults.set('pre-step|agent-step', ['src/a.ts']);
@@ -143,8 +152,17 @@ describe('ImplementHandler Auto-Commit Declared Files State Machine', () => {
       expectedFiles: ['docs/adr/0001.md'],
     });
 
+    let scratchStaged = false;
+    add.mockImplementation(async (_cwd, files) => {
+      if (files.includes('scratch.md')) {
+        scratchStaged = true;
+      }
+    });
     git.status = vi.fn(async () => {
       const docCommitted = git.commits.some((c) => c.files?.includes('docs/adr/0001.md'));
+      const scratchCommitted = git.commits.some((c) => !c.files || c.files.includes('scratch.md'));
+      if (scratchCommitted) return '';
+      if (scratchStaged) return 'A  scratch.md';
       return docCommitted ? '?? scratch.md' : '?? docs/adr/0001.md\n?? scratch.md';
     });
     git.changedFilesResults.set('pre-step|pre-step', []);

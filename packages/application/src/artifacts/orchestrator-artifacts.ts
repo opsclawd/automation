@@ -161,7 +161,7 @@ export function unquoteGitPath(path: string): string {
   return path;
 }
 
-function parseGitStatusLine(rawLine: string): string[] {
+export function parseGitStatusLine(rawLine: string): string[] {
   const line = rawLine.replace(/\r$/, '');
   if (!line || line.length <= 3) return [];
   const statusX = line.charAt(0);
