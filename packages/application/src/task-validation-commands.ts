@@ -413,6 +413,53 @@ export function checkTaskValidationCommandsDeclarationMismatch(
   return diagnostics.join('\n\n');
 }
 
+export interface CheckTaskValidationCommandsDoubleInversionOptions {
+  worktreeRoot: string;
+  readWorktreeFile?: (relativePath: string) => Promise<string | null> | string | null;
+}
+
+export async function checkTaskValidationCommandsDoubleInversion(
+  manifest: TaskManifest,
+  options: CheckTaskValidationCommandsDoubleInversionOptions,
+): Promise<string | null> {
+  if (manifest.version !== 2) return null;
+  const { readWorktreeFile } = options;
+  if (!readWorktreeFile) return null;
+
+  const diagnostics: string[] = [];
+
+  for (const task of manifest.tasks) {
+    const commands = task.validation_commands ?? [];
+    const invertedCommands = commands.filter(isNegatedValidationCommand);
+    if (invertedCommands.length === 0) continue;
+
+    const targetFiles = extractTargetTestFilesFromInvertedCommands(invertedCommands);
+    if (targetFiles.length === 0) continue;
+
+    for (const relativePath of targetFiles) {
+      let content: string | null = null;
+      try {
+        content = await readWorktreeFile(relativePath);
+      } catch {
+        content = null;
+      }
+      if (!content) continue;
+
+      const pattern = /\b(?:it|test)(?:\.[a-zA-Z0-9_$]+)*\.(?:fails|failing)\b/g;
+      const matches = Array.from(content.matchAll(pattern)).map((m) => m[0]);
+      if (matches.length > 0) {
+        const uniqueMatches = Array.from(new Set(matches)).sort();
+        diagnostics.push(
+          `Task ${task.n}: test file "${relativePath}" targeted by inverted validation command uses test-runner inversion helper (${uniqueMatches.map((m) => `\`${m}\``).join(', ')}). Do not use runner-level inversion helpers (such as Vitest's \`it.fails()\` or \`test.fails()\`) when the task's validation command already applies \`!\` command-level inversion, as double inversion produces the opposite of the intended validation signal. Write standard assertions so the test body throws and exits non-zero.`,
+        );
+      }
+    }
+  }
+
+  if (diagnostics.length === 0) return null;
+  return diagnostics.join('\n\n');
+}
+
 export async function checkTaskValidationCommandsSatisfiability(
   manifest: TaskManifest,
   options: CheckTaskValidationCommandsOptions,

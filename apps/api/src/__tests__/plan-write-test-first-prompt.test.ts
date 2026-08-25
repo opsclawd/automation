@@ -13,6 +13,7 @@ describe('plan-write test-first task ordering', () => {
     expect(prompt).toContain('must not include the implementation source change');
     expect(prompt).toContain('later implementation task');
     expect(prompt).toContain('prefix the validation command with `! `');
+    expect(prompt).toContain('it.fails()');
     expect(prompt).toContain(
       'For all such work, tests MUST be delivered in the **same task** as the implementation they test',
     );
@@ -44,6 +45,7 @@ describe('plan-write test-first task ordering', () => {
     expect(repairPrompt).toContain(
       'Do not merge a regression-proof task into its implementation task',
     );
+    expect(repairPrompt).toContain('it.fails()');
     expect(repairPrompt).toContain(
       'For additive feature work,\n  preserve unit tests co-located within the same task as their implementation code',
     );

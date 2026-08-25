@@ -376,7 +376,31 @@ Something else.
     expect(result.content).toContain('## Execution Semantics');
     expect(result.content).toContain('Task Type: red');
     expect(result.content).toContain('Paired With Task: 2');
+    expect(result.content).toContain('CRITICAL GUIDANCE FOR RED TASKS');
+    expect(result.content).toContain('it.fails()');
     expect(result.diagnostics.componentSizes['execution_semantics']).toBeGreaterThan(0);
+  });
+
+  it('includes RED task double inversion guidance when validation command is negated', () => {
+    const generator = new TaskContextGenerator();
+    const task: TaskManifestEntryV2 = {
+      n: 1,
+      title: 'Task with negated command',
+      validation_commands: ['! pnpm test -- src/foo.test.ts'],
+    };
+    const manifest: TaskManifest = { version: 2, task_count: 1, tasks: [task] };
+    const result = generator.generate({
+      task,
+      manifest,
+      planMd: '## Task 1\n\nTask body.',
+      workspaceConstraints: '',
+      cwd: '/fake/cwd',
+      repoId: 'repo-1',
+      branchName: 'main',
+    });
+    expect(result.content).toContain('## Execution Semantics');
+    expect(result.content).toContain('CRITICAL GUIDANCE FOR RED TASKS');
+    expect(result.content).toContain('it.fails()');
   });
 
   it('renders only task_type or paired_with_task when only one is present', () => {

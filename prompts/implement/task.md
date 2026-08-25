@@ -15,6 +15,12 @@ implementation work. If a prior attempt already implemented this
 step (check `git log` against the startCommitSha), verify that the prior
 commit still satisfies the step's acceptance criteria and proceed.
 
+When implementing a RED-first task (or writing tests targeted by a `!`-prefixed
+validation command), write standard direct assertions of expected behavior. Do
+NOT use test-runner-level inversion helpers (such as Vitest's `it.fails()` or
+`test.fails()`), as combining test-runner inversion with command-level `!`
+inversion produces double-inversion and causes step validation to fail.
+
 ## MANDATORY COMMIT (Step N+1) — Unconditional commit-coverage gate
 
 Every invocation must complete the commit coverage gate before writing artifacts.
