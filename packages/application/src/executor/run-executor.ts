@@ -253,19 +253,24 @@ export class RunExecutor {
               fingerprint: plan.fingerprint,
             };
 
-            // Synchronously insert audit record BEFORE mutating Git state
+            // Synchronously insert audit record BEFORE mutating Git state.
+            // This is a hard (unguarded) call, not `if (this.deps.eventRepository)`:
+            // a missing eventRepository must fail the same way an insert
+            // failure does (needs_human_review, no mutation), not silently
+            // skip the audit and proceed to the destructive reset below.
             try {
-              if (this.deps.eventRepository) {
-                this.deps.eventRepository.insert({
-                  runUuid: currentRun.uuid,
-                  phase: firstIncompletePhase as string,
-                  level: 'info',
-                  type: 'run.resume_worktree_reset',
-                  message: resetMessage,
-                  metadata,
-                  timestamp: now(),
-                });
+              if (!this.deps.eventRepository) {
+                throw new Error('eventRepository port is not configured');
               }
+              this.deps.eventRepository.insert({
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                level: 'info',
+                type: 'run.resume_worktree_reset',
+                message: resetMessage,
+                metadata,
+                timestamp: now(),
+              });
               this.emit(
                 run.displayId,
                 run.uuid,

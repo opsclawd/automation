@@ -107,8 +107,27 @@ export class ResumeRun implements ResumeRunUseCase {
         preservedPatterns: orchestratorExcludePatterns(),
       });
       return plan.discardedPaths;
-    } catch {
-      return [];
+    } catch (err) {
+      // A missing worktree is a legitimate "nothing to inspect" case — treat
+      // it as clean. Any other inspection failure (transient git error,
+      // permissions, corrupted repo) must NOT be silently treated as clean:
+      // doing so would bypass resolveResumeDisposition's requirement that a
+      // dirty needs_human_review run gets an explicit disposition before
+      // being auto-reset. Fail closed instead by surfacing the error.
+      const msg = err instanceof Error ? err.message : String(err);
+      const lowerMsg = msg.toLowerCase();
+      const isMissingWorktree =
+        lowerMsg.includes('enoent') ||
+        lowerMsg.includes('no such file or directory') ||
+        lowerMsg.includes('does not exist') ||
+        lowerMsg.includes('not a git repository') ||
+        lowerMsg.includes('git not found on path') ||
+        lowerMsg.includes('cannot change to') ||
+        lowerMsg.includes('fatal: path');
+      if (isMissingWorktree) {
+        return [];
+      }
+      throw new Error(`failed to inspect worktree cleanliness for resume: ${msg}`);
     }
   }
 

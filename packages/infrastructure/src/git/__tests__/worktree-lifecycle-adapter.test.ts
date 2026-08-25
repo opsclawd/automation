@@ -489,7 +489,11 @@ describe('WorktreeLifecycleAdapter', () => {
     });
 
     expect(plan.preservedPaths).toEqual(['config.json']);
-    expect(plan.discardedPaths).toEqual(['uncommitted-probe.ts']);
+    // file.ts and new-step-file.ts are committed changes between baselineSha
+    // and HEAD, not currently-dirty files — but the resume_baseline reset
+    // will revert/remove them too, so the plan must account for them up
+    // front for the audit record to accurately predict what execute() does.
+    expect(plan.discardedPaths).toEqual(['file.ts', 'new-step-file.ts', 'uncommitted-probe.ts']);
 
     const result = await adapter.execute({ plan });
 

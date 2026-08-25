@@ -184,6 +184,34 @@ export class WorktreeLifecycleAdapter implements WorktreeLifecyclePort {
       }
     }
 
+    // resume_baseline mode moves HEAD backward to targetBaseline during
+    // execute(). Files that are currently clean (fully committed) but differ
+    // between HEAD and targetBaseline will become dirty as a direct result of
+    // that reset, and execute() must revert them — but a plain `git status`
+    // against the CURRENT HEAD (above) cannot see them, since they aren't
+    // dirty yet. Without this, the persisted plan.discardedPaths would
+    // understate what execute() actually touches, making the audit record
+    // (inserted before mutation) inaccurate for crash forensics.
+    if (mode === 'resume_baseline' && targetBaseline) {
+      const committedDiffOutput = await git(resolvedCwd, [
+        'diff',
+        '--name-only',
+        '-z',
+        targetBaseline.trim(),
+        'HEAD',
+      ]);
+      const committedDiffPaths = committedDiffOutput.split('\0').filter(Boolean);
+      for (const rawPath of committedDiffPaths) {
+        const normPath = assertSafePath(resolvedCwd, rawPath);
+        if (!normPath) continue;
+        if (this.isPreservedPath(normPath, callerPatterns)) {
+          preservedPaths.push(normPath);
+        } else {
+          discardedPaths.push(normPath);
+        }
+      }
+    }
+
     const sortedTracked = Array.from(new Set(trackedChanges)).sort();
     const sortedUntracked = Array.from(new Set(untrackedPaths)).sort();
     const sortedDiscarded = Array.from(new Set(discardedPaths)).sort();
