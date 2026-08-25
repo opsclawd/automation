@@ -310,6 +310,8 @@ export class PlanReviewLoop {
           data: { diagnostic: checkResult.diagnostic },
         });
 
+        const planMdBeforeFix = await deps.readPlanMd(localCtx.cwd, 'plan.md');
+
         const fix = await deps.runFix(localCtx, {
           deterministicDiagnostic: checkResult.diagnostic,
           metadata: {
@@ -336,7 +338,7 @@ export class PlanReviewLoop {
           fix.verdict === 'cannot_fix' ||
           fix.verdict === 'done_no_fixes_needed';
 
-        recentFixCitations = deps.computeLastFixDiffCitations(localCtx.cwd, fix.headBeforeFix);
+        recentFixCitations = deps.computeLastFixDiffCitations(localCtx.cwd, planMdBeforeFix);
 
         loop = startIteration(loop, {
           kind: 'deterministic_fix',
@@ -503,6 +505,15 @@ export class PlanReviewLoop {
           }
           review = guardedResult.review;
           if (review.agentOutcome === 'success' && review.verdict !== undefined) break;
+          // A duplicate_retry_suppressed outcome means the retry-identity
+          // mechanism found a prior invocation in this run with an
+          // identical prompt hash — the agent was never actually invoked.
+          // This is deterministic: every further retry in this loop would
+          // compute the exact same identity and be suppressed again, so
+          // continuing to retry can never succeed. Stop immediately instead
+          // of burning the retry budget on guaranteed-repeat suppressions
+          // (#1027).
+          if (review.agentOutcome === 'duplicate_retry_suppressed') break;
           if (reviewAttempts <= reviewerMaxRetries) {
             this.emit(
               input,
@@ -521,12 +532,15 @@ export class PlanReviewLoop {
         }
 
         if (!review || review.agentOutcome !== 'success' || review.verdict === undefined) {
+          const isDuplicateSuppressed = review?.agentOutcome === 'duplicate_retry_suppressed';
           this.emit(
             input,
             'plan-review.reviewer.failed',
             'error',
-            `reviewer exhausted retry budget at iteration ${iterationIndex}`,
-            { iterationIndex, attempts: reviewAttempts },
+            isDuplicateSuppressed
+              ? `reviewer invocation was suppressed as a duplicate of a prior identical invocation at iteration ${iterationIndex}; escalating instead of retrying a guaranteed-repeat outcome`
+              : `reviewer exhausted retry budget at iteration ${iterationIndex}`,
+            { iterationIndex, attempts: reviewAttempts, isDuplicateSuppressed },
           );
           loop = startIteration(loop, {
             reviewInvocationId: review?.invocationId ?? '',
@@ -541,6 +555,9 @@ export class PlanReviewLoop {
             `iteration ${iterationIndex} completed: failed`,
             { index: iterationIndex, outcome: 'failed' },
           );
+          if (isDuplicateSuppressed) {
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          }
           return { outcome: 'failed', loop, proceedWithConcerns: false };
         }
 
@@ -916,6 +933,7 @@ export class PlanReviewLoop {
       }
 
       // --- FIX ---
+      const planMdBeforeFix = await deps.readPlanMd(ctx.cwd, 'plan.md');
       const fix = await deps.runFix(ctx, {
         ...(pendingReconciliationContext !== undefined
           ? { reconciliationContext: pendingReconciliationContext }
@@ -937,8 +955,8 @@ export class PlanReviewLoop {
         },
       });
 
-      recentFixCitations = deps.computeLastFixDiffCitations(ctx.cwd, fix.headBeforeFix);
-      if (fix.headBeforeFix !== undefined) {
+      recentFixCitations = deps.computeLastFixDiffCitations(ctx.cwd, planMdBeforeFix);
+      if (planMdBeforeFix !== undefined) {
         this.emit(
           input,
           'plan-review.fix.diff_citations.refreshed',
@@ -1322,6 +1340,10 @@ export class PlanReviewLoop {
             reviewResult = guardedResult.review;
             if (reviewResult.agentOutcome === 'success' && reviewResult.verdict !== undefined)
               break;
+            // See the primary review loop above (#1027): a duplicate
+            // suppression is deterministic and can never resolve by
+            // retrying, so stop immediately rather than burning budget.
+            if (reviewResult.agentOutcome === 'duplicate_retry_suppressed') break;
             if (reviewAttempts <= reviewerMaxRetries) {
               this.emit(
                 input,
@@ -1409,12 +1431,20 @@ export class PlanReviewLoop {
               },
             });
           } else {
+            const isDuplicateSuppressed =
+              reviewResult?.agentOutcome === 'duplicate_retry_suppressed';
             this.emit(
               input,
               'plan-review.reviewer.failed',
               'error',
-              `reviewer exhausted retry budget at verification iteration ${verificationIteration}`,
-              { iterationIndex: verificationIteration, attempts: reviewAttempts },
+              isDuplicateSuppressed
+                ? `reviewer invocation was suppressed as a duplicate of a prior identical invocation at verification iteration ${verificationIteration}; escalating instead of retrying a guaranteed-repeat outcome`
+                : `reviewer exhausted retry budget at verification iteration ${verificationIteration}`,
+              {
+                iterationIndex: verificationIteration,
+                attempts: reviewAttempts,
+                isDuplicateSuppressed,
+              },
             );
             const verificationIterationObj: import('@ai-sdlc/domain').LoopIteration = {
               index: verificationIteration,
@@ -1440,6 +1470,9 @@ export class PlanReviewLoop {
                 verification: 'post_reopen_final_full',
               },
             );
+            if (isDuplicateSuppressed) {
+              return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+            }
             return { outcome: 'failed', loop, proceedWithConcerns: false };
           }
         }
@@ -1574,6 +1607,10 @@ export class PlanReviewLoop {
           }
           finalReview = guardedResult.review;
           if (finalReview.agentOutcome === 'success' && finalReview.verdict !== undefined) break;
+          // See the primary review loop above (#1027): a duplicate
+          // suppression is deterministic and can never resolve by
+          // retrying, so stop immediately rather than burning budget.
+          if (finalReview.agentOutcome === 'duplicate_retry_suppressed') break;
           if (finalReviewAttempts <= reviewerMaxRetries) {
             this.emit(
               input,
@@ -1596,12 +1633,19 @@ export class PlanReviewLoop {
           finalReview.agentOutcome !== 'success' ||
           finalReview.verdict === undefined
         ) {
+          const isDuplicateSuppressed = finalReview?.agentOutcome === 'duplicate_retry_suppressed';
           this.emit(
             input,
             'plan-review.reviewer.failed',
             'error',
-            `reviewer exhausted retry budget at final review pass`,
-            { iterationIndex: finalIterationIndex, attempts: finalReviewAttempts },
+            isDuplicateSuppressed
+              ? `reviewer invocation was suppressed as a duplicate of a prior identical invocation at final review pass; escalating instead of retrying a guaranteed-repeat outcome`
+              : `reviewer exhausted retry budget at final review pass`,
+            {
+              iterationIndex: finalIterationIndex,
+              attempts: finalReviewAttempts,
+              isDuplicateSuppressed,
+            },
           );
           loop = {
             ...loop,
@@ -1625,6 +1669,9 @@ export class PlanReviewLoop {
             `iteration ${finalIterationIndex} completed: failed`,
             { index: finalIterationIndex, outcome: 'failed' },
           );
+          if (isDuplicateSuppressed) {
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          }
           return { outcome: 'failed', loop, proceedWithConcerns: false };
         }
 
@@ -1999,6 +2046,7 @@ export class PlanReviewLoop {
             }
 
             // 1. Bonus Fix
+            const planMdBeforeBonusFix = await deps.readPlanMd(finalCtx.cwd, 'plan.md');
             const bonusFix = await deps.runFix(finalCtx, {
               reconciliationContext: effectiveArbiterResult.rationale,
               metadata: {
@@ -2008,7 +2056,7 @@ export class PlanReviewLoop {
             });
             recentFixCitations = deps.computeLastFixDiffCitations(
               finalCtx.cwd,
-              bonusFix.headBeforeFix,
+              planMdBeforeBonusFix,
             );
 
             const fixIteration: import('@ai-sdlc/domain').LoopIteration = {
@@ -2088,6 +2136,10 @@ export class PlanReviewLoop {
                 confirmReview = guardedResult.review;
                 if (confirmReview.agentOutcome === 'success' && confirmReview.verdict !== undefined)
                   break;
+                // See the primary review loop above (#1027): a duplicate
+                // suppression is deterministic and can never resolve by
+                // retrying, so stop immediately rather than burning budget.
+                if (confirmReview.agentOutcome === 'duplicate_retry_suppressed') break;
                 if (confirmAttempts <= reviewerMaxRetries) {
                   this.emit(
                     input,

@@ -96,6 +96,7 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       });
   const deps: PlanReviewLoopDeps = {
     git: fakeGit,
+    readPlanMd: async (_cwd: string, _relativePath: string) => 'plan.md before-fix text\n',
     runReview: async (_ctx: PlanReviewContext): Promise<PlanReviewResult> => ({
       invocationId: `rev-${++n}`,
       agentOutcome: 'success' as const,
@@ -110,7 +111,7 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       diagnostic: null,
       signatureBlastRadiusFailures: [],
     }),
-    computeLastFixDiffCitations: (_cwd: string, _headBeforeFix: string | undefined) => [],
+    computeLastFixDiffCitations: (_cwd: string, _planMdBeforeFix: string | undefined) => [],
     runArbiter: undefined,
     loops: new FakeLoopRepository(),
     events: bus,
@@ -472,6 +473,46 @@ describe('PlanReviewLoop', () => {
     expect(fixCalls).toBe(1);
   });
 
+  it('#1027 — a duplicate_retry_suppressed reviewer outcome escalates to needs_human_review without burning the retry budget', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      maxIterations: 3,
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        if (reviewCalls === 1) {
+          return {
+            invocationId: 'rev-1',
+            agentOutcome: 'success' as const,
+            verdict: 'p1_found' as const,
+            findings: groundedP1Findings(),
+          };
+        }
+        // Iteration 2's reviewer invocation was suppressed as a duplicate of
+        // a prior identical invocation (retry-identity collision). Every
+        // subsequent retry in this same iteration would compute the exact
+        // same identity and also be suppressed — this call must only happen
+        // once for iteration 2, never retried.
+        return {
+          invocationId: 'rev-2',
+          agentOutcome: 'duplicate_retry_suppressed' as const,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('needs_human_review');
+    // One call for iteration 1, exactly one call for iteration 2 — the
+    // duplicate suppression must not trigger any retries.
+    expect(reviewCalls).toBe(2);
+    const failedEvent = events.find((e) => e.type === 'plan-review.reviewer.failed');
+    expect(failedEvent?.message).toContain('suppressed as a duplicate');
+    expect(failedEvent?.metadata?.isDuplicateSuppressed).toBe(true);
+  });
+
   it('AC #5.5 — exhaustion → needs_human_review', async () => {
     const { deps } = makeDeps({
       maxIterations: 2,
@@ -550,6 +591,7 @@ describe('PlanReviewLoop', () => {
                 ],
         };
       },
+      readPlanMd: async () => (fixCalls === 0 ? 'plan-before-1' : 'plan-before-2'),
       runFix: async (): Promise<PlanFixResult> => {
         fixCalls += 1;
         return {
@@ -559,10 +601,10 @@ describe('PlanReviewLoop', () => {
           headBeforeFix: fixCalls === 1 ? 'fix-head-1' : 'fix-head-2',
         };
       },
-      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
-        headBeforeFix === 'fix-head-1'
+      computeLastFixDiffCitations: (_cwd, planMdBeforeFix) =>
+        planMdBeforeFix === 'plan-before-1'
           ? ['plan.md:42']
-          : headBeforeFix === 'fix-head-2'
+          : planMdBeforeFix === 'plan-before-2'
             ? ['plan.md:50-55']
             : [],
     });
@@ -601,11 +643,12 @@ describe('PlanReviewLoop', () => {
     });
   });
 
-  it('refreshes recentFixCitations from computeLastFixDiffCitations even when headBeforeFix is undefined', async () => {
+  it('refreshes recentFixCitations from computeLastFixDiffCitations even when the pre-fix plan.md read fails', async () => {
     let reviewCalls = 0;
     const computeCalls: Array<string | undefined> = [];
     const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
     const { deps } = makeDeps({
+      readPlanMd: async () => undefined,
       runReview: async (
         _ctx: PlanReviewContext,
         opts?: PlanReviewStepOptions,
@@ -624,8 +667,8 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
       }),
-      computeLastFixDiffCitations: (cwd, headBeforeFix) => {
-        computeCalls.push(`${cwd}:${headBeforeFix ?? 'undefined'}`);
+      computeLastFixDiffCitations: (cwd, planMdBeforeFix) => {
+        computeCalls.push(`${cwd}:${planMdBeforeFix ?? 'undefined'}`);
         return [];
       },
     });
@@ -1274,6 +1317,8 @@ describe('PlanReviewLoop', () => {
                 ],
         };
       },
+      readPlanMd: async () =>
+        fixCalls === 0 ? 'plan-before-1' : fixCalls === 1 ? 'plan-before-2' : 'plan-before-bonus',
       runFix: async (): Promise<PlanFixResult> => {
         fixCalls += 1;
         return {
@@ -1283,12 +1328,12 @@ describe('PlanReviewLoop', () => {
           headBeforeFix: fixCalls === 3 ? 'bonus-fix-head' : `fix-head-${fixCalls}`,
         };
       },
-      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
-        headBeforeFix === 'bonus-fix-head'
+      computeLastFixDiffCitations: (_cwd, planMdBeforeFix) =>
+        planMdBeforeFix === 'plan-before-bonus'
           ? ['plan.md:99-101']
-          : headBeforeFix === 'fix-head-1'
+          : planMdBeforeFix === 'plan-before-1'
             ? ['plan.md:42']
-            : headBeforeFix === 'fix-head-2'
+            : planMdBeforeFix === 'plan-before-2'
               ? ['plan.md:50-55']
               : [],
       runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> => {

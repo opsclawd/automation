@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as childProcess from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { FakeArtifactStore } from '@ai-sdlc/application/test-doubles';
 import {
   buildPlanReviewArbiterPrompt,
@@ -278,6 +280,59 @@ describe('buildPlanReviewReviewScopeBlock (#716)', () => {
     expect(block).toBe('');
   });
 
+  it('#1027 AC2 — iteration N+1 scope block differs from iteration N after a genuine fix changes plan.md', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'plan-review-ac2-'));
+    try {
+      const prevFindings = [
+        {
+          severity: 'P1' as const,
+          citation: 'plan.md:5',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded' as const,
+          disposition: 'still_open' as const,
+        },
+      ];
+
+      // Iteration N (the discovery pass that found the P1) had no fix
+      // applied yet within this iteration's own scope block construction.
+      const iterationNBlock = buildPlanReviewReviewScopeBlock({
+        mode: 'intermediate_delta',
+        prevFindings,
+        recentFixCitations: [],
+      });
+
+      // Between iteration N and N+1, the fixer genuinely changes plan.md.
+      const planMdBeforeFix = ['# Plan', '', '## Task 1', 'Original text', ''].join('\n');
+      const planMdAfterFix = [
+        '# Plan',
+        '',
+        '## Task 1',
+        'Original text',
+        '',
+        '## Task 2',
+        'Declares the missing transition handler',
+        '',
+      ].join('\n');
+      writeFileSync(join(dir, 'plan.md'), planMdAfterFix, 'utf-8');
+      const recentFixCitations = getRecentFixCitations(dir, planMdBeforeFix);
+      expect(recentFixCitations.length).toBeGreaterThan(0);
+
+      // Iteration N+1 reviews the fixed plan with real, non-empty
+      // recentFixCitations reflecting what the fix actually touched.
+      const iterationNPlus1Block = buildPlanReviewReviewScopeBlock({
+        mode: 'intermediate_delta',
+        prevFindings,
+        recentFixCitations,
+      });
+
+      expect(iterationNPlus1Block).not.toBe(iterationNBlock);
+      expect(iterationNPlus1Block).toContain(`\`${recentFixCitations[0]}\``);
+      expect(iterationNBlock).toContain('No citations were recorded for the most recent fix');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('renders a minimal no-data scope block when explicit empty arrays are threaded', () => {
     const block = buildPlanReviewReviewScopeBlock({
       prevFindings: [],
@@ -533,8 +588,8 @@ describe('createPlanReviewEvidenceResolver (#716)', () => {
   });
 });
 
-describe('getRecentFixCitations (#716)', () => {
-  it('returns empty array when headBeforeFix is undefined', () => {
+describe('getRecentFixCitations (#716, rewritten for #1027)', () => {
+  it('returns empty array when planMdBeforeFix is undefined', () => {
     const citations = getRecentFixCitations(process.cwd(), undefined);
     expect(citations).toEqual([]);
   });
@@ -555,12 +610,57 @@ describe('getRecentFixCitations (#716)', () => {
     const prev = execSpy.getMockImplementation();
     execSpy.mockImplementationOnce(() => fakeDiff as unknown as Buffer);
     try {
-      const citations = getRecentFixCitations(process.cwd(), 'deadbeef');
+      const citations = getRecentFixCitations(process.cwd(), 'prior plan.md text\n');
       expect(citations).toContain('plan.md:1-3');
       expect(citations).toContain('plan.md:12-15');
     } finally {
       if (prev) execSpy.mockImplementation(prev);
       else execSpy.mockReset();
+    }
+  });
+
+  it('computes real citations from a genuine content diff against an untracked plan.md (#1027)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'plan-review-citations-'));
+    try {
+      // plan.md is deliberately NOT git-tracked here, matching production:
+      // it is gitignored and written only via the artifact store. A
+      // git-diff-on-commit-SHA approach (the pre-#1027 implementation)
+      // would always see this as empty regardless of real changes.
+      const before = ['# Plan', '', '## Task 1', 'Original text', ''].join('\n');
+      const after = [
+        '# Plan',
+        '',
+        '## Task 1',
+        'Updated text',
+        '',
+        '## Task 2',
+        'New task',
+        '',
+      ].join('\n');
+      writeFileSync(join(dir, 'plan.md'), after, 'utf-8');
+
+      const citations = getRecentFixCitations(dir, before);
+      expect(citations.length).toBeGreaterThan(0);
+      // The changed/added lines are in the second half of `after`; assert at
+      // least one citation lands there rather than pinning an exact line
+      // number, since the precise hunk boundaries are an implementation
+      // detail of git's diff algorithm.
+      expect(citations.some((c) => /^plan\.md:[4-8](-\d+)?$/.test(c))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns empty array when plan.md content is unchanged (#1027)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'plan-review-citations-'));
+    try {
+      const text = ['# Plan', '', '## Task 1', 'Unchanged text', ''].join('\n');
+      writeFileSync(join(dir, 'plan.md'), text, 'utf-8');
+
+      const citations = getRecentFixCitations(dir, text);
+      expect(citations).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
