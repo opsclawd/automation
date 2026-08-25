@@ -1144,8 +1144,9 @@ describe('resume worktree lifecycle integration', () => {
       presentArtifacts: [],
     });
 
-    // Plan review failed due to contract violation and halted execution
-    expect(execResultA.run.status).toBe('failed');
+    // Plan review's own read-only guard (#1024) catches the contract violation
+    // and escalates to human review rather than hard-failing the run.
+    expect(execResultA.run.status).toBe('needs_human_review');
 
     // Implement was never entered
     const implementPhaseA = execResultA.phases.find((p) => p.phase === 'implement');
@@ -1159,34 +1160,17 @@ describe('resume worktree lifecycle integration', () => {
     expect(eventsA.some((e) => e.type === 'implement.inbound_worktree_reset')).toBe(false);
 
     // -------------------------------------------------------------
-    // Part B: Residual ambient drift from passed plan-review is audited and cleaned at implement boundary
+    // Part B: Residual ambient drift from a plan-review that already completed
+    // in a prior process (e.g. the process crashed or was killed after plan-review
+    // finished but before any cleanup ran) is audited and cleaned at the implement
+    // boundary. This must NOT be simulated via a live plan-review agent invocation
+    // that leaves residue mid-invocation — plan-review's own read-only guard
+    // (#1024) now detects and cleans that class of drift itself, before implement
+    // is ever entered, which would make this scenario indistinguishable from
+    // Part A. Instead, plan-review is marked already-completed (as if resumed
+    // after a crash) and the residue is written directly into the worktree,
+    // matching drift that no live per-invocation guard ever had a chance to see.
     // -------------------------------------------------------------
-    const passingReviewWithDriftScript: ScriptedAgentScript = {
-      phaseId: 'plan-review',
-      handle: async (request) => {
-        writeFileSync(
-          path.join(request.cwd, 'plan-review-findings.md'),
-          '## verdict\npass\n\n## findings\n',
-        );
-        // Review probe leaves ambient residue in the persistent worktree
-        writeFileSync(
-          path.join(request.cwd, 'ambient-review-probe.tmp'),
-          'temporary probe residue\n',
-        );
-        return {
-          runtime: 'test' as const,
-          provider: 'test',
-          model: 'test',
-          exitCode: 0,
-          durationMs: 10,
-          stdoutPath: '/dev/null',
-          stderrPath: '/dev/null',
-          contractViolations: [],
-          outcome: 'success' as const,
-        };
-      },
-    };
-
     const implementScript: ScriptedAgentScript = {
       phaseId: 'implement',
       handle: async (request) => {
@@ -1253,7 +1237,7 @@ describe('resume worktree lifecycle integration', () => {
 
     const harnessB = trackHarness(
       await createHarness({
-        scripts: [passingReviewWithDriftScript, implementScript, ...reviewPassingScripts],
+        scripts: [implementScript, ...reviewPassingScripts],
       }),
     );
 
@@ -1273,9 +1257,25 @@ describe('resume worktree lifecycle integration', () => {
     harnessB.container.runRepository.update(harnessB.run.uuid, {
       status: 'running',
       currentPhase: null,
-      completedPhases: ['read_issue', 'plan-design', 'plan-write'],
+      // plan-review is already completed (as if from a prior, crashed process),
+      // so the run resumes directly at the implement boundary with pre-existing
+      // ambient residue that no live plan-review invocation guard ever observed.
+      completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review'],
     });
 
+    // Residue left behind by the already-completed plan-review phase, written
+    // directly into the worktree rather than via a live agent invocation.
+    writeFileSync(
+      path.join(harnessB.worktreeDir, 'ambient-review-probe.tmp'),
+      'temporary probe residue\n',
+    );
+
+    await harnessB.context.artifacts.write({
+      runId: harnessB.run.uuid,
+      phaseId: 'plan-review',
+      relativePath: 'plan-review-findings.md',
+      contents: '## verdict\npass\n\n## findings\n',
+    });
     await harnessB.context.artifacts.write({
       runId: harnessB.run.uuid,
       phaseId: 'read_issue',
