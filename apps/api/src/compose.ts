@@ -4928,8 +4928,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           if (failingCommands.length > 0) {
             const details = await Promise.all(
               failingCommands.map(async (c) => {
-                const stdoutAbs = c.stdoutPath ? join(revalidateLogDir, basename(c.stdoutPath)) : '';
-                const stderrAbs = c.stderrPath ? join(revalidateLogDir, basename(c.stderrPath)) : '';
+                const stdoutAbs = c.stdoutPath
+                  ? join(revalidateLogDir, basename(c.stdoutPath))
+                  : '';
+                const stderrAbs = c.stderrPath
+                  ? join(revalidateLogDir, basename(c.stderrPath))
+                  : '';
                 const [stdoutTail, stderrTail] = await Promise.all([
                   readTail(stdoutAbs),
                   readTail(stderrAbs),
@@ -4951,14 +4955,14 @@ export function composeRoot(opts: ComposeOptions): Container {
             passed: revalPassed,
             ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
             ...(failedCommand?.outcome
-            ? { outcome: failedCommand.outcome as ValidationCommandOutcome }
+              ? { outcome: failedCommand.outcome as ValidationCommandOutcome }
               : {}),
             ...(failingCommands.length > 0
-            ? {
-                failedCommands: failingCommands.map((c) =>
-                  Array.isArray(c.command) ? c.command.join(' ') : c.command,
-                ),
-              }
+              ? {
+                  failedCommands: failingCommands.map((c) =>
+                    Array.isArray(c.command) ? c.command.join(' ') : c.command,
+                  ),
+                }
               : {}),
             ...(failureDetail ? { failureDetail } : {}),
           };
@@ -5657,12 +5661,13 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const planReviewLoop = new PlanReviewLoop({
         git: gitAdapter,
+        readPlanMd: readWorktreeFile,
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
         checkDeterministicPlan: planReviewCheckDeterministicPlan,
         captureSnapshot: (ctx) => computeSnapshot(ctx.cwd, 'final_full'),
-        computeLastFixDiffCitations: (cwd, headBeforeFix) =>
-          getRecentFixCitations(cwd, headBeforeFix),
+        computeLastFixDiffCitations: (cwd, planMdBeforeFix) =>
+          getRecentFixCitations(cwd, planMdBeforeFix),
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),
         ...(planReviewFinalReviewRunArbiter
           ? { runFinalReviewArbiter: planReviewFinalReviewRunArbiter }

@@ -6,6 +6,7 @@ import type { ArbiterResult } from '../implement-step/types.js';
 import type { ReviewMode } from '../review-state/types.js';
 import type { ReviewStateRepositoryPort } from '../ports/review-state-repository-port.js';
 import type { GitPort } from '../ports/git-port.js';
+import type { ReadWorktreeFilePort } from '../ports/read-worktree-file-port.js';
 import type { SignatureBlastRadiusFailure } from './signature-blast-radius.js';
 
 export interface DeterministicPlanCheckResult {
@@ -209,17 +210,32 @@ export interface PlanReviewLoopDeps {
   git: GitPort;
   runReview: (ctx: PlanReviewContext, opts?: PlanReviewStepOptions) => Promise<PlanReviewResult>;
   /**
+   * Plain (non-git) worktree file reader, used to capture plan.md's full
+   * text immediately before a fix runs (#1027). plan.md is gitignored and
+   * written only via the artifact store, never via `git commit`, so its
+   * pre-fix content cannot be reconstructed from a git ref — the loop
+   * must capture it directly before `runFix` executes.
+   */
+  readPlanMd: ReadWorktreeFilePort;
+  /**
    * Composition-root seam for refreshing the loop's internal
    * `lastFixDiffCitations` after each fix invocation (#716, fix to reviewer
-   * finding #1). The loop calls this with the `headBeforeFix` SHA captured
-   * by the fixer adapter; the composition root uses it to compute
-   * `git diff <headBeforeFix>..HEAD -- plan.md` line ranges and returns
-   * them as `plan.md:N` or `plan.md:N-M` citation strings.
+   * finding #1; signature updated for #1027). The loop calls this with the
+   * full text of plan.md captured via `readPlanMd` immediately BEFORE the
+   * fix ran; the composition root diffs that text against the CURRENT
+   * plan.md file on disk and returns `plan.md:N` / `plan.md:N-M` citation
+   * strings for the lines that changed.
    *
-   * When `headBeforeFix` is undefined (fixer failure, no fix this
-   * iteration), the composition root returns `[]` — every new finding
-   * from the next reviewer is classified `out_of_scope` and dropped from
-   * verdict computation (the safe default per reviewer finding #1).
+   * The second parameter used to be the fixer's `headBeforeFix` git SHA,
+   * diffed via `git diff <sha>..HEAD -- plan.md`. That was always empty
+   * for plan.md specifically, since plan.md is gitignored/untracked and
+   * git has no history for it at any commit — see #1027.
+   *
+   * When `planMdBeforeFix` is undefined (fixer failure, no fix this
+   * iteration, or the pre-fix read failed), the composition root returns
+   * `[]` — every new finding from the next reviewer is classified
+   * `out_of_scope` and dropped from verdict computation (the safe default
+   * per reviewer finding #1).
    *
    * The application package does NOT call `git` directly; this dep is
    * the layer-rule-safe indirection.
@@ -233,7 +249,7 @@ export interface PlanReviewLoopDeps {
    */
   computeLastFixDiffCitations: (
     cwd: string,
-    headBeforeFix: string | undefined,
+    planMdBeforeFix: string | undefined,
   ) => ReadonlyArray<string>;
   runFix: (ctx: PlanReviewContext, opts: PlanFixOptions) => Promise<PlanFixResult>;
   /**

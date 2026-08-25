@@ -62,6 +62,7 @@ function makeDeps(
 
   const deps: PlanReviewLoopDeps = {
     git: fakeGit,
+    readPlanMd: async (_cwd: string, _relativePath: string) => 'plan.md before-fix text\n',
     runReview: async (_ctx: PlanReviewContext): Promise<PlanReviewResult> => ({
       invocationId: `rev-${++n}`,
       agentOutcome: 'success',
@@ -76,7 +77,7 @@ function makeDeps(
       diagnostic: null,
       signatureBlastRadiusFailures: [],
     }),
-    computeLastFixDiffCitations: (_cwd: string, _headBeforeFix: string | undefined) => [],
+    computeLastFixDiffCitations: (_cwd: string, _planMdBeforeFix: string | undefined) => [],
     captureSnapshot: async (_ctx: PlanReviewContext): Promise<PlanReviewSnapshot | undefined> => ({
       planMdDigest: 'snapshot-digest-1',
       planMdPath: '/wt/plan.md',

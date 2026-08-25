@@ -1,4 +1,8 @@
 import { execFileSync } from 'node:child_process';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   ArtifactNotFoundError,
   WORKSPACE_CONSTRAINTS,
@@ -509,29 +513,66 @@ export function createPlanReviewEvidenceResolver(
 
 /**
  * Compute citations for text introduced by the most recent fix invocation
- * (#716, design §2.5 / §7.1). Returns line ranges from
- * `git diff <headBeforeFix>..HEAD -- plan.md` as `plan.md:N` or
- * `plan.md:N-M` citations.
+ * (#716, design §2.5 / §7.1; rewritten for #1027). Returns line ranges
+ * from a plain content diff between `planMdBeforeFix` (the full text of
+ * plan.md captured immediately before the fix ran) and the CURRENT
+ * plan.md file on disk, as `plan.md:N` or `plan.md:N-M` citations.
+ *
+ * plan.md is gitignored/untracked (`.gitignore:/plan.md`) — it is written
+ * via the artifact store's `write()`, never via `git commit`. The
+ * original implementation computed `git diff <sha>..HEAD -- plan.md`,
+ * which is always empty for an untracked path regardless of real content
+ * changes, since git has no history for it at any commit. That caused
+ * `recentFixCitations` to always be `[]`, which — combined with
+ * `prevFindings` being frozen at iteration 1 — could make the
+ * `intermediate_delta` scope block (and sometimes the whole rendered
+ * prompt) byte-identical across iterations even after a genuine fix,
+ * triggering plan-review's semantic-retry dedup to suppress a genuinely
+ * new review as a duplicate of the pre-fix one (#1027).
+ *
+ * This diffs two file contents directly via `git diff --no-index`, which
+ * works regardless of git tracking status: the "before" text is written
+ * to a temp file and compared against the live worktree file.
  *
  * Used by the composition-root adapter to supply the
  * `computeLastFixDiffCitations` dep on `PlanReviewLoopDeps`. Returns an
- * empty array on git failure — when no `headBeforeFix` is provided, or
- * the diff fails to compute, the loop defaults `lastFixDiffCitations` to
- * `[]`, which means every new finding from the next reviewer is
- * classified `out_of_scope` (the safe default per reviewer finding #1:
- * never promote a citation to in-scope without proof the fix touched it).
+ * empty array when `planMdBeforeFix` is undefined (fixer failure, no fix
+ * this iteration) or the diff fails to compute — every new finding from
+ * the next reviewer is then classified `out_of_scope` (the safe default
+ * per reviewer finding #1: never promote a citation to in-scope without
+ * proof the fix touched it).
  */
-export function getRecentFixCitations(cwd: string, headBeforeFix: string | undefined): string[] {
-  if (!headBeforeFix) return [];
+export function getRecentFixCitations(cwd: string, planMdBeforeFix: string | undefined): string[] {
+  if (planMdBeforeFix === undefined) return [];
+  const tempPath = join(tmpdir(), `plan-review-before-fix-${randomUUID()}.md`);
   try {
-    const diff = execFileSync(
-      'git',
-      ['diff', '--unified=0', `${headBeforeFix}..HEAD`, '--', 'plan.md'],
-      { cwd, encoding: 'utf-8', maxBuffer: 1024 * 1024 },
-    );
+    writeFileSync(tempPath, planMdBeforeFix, 'utf-8');
+    let diff: string;
+    try {
+      diff = execFileSync(
+        'git',
+        ['diff', '--no-index', '--unified=0', tempPath, join(cwd, 'plan.md')],
+        { cwd, encoding: 'utf-8', maxBuffer: 1024 * 1024 },
+      );
+    } catch (err) {
+      // `git diff --no-index` exits 1 (not an error condition) whenever it
+      // finds differences — execFileSync throws on any non-zero exit, so
+      // recover stdout from the thrown error in that specific case rather
+      // than treating a real diff as a failure.
+      const execErr = err as { status?: number; stdout?: unknown };
+      if (execErr.status === 1 && typeof execErr.stdout === 'string') {
+        diff = execErr.stdout;
+      } else {
+        return [];
+      }
+    }
     return parsePlanDiffCitations(diff);
   } catch {
     return [];
+  } finally {
+    try {
+      unlinkSync(tempPath);
+    } catch {}
   }
 }
 

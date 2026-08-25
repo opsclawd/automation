@@ -310,6 +310,8 @@ export class PlanReviewLoop {
           data: { diagnostic: checkResult.diagnostic },
         });
 
+        const planMdBeforeFix = await deps.readPlanMd(localCtx.cwd, 'plan.md');
+
         const fix = await deps.runFix(localCtx, {
           deterministicDiagnostic: checkResult.diagnostic,
           metadata: {
@@ -336,7 +338,7 @@ export class PlanReviewLoop {
           fix.verdict === 'cannot_fix' ||
           fix.verdict === 'done_no_fixes_needed';
 
-        recentFixCitations = deps.computeLastFixDiffCitations(localCtx.cwd, fix.headBeforeFix);
+        recentFixCitations = deps.computeLastFixDiffCitations(localCtx.cwd, planMdBeforeFix);
 
         loop = startIteration(loop, {
           kind: 'deterministic_fix',
@@ -931,6 +933,7 @@ export class PlanReviewLoop {
       }
 
       // --- FIX ---
+      const planMdBeforeFix = await deps.readPlanMd(ctx.cwd, 'plan.md');
       const fix = await deps.runFix(ctx, {
         ...(pendingReconciliationContext !== undefined
           ? { reconciliationContext: pendingReconciliationContext }
@@ -952,8 +955,8 @@ export class PlanReviewLoop {
         },
       });
 
-      recentFixCitations = deps.computeLastFixDiffCitations(ctx.cwd, fix.headBeforeFix);
-      if (fix.headBeforeFix !== undefined) {
+      recentFixCitations = deps.computeLastFixDiffCitations(ctx.cwd, planMdBeforeFix);
+      if (planMdBeforeFix !== undefined) {
         this.emit(
           input,
           'plan-review.fix.diff_citations.refreshed',
@@ -2043,6 +2046,7 @@ export class PlanReviewLoop {
             }
 
             // 1. Bonus Fix
+            const planMdBeforeBonusFix = await deps.readPlanMd(finalCtx.cwd, 'plan.md');
             const bonusFix = await deps.runFix(finalCtx, {
               reconciliationContext: effectiveArbiterResult.rationale,
               metadata: {
@@ -2052,7 +2056,7 @@ export class PlanReviewLoop {
             });
             recentFixCitations = deps.computeLastFixDiffCitations(
               finalCtx.cwd,
-              bonusFix.headBeforeFix,
+              planMdBeforeBonusFix,
             );
 
             const fixIteration: import('@ai-sdlc/domain').LoopIteration = {

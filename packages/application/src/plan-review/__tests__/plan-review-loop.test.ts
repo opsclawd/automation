@@ -96,6 +96,7 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       });
   const deps: PlanReviewLoopDeps = {
     git: fakeGit,
+    readPlanMd: async (_cwd: string, _relativePath: string) => 'plan.md before-fix text\n',
     runReview: async (_ctx: PlanReviewContext): Promise<PlanReviewResult> => ({
       invocationId: `rev-${++n}`,
       agentOutcome: 'success' as const,
@@ -110,7 +111,7 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       diagnostic: null,
       signatureBlastRadiusFailures: [],
     }),
-    computeLastFixDiffCitations: (_cwd: string, _headBeforeFix: string | undefined) => [],
+    computeLastFixDiffCitations: (_cwd: string, _planMdBeforeFix: string | undefined) => [],
     runArbiter: undefined,
     loops: new FakeLoopRepository(),
     events: bus,
@@ -590,6 +591,7 @@ describe('PlanReviewLoop', () => {
                 ],
         };
       },
+      readPlanMd: async () => (fixCalls === 0 ? 'plan-before-1' : 'plan-before-2'),
       runFix: async (): Promise<PlanFixResult> => {
         fixCalls += 1;
         return {
@@ -599,10 +601,10 @@ describe('PlanReviewLoop', () => {
           headBeforeFix: fixCalls === 1 ? 'fix-head-1' : 'fix-head-2',
         };
       },
-      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
-        headBeforeFix === 'fix-head-1'
+      computeLastFixDiffCitations: (_cwd, planMdBeforeFix) =>
+        planMdBeforeFix === 'plan-before-1'
           ? ['plan.md:42']
-          : headBeforeFix === 'fix-head-2'
+          : planMdBeforeFix === 'plan-before-2'
             ? ['plan.md:50-55']
             : [],
     });
@@ -641,11 +643,12 @@ describe('PlanReviewLoop', () => {
     });
   });
 
-  it('refreshes recentFixCitations from computeLastFixDiffCitations even when headBeforeFix is undefined', async () => {
+  it('refreshes recentFixCitations from computeLastFixDiffCitations even when the pre-fix plan.md read fails', async () => {
     let reviewCalls = 0;
     const computeCalls: Array<string | undefined> = [];
     const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
     const { deps } = makeDeps({
+      readPlanMd: async () => undefined,
       runReview: async (
         _ctx: PlanReviewContext,
         opts?: PlanReviewStepOptions,
@@ -664,8 +667,8 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
       }),
-      computeLastFixDiffCitations: (cwd, headBeforeFix) => {
-        computeCalls.push(`${cwd}:${headBeforeFix ?? 'undefined'}`);
+      computeLastFixDiffCitations: (cwd, planMdBeforeFix) => {
+        computeCalls.push(`${cwd}:${planMdBeforeFix ?? 'undefined'}`);
         return [];
       },
     });
@@ -1314,6 +1317,8 @@ describe('PlanReviewLoop', () => {
                 ],
         };
       },
+      readPlanMd: async () =>
+        fixCalls === 0 ? 'plan-before-1' : fixCalls === 1 ? 'plan-before-2' : 'plan-before-bonus',
       runFix: async (): Promise<PlanFixResult> => {
         fixCalls += 1;
         return {
@@ -1323,12 +1328,12 @@ describe('PlanReviewLoop', () => {
           headBeforeFix: fixCalls === 3 ? 'bonus-fix-head' : `fix-head-${fixCalls}`,
         };
       },
-      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
-        headBeforeFix === 'bonus-fix-head'
+      computeLastFixDiffCitations: (_cwd, planMdBeforeFix) =>
+        planMdBeforeFix === 'plan-before-bonus'
           ? ['plan.md:99-101']
-          : headBeforeFix === 'fix-head-1'
+          : planMdBeforeFix === 'plan-before-1'
             ? ['plan.md:42']
-            : headBeforeFix === 'fix-head-2'
+            : planMdBeforeFix === 'plan-before-2'
               ? ['plan.md:50-55']
               : [],
       runFinalReviewArbiter: async (): Promise<PlanReviewArbiterResult> => {
