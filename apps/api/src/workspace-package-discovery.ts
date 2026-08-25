@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { WorkspacePackageDescriptor } from '@ai-sdlc/application';
 
@@ -177,9 +178,37 @@ function validatePattern(
 }
 
 /**
- * Expand a validated pattern's segments into matched directory paths relative to worktreeRoot.
+ * Extract target package name from a workspace: dependency specification.
  */
-function expandPatternSegments(worktreeRoot: string, segments: string[]): string[] {
+function extractWorkspaceDependencyTarget(depKey: string, depVal: string): string {
+  const rawTarget = depVal.slice('workspace:'.length).trim();
+  if (!rawTarget || rawTarget === '*' || rawTarget === '^' || rawTarget === '~') {
+    return depKey;
+  }
+  if (/^[~^<>=]|^v?\d+(?:\.\d+)*(?:[a-zA-Z0-9_.+-]*)$/.test(rawTarget)) {
+    return depKey;
+  }
+  if (rawTarget.startsWith('@')) {
+    const match = rawTarget.match(/^(@[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)(?:@.*)?$/);
+    if (match && match[1]) {
+      return match[1];
+    }
+  } else {
+    const match = rawTarget.match(/^([a-zA-Z0-9_.-]+)(?:@.*)?$/);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  return depKey;
+}
+
+/**
+ * Asynchronously expand a validated pattern's segments into matched directory paths relative to worktreeRoot.
+ */
+async function expandPatternSegmentsAsync(
+  worktreeRoot: string,
+  segments: string[],
+): Promise<string[]> {
   let currentDirs = [''];
 
   for (const seg of segments) {
@@ -187,10 +216,58 @@ function expandPatternSegments(worktreeRoot: string, segments: string[]): string
 
     for (const cur of currentDirs) {
       const fullCurPath = path.join(worktreeRoot, cur);
-      if (!existsSync(fullCurPath)) {
+      try {
+        const stat = await fs.stat(fullCurPath);
+        if (!stat.isDirectory()) {
+          continue;
+        }
+      } catch {
         continue;
       }
 
+      if (seg === '*') {
+        try {
+          const entries = await fs.readdir(fullCurPath, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() || entry.isSymbolicLink()) {
+              const rel = cur ? `${cur}/${entry.name}` : entry.name;
+              nextDirs.push(rel);
+            }
+          }
+        } catch {
+          // ignore directory read error on wildcards
+        }
+      } else {
+        const targetPath = path.join(fullCurPath, seg);
+        try {
+          const stat = await fs.stat(targetPath);
+          if (stat.isDirectory()) {
+            const rel = cur ? `${cur}/${seg}` : seg;
+            nextDirs.push(rel);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    currentDirs = nextDirs;
+  }
+
+  return currentDirs;
+}
+
+/**
+ * Synchronously expand a validated pattern's segments into matched directory paths relative to worktreeRoot.
+ */
+function expandPatternSegmentsSync(worktreeRoot: string, segments: string[]): string[] {
+  let currentDirs = [''];
+
+  for (const seg of segments) {
+    const nextDirs: string[] = [];
+
+    for (const cur of currentDirs) {
+      const fullCurPath = path.join(worktreeRoot, cur);
       try {
         const stat = statSync(fullCurPath);
         if (!stat.isDirectory()) {
@@ -214,16 +291,14 @@ function expandPatternSegments(worktreeRoot: string, segments: string[]): string
         }
       } else {
         const targetPath = path.join(fullCurPath, seg);
-        if (existsSync(targetPath)) {
-          try {
-            const stat = statSync(targetPath);
-            if (stat.isDirectory()) {
-              const rel = cur ? `${cur}/${seg}` : seg;
-              nextDirs.push(rel);
-            }
-          } catch {
-            // ignore
+        try {
+          const stat = statSync(targetPath);
+          if (stat.isDirectory()) {
+            const rel = cur ? `${cur}/${seg}` : seg;
+            nextDirs.push(rel);
           }
+        } catch {
+          // ignore
         }
       }
     }
@@ -235,9 +310,58 @@ function expandPatternSegments(worktreeRoot: string, segments: string[]): string
 }
 
 /**
- * Check if a package directory contains any .bats files, excluding nested packages and ignored dirs.
+ * Asynchronously check if a package directory contains any .bats files, excluding nested packages and ignored dirs.
  */
-function packageHasBats(
+async function packageHasBatsAsync(
+  worktreeRoot: string,
+  packageDir: string,
+  allPackageDirs: Set<string>,
+): Promise<boolean> {
+  async function walk(currentRelDir: string): Promise<boolean> {
+    const fullDirPath = path.join(worktreeRoot, currentRelDir);
+    let entries: Array<{
+      name: string;
+      isDirectory(): boolean;
+      isFile(): boolean;
+      isSymbolicLink(): boolean;
+    }>;
+    try {
+      entries = await fs.readdir(fullDirPath, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+
+    for (const entry of entries) {
+      const name = String(entry.name);
+      if ((name.startsWith('.') && name !== '.bats') || IGNORED_BATS_DIRECTORIES.has(name)) {
+        continue;
+      }
+
+      const childRelDir = `${currentRelDir}/${name}`;
+
+      if (entry.isDirectory()) {
+        // Do not traverse into another package's directory boundary
+        if (allPackageDirs.has(childRelDir)) {
+          continue;
+        }
+        if (await walk(childRelDir)) {
+          return true;
+        }
+      } else if (entry.isFile() && name.endsWith('.bats')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  return walk(packageDir);
+}
+
+/**
+ * Synchronously check if a package directory contains any .bats files, excluding nested packages and ignored dirs.
+ */
+function packageHasBatsSync(
   worktreeRoot: string,
   packageDir: string,
   allPackageDirs: Set<string>,
@@ -294,10 +418,6 @@ export function discoverWorkspacePackagesSync(
   }
 
   const resolvedRoot = path.resolve(worktreeRoot);
-  if (!existsSync(resolvedRoot)) {
-    return { success: false, reason: `Worktree root directory does not exist: ${resolvedRoot}` };
-  }
-
   let realRoot: string;
   try {
     const rootStat = statSync(resolvedRoot);
@@ -313,17 +433,13 @@ export function discoverWorkspacePackagesSync(
   }
 
   const workspaceYamlPath = path.join(resolvedRoot, 'pnpm-workspace.yaml');
-  if (!existsSync(workspaceYamlPath)) {
-    return { success: false, reason: `Missing pnpm-workspace.yaml in ${resolvedRoot}` };
-  }
-
   let yamlContent: string;
   try {
     yamlContent = readFileSync(workspaceYamlPath, 'utf-8');
-  } catch (err) {
+  } catch {
     return {
       success: false,
-      reason: `Failed to read pnpm-workspace.yaml: ${err instanceof Error ? err.message : String(err)}`,
+      reason: `Missing pnpm-workspace.yaml in ${resolvedRoot}`,
     };
   }
 
@@ -340,24 +456,31 @@ export function discoverWorkspacePackagesSync(
       return { success: false, reason: validated.reason };
     }
 
-    const matched = expandPatternSegments(resolvedRoot, validated.segments);
+    const matched = expandPatternSegmentsSync(resolvedRoot, validated.segments);
     for (const dir of matched) {
       const candidatePath = path.join(resolvedRoot, dir);
       const pkgJsonPath = path.join(candidatePath, 'package.json');
-      if (existsSync(pkgJsonPath)) {
-        // Verify path does not escape worktree
-        let realDir: string;
-        try {
-          realDir = realpathSync(candidatePath);
-        } catch {
-          return { success: false, reason: `Package directory escapes worktree root: ${dir}` };
+      try {
+        const stat = statSync(pkgJsonPath);
+        if (!stat.isFile()) {
+          continue;
         }
-        const relFromRoot = path.relative(realRoot, realDir);
-        if (relFromRoot.startsWith('..') || path.isAbsolute(relFromRoot)) {
-          return { success: false, reason: `Package directory escapes worktree root: ${dir}` };
-        }
-        candidateDirs.add(dir.replace(/\\/g, '/'));
+      } catch {
+        continue;
       }
+
+      // Verify path does not escape worktree
+      let realDir: string;
+      try {
+        realDir = realpathSync(candidatePath);
+      } catch {
+        return { success: false, reason: `Package directory escapes worktree root: ${dir}` };
+      }
+      const relFromRoot = path.relative(realRoot, realDir);
+      if (relFromRoot.startsWith('..') || path.isAbsolute(relFromRoot)) {
+        return { success: false, reason: `Package directory escapes worktree root: ${dir}` };
+      }
+      candidateDirs.add(dir.replace(/\\/g, '/'));
     }
   }
 
@@ -366,7 +489,6 @@ export function discoverWorkspacePackagesSync(
   }
 
   const seenNames = new Map<string, string>();
-  const seenDirs = new Set<string>();
   const descriptors: WorkspacePackageDescriptor[] = [];
 
   for (const dir of candidateDirs) {
@@ -412,11 +534,6 @@ export function discoverWorkspacePackagesSync(
     }
     seenNames.set(pkgName, dir);
 
-    if (seenDirs.has(dir)) {
-      return { success: false, reason: `Duplicate package directory "${dir}"` };
-    }
-    seenDirs.add(dir);
-
     // Scripts
     const scripts: Record<string, string> = {};
     if (pkgJson.scripts !== undefined && pkgJson.scripts !== null) {
@@ -449,21 +566,14 @@ export function discoverWorkspacePackagesSync(
         }
         for (const [depKey, depVal] of Object.entries(depObj as Record<string, unknown>)) {
           if (typeof depVal === 'string' && depVal.startsWith('workspace:')) {
-            const rawTarget = depVal.slice('workspace:'.length).trim();
-            let targetName = depKey;
-            if (rawTarget.includes('@')) {
-              const match = rawTarget.match(/^(@?[^@]+)@/);
-              if (match && match[1]) {
-                targetName = match[1];
-              }
-            }
+            const targetName = extractWorkspaceDependencyTarget(depKey, depVal);
             workspaceDeps.add(targetName);
           }
         }
       }
     }
 
-    const hasBats = packageHasBats(resolvedRoot, dir, candidateDirs);
+    const hasBats = packageHasBatsSync(resolvedRoot, dir, candidateDirs);
 
     descriptors.push({
       name: pkgName,
@@ -497,12 +607,202 @@ export function discoverWorkspacePackagesSync(
 }
 
 /**
- * Asynchronous discoverWorkspacePackages wrapper.
+ * Asynchronous discoverWorkspacePackages implementation using node:fs/promises.
  */
 export async function discoverWorkspacePackages(
   worktreeRoot: string,
 ): Promise<WorkspacePackageDiscoveryResult> {
-  return discoverWorkspacePackagesSync(worktreeRoot);
+  if (!worktreeRoot || typeof worktreeRoot !== 'string' || !worktreeRoot.trim()) {
+    return { success: false, reason: 'Invalid worktree root path' };
+  }
+
+  const resolvedRoot = path.resolve(worktreeRoot);
+  let realRoot: string;
+  try {
+    const rootStat = await fs.stat(resolvedRoot);
+    if (!rootStat.isDirectory()) {
+      return { success: false, reason: `Worktree root is not a directory: ${resolvedRoot}` };
+    }
+    realRoot = await fs.realpath(resolvedRoot);
+  } catch (err) {
+    return {
+      success: false,
+      reason: `Cannot inspect worktree root: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  const workspaceYamlPath = path.join(resolvedRoot, 'pnpm-workspace.yaml');
+  let yamlContent: string;
+  try {
+    yamlContent = await fs.readFile(workspaceYamlPath, 'utf-8');
+  } catch {
+    return {
+      success: false,
+      reason: `Missing pnpm-workspace.yaml in ${resolvedRoot}`,
+    };
+  }
+
+  const parsedYaml = parseWorkspaceYamlPackages(yamlContent);
+  if (!parsedYaml.success) {
+    return { success: false, reason: parsedYaml.reason };
+  }
+
+  const candidateDirs = new Set<string>();
+
+  for (const pattern of parsedYaml.patterns) {
+    const validated = validatePattern(pattern);
+    if (!validated.success) {
+      return { success: false, reason: validated.reason };
+    }
+
+    const matched = await expandPatternSegmentsAsync(resolvedRoot, validated.segments);
+    for (const dir of matched) {
+      const candidatePath = path.join(resolvedRoot, dir);
+      const pkgJsonPath = path.join(candidatePath, 'package.json');
+      try {
+        const stat = await fs.stat(pkgJsonPath);
+        if (!stat.isFile()) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+
+      // Verify path does not escape worktree
+      let realDir: string;
+      try {
+        realDir = await fs.realpath(candidatePath);
+      } catch {
+        return { success: false, reason: `Package directory escapes worktree root: ${dir}` };
+      }
+      const relFromRoot = path.relative(realRoot, realDir);
+      if (relFromRoot.startsWith('..') || path.isAbsolute(relFromRoot)) {
+        return { success: false, reason: `Package directory escapes worktree root: ${dir}` };
+      }
+      candidateDirs.add(dir.replace(/\\/g, '/'));
+    }
+  }
+
+  if (candidateDirs.size === 0) {
+    return { success: false, reason: 'No workspace packages found matching workspace patterns' };
+  }
+
+  const seenNames = new Map<string, string>();
+  const descriptors: WorkspacePackageDescriptor[] = [];
+
+  for (const dir of candidateDirs) {
+    const pkgJsonPath = path.join(resolvedRoot, dir, 'package.json');
+    let pkgJsonRaw: string;
+    try {
+      pkgJsonRaw = await fs.readFile(pkgJsonPath, 'utf-8');
+    } catch (err) {
+      return {
+        success: false,
+        reason: `Unreadable manifest in ${dir}: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    let pkgJson: Record<string, unknown>;
+    try {
+      pkgJson = JSON.parse(pkgJsonRaw);
+    } catch (err) {
+      return {
+        success: false,
+        reason: `Malformed package.json in ${dir}: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    if (!pkgJson || typeof pkgJson !== 'object' || Array.isArray(pkgJson)) {
+      return { success: false, reason: `Invalid package.json object in ${dir}` };
+    }
+
+    if (typeof pkgJson.name !== 'string' || !pkgJson.name.trim()) {
+      return { success: false, reason: `Unnamed package manifest in ${dir}` };
+    }
+
+    const pkgName = pkgJson.name.trim();
+    if (!SAFE_NAME_REGEX.test(pkgName)) {
+      return { success: false, reason: `Invalid package name "${pkgName}" in ${dir}` };
+    }
+
+    if (seenNames.has(pkgName)) {
+      return {
+        success: false,
+        reason: `Duplicate package name "${pkgName}" found in "${dir}" and "${seenNames.get(pkgName)}"`,
+      };
+    }
+    seenNames.set(pkgName, dir);
+
+    // Scripts
+    const scripts: Record<string, string> = {};
+    if (pkgJson.scripts !== undefined && pkgJson.scripts !== null) {
+      if (typeof pkgJson.scripts !== 'object' || Array.isArray(pkgJson.scripts)) {
+        return { success: false, reason: `Invalid scripts definition in ${dir}` };
+      }
+      for (const [scriptName, scriptCmd] of Object.entries(
+        pkgJson.scripts as Record<string, unknown>,
+      )) {
+        if (typeof scriptCmd === 'string') {
+          scripts[scriptName] = scriptCmd;
+        }
+      }
+    }
+
+    // Dependencies across all four sections
+    const workspaceDeps = new Set<string>();
+    const depSections = [
+      'dependencies',
+      'devDependencies',
+      'peerDependencies',
+      'optionalDependencies',
+    ] as const;
+
+    for (const section of depSections) {
+      const depObj = pkgJson[section];
+      if (depObj !== undefined && depObj !== null) {
+        if (typeof depObj !== 'object' || Array.isArray(depObj)) {
+          return { success: false, reason: `Invalid ${section} in ${dir}` };
+        }
+        for (const [depKey, depVal] of Object.entries(depObj as Record<string, unknown>)) {
+          if (typeof depVal === 'string' && depVal.startsWith('workspace:')) {
+            const targetName = extractWorkspaceDependencyTarget(depKey, depVal);
+            workspaceDeps.add(targetName);
+          }
+        }
+      }
+    }
+
+    const hasBats = await packageHasBatsAsync(resolvedRoot, dir, candidateDirs);
+
+    descriptors.push({
+      name: pkgName,
+      directory: dir,
+      workspaceDependencies: Array.from(workspaceDeps).sort(),
+      scripts,
+      hasBats,
+    });
+  }
+
+  // Validate that all workspace dependencies are resolved within the workspace
+  const allNames = new Set(descriptors.map((d) => d.name));
+  for (const desc of descriptors) {
+    for (const dep of desc.workspaceDependencies ?? []) {
+      if (!allNames.has(dep)) {
+        return {
+          success: false,
+          reason: `Unresolved workspace dependency: "${dep}" required by "${desc.name}" was not found in workspace`,
+        };
+      }
+    }
+  }
+
+  // Deterministic ordering by directory
+  descriptors.sort((a, b) => a.directory.localeCompare(b.directory));
+
+  return {
+    success: true,
+    descriptors,
+  };
 }
 
 export const discoverWorkspacePackageDescriptors = discoverWorkspacePackages;

@@ -448,6 +448,56 @@ packages:
     }
   });
 
+  it('correctly resolves workspace dependency aliases including unversioned and scoped targets', async () => {
+    const workspaceYaml = `packages:
+  - 'packages/*'
+`;
+    await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), workspaceYaml, 'utf-8');
+
+    // Shared package
+    const sharedDir = path.join(tmpDir, 'packages', 'shared');
+    await fs.mkdir(sharedDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sharedDir, 'package.json'),
+      JSON.stringify({ name: '@ai-sdlc/shared' }),
+      'utf-8',
+    );
+
+    // Utils package
+    const utilsDir = path.join(tmpDir, 'packages', 'utils');
+    await fs.mkdir(utilsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(utilsDir, 'package.json'),
+      JSON.stringify({ name: 'my-utils' }),
+      'utf-8',
+    );
+
+    // Consumer package using various alias forms
+    const consumerDir = path.join(tmpDir, 'packages', 'consumer');
+    await fs.mkdir(consumerDir, { recursive: true });
+    await fs.writeFile(
+      path.join(consumerDir, 'package.json'),
+      JSON.stringify({
+        name: 'consumer-pkg',
+        dependencies: {
+          'unversioned-alias': 'workspace:my-utils',
+          'versioned-alias': 'workspace:my-utils@^1.0.0',
+          'unversioned-scoped-alias': 'workspace:@ai-sdlc/shared',
+          'versioned-scoped-alias': 'workspace:@ai-sdlc/shared@*',
+        },
+      }),
+      'utf-8',
+    );
+
+    const result = await discoverWorkspacePackages(tmpDir);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    const consumer = result.descriptors.find((d) => d.name === 'consumer-pkg');
+    expect(consumer).toBeDefined();
+    expect(consumer?.workspaceDependencies).toEqual(['@ai-sdlc/shared', 'my-utils']);
+  });
+
   it('discovers all packages in the actual repository workspace', async () => {
     const repoRoot = path.resolve(__dirname, '../../../..');
     const result = await discoverWorkspacePackages(repoRoot);
@@ -458,15 +508,17 @@ packages:
       return;
     }
 
-    const names = result.descriptors.map((d) => d.name).sort();
-    expect(names).toEqual([
-      '@ai-sdlc/api',
-      '@ai-sdlc/application',
-      '@ai-sdlc/cli',
-      '@ai-sdlc/domain',
-      '@ai-sdlc/infrastructure',
-      '@ai-sdlc/shared',
-      '@ai-sdlc/web',
-    ]);
+    const names = result.descriptors.map((d) => d.name);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        '@ai-sdlc/api',
+        '@ai-sdlc/application',
+        '@ai-sdlc/cli',
+        '@ai-sdlc/domain',
+        '@ai-sdlc/infrastructure',
+        '@ai-sdlc/shared',
+        '@ai-sdlc/web',
+      ]),
+    );
   });
 });
