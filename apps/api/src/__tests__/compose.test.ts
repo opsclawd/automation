@@ -1364,6 +1364,18 @@ exit 1
     expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?holisticFindings/);
   });
 
+  it('implRunFix forwards task scope contract fields and hasInvertedCommand into buildImplementStepFixPrompt', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
+    expect(fixMatch).toBeTruthy();
+    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?expectedFiles/);
+    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?nonGoals/);
+    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?hasInvertedCommand/);
+  });
+
   it('implRunFix passes the worktree cwd and persisted end commit to fix-result repair', () => {
     const composeSrc = readFileSync(
       path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),

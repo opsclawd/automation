@@ -252,4 +252,78 @@ describe('buildImplementStepFixPrompt', () => {
     expect(prompt).toContain('Only write "done_with_fixes"');
     expect(prompt).toContain('## WHAT THE REVIEWERS FOUND (verbatim)');
   });
+
+  it('renders TASK SCOPE CONTRACT section with non_goals and other scope fields when provided', async () => {
+    const artifacts = makeStore();
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', {
+      ...input,
+      expectedFiles: ['packages/app/src/a.ts'],
+      permittedAreas: ['packages/app/src/'],
+      mayExtend: ['packages/app/src/utils.ts'],
+      nonGoals: ['packages/application/src/phases/handlers/implement.ts'],
+      referenceFiles: ['packages/app/src/types.ts'],
+    });
+
+    expect(prompt).toContain('## TASK SCOPE CONTRACT');
+    expect(prompt).toContain('### Expected Files (must modify and commit)');
+    expect(prompt).toContain('- packages/app/src/a.ts');
+    expect(prompt).toContain('### Permitted Areas (may modify tracked files)');
+    expect(prompt).toContain('- packages/app/src/');
+    expect(prompt).toContain('### May Extend (may modify exact files)');
+    expect(prompt).toContain('- packages/app/src/utils.ts');
+    expect(prompt).toContain('### Non-Goals (must not modify)');
+    expect(prompt).toContain('- packages/application/src/phases/handlers/implement.ts');
+    expect(prompt).toContain('### Reference Files (read-only)');
+    expect(prompt).toContain('- packages/app/src/types.ts');
+  });
+
+  it('qualifies terminal-fix test guidance when hasInvertedCommand is set', async () => {
+    const artifacts = makeStore();
+    const promptInverted = await buildImplementStepFixPrompt(artifacts, 'run-1', {
+      ...input,
+      isTerminalFix: true,
+      hasInvertedCommand: true,
+      nonGoals: ['packages/application/src/phases/handlers/implement.ts'],
+    });
+
+    expect(promptInverted).toContain('## TERMINAL ATTEMPT — FINAL FIX PASS');
+    expect(promptInverted).toContain('NOTE: This task uses inverted validation commands (! -prefixed)');
+    expect(promptInverted).toContain(
+      'Do NOT modify files outside scope (such as non-goals or downstream files) to make inverted tests pass.',
+    );
+    expect(promptInverted).toContain('### Non-Goals (must not modify)');
+    expect(promptInverted).toContain('- packages/application/src/phases/handlers/implement.ts');
+
+    const promptStandard = await buildImplementStepFixPrompt(artifacts, 'run-1', {
+      ...input,
+      isTerminalFix: true,
+      hasInvertedCommand: false,
+    });
+
+    expect(promptStandard).toContain('## TERMINAL ATTEMPT — FINAL FIX PASS');
+    expect(promptStandard).toContain('make sure they pass before committing.');
+    expect(promptStandard).not.toContain('inverted validation commands');
+  });
+
+  it('reproduces RED-first terminal fix incident shape with non_goals and inverted guidance', async () => {
+    const artifacts = makeStore();
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', {
+      cwd: '/worktree/run-fd85907d',
+      stepIndex: 1,
+      stepTitle: 'RED test for implement phase handler',
+      isTerminalFix: true,
+      hasInvertedCommand: true,
+      nonGoals: [
+        'packages/application/src/phases/handlers/implement.ts',
+        'packages/application/src/phases/handlers/index.ts',
+      ],
+      expectedFiles: ['packages/application/src/phases/handlers/__tests__/implement.test.ts'],
+    });
+
+    expect(prompt).toContain('## TERMINAL ATTEMPT — FINAL FIX PASS');
+    expect(prompt).toContain('## TASK SCOPE CONTRACT');
+    expect(prompt).toContain('### Non-Goals (must not modify)');
+    expect(prompt).toContain('- packages/application/src/phases/handlers/implement.ts');
+    expect(prompt).toContain('NOTE: This task uses inverted validation commands (! -prefixed)');
+  });
 });
