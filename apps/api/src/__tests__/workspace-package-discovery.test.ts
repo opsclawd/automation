@@ -2,9 +2,26 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { discoverWorkspacePackages } from '../workspace-package-discovery.js';
+import {
+  discoverWorkspacePackages,
+  discoverWorkspacePackagesSync,
+  type WorkspacePackageDiscoveryResult,
+} from '../workspace-package-discovery.js';
 
-describe('Workspace Package Discovery', () => {
+const discoveryImplementations = [
+  {
+    name: 'async (discoverWorkspacePackages)',
+    discover: async (root: string): Promise<WorkspacePackageDiscoveryResult> =>
+      discoverWorkspacePackages(root),
+  },
+  {
+    name: 'sync (discoverWorkspacePackagesSync)',
+    discover: async (root: string): Promise<WorkspacePackageDiscoveryResult> =>
+      discoverWorkspacePackagesSync(root),
+  },
+];
+
+describe.each(discoveryImplementations)('Workspace Package Discovery ($name)', ({ discover }) => {
   let tmpDir: string;
 
   beforeEach(async () => {
@@ -89,7 +106,7 @@ describe('Workspace Package Discovery', () => {
     await fs.writeFile(path.join(cliScriptsDir, 'cli.bats'), '#!/usr/bin/env bats\n', 'utf-8');
 
     // 6. Run discovery
-    const result = await discoverWorkspacePackages(tmpDir);
+    const result = await discover(tmpDir);
 
     expect(result.success).toBe(true);
     if (!result.success) return;
@@ -155,7 +172,7 @@ describe('Workspace Package Discovery', () => {
     );
     await fs.writeFile(path.join(childDir, 'child.bats'), '# bats\n', 'utf-8');
 
-    const result = await discoverWorkspacePackages(tmpDir);
+    const result = await discover(tmpDir);
     expect(result.success).toBe(true);
     if (!result.success) return;
 
@@ -172,12 +189,12 @@ describe('Workspace Package Discovery', () => {
 
   it('fails closed on unreadable malformed or unnamed manifests', async () => {
     // Sub-case 1: Missing pnpm-workspace.yaml
-    const resMissingYaml = await discoverWorkspacePackages(tmpDir);
+    const resMissingYaml = await discover(tmpDir);
     expect(resMissingYaml.success).toBe(false);
 
     // Sub-case 2: Malformed pnpm-workspace.yaml
     await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), 'packages: [unclosed', 'utf-8');
-    const resMalformedYaml = await discoverWorkspacePackages(tmpDir);
+    const resMalformedYaml = await discover(tmpDir);
     expect(resMalformedYaml.success).toBe(false);
 
     // Sub-case 3: Malformed package.json
@@ -189,7 +206,7 @@ describe('Workspace Package Discovery', () => {
     await fs.mkdir(pkgADir, { recursive: true });
     await fs.writeFile(path.join(pkgADir, 'package.json'), '{ invalid json', 'utf-8');
 
-    const resMalformedPkg = await discoverWorkspacePackages(tmpDir);
+    const resMalformedPkg = await discover(tmpDir);
     expect(resMalformedPkg.success).toBe(false);
 
     // Sub-case 4: Unnamed package.json
@@ -198,7 +215,7 @@ describe('Workspace Package Discovery', () => {
       JSON.stringify({ scripts: { build: 'tsc' } }),
       'utf-8',
     );
-    const resUnnamed = await discoverWorkspacePackages(tmpDir);
+    const resUnnamed = await discover(tmpDir);
     expect(resUnnamed.success).toBe(false);
 
     // Sub-case 5: Invalid package name format
@@ -207,7 +224,7 @@ describe('Workspace Package Discovery', () => {
       JSON.stringify({ name: 'invalid name with spaces', scripts: {} }),
       'utf-8',
     );
-    const resInvalidName = await discoverWorkspacePackages(tmpDir);
+    const resInvalidName = await discover(tmpDir);
     expect(resInvalidName.success).toBe(false);
   });
 
@@ -235,7 +252,7 @@ describe('Workspace Package Discovery', () => {
       'utf-8',
     );
 
-    const resDuplicate = await discoverWorkspacePackages(tmpDir);
+    const resDuplicate = await discover(tmpDir);
     expect(resDuplicate.success).toBe(false);
 
     // Sub-case 2: Unresolved workspace dependency
@@ -255,7 +272,7 @@ describe('Workspace Package Discovery', () => {
       'utf-8',
     );
 
-    const resUnresolved = await discoverWorkspacePackages(tmpDir);
+    const resUnresolved = await discover(tmpDir);
     expect(resUnresolved.success).toBe(false);
   });
 
@@ -268,7 +285,7 @@ describe('Workspace Package Discovery', () => {
 `,
       'utf-8',
     );
-    const resAbs = await discoverWorkspacePackages(tmpDir);
+    const resAbs = await discover(tmpDir);
     expect(resAbs.success).toBe(false);
 
     // Sub-case 2: Parent traversal in workspace patterns
@@ -279,7 +296,7 @@ describe('Workspace Package Discovery', () => {
 `,
       'utf-8',
     );
-    const resParent = await discoverWorkspacePackages(tmpDir);
+    const resParent = await discover(tmpDir);
     expect(resParent.success).toBe(false);
 
     // Sub-case 3: Unsupported recursive glob shape
@@ -290,7 +307,7 @@ describe('Workspace Package Discovery', () => {
 `,
       'utf-8',
     );
-    const resGlob = await discoverWorkspacePackages(tmpDir);
+    const resGlob = await discover(tmpDir);
     expect(resGlob.success).toBe(false);
 
     // Sub-case 4: Unsupported partial wildcard shape
@@ -301,7 +318,7 @@ describe('Workspace Package Discovery', () => {
 `,
       'utf-8',
     );
-    const resPartialGlob = await discoverWorkspacePackages(tmpDir);
+    const resPartialGlob = await discover(tmpDir);
     expect(resPartialGlob.success).toBe(false);
 
     // Sub-case 5: Symlink escaping worktree root
@@ -322,7 +339,7 @@ describe('Workspace Package Discovery', () => {
 `,
         'utf-8',
       );
-      const resSymlink = await discoverWorkspacePackages(tmpDir);
+      const resSymlink = await discover(tmpDir);
       expect(resSymlink.success).toBe(false);
       if (!resSymlink.success) {
         expect(resSymlink.reason).toContain('escapes worktree root');
@@ -361,7 +378,7 @@ describe('Workspace Package Discovery', () => {
     await fs.writeFile(path.join(githubDir, 'test.bats'), '#!/usr/bin/env bats\n', 'utf-8');
     await fs.writeFile(path.join(nodeModulesDir, 'test.bats'), '#!/usr/bin/env bats\n', 'utf-8');
 
-    const result = await discoverWorkspacePackages(tmpDir);
+    const result = await discover(tmpDir);
     expect(result.success).toBe(true);
     if (!result.success) return;
 
@@ -399,12 +416,78 @@ packages:
       'utf-8',
     );
 
-    const result = await discoverWorkspacePackages(tmpDir);
+    const result = await discover(tmpDir);
     expect(result.success).toBe(true);
     if (!result.success) return;
 
     expect(result.descriptors).toHaveLength(1);
     expect(result.descriptors[0]?.name).toBe('@ai-sdlc/valid-pkg');
+  });
+
+  it('correctly handles YAML comments including full-line, inline, and quoted hashes', async () => {
+    const workspaceYaml = `
+# Full-line comment before packages
+# Another top comment
+packages: # inline comment on packages declaration
+  # Comment before first package pattern
+  - 'packages/*' # inline comment after single-quoted pattern
+  # Interleaved comment
+  - "apps/*" # inline comment after double-quoted pattern
+  # Trailing comment inside packages block
+`;
+    await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), workspaceYaml, 'utf-8');
+
+    const pkg1Dir = path.join(tmpDir, 'packages', 'core-lib');
+    await fs.mkdir(pkg1Dir, { recursive: true });
+    await fs.writeFile(
+      path.join(pkg1Dir, 'package.json'),
+      JSON.stringify({ name: '@ai-sdlc/core-lib' }),
+      'utf-8',
+    );
+
+    const appDir = path.join(tmpDir, 'apps', 'dashboard');
+    await fs.mkdir(appDir, { recursive: true });
+    await fs.writeFile(
+      path.join(appDir, 'package.json'),
+      JSON.stringify({
+        name: '@ai-sdlc/dashboard',
+        dependencies: { '@ai-sdlc/core-lib': 'workspace:*' },
+      }),
+      'utf-8',
+    );
+
+    const result = await discover(tmpDir);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.descriptors).toHaveLength(2);
+    expect(result.descriptors.map((d) => d.name)).toEqual([
+      '@ai-sdlc/dashboard',
+      '@ai-sdlc/core-lib',
+    ]);
+  });
+
+  it('correctly handles inline array syntax with comments in pnpm-workspace.yaml', async () => {
+    const workspaceYaml = `
+# Header comment
+packages: [ 'packages/*', "apps/*" ] # inline comment after bracketed list
+`;
+    await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), workspaceYaml, 'utf-8');
+
+    const pkgDir = path.join(tmpDir, 'packages', 'bracket-pkg');
+    await fs.mkdir(pkgDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({ name: '@ai-sdlc/bracket-pkg' }),
+      'utf-8',
+    );
+
+    const result = await discover(tmpDir);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.descriptors).toHaveLength(1);
+    expect(result.descriptors[0]?.name).toBe('@ai-sdlc/bracket-pkg');
   });
 
   it('returns deterministic descriptors', async () => {
@@ -430,7 +513,7 @@ packages:
       );
     }
 
-    const res1 = await discoverWorkspacePackages(tmpDir);
+    const res1 = await discover(tmpDir);
     expect(res1.success).toBe(true);
 
     // Now change order of patterns in pnpm-workspace.yaml
@@ -440,7 +523,7 @@ packages:
 `;
     await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), workspaceYaml2, 'utf-8');
 
-    const res2 = await discoverWorkspacePackages(tmpDir);
+    const res2 = await discover(tmpDir);
     expect(res2.success).toBe(true);
 
     if (res1.success && res2.success) {
@@ -489,7 +572,7 @@ packages:
       'utf-8',
     );
 
-    const result = await discoverWorkspacePackages(tmpDir);
+    const result = await discover(tmpDir);
     expect(result.success).toBe(true);
     if (!result.success) return;
 
@@ -500,7 +583,7 @@ packages:
 
   it('discovers all packages in the actual repository workspace', async () => {
     const repoRoot = path.resolve(__dirname, '../../../..');
-    const result = await discoverWorkspacePackages(repoRoot);
+    const result = await discover(repoRoot);
 
     expect(result.success).toBe(true);
     if (!result.success) {
@@ -520,5 +603,39 @@ packages:
         '@ai-sdlc/web',
       ]),
     );
+  });
+});
+
+describe('discoverWorkspacePackagesSync synchronous execution', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'workspace-discovery-sync-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('executes synchronously and returns result object directly without returning a Promise', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'pnpm-workspace.yaml'),
+      `packages:\n  - 'packages/*'\n`,
+      'utf-8',
+    );
+    const pkgDir = path.join(tmpDir, 'packages', 'sync-pkg');
+    await fs.mkdir(pkgDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({ name: '@ai-sdlc/sync-pkg', scripts: { test: 'vitest' } }),
+      'utf-8',
+    );
+
+    const result = discoverWorkspacePackagesSync(tmpDir);
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.descriptors).toHaveLength(1);
+    expect(result.descriptors[0]?.name).toBe('@ai-sdlc/sync-pkg');
   });
 });

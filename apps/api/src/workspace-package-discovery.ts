@@ -203,6 +203,135 @@ function extractWorkspaceDependencyTarget(depKey: string, depVal: string): strin
 }
 
 /**
+ * Checks whether a resolved real path is within the resolved real worktree root.
+ */
+function isPathWithinRoot(realRoot: string, realDir: string): boolean {
+  const relFromRoot = path.relative(realRoot, realDir);
+  return !relFromRoot.startsWith('..') && !path.isAbsolute(relFromRoot);
+}
+
+/**
+ * Parse and validate package.json manifest content into a WorkspacePackageDescriptor.
+ */
+function parsePackageManifest(
+  rawContent: string,
+  dir: string,
+  hasBats: boolean,
+): { success: true; descriptor: WorkspacePackageDescriptor } | { success: false; reason: string } {
+  let pkgJson: Record<string, unknown>;
+  try {
+    pkgJson = JSON.parse(rawContent);
+  } catch (err) {
+    return {
+      success: false,
+      reason: `Malformed package.json in ${dir}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  if (!pkgJson || typeof pkgJson !== 'object' || Array.isArray(pkgJson)) {
+    return { success: false, reason: `Invalid package.json object in ${dir}` };
+  }
+
+  if (typeof pkgJson.name !== 'string' || !pkgJson.name.trim()) {
+    return { success: false, reason: `Unnamed package manifest in ${dir}` };
+  }
+
+  const pkgName = pkgJson.name.trim();
+  if (!SAFE_NAME_REGEX.test(pkgName)) {
+    return { success: false, reason: `Invalid package name "${pkgName}" in ${dir}` };
+  }
+
+  // Scripts
+  const scripts: Record<string, string> = {};
+  if (pkgJson.scripts !== undefined && pkgJson.scripts !== null) {
+    if (typeof pkgJson.scripts !== 'object' || Array.isArray(pkgJson.scripts)) {
+      return { success: false, reason: `Invalid scripts definition in ${dir}` };
+    }
+    for (const [scriptName, scriptCmd] of Object.entries(
+      pkgJson.scripts as Record<string, unknown>,
+    )) {
+      if (typeof scriptCmd === 'string') {
+        scripts[scriptName] = scriptCmd;
+      }
+    }
+  }
+
+  // Dependencies across all four sections
+  const workspaceDeps = new Set<string>();
+  const depSections = [
+    'dependencies',
+    'devDependencies',
+    'peerDependencies',
+    'optionalDependencies',
+  ] as const;
+
+  for (const section of depSections) {
+    const depObj = pkgJson[section];
+    if (depObj !== undefined && depObj !== null) {
+      if (typeof depObj !== 'object' || Array.isArray(depObj)) {
+        return { success: false, reason: `Invalid ${section} in ${dir}` };
+      }
+      for (const [depKey, depVal] of Object.entries(depObj as Record<string, unknown>)) {
+        if (typeof depVal === 'string' && depVal.startsWith('workspace:')) {
+          const targetName = extractWorkspaceDependencyTarget(depKey, depVal);
+          workspaceDeps.add(targetName);
+        }
+      }
+    }
+  }
+
+  return {
+    success: true,
+    descriptor: {
+      name: pkgName,
+      directory: dir,
+      workspaceDependencies: Array.from(workspaceDeps).sort(),
+      scripts,
+      hasBats,
+    },
+  };
+}
+
+/**
+ * Validates uniqueness, internal resolution of workspace dependencies, and sorts descriptors deterministically.
+ */
+function validateAndFinalizeDescriptors(
+  descriptors: WorkspacePackageDescriptor[],
+): WorkspacePackageDiscoveryResult {
+  const seenNames = new Map<string, string>();
+  for (const desc of descriptors) {
+    if (seenNames.has(desc.name)) {
+      return {
+        success: false,
+        reason: `Duplicate package name "${desc.name}" found in "${desc.directory}" and "${seenNames.get(desc.name)}"`,
+      };
+    }
+    seenNames.set(desc.name, desc.directory);
+  }
+
+  // Validate that all workspace dependencies are resolved within the workspace
+  const allNames = new Set(descriptors.map((d) => d.name));
+  for (const desc of descriptors) {
+    for (const dep of desc.workspaceDependencies ?? []) {
+      if (!allNames.has(dep)) {
+        return {
+          success: false,
+          reason: `Unresolved workspace dependency: "${dep}" required by "${desc.name}" was not found in workspace`,
+        };
+      }
+    }
+  }
+
+  // Deterministic ordering by directory
+  descriptors.sort((a, b) => a.directory.localeCompare(b.directory));
+
+  return {
+    success: true,
+    descriptors,
+  };
+}
+
+/**
  * Asynchronously expand a validated pattern's segments into matched directory paths relative to worktreeRoot.
  */
 async function expandPatternSegmentsAsync(
@@ -476,8 +605,7 @@ export function discoverWorkspacePackagesSync(
       } catch {
         return { success: false, reason: `Package directory escapes worktree root: ${dir}` };
       }
-      const relFromRoot = path.relative(realRoot, realDir);
-      if (relFromRoot.startsWith('..') || path.isAbsolute(relFromRoot)) {
+      if (!isPathWithinRoot(realRoot, realDir)) {
         return { success: false, reason: `Package directory escapes worktree root: ${dir}` };
       }
       candidateDirs.add(dir.replace(/\\/g, '/'));
@@ -488,7 +616,6 @@ export function discoverWorkspacePackagesSync(
     return { success: false, reason: 'No workspace packages found matching workspace patterns' };
   }
 
-  const seenNames = new Map<string, string>();
   const descriptors: WorkspacePackageDescriptor[] = [];
 
   for (const dir of candidateDirs) {
@@ -503,107 +630,16 @@ export function discoverWorkspacePackagesSync(
       };
     }
 
-    let pkgJson: Record<string, unknown>;
-    try {
-      pkgJson = JSON.parse(pkgJsonRaw);
-    } catch (err) {
-      return {
-        success: false,
-        reason: `Malformed package.json in ${dir}: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-
-    if (!pkgJson || typeof pkgJson !== 'object' || Array.isArray(pkgJson)) {
-      return { success: false, reason: `Invalid package.json object in ${dir}` };
-    }
-
-    if (typeof pkgJson.name !== 'string' || !pkgJson.name.trim()) {
-      return { success: false, reason: `Unnamed package manifest in ${dir}` };
-    }
-
-    const pkgName = pkgJson.name.trim();
-    if (!SAFE_NAME_REGEX.test(pkgName)) {
-      return { success: false, reason: `Invalid package name "${pkgName}" in ${dir}` };
-    }
-
-    if (seenNames.has(pkgName)) {
-      return {
-        success: false,
-        reason: `Duplicate package name "${pkgName}" found in "${dir}" and "${seenNames.get(pkgName)}"`,
-      };
-    }
-    seenNames.set(pkgName, dir);
-
-    // Scripts
-    const scripts: Record<string, string> = {};
-    if (pkgJson.scripts !== undefined && pkgJson.scripts !== null) {
-      if (typeof pkgJson.scripts !== 'object' || Array.isArray(pkgJson.scripts)) {
-        return { success: false, reason: `Invalid scripts definition in ${dir}` };
-      }
-      for (const [scriptName, scriptCmd] of Object.entries(
-        pkgJson.scripts as Record<string, unknown>,
-      )) {
-        if (typeof scriptCmd === 'string') {
-          scripts[scriptName] = scriptCmd;
-        }
-      }
-    }
-
-    // Dependencies across all four sections
-    const workspaceDeps = new Set<string>();
-    const depSections = [
-      'dependencies',
-      'devDependencies',
-      'peerDependencies',
-      'optionalDependencies',
-    ] as const;
-
-    for (const section of depSections) {
-      const depObj = pkgJson[section];
-      if (depObj !== undefined && depObj !== null) {
-        if (typeof depObj !== 'object' || Array.isArray(depObj)) {
-          return { success: false, reason: `Invalid ${section} in ${dir}` };
-        }
-        for (const [depKey, depVal] of Object.entries(depObj as Record<string, unknown>)) {
-          if (typeof depVal === 'string' && depVal.startsWith('workspace:')) {
-            const targetName = extractWorkspaceDependencyTarget(depKey, depVal);
-            workspaceDeps.add(targetName);
-          }
-        }
-      }
-    }
-
     const hasBats = packageHasBatsSync(resolvedRoot, dir, candidateDirs);
-
-    descriptors.push({
-      name: pkgName,
-      directory: dir,
-      workspaceDependencies: Array.from(workspaceDeps).sort(),
-      scripts,
-      hasBats,
-    });
-  }
-
-  // Validate that all workspace dependencies are resolved within the workspace
-  const allNames = new Set(descriptors.map((d) => d.name));
-  for (const desc of descriptors) {
-    for (const dep of desc.workspaceDependencies ?? []) {
-      if (!allNames.has(dep)) {
-        return {
-          success: false,
-          reason: `Unresolved workspace dependency: "${dep}" required by "${desc.name}" was not found in workspace`,
-        };
-      }
+    const parsed = parsePackageManifest(pkgJsonRaw, dir, hasBats);
+    if (!parsed.success) {
+      return { success: false, reason: parsed.reason };
     }
+
+    descriptors.push(parsed.descriptor);
   }
 
-  // Deterministic ordering by directory
-  descriptors.sort((a, b) => a.directory.localeCompare(b.directory));
-
-  return {
-    success: true,
-    descriptors,
-  };
+  return validateAndFinalizeDescriptors(descriptors);
 }
 
 /**
@@ -675,8 +711,7 @@ export async function discoverWorkspacePackages(
       } catch {
         return { success: false, reason: `Package directory escapes worktree root: ${dir}` };
       }
-      const relFromRoot = path.relative(realRoot, realDir);
-      if (relFromRoot.startsWith('..') || path.isAbsolute(relFromRoot)) {
+      if (!isPathWithinRoot(realRoot, realDir)) {
         return { success: false, reason: `Package directory escapes worktree root: ${dir}` };
       }
       candidateDirs.add(dir.replace(/\\/g, '/'));
@@ -687,7 +722,6 @@ export async function discoverWorkspacePackages(
     return { success: false, reason: 'No workspace packages found matching workspace patterns' };
   }
 
-  const seenNames = new Map<string, string>();
   const descriptors: WorkspacePackageDescriptor[] = [];
 
   for (const dir of candidateDirs) {
@@ -702,107 +736,16 @@ export async function discoverWorkspacePackages(
       };
     }
 
-    let pkgJson: Record<string, unknown>;
-    try {
-      pkgJson = JSON.parse(pkgJsonRaw);
-    } catch (err) {
-      return {
-        success: false,
-        reason: `Malformed package.json in ${dir}: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-
-    if (!pkgJson || typeof pkgJson !== 'object' || Array.isArray(pkgJson)) {
-      return { success: false, reason: `Invalid package.json object in ${dir}` };
-    }
-
-    if (typeof pkgJson.name !== 'string' || !pkgJson.name.trim()) {
-      return { success: false, reason: `Unnamed package manifest in ${dir}` };
-    }
-
-    const pkgName = pkgJson.name.trim();
-    if (!SAFE_NAME_REGEX.test(pkgName)) {
-      return { success: false, reason: `Invalid package name "${pkgName}" in ${dir}` };
-    }
-
-    if (seenNames.has(pkgName)) {
-      return {
-        success: false,
-        reason: `Duplicate package name "${pkgName}" found in "${dir}" and "${seenNames.get(pkgName)}"`,
-      };
-    }
-    seenNames.set(pkgName, dir);
-
-    // Scripts
-    const scripts: Record<string, string> = {};
-    if (pkgJson.scripts !== undefined && pkgJson.scripts !== null) {
-      if (typeof pkgJson.scripts !== 'object' || Array.isArray(pkgJson.scripts)) {
-        return { success: false, reason: `Invalid scripts definition in ${dir}` };
-      }
-      for (const [scriptName, scriptCmd] of Object.entries(
-        pkgJson.scripts as Record<string, unknown>,
-      )) {
-        if (typeof scriptCmd === 'string') {
-          scripts[scriptName] = scriptCmd;
-        }
-      }
-    }
-
-    // Dependencies across all four sections
-    const workspaceDeps = new Set<string>();
-    const depSections = [
-      'dependencies',
-      'devDependencies',
-      'peerDependencies',
-      'optionalDependencies',
-    ] as const;
-
-    for (const section of depSections) {
-      const depObj = pkgJson[section];
-      if (depObj !== undefined && depObj !== null) {
-        if (typeof depObj !== 'object' || Array.isArray(depObj)) {
-          return { success: false, reason: `Invalid ${section} in ${dir}` };
-        }
-        for (const [depKey, depVal] of Object.entries(depObj as Record<string, unknown>)) {
-          if (typeof depVal === 'string' && depVal.startsWith('workspace:')) {
-            const targetName = extractWorkspaceDependencyTarget(depKey, depVal);
-            workspaceDeps.add(targetName);
-          }
-        }
-      }
-    }
-
     const hasBats = await packageHasBatsAsync(resolvedRoot, dir, candidateDirs);
-
-    descriptors.push({
-      name: pkgName,
-      directory: dir,
-      workspaceDependencies: Array.from(workspaceDeps).sort(),
-      scripts,
-      hasBats,
-    });
-  }
-
-  // Validate that all workspace dependencies are resolved within the workspace
-  const allNames = new Set(descriptors.map((d) => d.name));
-  for (const desc of descriptors) {
-    for (const dep of desc.workspaceDependencies ?? []) {
-      if (!allNames.has(dep)) {
-        return {
-          success: false,
-          reason: `Unresolved workspace dependency: "${dep}" required by "${desc.name}" was not found in workspace`,
-        };
-      }
+    const parsed = parsePackageManifest(pkgJsonRaw, dir, hasBats);
+    if (!parsed.success) {
+      return { success: false, reason: parsed.reason };
     }
+
+    descriptors.push(parsed.descriptor);
   }
 
-  // Deterministic ordering by directory
-  descriptors.sort((a, b) => a.directory.localeCompare(b.directory));
-
-  return {
-    success: true,
-    descriptors,
-  };
+  return validateAndFinalizeDescriptors(descriptors);
 }
 
 export const discoverWorkspacePackageDescriptors = discoverWorkspacePackages;
