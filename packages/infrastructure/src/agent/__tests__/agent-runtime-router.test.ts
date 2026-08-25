@@ -193,8 +193,10 @@ describe('AgentRuntimeRouter', () => {
   it('reclassifies cancelled_by_orchestrator to timeout when profile timeout fired', async () => {
     const inv = new FakeAgentInvocationPort();
     const adapter = {
-      async invoke(_req: AgentInvocationRequest): Promise<AgentInvocationResult> {
-        await new Promise((r) => setTimeout(r, 10));
+      async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        if (req.abortSignal && !req.abortSignal.aborted) {
+          await new Promise((r) => req.abortSignal?.addEventListener('abort', r, { once: true }));
+        }
         return {
           runtime: 'opencode',
           provider: 'a',
