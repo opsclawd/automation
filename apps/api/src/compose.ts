@@ -516,7 +516,10 @@ export async function maybeRetryTransientRevalidationFlake(
         ? c.stderrPath
         : join(input.revalidateLogDir, basename(c.stderrPath))
       : '';
-    const [stdoutTail, stderrTail] = await Promise.all([readTail(stdoutAbs), readTail(stderrAbs)]);
+    const [stdoutTail, stderrTail] = await Promise.all([
+      readTail(stdoutAbs),
+      readTail(stderrAbs),
+    ]);
     const extracted = extractFailedTestFilesFromOutput(stdoutTail + '\n' + stderrTail);
     for (const f of extracted) {
       failedTestFiles.add(f);

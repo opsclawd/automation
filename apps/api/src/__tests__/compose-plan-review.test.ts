@@ -91,9 +91,7 @@ describe('plan-review compose wiring', () => {
     );
 
     // Ensure artifactAgent.invoke catch does NOT return validationError
-    const invokeCatchMatch = fnSrc.match(
-      /artifactAgent\.invoke[\s\S]*?catch[\s\S]*?\{([\s\S]*?)\}/,
-    );
+    const invokeCatchMatch = fnSrc.match(/artifactAgent\.invoke[\s\S]*?catch[\s\S]*?\{([\s\S]*?)\}/);
     expect(invokeCatchMatch).toBeTruthy();
     expect(invokeCatchMatch![1]).not.toContain('validationError');
 
