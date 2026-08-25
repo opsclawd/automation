@@ -107,6 +107,7 @@ describe('ImplementHandler phase-boundary stale status recovery (issue #960)', (
     git.headByCwd.set('/tmp/wt', 'head-sha');
     git.changedFilesResults.set('head-sha|step-1', ['src/util.ts']);
     git.fileContentResults.set('HEAD:apps/control-api/src/app.ts', 'const x = 1;\n');
+    git.fileContentResults.set(':0:apps/control-api/src/app.ts', 'const x = 1;\n');
     git.fileContentResults.set('head-sha:apps/control-api/src/app.ts', 'const x = 1;\n');
     git.fileContentResults.set('step-1:apps/control-api/src/app.ts', 'const x = 1;\n');
 
@@ -115,6 +116,7 @@ describe('ImplementHandler phase-boundary stale status recovery (issue #960)', (
       ' M apps/control-api/src/app.ts\n?? pnpm-lock.yaml\n',
       ' M apps/control-api/src/app.ts\n',
       'M  apps/control-api/src/app.ts\n',
+      '',
     ];
     git.status = vi.fn(async (_cwd: string) => {
       const next = statusOutputs.shift();

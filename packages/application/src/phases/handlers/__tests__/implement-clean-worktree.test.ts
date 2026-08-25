@@ -118,18 +118,26 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     git.headByCwd.set('/tmp/wt', 'head-sha');
     git.changedFilesResults.set('head-sha|step-1', ['src/util.ts']);
     // Uncommitted: formatting-only change (whitespace change that parses the same)
-    git.statusByCwd.set('/tmp/wt', ' M apps/control-api/src/app.ts\n');
     git.fileContentResults.set('HEAD:apps/control-api/src/app.ts', 'const x = 1;\n');
+    git.fileContentResults.set(':0:apps/control-api/src/app.ts', 'const x = 1;\n');
     git.fileContentResults.set('head-sha:apps/control-api/src/app.ts', 'const x = 1;\n');
     git.fileContentResults.set('step-1:apps/control-api/src/app.ts', 'const x = 1;\n');
     const worktreeFiles = new Map<string, string>();
     worktreeFiles.set('apps/control-api/src/app.ts', 'const x = 1; \n');
+
+    const statusOutputs = [
+      ' M apps/control-api/src/app.ts\n',
+      ' M apps/control-api/src/app.ts\n',
+      ' M apps/control-api/src/app.ts\n',
+      'M  apps/control-api/src/app.ts\n',
+      '',
+    ];
+    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
+
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
       .mockImplementation(async (sctx) => {
         sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
-        // Simulate status after add
-        git.statusByCwd.set(sctx.cwd, 'M  apps/control-api/src/app.ts\n');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git, worktreeFiles);
@@ -153,12 +161,19 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     git.headByCwd.set('/tmp/wt', 'head-sha');
     git.changedFilesResults.set('head-sha|step-1', ['src/util.ts']);
     // Uncommitted: exempt file (pnpm-lock.yaml is globally exempt)
-    git.statusByCwd.set('/tmp/wt', '?? pnpm-lock.yaml\n');
+    const statusOutputs = [
+      '?? pnpm-lock.yaml\n',
+      '?? pnpm-lock.yaml\n',
+      '?? pnpm-lock.yaml\n',
+      'A  pnpm-lock.yaml\n',
+      '',
+    ];
+    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
+
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
       .mockImplementation(async (sctx) => {
         sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
-        git.statusByCwd.set(sctx.cwd, 'A  pnpm-lock.yaml\n');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git);
@@ -191,11 +206,18 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     git.headByCwd.set('/tmp/wt', 'head-sha');
     git.changedFilesResults.set('head-sha|step-1', ['src/util.ts']);
     // Substantive change to an exempt file (not formatting-only)
-    git.statusByCwd.set('/tmp/wt', '?? generated/client.ts\n');
+    const statusOutputs = [
+      '?? generated/client.ts\n',
+      '?? generated/client.ts\n',
+      '?? generated/client.ts\n',
+      'A  generated/client.ts\n',
+      '',
+    ];
+    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
+
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
-      .mockImplementation(async (sctx) => {
-        git.statusByCwd.set(sctx.cwd, 'A  generated/client.ts\n');
+      .mockImplementation(async () => {
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git);
@@ -258,9 +280,22 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
 
     // Status reports dirty files due to mtime/stat touch
     git.statusByCwd.set('/tmp/wt', ' M packages/infrastructure/src/index.ts\n');
-    git.fileContentResults.set('HEAD:packages/infrastructure/src/index.ts', 'export * from "./git";\n');
-    git.fileContentResults.set('head-sha:packages/infrastructure/src/index.ts', 'export * from "./git";\n');
-    git.fileContentResults.set('step-1:packages/infrastructure/src/index.ts', 'export * from "./git";\n');
+    git.fileContentResults.set(
+      'HEAD:packages/infrastructure/src/index.ts',
+      'export * from "./git";\n',
+    );
+    git.fileContentResults.set(
+      ':0:packages/infrastructure/src/index.ts',
+      'export * from "./git";\n',
+    );
+    git.fileContentResults.set(
+      'head-sha:packages/infrastructure/src/index.ts',
+      'export * from "./git";\n',
+    );
+    git.fileContentResults.set(
+      'step-1:packages/infrastructure/src/index.ts',
+      'export * from "./git";\n',
+    );
 
     const worktreeFiles = new Map<string, string>();
     // Exact identical content to HEAD
@@ -295,14 +330,19 @@ describe('ImplementHandler phase-boundary clean worktree', () => {
     git.changedFilesResults.set('head-sha|step-1', ['src/util.ts']);
 
     // Uncommitted exempt file
-    git.statusByCwd.set('/tmp/wt', '?? pnpm-lock.yaml\n');
+    const statusOutputs = [
+      '?? pnpm-lock.yaml\n',
+      '?? pnpm-lock.yaml\n',
+      '?? pnpm-lock.yaml\n',
+      'A  pnpm-lock.yaml\n',
+      '',
+    ];
+    git.status = vi.fn(async () => statusOutputs.shift() ?? '');
 
     const runStep = vi
       .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
       .mockImplementation(async (sctx) => {
         sctx.ctx.git.headByCwd.set(sctx.cwd, 'step-1');
-        // When status is checked after git.add('pnpm-lock.yaml'), simulate staged status
-        git.statusByCwd.set(sctx.cwd, 'A  pnpm-lock.yaml\n');
         return { outcome: 'success' };
       });
     const { ctx } = makeCtx(artifacts, git);
