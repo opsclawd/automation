@@ -231,31 +231,15 @@ export interface FileTailerPort {
   stop(): Promise<void>;
 }
 
-export interface EventRepositoryPort {
-  insert(event: {
-    runUuid: string;
-    phase?: string;
-    level: string;
-    type: string;
-    message: string;
-    metadata?: Record<string, unknown>;
-    timestamp: Date;
-  }): number;
-  listByRunSince(
-    runUuid: string,
-    sinceIso?: string,
-  ): Array<{
-    id: number;
-    runUuid: string;
-    repoId: RepositoryId;
-    phase?: string;
-    level: string;
-    type: string;
-    message: string;
-    metadata: Record<string, unknown>;
-    timestamp: Date;
-  }>;
-}
+export type { EventRepositoryPort } from './ports/event-repository-port.js';
+export type {
+  WorktreeLifecyclePort,
+  WorktreeLifecycleMode,
+  InspectWorktreeLifecycleInput,
+  WorktreeLifecyclePlan,
+  ExecuteWorktreeLifecyclePlanInput,
+  WorktreeLifecycleExecutionResult,
+} from './ports/worktree-lifecycle-port.js';
 
 export type { EventBusPort } from './ports/event-bus-port.js';
 

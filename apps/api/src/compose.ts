@@ -55,6 +55,7 @@ import {
   ReviewStateRepository,
   createPrReviewContextSource,
   revertScopeFiles,
+  WorktreeLifecycleAdapter,
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
@@ -304,6 +305,7 @@ import {
   type SelectedPrReviewContext,
   type SelectedPrReviewContextSection,
   getGitCommitExcludePathspecsString,
+  isProtectedFilePath,
 } from '@ai-sdlc/application';
 
 /**
@@ -704,20 +706,7 @@ export interface Container {
   cancelRun: CancelRun;
   checkMergeReadiness: CheckMergeReadiness;
   stepRepository: StepRepositoryPort;
-  resumeRun: {
-    execute(input: {
-      runId: RunId;
-      fromPhase?: string;
-      workerId: import('@ai-sdlc/domain').WorkerId;
-      attempt?: number;
-    }): Promise<void>;
-    transition(input: {
-      runId: RunId;
-      fromPhase?: string;
-      workerId: import('@ai-sdlc/domain').WorkerId;
-      attempt?: number;
-    }): ReturnType<ResumeRun['transition']>;
-  };
+  resumeRun: ResumeRun;
   retryFailedPhase: RetryFailedPhase;
   runsDir: string;
   baseTmpDir: string;
@@ -2449,6 +2438,9 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const abortRegistry = new AbortRegistry();
   const gitAdapter = new GitWorktreeAdapter(orchestratorExcludePatterns());
+  const worktreeLifecycleAdapter = new WorktreeLifecycleAdapter({
+    isPreserved: isProtectedFilePath,
+  });
 
   const cancelRun = new CancelRun({
     runRepository,
@@ -6353,6 +6345,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         registry: phaseRegistry,
         contextFactory: buildContext,
         logger,
+        worktreeLifecycle: worktreeLifecycleAdapter,
+        eventRepository,
+        stepRepository,
       });
     }
   } catch (err) {
@@ -6456,7 +6451,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           leases: workerLeaseRepository,
           repos: registryBackedRepo,
           repoId,
-          executeRun: async ({ run, signal }) => {
+          executeRun: async ({ run, signal, resumeDisposition }) => {
             runRepository.update(run.uuid, { pid: process.pid });
             const controller = new AbortController();
             const onAbort = () => {
@@ -6475,7 +6470,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             });
             abortRegistry.register(RunId(run.uuid), controller, donePromise);
             try {
-              const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
+              const result = await runExecutor.execute({
+                run,
+                skip: [],
+                presentArtifacts: [],
+                ...(resumeDisposition !== undefined ? { resumeDisposition } : {}),
+              });
               return { ok: result.run.status === 'passed' };
             } finally {
               doneResolve();
@@ -6569,7 +6569,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     stepRepo: stepRepository,
     phaseRepo: phaseRepository,
     logger,
-  }) as unknown as Container['resumeRun'];
+    worktreeLifecycle: worktreeLifecycleAdapter,
+  });
 
   const retryFailedPhase = new RetryFailedPhase({
     runRepository,
@@ -7064,6 +7065,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       idFactory,
       readWorktreeFile,
       deleteWorktreeFile,
+      worktreeLifecycle: worktreeLifecycleAdapter,
+      eventRepository,
       ...opts,
     };
   };

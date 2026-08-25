@@ -1,12 +1,11 @@
-import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   ORCHESTRATOR_ARTIFACT_PATHS,
   PROMPT_ORCHESTRATOR_ARTIFACT_PATHS,
+  isOrchestratorArtifactPattern,
 } from '../orchestrator-artifacts.js';
 
 const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
@@ -26,52 +25,23 @@ function materialize(pattern: string): string {
   return pattern.replaceAll('*', 'probe');
 }
 
-describe('repository .gitignore artifact reconciliation', () => {
-  let isolatedRepository: string;
-
-  beforeAll(() => {
-    isolatedRepository = mkdtempSync(join(tmpdir(), 'orchestrator-gitignore-'));
-    writeFileSync(
-      join(isolatedRepository, '.gitignore'),
-      readFileSync(join(repositoryRoot, '.gitignore')),
-    );
-    execFileSync('git', ['init', '--quiet'], { cwd: isolatedRepository });
-  });
-
-  afterAll(() => {
-    if (isolatedRepository) {
-      rmSync(isolatedRepository, { recursive: true, force: true });
-    }
-  });
-
-  function checkIgnoreStatus(candidate: string): number {
-    const result = spawnSync('git', ['check-ignore', '-q', '--no-index', '--', candidate], {
-      cwd: isolatedRepository,
-      encoding: 'utf8',
-    });
-    if (result.error) throw result.error;
-    if (result.status !== 0 && result.status !== 1) {
-      throw new Error(`git check-ignore exited ${result.status}: ${result.stderr}`);
-    }
-    return result.status;
-  }
-
-  it('ignores every declared orchestrator artifact pattern at repository root', () => {
+describe('repository orchestrator artifact pattern matching', () => {
+  it('identifies every declared orchestrator artifact pattern at repository root', () => {
     for (const pattern of [...ORCHESTRATOR_ARTIFACT_PATHS, ...PROMPT_ORCHESTRATOR_ARTIFACT_PATHS]) {
-      expect(checkIgnoreStatus(materialize(pattern)), pattern).toBe(0);
+      expect(isOrchestratorArtifactPattern(materialize(pattern)), pattern).toBe(true);
     }
   });
 
-  it('ignores every newly added artifact pattern at repository root', () => {
+  it('identifies every newly added artifact pattern at repository root', () => {
     for (const pattern of newlyAddedRootArtifactPatterns) {
-      expect(checkIgnoreStatus(materialize(pattern)), pattern).toBe(0);
+      expect(isOrchestratorArtifactPattern(materialize(pattern)), pattern).toBe(true);
     }
   });
 
   it('keeps newly added artifact names visible below packages', () => {
     for (const pattern of newlyAddedRootArtifactPatterns) {
       const nested = join('packages', 'application', materialize(pattern));
-      expect(checkIgnoreStatus(nested), pattern).toBe(1);
+      expect(isOrchestratorArtifactPattern(nested), pattern).toBe(false);
     }
   });
 

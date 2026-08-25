@@ -6,7 +6,15 @@ import {
   LeaseOwnershipLostError,
 } from '@ai-sdlc/domain';
 import { IssueNumber } from '@ai-sdlc/domain';
-import type { RunId, WorkerId, JobId, Step, Phase, RunStatus } from '@ai-sdlc/domain';
+import type {
+  RunId,
+  WorkerId,
+  JobId,
+  Step,
+  Phase,
+  RunStatus,
+  ResumeDisposition,
+} from '@ai-sdlc/domain';
 import type {
   RunRepositoryPort,
   RepositoryPort,
@@ -15,7 +23,9 @@ import type {
   PhaseRepositoryPort,
   StepRepositoryPort,
   LoggerPort,
+  WorktreeLifecyclePort,
 } from './ports.js';
+import { orchestratorExcludePatterns } from './artifacts/orchestrator-artifacts.js';
 import type { ResumeRunUseCase } from './use-cases.js';
 
 // Acquired before atomic CAS to prevent concurrent workers from claiming the
@@ -32,6 +42,7 @@ export interface ResumeRunDeps {
   stepRepo: StepRepositoryPort;
   phaseRepo: PhaseRepositoryPort;
   logger: LoggerPort;
+  worktreeLifecycle?: WorktreeLifecyclePort;
   now?: () => Date;
 }
 
@@ -44,16 +55,100 @@ export interface ResumeTransitionState {
   savedSkippedPhases: string[];
   savedSteps: Step[];
   savedPhase?: Phase;
+  effectiveDisposition: ResumeDisposition;
+}
+
+export class ResumeDispositionRequiredError extends Error {
+  readonly allowedDispositions: readonly ResumeDisposition[] = [
+    'preserve_working_tree',
+    'reset_to_baseline',
+  ];
+
+  constructor(
+    message = 'explicit resume disposition is required for dirty needs_human_review runs',
+  ) {
+    super(message);
+    this.name = 'ResumeDispositionRequiredError';
+  }
+}
+
+export function resolveResumeDisposition(
+  status: RunStatus,
+  meaningfulDirtyPaths: readonly string[],
+  requestedDisposition?: ResumeDisposition,
+): ResumeDisposition {
+  if (requestedDisposition !== undefined) {
+    return requestedDisposition;
+  }
+  if (status === 'needs_human_review') {
+    if (meaningfulDirtyPaths.length > 0) {
+      throw new ResumeDispositionRequiredError();
+    }
+    return 'reset_to_baseline';
+  }
+  return 'reset_to_baseline';
 }
 
 export class ResumeRun implements ResumeRunUseCase {
-  constructor(private readonly deps: ResumeRunDeps) {}
+  constructor(readonly deps: ResumeRunDeps) {}
+
+  private async getMeaningfulDirtyPaths(
+    repoBasePath: string,
+    issueNumber: number,
+  ): Promise<string[]> {
+    if (!this.deps.worktreeLifecycle) {
+      return [];
+    }
+    try {
+      const worktreeRoot = `${repoBasePath}/.ai-worktrees/issue-${issueNumber}`;
+      const plan = await this.deps.worktreeLifecycle.inspect({
+        cwd: worktreeRoot,
+        mode: 'phase_boundary',
+        preservedPatterns: orchestratorExcludePatterns(),
+      });
+      return plan.discardedPaths;
+    } catch (err) {
+      // A missing worktree is a legitimate "nothing to inspect" case — treat
+      // it as clean. Any other inspection failure (transient git error,
+      // permissions, corrupted repo) must NOT be silently treated as clean:
+      // doing so would bypass resolveResumeDisposition's requirement that a
+      // dirty needs_human_review run gets an explicit disposition before
+      // being auto-reset. Fail closed instead by surfacing the error.
+      const msg = err instanceof Error ? err.message : String(err);
+      const lowerMsg = msg.toLowerCase();
+      const isMissingWorktree =
+        lowerMsg.includes('enoent') ||
+        lowerMsg.includes('no such file or directory') ||
+        lowerMsg.includes('does not exist') ||
+        lowerMsg.includes('not a git repository') ||
+        lowerMsg.includes('git not found on path') ||
+        lowerMsg.includes('cannot change to') ||
+        lowerMsg.includes('fatal: path');
+      if (isMissingWorktree) {
+        return [];
+      }
+      throw new Error(`failed to inspect worktree cleanliness for resume: ${msg}`);
+    }
+  }
+
+  private async resolveEffectiveDisposition(
+    repoBasePath: string,
+    run: { status: RunStatus; issueNumber: number },
+    requestedDisposition?: ResumeDisposition,
+  ): Promise<ResumeDisposition> {
+    if (requestedDisposition !== undefined) {
+      return requestedDisposition;
+    }
+    const meaningfulDirtyPaths = await this.getMeaningfulDirtyPaths(repoBasePath, run.issueNumber);
+    return resolveResumeDisposition(run.status, meaningfulDirtyPaths, requestedDisposition);
+  }
 
   async transition(input: {
     runId: RunId;
     fromPhase?: string;
     workerId: WorkerId;
     attempt?: number;
+    resumeDisposition?: ResumeDisposition;
   }): Promise<ResumeTransitionState> {
     const run = this.deps.runRepository.findByUuid(input.runId);
     if (!run) throw new Error(`No run found for ${input.runId}`);
@@ -72,6 +167,12 @@ export class ResumeRun implements ResumeRunUseCase {
     if (!repo.enabled) {
       throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
     }
+
+    const effectiveDisposition = await this.resolveEffectiveDisposition(
+      repo.localBasePath,
+      run,
+      input.resumeDisposition,
+    );
 
     const savedStatus = run.status;
     const savedCompletedAt = run.completedAt;
@@ -161,6 +262,7 @@ export class ResumeRun implements ResumeRunUseCase {
       savedSkippedPhases,
       savedSteps,
       ...(savedPhase ? { savedPhase } : {}),
+      effectiveDisposition,
     };
   }
 
@@ -169,6 +271,7 @@ export class ResumeRun implements ResumeRunUseCase {
     fromPhase?: string;
     workerId: WorkerId;
     attempt?: number;
+    resumeDisposition?: ResumeDisposition;
   }): Promise<{ jobId: JobId; jobStatus: 'queued' }> {
     const now = this.deps.now ?? (() => new Date());
     const run = this.deps.runRepository.findByUuid(input.runId);
@@ -189,6 +292,12 @@ export class ResumeRun implements ResumeRunUseCase {
       throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
     }
 
+    const effectiveDisposition = await this.resolveEffectiveDisposition(
+      repo.localBasePath,
+      run,
+      input.resumeDisposition,
+    );
+
     let leaseAcquired = false;
     let acquiredLease;
     try {
@@ -207,7 +316,10 @@ export class ResumeRun implements ResumeRunUseCase {
     }
 
     try {
-      const transitionState = await this.transition(input);
+      const transitionState = await this.transition({
+        ...input,
+        resumeDisposition: effectiveDisposition,
+      });
       const job = createJob({
         id: `resume-${input.runId}-${now().getTime()}` as JobId,
         runId: input.runId,
@@ -215,6 +327,7 @@ export class ResumeRun implements ResumeRunUseCase {
         issueNumber: IssueNumber(run.issueNumber),
         priority: RESUME_JOB_PRIORITY,
         createdAt: now(),
+        resumeDisposition: transitionState.effectiveDisposition,
       });
 
       try {

@@ -15,6 +15,7 @@ import {
   formatDirtyPaths,
   unquoteGitPath,
   isUntrackedOrAddedStatusLine,
+  orchestratorExcludePatterns,
 } from '../../artifacts/orchestrator-artifacts.js';
 
 import {
@@ -1511,9 +1512,78 @@ export class ImplementHandler implements PhaseHandler {
     ctx: PhaseHandlerContext,
     emit: EventEmitter,
   ): Promise<PhaseResult | undefined> {
-    if (ctx.priorPhaseName === undefined) {
+    const preserveAllowance = ctx.inboundPreserveAllowance ?? ctx.approvedInboundPaths;
+
+    if (ctx.priorPhaseName === undefined && preserveAllowance === undefined) {
       return undefined;
     }
+
+    let implicitPreserved: string[] = [];
+
+    // When preserveAllowance is undefined, inspect worktree lifecycle to identify implicitly preserved paths
+    if (preserveAllowance === undefined && ctx.worktreeLifecycle) {
+      try {
+        const plan = await ctx.worktreeLifecycle.inspect({
+          cwd: ctx.cwd,
+          mode: 'phase_boundary',
+          preservedPatterns: orchestratorExcludePatterns(),
+        });
+        implicitPreserved = plan.preservedPaths;
+
+        // When entering from plan-review without a preserve allowance, perform audited ambient cleanup
+        if (
+          ctx.priorPhaseName === 'plan-review' &&
+          ctx.eventRepository &&
+          (plan.discardedPaths.length > 0 || plan.trackedChanges.length > 0)
+        ) {
+          const message =
+            plan.discardedPaths.length > 0
+              ? `implement reset ambient worktree residue from ${ctx.priorPhaseName}: discarded ${plan.discardedPaths.join(', ')}`
+              : `implement reset ambient worktree residue from ${ctx.priorPhaseName}: unstaged tracked changes`;
+          const metadata = {
+            reason: 'implement_inbound',
+            priorPhaseName: ctx.priorPhaseName,
+            discardedPaths: plan.discardedPaths,
+            preservedPaths: plan.preservedPaths,
+          };
+
+          // Synchronously insert audit event BEFORE mutating Git state
+          ctx.eventRepository.insert({
+            runUuid: ctx.runUuid,
+            phase: 'implement',
+            level: 'info',
+            type: 'implement.inbound_worktree_reset',
+            message,
+            metadata,
+            timestamp: ctx.now(),
+          });
+
+          // Emit to event bus
+          emit('implement.inbound_worktree_reset', 'info', message, metadata);
+
+          // Execute the exact inspected plan
+          await ctx.worktreeLifecycle.execute({ plan });
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        emit(
+          'implement.phase_boundary_violation',
+          'error',
+          `inbound worktree reset failed: ${message}`,
+          {
+            priorPhaseName: ctx.priorPhaseName,
+            error: message,
+          },
+        );
+        return this.fail(
+          ctx,
+          emit,
+          'phase_boundary_violation',
+          `inbound worktree reset failed: ${message}`,
+        );
+      }
+    }
+
     let statusOutput: string;
     try {
       statusOutput = await ctx.git.status(ctx.cwd);
@@ -1526,12 +1596,47 @@ export class ImplementHandler implements PhaseHandler {
         `inbound worktree cleanliness check failed: ${message}`,
       );
     }
+
     const dirtyPaths = uncommittedSourcePaths(statusOutput);
     if (dirtyPaths.length === 0) {
       return undefined;
     }
-    const fileList = formatDirtyPaths(dirtyPaths);
-    const message = `${ctx.priorPhaseName} left the worktree dirty: ${fileList}. implement aborted to surface the boundary violation; resolve the dirty worktree in ${ctx.priorPhaseName} before re-running implement.`;
+
+    const normDirty = dirtyPaths.map(normalizeTaskPath).filter(Boolean);
+
+    // When a preserve allowance is present, accept dirty paths if they are a subset of the approved allowance
+    if (preserveAllowance !== undefined) {
+      const normAllowanceSet = new Set(preserveAllowance.map(normalizeTaskPath).filter(Boolean));
+      const unapproved = normDirty.filter((p) => !normAllowanceSet.has(p));
+
+      if (unapproved.length === 0) {
+        return undefined;
+      }
+
+      const fileList = formatDirtyPaths(unapproved);
+      const message = `inbound dirty paths outside approved preserve allowance: ${fileList}. implement aborted to surface the boundary violation; resolve the dirty worktree before re-running implement.`;
+      emit('implement.phase_boundary_violation', 'error', message, {
+        priorPhaseName: ctx.priorPhaseName,
+        dirtyPaths,
+        unapprovedPaths: unapproved,
+      });
+      return this.fail(ctx, emit, 'phase_boundary_violation', message);
+    }
+
+    // When preserveAllowance is undefined, exempt implicitPreserved paths identified by worktreeLifecycle.inspect
+    const unapproved =
+      implicitPreserved.length > 0
+        ? normDirty.filter(
+            (p) => !new Set(implicitPreserved.map(normalizeTaskPath).filter(Boolean)).has(p),
+          )
+        : normDirty;
+
+    if (unapproved.length === 0) {
+      return undefined;
+    }
+
+    const fileList = formatDirtyPaths(unapproved);
+    const message = `${ctx.priorPhaseName ?? 'prior phase'} left the worktree dirty: ${fileList}. implement aborted to surface the boundary violation; resolve the dirty worktree in ${ctx.priorPhaseName ?? 'prior phase'} before re-running implement.`;
     emit('implement.phase_boundary_violation', 'error', message, {
       priorPhaseName: ctx.priorPhaseName,
       dirtyPaths,

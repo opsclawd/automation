@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { RunId, WorkerId, RepositoryId } from '@ai-sdlc/domain';
-import { ResumeRun } from '../resume-run.js';
+import { ResumeRun, ResumeDispositionRequiredError } from '../resume-run.js';
 import { FakeRepositoryPort } from '../test-doubles/fake-repository-port.js';
 import { FakeWorkerLeasePort } from '../test-doubles/fake-worker-lease-port.js';
 import { FakeJobQueuePort } from '../test-doubles/fake-job-queue-port.js';
@@ -9,6 +9,37 @@ import { FakePhaseRepository } from '../test-doubles/fake-phase-repository.js';
 import { FakeWorkerRegistryPort } from '../test-doubles/fake-worker-registry-port.js';
 import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
 import type { RunRecord } from '../ports.js';
+import type {
+  WorktreeLifecyclePort,
+  InspectWorktreeLifecycleInput,
+  WorktreeLifecyclePlan,
+  ExecuteWorktreeLifecyclePlanInput,
+  WorktreeLifecycleExecutionResult,
+} from '../ports/worktree-lifecycle-port.js';
+
+class FakeWorktreeLifecycle implements WorktreeLifecyclePort {
+  discardedPaths: string[] = [];
+  inspectCalls: InspectWorktreeLifecycleInput[] = [];
+
+  async inspect(input: InspectWorktreeLifecycleInput): Promise<WorktreeLifecyclePlan> {
+    this.inspectCalls.push(input);
+    return {
+      mode: input.mode,
+      cwd: input.cwd,
+      fingerprint: 'test-fingerprint',
+      discardedPaths: this.discardedPaths,
+      preservedPaths: [],
+      trackedChanges: [],
+      untrackedPaths: [],
+    };
+  }
+
+  async execute(
+    _input: ExecuteWorktreeLifecyclePlanInput,
+  ): Promise<WorktreeLifecycleExecutionResult> {
+    return { success: true, discardedPaths: [], preservedPaths: [] };
+  }
+}
 
 const wid = (s: string) => s as WorkerId;
 const rid = (s: string) => s as RunId;
@@ -534,5 +565,297 @@ describe('ResumeRun', () => {
       /concurrent modification/,
     );
     expect(leases.current(repoid('run-1'))).toBeUndefined();
+  });
+
+  it('defaults failed resume to reset_to_baseline', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'failed' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      now: fixedNow,
+    });
+    const result = await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    const job = queue.findById(result.jobId);
+    expect(job?.resumeDisposition).toBe('reset_to_baseline');
+
+    runRepo.atomicUpdateByUuid(
+      rid('run-1'),
+      { status: 'failed', completedPhases: [], skippedPhases: [] },
+      'running',
+    );
+    const transitionResult = await usecase.transition({
+      runId: rid('run-1'),
+      workerId: wid('w-1'),
+    });
+    expect(transitionResult.effectiveDisposition).toBe('reset_to_baseline');
+  });
+
+  it('defaults cancelled resume to reset_to_baseline', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'cancelled' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      now: fixedNow,
+    });
+    const result = await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    const job = queue.findById(result.jobId);
+    expect(job?.resumeDisposition).toBe('reset_to_baseline');
+
+    runRepo.atomicUpdateByUuid(
+      rid('run-1'),
+      { status: 'cancelled', completedPhases: [], skippedPhases: [] },
+      'running',
+    );
+    const transitionResult = await usecase.transition({
+      runId: rid('run-1'),
+      workerId: wid('w-1'),
+    });
+    expect(transitionResult.effectiveDisposition).toBe('reset_to_baseline');
+  });
+
+  it('requires explicit disposition for dirty needs_human_review before mutation', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'needs_human_review' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const worktreeLifecycle = new FakeWorktreeLifecycle();
+    worktreeLifecycle.discardedPaths = ['src/dirty.ts'];
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      worktreeLifecycle,
+      now: fixedNow,
+    });
+
+    const acquireSpy = vi.spyOn(leases, 'acquire');
+
+    await expect(usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') })).rejects.toThrow(
+      ResumeDispositionRequiredError,
+    );
+
+    expect(acquireSpy).not.toHaveBeenCalled();
+    expect(runRepo.updates).toHaveLength(0);
+    expect(queue.listForRun(rid('run-1'))).toHaveLength(0);
+    expect(leases.current(repoid('run-1'))).toBeUndefined();
+
+    await expect(usecase.transition({ runId: rid('run-1'), workerId: wid('w-1') })).rejects.toThrow(
+      ResumeDispositionRequiredError,
+    );
+    expect(runRepo.updates).toHaveLength(0);
+  });
+
+  it('accepts either explicit disposition for dirty human review', async () => {
+    let nowCounter = 1000;
+    const movingNow = () => new Date(1780272000000 + (nowCounter += 1000));
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'needs_human_review' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const worktreeLifecycle = new FakeWorktreeLifecycle();
+    worktreeLifecycle.discardedPaths = ['src/dirty.ts'];
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      worktreeLifecycle,
+      now: movingNow,
+    });
+
+    // Test preserve_working_tree
+    const resPreserve = await usecase.execute({
+      runId: rid('run-1'),
+      workerId: wid('w-1'),
+      resumeDisposition: 'preserve_working_tree',
+    });
+    expect(queue.findById(resPreserve.jobId)?.resumeDisposition).toBe('preserve_working_tree');
+
+    // Reset run status to needs_human_review for transition test
+    runRepo.atomicUpdateByUuid(
+      rid('run-1'),
+      { status: 'needs_human_review', completedPhases: [], skippedPhases: [] },
+      'running',
+    );
+
+    const transPreserve = await usecase.transition({
+      runId: rid('run-1'),
+      workerId: wid('w-1'),
+      resumeDisposition: 'preserve_working_tree',
+    });
+    expect(transPreserve.effectiveDisposition).toBe('preserve_working_tree');
+
+    // Test reset_to_baseline
+    runRepo.atomicUpdateByUuid(
+      rid('run-1'),
+      { status: 'needs_human_review', completedPhases: [], skippedPhases: [] },
+      'running',
+    );
+    const resReset = await usecase.execute({
+      runId: rid('run-1'),
+      workerId: wid('w-1'),
+      resumeDisposition: 'reset_to_baseline',
+    });
+    expect(queue.findById(resReset.jobId)?.resumeDisposition).toBe('reset_to_baseline');
+
+    runRepo.atomicUpdateByUuid(
+      rid('run-1'),
+      { status: 'needs_human_review', completedPhases: [], skippedPhases: [] },
+      'running',
+    );
+    const transReset = await usecase.transition({
+      runId: rid('run-1'),
+      workerId: wid('w-1'),
+      resumeDisposition: 'reset_to_baseline',
+    });
+    expect(transReset.effectiveDisposition).toBe('reset_to_baseline');
+  });
+
+  it('defaults clean human review to reset', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'needs_human_review' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const worktreeLifecycle = new FakeWorktreeLifecycle();
+    worktreeLifecycle.discardedPaths = []; // Clean worktree
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      worktreeLifecycle,
+      now: fixedNow,
+    });
+
+    const result = await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    expect(queue.findById(result.jobId)?.resumeDisposition).toBe('reset_to_baseline');
+
+    runRepo.atomicUpdateByUuid(
+      rid('run-1'),
+      { status: 'needs_human_review', completedPhases: [], skippedPhases: [] },
+      'running',
+    );
+    const trans = await usecase.transition({ runId: rid('run-1'), workerId: wid('w-1') });
+    expect(trans.effectiveDisposition).toBe('reset_to_baseline');
+  });
+
+  it('restores prior state when disposition-bearing enqueue fails', async () => {
+    class FakeQueueWithThrow extends FakeJobQueuePort {
+      override enqueue(): void {
+        throw new Error('queue unavailable');
+      }
+    }
+    const runRepo = new FakeRunRepository();
+    const completedAt = new Date('2026-06-01T12:00:00Z');
+    runRepo.addRun(
+      makeRun({ status: 'needs_human_review', completedAt, failureReason: 'manual review' }),
+    );
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeQueueWithThrow(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const worktreeLifecycle = new FakeWorktreeLifecycle();
+    worktreeLifecycle.discardedPaths = ['dirty.ts'];
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      worktreeLifecycle,
+      now: fixedNow,
+    });
+
+    await expect(
+      usecase.execute({
+        runId: rid('run-1'),
+        workerId: wid('w-1'),
+        resumeDisposition: 'preserve_working_tree',
+      }),
+    ).rejects.toThrow(/queue unavailable/);
+
+    const lastUpdate = runRepo.updates[runRepo.updates.length - 1]!;
+    expect(lastUpdate.patch.status).toBe('needs_human_review');
+    expect(lastUpdate.patch.completedAt).toEqual(completedAt);
+    const run = runRepo.findByUuid('run-1')!;
+    expect(run.failureReason).toBe('manual review');
+    expect(leases.current(repoid('run-1'))).toBeUndefined();
+  });
+
+  it('computes meaningfulDirtyPaths only once when execute delegates to transition', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'failed' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const worktreeLifecycle = new FakeWorktreeLifecycle();
+    worktreeLifecycle.discardedPaths = [];
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      worktreeLifecycle,
+      now: fixedNow,
+    });
+
+    await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    expect(worktreeLifecycle.inspectCalls).toHaveLength(1);
   });
 });

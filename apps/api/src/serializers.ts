@@ -59,5 +59,6 @@ export function serializeJob(job: Job) {
     claimedAt: job.claimedAt?.toISOString() ?? null,
     startedAt: job.startedAt?.toISOString() ?? null,
     completedAt: job.completedAt?.toISOString() ?? null,
+    ...(job.resumeDisposition !== undefined ? { resumeDisposition: job.resumeDisposition } : {}),
   };
 }

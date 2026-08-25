@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { RunId, WorkerId } from '@ai-sdlc/domain';
 import { RetryFailedPhase } from '../retry-failed-phase.js';
 import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
@@ -221,6 +221,46 @@ describe('RetryFailedPhase', () => {
     });
     await expect(usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') })).rejects.toThrow(
       /no current phase/i,
+    );
+  });
+
+  it('omits resumeDisposition when calling resumeRun.transition if not provided in input', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun());
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
+    expect(resumeRun.calls).toHaveLength(1);
+    expect(resumeRun.calls[0]!.resumeDisposition).toBeUndefined();
+  });
+
+  it('forwards explicit resumeDisposition to resumeRun.transition when provided in input', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun());
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({
+      runId: rid('run-rp-1'),
+      workerId: wid('w-1'),
+      resumeDisposition: 'preserve_working_tree',
+    });
+    expect(resumeRun.calls).toHaveLength(1);
+    expect(resumeRun.calls[0]!.resumeDisposition).toBe('preserve_working_tree');
+  });
+
+  it('propagates ResumeDispositionRequiredError from resumeRun.transition', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ status: 'needs_human_review' }));
+    const resumeRun = new FakeResumeRun();
+    vi.spyOn(resumeRun, 'transition').mockRejectedValue(
+      new (await import('../resume-run.js')).ResumeDispositionRequiredError(),
+    );
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await expect(usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') })).rejects.toThrow(
+      (await import('../resume-run.js')).ResumeDispositionRequiredError,
     );
   });
 });

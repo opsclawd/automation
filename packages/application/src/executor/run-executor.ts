@@ -1,4 +1,13 @@
-import type { Run, Phase, PhaseName, PhaseStatus, Failure } from '@ai-sdlc/domain';
+import type {
+  Run,
+  Phase,
+  PhaseName,
+  PhaseStatus,
+  Failure,
+  ResumeDisposition,
+  Step,
+  RunId,
+} from '@ai-sdlc/domain';
 import {
   startPhase,
   completePhase,
@@ -21,6 +30,25 @@ import type { RunRepositoryPort, FailureRepositoryPort, LoggerPort } from '../po
 import type { PhaseRepositoryPort } from '../ports/phase-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { PhaseHandlerRegistryPort } from '../ports/phase-handler-registry-port.js';
+import type {
+  WorktreeLifecyclePort,
+  WorktreeLifecyclePlan,
+} from '../ports/worktree-lifecycle-port.js';
+import type { EventRepositoryPort } from '../ports/event-repository-port.js';
+import type { StepRepositoryPort } from '../ports/step-repository-port.js';
+import {
+  orchestratorExcludePatterns,
+  uncommittedSourcePaths,
+  unquoteGitPath,
+  isUntrackedOrAddedStatusLine,
+} from '../artifacts/orchestrator-artifacts.js';
+import {
+  normalizeTaskPath,
+  classifyTaskChanges,
+  loadManifest,
+  resolveEffectiveTaskScope,
+  type TaskChangeCandidate,
+} from '../task-file-boundaries.js';
 
 export interface RunExecutorDeps {
   runRepository: RunRepositoryPort;
@@ -31,12 +59,16 @@ export interface RunExecutorDeps {
   contextFactory: (run: Run) => PhaseHandlerContext;
   now?: () => Date;
   logger?: LoggerPort;
+  worktreeLifecycle?: WorktreeLifecyclePort;
+  eventRepository?: EventRepositoryPort;
+  stepRepository?: StepRepositoryPort;
 }
 
 export interface ExecuteRunInput {
   run: Run;
   skip: PhaseName[];
   presentArtifacts: string[];
+  resumeDisposition?: ResumeDisposition;
 }
 
 export interface PhaseRecord {
@@ -77,7 +109,608 @@ export class RunExecutor {
     const completedSet = new Set(currentRun.completedPhases);
     const previouslySkippedSet = new Set(currentRun.skippedPhases);
 
-    const ctx = this.deps.contextFactory(run);
+    let approvedInboundPaths: string[] | undefined;
+
+    if (input.resumeDisposition !== undefined) {
+      let firstIncompletePhase: PhaseName | undefined;
+      for (const phaseName of CANONICAL_PHASE_ORDER) {
+        if (
+          !completedSet.has(phaseName as string) &&
+          !previouslySkippedSet.has(phaseName as string) &&
+          !skipSet.has(phaseName as string)
+        ) {
+          firstIncompletePhase = phaseName;
+          break;
+        }
+      }
+
+      if (firstIncompletePhase) {
+        const firstIncompleteDef = PHASE_DEFINITIONS[firstIncompletePhase]!;
+        const ctxForResume = this.deps.contextFactory(run);
+
+        const isImplementPhase = firstIncompletePhase === 'implement';
+        let resumableStep: Step | undefined;
+        if (this.deps.stepRepository) {
+          const runSteps = this.deps.stepRepository.listForRun(run.uuid as RunId);
+          const implementSteps = runSteps
+            .filter((s) => s.phaseId === 'implement')
+            .sort((a, b) => a.index - b.index);
+          resumableStep = implementSteps.find((s) => s.status !== 'success');
+        }
+
+        if (isImplementPhase && resumableStep !== undefined) {
+          if (input.resumeDisposition === 'reset_to_baseline') {
+            const baseline = resumableStep.initialPreStepHead;
+            if (!baseline || !baseline.trim()) {
+              const failureMessage = `step ${resumableStep.index} (${resumableStep.title}) is missing initialPreStepHead baseline; cannot resume with reset_to_baseline`;
+              const failure: Failure = {
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                kind: 'setup_failed',
+                message: failureMessage,
+                canRetry: true,
+                suggestedAction: 'Inspect the step baseline in the database or reset the run.',
+                artifacts: [],
+                detectedAt: now(),
+              };
+              const phase: Phase = {
+                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                runUuid: currentRun.uuid,
+                name: firstIncompletePhase as string,
+                status: 'needs_human_review',
+                attempt: 1,
+                startedAt: now(),
+                completedAt: now(),
+              };
+              return this.needsHumanReviewRun(
+                currentRun,
+                firstIncompleteDef,
+                phase,
+                failure,
+                now(),
+                phases,
+              );
+            }
+
+            if (!this.deps.worktreeLifecycle) {
+              const failureMessage = `worktreeLifecycle port is not configured; cannot resume with reset_to_baseline`;
+              const failure: Failure = {
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                kind: 'setup_failed',
+                message: failureMessage,
+                canRetry: true,
+                suggestedAction: 'Ensure worktreeLifecycle port is wired.',
+                artifacts: [],
+                detectedAt: now(),
+              };
+              const phase: Phase = {
+                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                runUuid: currentRun.uuid,
+                name: firstIncompletePhase as string,
+                status: 'needs_human_review',
+                attempt: 1,
+                startedAt: now(),
+                completedAt: now(),
+              };
+              return this.needsHumanReviewRun(
+                currentRun,
+                firstIncompleteDef,
+                phase,
+                failure,
+                now(),
+                phases,
+              );
+            }
+
+            let plan: WorktreeLifecyclePlan;
+            try {
+              plan = await this.deps.worktreeLifecycle.inspect({
+                cwd: ctxForResume.cwd,
+                mode: 'resume_baseline',
+                targetBaseline: baseline.trim(),
+                preservedPatterns: orchestratorExcludePatterns(),
+              });
+            } catch (err) {
+              const failureMessage = `failed to resolve resume baseline ${baseline}: ${err instanceof Error ? err.message : String(err)}`;
+              const failure: Failure = {
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                kind: 'setup_failed',
+                message: failureMessage,
+                canRetry: true,
+                suggestedAction: 'Ensure the baseline commit exists in the repository.',
+                artifacts: [],
+                detectedAt: now(),
+              };
+              const phase: Phase = {
+                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                runUuid: currentRun.uuid,
+                name: firstIncompletePhase as string,
+                status: 'needs_human_review',
+                attempt: 1,
+                startedAt: now(),
+                completedAt: now(),
+              };
+              return this.needsHumanReviewRun(
+                currentRun,
+                firstIncompleteDef,
+                phase,
+                failure,
+                now(),
+                phases,
+              );
+            }
+
+            const resetMessage = `resumed run reset worktree to baseline ${baseline}`;
+            const metadata = {
+              baseline,
+              stepIndex: resumableStep.index,
+              discardedPaths: [...plan.discardedPaths].sort(),
+              preservedPaths: [...plan.preservedPaths].sort(),
+              trackedChanges: [...plan.trackedChanges].sort(),
+              untrackedPaths: [...plan.untrackedPaths].sort(),
+              fingerprint: plan.fingerprint,
+            };
+
+            // Synchronously insert audit record BEFORE mutating Git state.
+            // This is a hard (unguarded) call, not `if (this.deps.eventRepository)`:
+            // a missing eventRepository must fail the same way an insert
+            // failure does (needs_human_review, no mutation), not silently
+            // skip the audit and proceed to the destructive reset below.
+            try {
+              if (!this.deps.eventRepository) {
+                throw new Error('eventRepository port is not configured');
+              }
+              this.deps.eventRepository.insert({
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                level: 'info',
+                type: 'run.resume_worktree_reset',
+                message: resetMessage,
+                metadata,
+                timestamp: now(),
+              });
+              this.emit(
+                run.displayId,
+                run.uuid,
+                firstIncompletePhase as string,
+                'info',
+                'run.resume_worktree_reset',
+                resetMessage,
+                now(),
+                metadata,
+              );
+            } catch (err) {
+              const failureMessage = `failed to insert resume audit event: ${err instanceof Error ? err.message : String(err)}`;
+              const failure: Failure = {
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                kind: 'setup_failed',
+                message: failureMessage,
+                canRetry: true,
+                suggestedAction: 'Verify database connectivity and disk space.',
+                artifacts: [],
+                detectedAt: now(),
+              };
+              const phase: Phase = {
+                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                runUuid: currentRun.uuid,
+                name: firstIncompletePhase as string,
+                status: 'needs_human_review',
+                attempt: 1,
+                startedAt: now(),
+                completedAt: now(),
+              };
+              return this.needsHumanReviewRun(
+                currentRun,
+                firstIncompleteDef,
+                phase,
+                failure,
+                now(),
+                phases,
+              );
+            }
+
+            // Execute reset plan
+            try {
+              const execResult = await this.deps.worktreeLifecycle.execute({ plan });
+              if (!execResult.success) {
+                throw new Error('worktree lifecycle execution failed');
+              }
+            } catch (err) {
+              const failureMessage = `failed to execute resume reset plan: ${err instanceof Error ? err.message : String(err)}`;
+              const failure: Failure = {
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                kind: 'setup_failed',
+                message: failureMessage,
+                canRetry: true,
+                suggestedAction: 'Inspect worktree git state.',
+                artifacts: [],
+                detectedAt: now(),
+              };
+              const phase: Phase = {
+                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                runUuid: currentRun.uuid,
+                name: firstIncompletePhase as string,
+                status: 'needs_human_review',
+                attempt: 1,
+                startedAt: now(),
+                completedAt: now(),
+              };
+              return this.needsHumanReviewRun(
+                currentRun,
+                firstIncompleteDef,
+                phase,
+                failure,
+                now(),
+                phases,
+              );
+            }
+          } else if (input.resumeDisposition === 'preserve_working_tree') {
+            const manifestResult = await loadManifest(
+              { runId: run.uuid },
+              { cwd: ctxForResume.cwd, runId: run.uuid },
+              {
+                artifactStore: ctxForResume.artifacts,
+                readWorktreeFile: ctxForResume.readWorktreeFile,
+              },
+            );
+
+            if (manifestResult.status !== 'found') {
+              const failureMessage = `cannot preserve working tree: ${manifestResult.message}`;
+              const failure: Failure = {
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                kind: 'setup_failed',
+                message: failureMessage,
+                canRetry: true,
+                suggestedAction: 'Ensure valid task-manifest.json exists in the artifact store.',
+                artifacts: [],
+                detectedAt: now(),
+              };
+              const phase: Phase = {
+                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                runUuid: currentRun.uuid,
+                name: firstIncompletePhase as string,
+                status: 'needs_human_review',
+                attempt: 1,
+                startedAt: now(),
+                completedAt: now(),
+              };
+              return this.needsHumanReviewRun(
+                currentRun,
+                firstIncompleteDef,
+                phase,
+                failure,
+                now(),
+                phases,
+              );
+            }
+
+            const manifest = manifestResult.manifest as Record<string, unknown>;
+            const tasks = Array.isArray(manifest.tasks) ? manifest.tasks : [];
+            const task = tasks.find((t: unknown) => {
+              if (!t || typeof t !== 'object') return false;
+              const rec = t as Record<string, unknown>;
+              return rec.n === resumableStep.index || rec.task_number === resumableStep.index;
+            }) as Record<string, unknown> | undefined;
+
+            if (!task) {
+              const failureMessage = `cannot preserve working tree: task ${resumableStep.index} not found in manifest`;
+              const failure: Failure = {
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                kind: 'setup_failed',
+                message: failureMessage,
+                canRetry: true,
+                suggestedAction: 'Inspect task-manifest.json.',
+                artifacts: [],
+                detectedAt: now(),
+              };
+              const phase: Phase = {
+                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                runUuid: currentRun.uuid,
+                name: firstIncompletePhase as string,
+                status: 'needs_human_review',
+                attempt: 1,
+                startedAt: now(),
+                completedAt: now(),
+              };
+              return this.needsHumanReviewRun(
+                currentRun,
+                firstIncompleteDef,
+                phase,
+                failure,
+                now(),
+                phases,
+              );
+            }
+
+            let statusOutput = '';
+            try {
+              statusOutput = await ctxForResume.git.status(ctxForResume.cwd);
+            } catch (err) {
+              const failureMessage = `failed to check git status for preserve resume: ${err instanceof Error ? err.message : String(err)}`;
+              const failure: Failure = {
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                kind: 'setup_failed',
+                message: failureMessage,
+                canRetry: true,
+                suggestedAction: 'Inspect git repository accessibility.',
+                artifacts: [],
+                detectedAt: now(),
+              };
+              const phase: Phase = {
+                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                runUuid: currentRun.uuid,
+                name: firstIncompletePhase as string,
+                status: 'needs_human_review',
+                attempt: 1,
+                startedAt: now(),
+                completedAt: now(),
+              };
+              return this.needsHumanReviewRun(
+                currentRun,
+                firstIncompleteDef,
+                phase,
+                failure,
+                now(),
+                phases,
+              );
+            }
+
+            const untrackedSet = new Set(
+              statusOutput
+                .split('\n')
+                .filter(isUntrackedOrAddedStatusLine)
+                .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
+                .map(normalizeTaskPath)
+                .filter(Boolean),
+            );
+
+            const dirtySourcePaths = uncommittedSourcePaths(statusOutput)
+              .map(normalizeTaskPath)
+              .filter(Boolean);
+
+            const candidates: TaskChangeCandidate[] = dirtySourcePaths.map((p) => ({
+              path: p,
+              tracked: !untrackedSet.has(p),
+            }));
+
+            const currentScope = resolveEffectiveTaskScope(task);
+            const classification = classifyTaskChanges({
+              candidates,
+              currentScope,
+              manifest,
+              currentTaskNumber: resumableStep.index,
+            });
+
+            const unapprovedPaths = [
+              ...new Set([
+                ...classification.modifiedReferenceFiles,
+                ...classification.nonGoalFiles,
+                ...classification.prematureImplementation.map((p) => p.path),
+                ...classification.driftFiles,
+                ...(classification.protectedFiles ?? []),
+              ]),
+            ].sort();
+
+            if (unapprovedPaths.length > 0) {
+              const failureMessage = `preserve mode rejected unpermitted dirty paths in worktree: ${unapprovedPaths.join(', ')}`;
+              const failure: Failure = {
+                runUuid: currentRun.uuid,
+                phase: firstIncompletePhase as string,
+                kind: 'setup_failed',
+                message: failureMessage,
+                canRetry: true,
+                suggestedAction: 'Clean or revert unpermitted dirty files before resuming.',
+                artifacts: [],
+                detectedAt: now(),
+              };
+              const phase: Phase = {
+                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                runUuid: currentRun.uuid,
+                name: firstIncompletePhase as string,
+                status: 'needs_human_review',
+                attempt: 1,
+                startedAt: now(),
+                completedAt: now(),
+              };
+              return this.needsHumanReviewRun(
+                currentRun,
+                firstIncompleteDef,
+                phase,
+                failure,
+                now(),
+                phases,
+              );
+            }
+
+            approvedInboundPaths = [...classification.permittedPaths].sort();
+          }
+        } else if (isImplementPhase) {
+          // Fresh implement phase — there is no in-progress step for
+          // resumeDisposition (reset_to_baseline / preserve_working_tree) to
+          // apply to, so it cannot be honored here. Do NOT fall through to the
+          // strict non-implement cleanliness check below: that check rejects
+          // ANY dirty path, including ambient residue left behind by a prior
+          // plan-review phase, which ImplementHandler's own inbound audit
+          // (checkInboundWorktreeCleanliness) is specifically designed to
+          // detect, audit, and reset. Record that the requested disposition
+          // was not applicable so it is not silently dropped, then let the
+          // phase loop proceed into ImplementHandler's audited cleanup.
+          const deferredMessage = `resumeDisposition '${input.resumeDisposition}' requested but no resumable implement step was found; deferring worktree cleanliness to the implement phase's own inbound audit`;
+          const deferredMetadata = { resumeDisposition: input.resumeDisposition };
+          try {
+            this.deps.eventRepository?.insert({
+              runUuid: currentRun.uuid,
+              phase: firstIncompletePhase as string,
+              level: 'info',
+              type: 'run.resume_disposition_deferred',
+              message: deferredMessage,
+              metadata: deferredMetadata,
+              timestamp: now(),
+            });
+          } catch (err) {
+            this.deps.logger?.debug(
+              'failed to insert resume_disposition_deferred audit event',
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+          this.emit(
+            run.displayId,
+            run.uuid,
+            firstIncompletePhase as string,
+            'info',
+            'run.resume_disposition_deferred',
+            deferredMessage,
+            now(),
+            deferredMetadata,
+          );
+        } else {
+          // No implementation worktree state to recover (non-implement phase)
+          let dirtyPaths: string[] = [];
+          if (this.deps.worktreeLifecycle) {
+            try {
+              const plan = await this.deps.worktreeLifecycle.inspect({
+                cwd: ctxForResume.cwd,
+                mode: 'phase_boundary',
+                preservedPatterns: orchestratorExcludePatterns(),
+              });
+              dirtyPaths = plan.discardedPaths;
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              const lowerMsg = msg.toLowerCase();
+              if (
+                lowerMsg.includes('enoent') ||
+                lowerMsg.includes('no such file or directory') ||
+                lowerMsg.includes('does not exist') ||
+                lowerMsg.includes('not a git repository') ||
+                lowerMsg.includes('git not found on path') ||
+                lowerMsg.includes('cannot change to') ||
+                lowerMsg.includes('fatal: path')
+              ) {
+                dirtyPaths = [];
+              } else {
+                const failureMessage = `failed to check worktree cleanliness for resume: ${msg}`;
+                const failure: Failure = {
+                  runUuid: currentRun.uuid,
+                  phase: firstIncompletePhase as string,
+                  kind: 'setup_failed',
+                  message: failureMessage,
+                  canRetry: true,
+                  suggestedAction: 'Inspect git repository accessibility.',
+                  artifacts: [],
+                  detectedAt: now(),
+                };
+                const phase: Phase = {
+                  id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                  runUuid: currentRun.uuid,
+                  name: firstIncompletePhase as string,
+                  status: 'needs_human_review',
+                  attempt: 1,
+                  startedAt: now(),
+                  completedAt: now(),
+                };
+                return this.needsHumanReviewRun(
+                  currentRun,
+                  firstIncompleteDef,
+                  phase,
+                  failure,
+                  now(),
+                  phases,
+                );
+              }
+            }
+          } else {
+            let statusOutput = '';
+            try {
+              statusOutput = await ctxForResume.git.status(ctxForResume.cwd);
+              dirtyPaths = uncommittedSourcePaths(statusOutput);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              const lowerMsg = msg.toLowerCase();
+              if (
+                lowerMsg.includes('enoent') ||
+                lowerMsg.includes('no such file or directory') ||
+                lowerMsg.includes('does not exist') ||
+                lowerMsg.includes('not a git repository') ||
+                lowerMsg.includes('git not found on path') ||
+                lowerMsg.includes('cannot change to') ||
+                lowerMsg.includes('fatal: path')
+              ) {
+                dirtyPaths = [];
+              } else {
+                const failureMessage = `failed to check git status for resume: ${msg}`;
+                const failure: Failure = {
+                  runUuid: currentRun.uuid,
+                  phase: firstIncompletePhase as string,
+                  kind: 'setup_failed',
+                  message: failureMessage,
+                  canRetry: true,
+                  suggestedAction: 'Inspect git repository accessibility.',
+                  artifacts: [],
+                  detectedAt: now(),
+                };
+                const phase: Phase = {
+                  id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                  runUuid: currentRun.uuid,
+                  name: firstIncompletePhase as string,
+                  status: 'needs_human_review',
+                  attempt: 1,
+                  startedAt: now(),
+                  completedAt: now(),
+                };
+                return this.needsHumanReviewRun(
+                  currentRun,
+                  firstIncompleteDef,
+                  phase,
+                  failure,
+                  now(),
+                  phases,
+                );
+              }
+            }
+          }
+
+          if (dirtyPaths.length > 0) {
+            const failureMessage = `cannot resume non-implement phase '${firstIncompletePhase}' with dirty worktree without an authoritative step baseline: ${dirtyPaths.join(', ')}`;
+            const failure: Failure = {
+              runUuid: currentRun.uuid,
+              phase: firstIncompletePhase as string,
+              kind: 'setup_failed',
+              message: failureMessage,
+              canRetry: true,
+              suggestedAction: 'Clean the worktree before resuming.',
+              artifacts: [],
+              detectedAt: now(),
+            };
+            const phase: Phase = {
+              id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+              runUuid: currentRun.uuid,
+              name: firstIncompletePhase as string,
+              status: 'needs_human_review',
+              attempt: 1,
+              startedAt: now(),
+              completedAt: now(),
+            };
+            return this.needsHumanReviewRun(
+              currentRun,
+              firstIncompleteDef,
+              phase,
+              failure,
+              now(),
+              phases,
+            );
+          }
+        }
+      }
+    }
+
+    const ctx = this.buildContext(run, approvedInboundPaths);
     // When resuming, the worktree may have been cleaned or artifacts lost
     // (e.g. CancelRun runs git clean). Re-materialize durable artifacts
     // into the worktree before starting the phase loop.
@@ -229,7 +862,7 @@ export class RunExecutor {
       // state like `priorPhaseName` reflects phases completed earlier in this
       // same execution. The function-parameter `run` was captured before any
       // phase completed, so its `completedPhases` would always be empty.
-      const ctx = this.deps.contextFactory(currentRun);
+      const ctx = this.buildContext(currentRun, approvedInboundPaths);
       let result: PhaseResult;
       try {
         result = await handler.run(ctx);
@@ -554,6 +1187,18 @@ export class RunExecutor {
     return { run, phases };
   }
 
+  private buildContext(run: Run, approvedInboundPaths?: string[]): PhaseHandlerContext {
+    const raw = this.deps.contextFactory(run);
+    if (approvedInboundPaths !== undefined) {
+      return {
+        ...raw,
+        approvedInboundPaths,
+        inboundPreserveAllowance: approvedInboundPaths,
+      };
+    }
+    return raw;
+  }
+
   private needsHumanReviewRun(
     currentRun: Run,
     phaseDef: PhaseDefinition,
@@ -575,7 +1220,13 @@ export class RunExecutor {
     const run = markRunNeedsHumanReview(currentRun, failure.message, at);
     phase.status = 'needs_human_review';
     phase.completedAt = at;
-    this.deps.phaseRepository.update(phase);
+    const existingPhases = this.deps.phaseRepository.listByRun(currentRun.uuid);
+    const existing = existingPhases.find((p) => p.name === phaseDef.name);
+    if (existing) {
+      this.deps.phaseRepository.update(phase);
+    } else {
+      this.deps.phaseRepository.insert(phase);
+    }
     this.deps.failureRepository.insert(failure);
     this.terminalStatusWrite(
       run.uuid,
@@ -746,6 +1397,7 @@ export class RunExecutor {
     type: string,
     message: string,
     now: Date,
+    metadata?: Record<string, unknown>,
   ): void {
     this.deps.events.publish(runUuid, {
       runId,
@@ -754,7 +1406,7 @@ export class RunExecutor {
       type,
       message,
       timestamp: now.toISOString(),
-      metadata: {},
+      metadata: metadata ?? {},
     });
   }
 }

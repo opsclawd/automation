@@ -484,4 +484,142 @@ describe('JobQueueRepository', () => {
       db.close();
     });
   });
+
+  describe('resumeDisposition support', () => {
+    it('round-trips resume disposition across queue ownership transitions', () => {
+      const db = freshDb();
+      const repos = mockRepos({ 'repo-1': true });
+      const repo = new JobQueueRepository(db, repos);
+
+      const jobPreserve = defaultJob({
+        id: mkJobId('job-preserve'),
+        repoId: mkRepositoryId('repo-1'),
+        runId: mkRunId('run-1'),
+        priority: 10,
+        resumeDisposition: 'preserve_working_tree',
+      });
+      const jobReset = defaultJob({
+        id: mkJobId('job-reset'),
+        repoId: mkRepositoryId('repo-1'),
+        runId: mkRunId('run-1'),
+        priority: 5,
+        resumeDisposition: 'reset_to_baseline',
+      });
+      const jobFresh = defaultJob({
+        id: mkJobId('job-fresh'),
+        repoId: mkRepositoryId('repo-1'),
+        runId: mkRunId('run-1'),
+        priority: 1,
+      });
+
+      repo.enqueue({ job: jobPreserve });
+      repo.enqueue({ job: jobReset });
+      repo.enqueue({ job: jobFresh });
+
+      // Lookup via findById
+      expect(repo.findById(jobPreserve.id)?.resumeDisposition).toBe('preserve_working_tree');
+      expect(repo.findById(jobReset.id)?.resumeDisposition).toBe('reset_to_baseline');
+      expect(repo.findById(jobFresh.id)?.resumeDisposition).toBeUndefined();
+
+      // List queries
+      const activeList = repo.listActive();
+      expect(activeList.find((j) => j.id === jobPreserve.id)?.resumeDisposition).toBe(
+        'preserve_working_tree',
+      );
+      expect(activeList.find((j) => j.id === jobReset.id)?.resumeDisposition).toBe(
+        'reset_to_baseline',
+      );
+      expect(activeList.find((j) => j.id === jobFresh.id)?.resumeDisposition).toBeUndefined();
+
+      const repoList = repo.listForRepo(mkRepositoryId('repo-1'));
+      expect(repoList.find((j) => j.id === jobPreserve.id)?.resumeDisposition).toBe(
+        'preserve_working_tree',
+      );
+      expect(repoList.find((j) => j.id === jobReset.id)?.resumeDisposition).toBe(
+        'reset_to_baseline',
+      );
+      expect(repoList.find((j) => j.id === jobFresh.id)?.resumeDisposition).toBeUndefined();
+
+      const runList = repo.listForRun(mkRunId('run-1'));
+      expect(runList.find((j) => j.id === jobPreserve.id)?.resumeDisposition).toBe(
+        'preserve_working_tree',
+      );
+      expect(runList.find((j) => j.id === jobReset.id)?.resumeDisposition).toBe(
+        'reset_to_baseline',
+      );
+      expect(runList.find((j) => j.id === jobFresh.id)?.resumeDisposition).toBeUndefined();
+
+      // Serialization round-trip
+      const serialized = JSON.parse(JSON.stringify(jobPreserve));
+      expect(serialized.resumeDisposition).toBe('preserve_working_tree');
+      const serializedFresh = JSON.parse(JSON.stringify(jobFresh));
+      expect(serializedFresh.resumeDisposition).toBeUndefined();
+
+      // Claim jobPreserve
+      const claimedPreserve = repo.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      expect(claimedPreserve?.id).toBe(jobPreserve.id);
+      expect(claimedPreserve?.resumeDisposition).toBe('preserve_working_tree');
+
+      const ownerPreserve = generateJobOwnership(claimedPreserve!, mkWorkerId('worker-1'));
+
+      // Mark running
+      const now = new Date('2026-01-01T01:00:00Z');
+      repo.markRunning(ownerPreserve, now);
+      expect(repo.findById(jobPreserve.id)?.resumeDisposition).toBe('preserve_working_tree');
+
+      // Reset to queued
+      repo.resetToQueued(ownerPreserve);
+      expect(repo.findById(jobPreserve.id)?.resumeDisposition).toBe('preserve_working_tree');
+
+      // Reclaim and release claim
+      const reclaimedPreserve = repo.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      expect(reclaimedPreserve?.id).toBe(jobPreserve.id);
+      expect(reclaimedPreserve?.resumeDisposition).toBe('preserve_working_tree');
+      const ownerReclaim = generateJobOwnership(reclaimedPreserve!, mkWorkerId('worker-1'));
+      repo.releaseClaim(ownerReclaim);
+      expect(repo.findById(jobPreserve.id)?.resumeDisposition).toBe('preserve_working_tree');
+
+      // Reclaim, run, succeed
+      const claimedPreserve3 = repo.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      const owner3 = generateJobOwnership(claimedPreserve3!, mkWorkerId('worker-1'));
+      repo.markRunning(owner3, now);
+      repo.markSucceeded(owner3, new Date('2026-01-01T02:00:00Z'));
+      expect(repo.findById(jobPreserve.id)?.resumeDisposition).toBe('preserve_working_tree');
+
+      // Claim jobReset, mark running, mark failed
+      const claimedReset = repo.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      expect(claimedReset?.id).toBe(jobReset.id);
+      expect(claimedReset?.resumeDisposition).toBe('reset_to_baseline');
+      const ownerReset = generateJobOwnership(claimedReset!, mkWorkerId('worker-1'));
+      repo.markRunning(ownerReset, now);
+      repo.markFailed(ownerReset, new Date('2026-01-01T02:00:00Z'));
+      expect(repo.findById(jobReset.id)?.resumeDisposition).toBe('reset_to_baseline');
+
+      // Claim jobFresh, mark running, mark cancelled
+      const claimedFresh = repo.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      expect(claimedFresh?.id).toBe(jobFresh.id);
+      expect(claimedFresh?.resumeDisposition).toBeUndefined();
+      const ownerFresh = generateJobOwnership(claimedFresh!, mkWorkerId('worker-1'));
+      repo.markRunning(ownerFresh, now);
+      repo.markCancelled(ownerFresh, new Date('2026-01-01T02:00:00Z'));
+      expect(repo.findById(jobFresh.id)?.resumeDisposition).toBeUndefined();
+
+      db.close();
+    });
+  });
 });

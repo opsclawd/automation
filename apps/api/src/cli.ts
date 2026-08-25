@@ -21,6 +21,7 @@ import {
   createJob,
   createWorker,
   generateJobOwnership,
+  type ResumeDisposition,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import {
@@ -410,7 +411,7 @@ function buildSchedulerDeps(
       leases: runtime.workerLeaseRepository,
       repos: runtime.workerLoopDeps.repos,
       repoId: runtime.repository.id,
-      executeRun: async ({ run: r, signal }) => {
+      executeRun: async ({ run: r, signal, resumeDisposition }) => {
         runtime.runRepository.update(r.uuid, { pid: process.pid });
         const controller = new AbortController();
         const onAbort = () => {
@@ -429,7 +430,12 @@ function buildSchedulerDeps(
         });
         c.runAbort.register(RunId(r.uuid), controller, donePromise);
         try {
-          const result = await runExecutor.execute({ run: r, skip: [], presentArtifacts: [] });
+          const result = await runExecutor.execute({
+            run: r,
+            skip: [],
+            presentArtifacts: [],
+            ...(resumeDisposition !== undefined ? { resumeDisposition } : {}),
+          });
           return { ok: result.run.status === 'passed' };
         } finally {
           doneResolve();
@@ -1654,6 +1660,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           '--from-phase <phase>',
           'Phase to resume from (default: auto-detect failed or blocked phase)',
         )
+        .option(
+          '--disposition <mode>',
+          'Resume disposition: preserve_working_tree | reset_to_baseline',
+        )
         .option('--confirm', 'Confirm retry/resume of an unsafe phase')
         .option('--verbose', 'Stream progress to terminal (default: auto when TTY)')
         .option('--no-verbose', 'Suppress streaming progress to terminal')
@@ -1669,6 +1679,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             verbose?: boolean;
             targetRepoRoot?: string;
             repositoryId?: string;
+            disposition?: string;
           }) => {
             const isCliTestSuite =
               buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
@@ -1676,6 +1687,18 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               buildOpts?.bypassPlanValidation ??
               (isCliTestSuite || process.env.AI_BYPASS_PLAN_VALIDATION === 'true');
             try {
+              if (opts.disposition !== undefined) {
+                if (
+                  opts.disposition !== 'preserve_working_tree' &&
+                  opts.disposition !== 'reset_to_baseline'
+                ) {
+                  console.error(
+                    'Error: invalid --disposition. Must be preserve_working_tree or reset_to_baseline.',
+                  );
+                  process.exit(EXIT_USER_ERROR);
+                }
+              }
+
               const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
                 console.error(`Error: ${msg}`);
                 process.exit(EXIT_USER_ERROR);
@@ -1841,18 +1864,35 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 );
                 testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
 
+                let effectiveDisposition: ResumeDisposition = 'reset_to_baseline';
                 if (opts.fromPhase) {
-                  await c.resumeRun.transition({
+                  const transitionState = await c.resumeRun.transition({
                     runId: RunId(opts.uuid),
                     fromPhase: plan.targetPhase ?? opts.fromPhase,
                     workerId,
                     ...(plan.attempt !== undefined ? { attempt: plan.attempt } : {}),
+                    ...(opts.disposition
+                      ? { resumeDisposition: opts.disposition as ResumeDisposition }
+                      : {}),
                   });
+                  effectiveDisposition = transitionState.effectiveDisposition;
                 } else {
-                  await c.retryFailedPhase.execute({
+                  const transitionState = await c.retryFailedPhase.execute({
                     runId: RunId(opts.uuid),
                     workerId,
+                    ...(opts.disposition
+                      ? { resumeDisposition: opts.disposition as ResumeDisposition }
+                      : {}),
                   });
+                  if (
+                    transitionState &&
+                    (transitionState as unknown as { effectiveDisposition?: ResumeDisposition })
+                      .effectiveDisposition
+                  ) {
+                    effectiveDisposition = (
+                      transitionState as unknown as { effectiveDisposition: ResumeDisposition }
+                    ).effectiveDisposition;
+                  }
                 }
 
                 const updatedRun = c.runRepository.findByUuid(opts.uuid);
@@ -1865,6 +1905,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   run: { ...updatedRun, status: 'running' },
                   skip: [],
                   presentArtifacts: [],
+                  resumeDisposition: effectiveDisposition,
                 });
 
                 process.stdout.write(

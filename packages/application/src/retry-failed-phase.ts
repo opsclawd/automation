@@ -1,18 +1,22 @@
-import type { Phase, RunId, WorkerId } from '@ai-sdlc/domain';
+import type { Phase, RunId, WorkerId, ResumeDisposition } from '@ai-sdlc/domain';
 import type { RunRepositoryPort, PhaseRepositoryPort } from './ports.js';
 import type { RetryFailedPhaseUseCase } from './use-cases.js';
-import type { ResumeRun } from './resume-run.js';
+import type { ResumeRun, ResumeTransitionState } from './resume-run.js';
 
 export interface RetryFailedPhaseDeps {
   runRepository: RunRepositoryPort;
   phaseRepo: PhaseRepositoryPort;
-  resumeRun: Pick<ResumeRun, 'transition'>;
+  resumeRun: ResumeRun;
 }
 
 export class RetryFailedPhase implements RetryFailedPhaseUseCase {
   constructor(private readonly deps: RetryFailedPhaseDeps) {}
 
-  async execute(input: { runId: RunId; workerId: WorkerId }): Promise<void> {
+  async execute(input: {
+    runId: RunId;
+    workerId: WorkerId;
+    resumeDisposition?: ResumeDisposition;
+  }): Promise<ResumeTransitionState> {
     const run = this.deps.runRepository.findByUuid(input.runId);
     if (!run) throw new Error(`No run found for ${input.runId}`);
     if (
@@ -42,11 +46,14 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
       .map((p) => p.attempt ?? 0);
     const maxAttempt =
       recoverablePhaseAttempts.length > 0 ? Math.max(...recoverablePhaseAttempts) : 0;
-    await this.deps.resumeRun.transition({
+    return await this.deps.resumeRun.transition({
       runId: input.runId,
       fromPhase: phaseName,
       workerId: input.workerId,
       attempt: maxAttempt + 1,
+      ...(input.resumeDisposition !== undefined
+        ? { resumeDisposition: input.resumeDisposition }
+        : {}),
     });
   }
 }

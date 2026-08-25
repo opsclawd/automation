@@ -228,4 +228,27 @@ describe('composeRoot — injection seams', () => {
       }),
     ]);
   });
+
+  it('injects worktreeLifecycle, eventRepository, and stepRepository into RunExecutor and wires workerLoopDeps', async () => {
+    const root = makeRepoRoot();
+    const scriptPath = fakeScript(0);
+    writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(makeAgentConfig()));
+
+    const container = composeRoot({
+      repoRoot: root,
+      scriptPath,
+      metadataResolver: FAKE_METADATA_RESOLVER,
+    });
+
+    expect(container.runExecutor).toBeDefined();
+    const executorDeps = (container.runExecutor as unknown as { deps: Record<string, unknown> })
+      .deps;
+    expect(executorDeps.worktreeLifecycle).toBeDefined();
+    expect(executorDeps.eventRepository).toBeDefined();
+    expect(executorDeps.stepRepository).toBeDefined();
+    expect(container.workerLoopDeps).toBeDefined();
+
+    const loopDeps = container.workerLoopDeps!(RepositoryId('owner/repo'));
+    expect(typeof loopDeps.executeRun).toBe('function');
+  });
 });
