@@ -18,11 +18,18 @@ export type {
   GitHubReviewComment,
   CreatePullRequestInput,
 } from './github-port.js';
-export type { GitPort, CreateWorktreeInput, PushInput, ArtifactGuardPort, GitRenamePair } from './git-port.js';
+export type {
+  GitPort,
+  CreateWorktreeInput,
+  PushInput,
+  ArtifactGuardPort,
+  GitRenamePair,
+} from './git-port.js';
 export { TrackedSourceDriftError } from './git-port.js';
 export type {
   ValidationPort,
   RunValidationInput,
+  ValidationScopeSummary,
   ValidationCommandResult,
   ValidationCommand,
 } from './validation-port.js';

@@ -130,6 +130,13 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
         if (combined.includes('nothing to commit') || combined.includes('working tree clean')) {
           return git(cwd, ['rev-parse', 'HEAD']);
         }
+
+        try {
+          await git(cwd, ['diff', '--cached', '--quiet']);
+          return git(cwd, ['rev-parse', 'HEAD']);
+        } catch {
+          // diff is non-empty or diff failed; rethrow original commit error
+        }
       }
       throw err;
     }

@@ -12,6 +12,7 @@ const validationSchema = z.object({
   tiers: z.array(z.array(z.string().min(1)).min(1)).optional(),
   timeout: z.number().int().positive(),
   forbiddenArtifactPaths: z.array(z.string().trim().min(1)).optional(),
+  narrowByChangedFiles: z.boolean().default(true),
 });
 
 const phasesSchema = z.object({

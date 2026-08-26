@@ -161,6 +161,7 @@ export type {
 export type {
   ValidationPort,
   RunValidationInput,
+  ValidationScopeSummary,
   ValidationCommandResult,
   ValidationCommand,
 } from './ports/validation-port.js';

@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { composeRoot, type ComposeOptions } from '../compose.js';
 import type { AgentPort } from '@ai-sdlc/application';
 import type { AgentRuntimeKind } from '@ai-sdlc/domain';
-import type { ValidationPort, RunValidationInput } from '@ai-sdlc/application';
+import type {
+  ValidationPort,
+  RunValidationInput,
+  ValidationScopeSummary,
+} from '@ai-sdlc/application';
 import type { AgentInvocationRequest } from '@ai-sdlc/application';
 import { RepositoryId, AgentProfileName, type PhaseName } from '@ai-sdlc/domain';
 
@@ -165,6 +169,7 @@ describe('composeRoot — injection seams', () => {
       logDir: root,
       commands: ['echo test'],
       timeoutSeconds: 10,
+      validationScope: { validationMode: 'full' } as ValidationScopeSummary,
     };
     await container.runValidation.execute(validationInput);
     expect(recordingValidation.inputs).toEqual([
@@ -173,6 +178,7 @@ describe('composeRoot — injection seams', () => {
         commands: ['echo test'],
         timeoutSeconds: 10,
         logDir: root,
+        validationScope: { validationMode: 'full' },
       }),
     ]);
   });

@@ -155,3 +155,44 @@ describe('features.scopeContractEnforcement', () => {
     expect(parsed.features.scopeContractEnforcement).toBe(false);
   });
 });
+
+describe('validation narrowByChangedFiles', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: {
+      skip: [],
+      reviewFix: { maxIterations: 5 },
+      implement: { maxIterations: 1 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
+
+  it('defaults validation.narrowByChangedFiles to true when omitted', () => {
+    const parsed = orchestratorConfigSchema.parse(baseConfig);
+    expect(parsed.validation.narrowByChangedFiles).toBe(true);
+  });
+
+  it('preserves explicit validation.narrowByChangedFiles true', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      validation: { ...baseConfig.validation, narrowByChangedFiles: true },
+    });
+    expect(parsed.validation.narrowByChangedFiles).toBe(true);
+  });
+
+  it('preserves explicit validation.narrowByChangedFiles false', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      validation: { ...baseConfig.validation, narrowByChangedFiles: false },
+    });
+    expect(parsed.validation.narrowByChangedFiles).toBe(false);
+  });
+
+  it('rejects a non-boolean validation.narrowByChangedFiles value', () => {
+    const result = orchestratorConfigSchema.safeParse({
+      ...baseConfig,
+      validation: { ...baseConfig.validation, narrowByChangedFiles: 'yes' },
+    });
+    expect(result.success).toBe(false);
+  });
+});

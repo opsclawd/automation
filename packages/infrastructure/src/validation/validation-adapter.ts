@@ -250,9 +250,7 @@ export class ProcessValidationAdapter implements ValidationPort {
         }));
 
         const tierResults = await Promise.all(
-          tierIndexed.map(({ command, index }) =>
-            this.executeSingleCommand(command, index, input),
-          ),
+          tierIndexed.map(({ command, index }) => this.executeSingleCommand(command, index, input)),
         );
 
         for (let t = 0; t < tierIndexed.length; t++) {
@@ -269,6 +267,14 @@ export class ProcessValidationAdapter implements ValidationPort {
       JSON.stringify(
         {
           passed,
+          ...(input.validationScope
+            ? {
+                validationMode: input.validationScope.validationMode,
+                ...(input.validationScope.validationMode === 'narrow'
+                  ? { narrowedPackages: input.validationScope.narrowedPackages }
+                  : {}),
+              }
+            : {}),
           commands: results.map((r) => ({
             command: r.command,
             exitCode: r.exitCode,
