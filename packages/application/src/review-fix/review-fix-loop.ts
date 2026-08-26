@@ -469,7 +469,6 @@ export class ReviewFixLoop {
                 input,
                 fix.headBeforeFix,
                 headAfterFix,
-                manifestResult,
               );
 
               const boundaryCheck = await this.checkTaskBoundary(
@@ -574,7 +573,6 @@ export class ReviewFixLoop {
                     input,
                     fix.headBeforeFix,
                     committedSha,
-                    manifestResult,
                   );
                   const boundaryCheck = await this.checkTaskBoundary(
                     ctx,
@@ -1558,7 +1556,6 @@ export class ReviewFixLoop {
               input,
               fix.headBeforeFix,
               headAfterFix,
-              manifestResult,
             );
 
             const boundaryCheck = await this.checkTaskBoundary(
@@ -1688,7 +1685,6 @@ export class ReviewFixLoop {
                   input,
                   fix.headBeforeFix,
                   committedSha,
-                  manifestResult,
                 );
                 const boundaryCheck = await this.checkTaskBoundary(
                   ctx,
@@ -2689,7 +2685,6 @@ export class ReviewFixLoop {
     loopInput: ReviewFixLoopInput,
     headBeforeFix: string,
     headAfterFix: string,
-    manifestResult: ManifestLoadResult,
   ): Promise<string> {
     if (
       !this.deps.revertScopeFiles ||
@@ -2701,14 +2696,11 @@ export class ReviewFixLoop {
 
     try {
       const committedFiles = await this.deps.git.changedFiles(ctx.cwd, headBeforeFix, headAfterFix);
-      const { writableSet } = getManifestBoundaries(
-        manifestResult.status === 'found' ? manifestResult.manifest : undefined,
-      );
       const protectedFiles = [
         ...new Set(
           committedFiles
             .map(normalizeTaskPath)
-            .filter((p) => p.length > 0 && isProtectedFilePath(p) && !writableSet.has(p)),
+            .filter((p) => p.length > 0 && isProtectedFilePath(p)),
         ),
       ].sort();
 
@@ -2734,8 +2726,18 @@ export class ReviewFixLoop {
         );
         return repairResult.amendedHeadSha;
       }
-    } catch {
-      // If inspection or repair fails, checkTaskBoundary downstream handles any boundary violation
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.emit(
+        loopInput,
+        'fix.protected_file_guard_failed',
+        'warn',
+        `review/fix iteration ${ctx.iterationIndex} failed protected-file guard check: ${errorMsg}`,
+        {
+          iterationIndex: ctx.iterationIndex,
+          error: errorMsg,
+        },
+      );
     }
 
     return headAfterFix;
