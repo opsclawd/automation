@@ -5,6 +5,7 @@ import type {
   GitPort,
   PushInput,
   ArtifactGuardPort,
+  GitRenamePair,
 } from '@ai-sdlc/application/ports';
 import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { git, GitFailedError } from './git-runner.js';
@@ -230,6 +231,27 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
       .map((path) => path.trim().replace(/\\/g, '/'))
       .filter(Boolean);
     return Array.from(new Set(paths)).sort();
+  }
+
+  async renamedFiles(cwd: string, base: string, head = 'HEAD'): Promise<GitRenamePair[]> {
+    const output = await git(cwd, ['diff', '-z', '-M', '--name-status', `${base}..${head}`]);
+    const parts = output.split('\0').filter(Boolean);
+    const renames: GitRenamePair[] = [];
+    let i = 0;
+    while (i < parts.length) {
+      const status = parts[i]!;
+      if (status.startsWith('R') || status.startsWith('C')) {
+        const oldPath = parts[i + 1]?.trim().replace(/\\/g, '/');
+        const newPath = parts[i + 2]?.trim().replace(/\\/g, '/');
+        if (oldPath && newPath) {
+          renames.push({ oldPath, newPath });
+        }
+        i += 3;
+      } else {
+        i += 2;
+      }
+    }
+    return renames;
   }
 
   async fileContent(cwd: string, ref: string, path: string): Promise<string> {

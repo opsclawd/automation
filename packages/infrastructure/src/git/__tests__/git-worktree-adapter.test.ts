@@ -816,6 +816,25 @@ describe('status()', () => {
   });
 });
 
+describe('renamedFiles()', () => {
+  it('detects file renames between two commits', async () => {
+    const repo = await makeTempRepo();
+    await mkdir(join(repo, 'src'), { recursive: true });
+    await writeFile(join(repo, 'src', 'old-name.ts'), 'export const x = 42;\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'add old-name']);
+    const midSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await git(repo, ['mv', 'src/old-name.ts', 'src/new-name.ts']);
+    await git(repo, ['commit', '-m', 'rename old-name to new-name']);
+    const finalSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    const renames = await adapter.renamedFiles!(repo, midSha, finalSha);
+    expect(renames).toEqual([{ oldPath: 'src/old-name.ts', newPath: 'src/new-name.ts' }]);
+
+  });
+});
+
 describe('changedFiles()', () => {
   it('returns normalized paths committed in the requested range', async () => {
     const repo = await makeTempRepo();
