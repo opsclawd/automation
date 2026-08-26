@@ -531,8 +531,8 @@ export class AgentRuntimeRouter implements AgentPort {
           }
         }
       } else {
-        if (this.opts.eventBus) {
-          try {
+        try {
+          if (this.opts.eventBus) {
             const event: OrchestratorEvent = {
               runId: request.runId,
               level: 'warn',
@@ -552,9 +552,11 @@ export class AgentRuntimeRouter implements AgentPort {
               },
             };
             this.opts.eventBus.publish(request.runId, event);
-          } catch {
-            // Warning failure containment
+          } else {
+            process.emitWarning(`Usage data unavailable for invocation ${id}`);
           }
+        } catch {
+          // Warning failure containment
         }
       }
     }

@@ -874,6 +874,43 @@ describe('AgentRuntimeRouter', () => {
     expect(usageRepo.inserts[0].status).toBe('unknown');
   });
 
+  it('emits fallback process.emitWarning when eventBus is omitted and usage is unknown', async () => {
+    const emitWarningSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+    try {
+      const usageRepo = new FakeAgentUsagePort();
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: {
+          opencode: new StubAdapter({
+            runtime: 'opencode',
+            provider: 'anthropic',
+            model: 'm',
+            exitCode: 0,
+            durationMs: 500,
+            stdoutPath: '/tmp/stdout.log',
+            stderrPath: '/tmp/stderr.log',
+            contractViolations: [],
+            outcome: 'success',
+          }),
+        },
+        invocationRepository: new FakeAgentInvocationPort(),
+        usageRepository: usageRepo,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-no-bus-unknown',
+      });
+
+      await router.invoke(req());
+
+      expect(usageRepo.inserts).toHaveLength(1);
+      expect(usageRepo.inserts[0].status).toBe('unknown');
+      expect(emitWarningSpy).toHaveBeenCalledWith(
+        'Usage data unavailable for invocation inv-no-bus-unknown',
+      );
+    } finally {
+      emitWarningSpy.mockRestore();
+    }
+  });
+
   describe('expected artifact cleanup', () => {
     it('deletes expected artifact files before calling adapter.invoke', async () => {
       // Use tmpdir so we can verify filesystem state
