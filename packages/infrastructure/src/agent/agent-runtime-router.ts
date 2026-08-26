@@ -434,19 +434,24 @@ export class AgentRuntimeRouter implements AgentPort {
     this.opts.invocationRepository.update(id, patch);
 
     // Persist token usage if the adapter reported it or record unknown usage
-    // NOTE: wrapped in try/catch so a DB error doesn't skip the fallback
-    // check below. The invocation has already been updated as completed.
+    // NOTE: wrapped in try/catch so a DB error or event warning doesn't skip the
+    // fallback check below. The invocation has already been updated as completed.
     if (this.opts.usageRepository) {
+      const usageIdentity = {
+        invocationId: id,
+        runId: RunId(request.runId),
+        phaseId: PhaseName(request.phaseId),
+        profile: request.profile,
+        provider: effectiveProvider,
+        model: effectiveModel,
+        recordedAt: endedAt,
+      };
+
       try {
         if (result.usage) {
           this.opts.usageRepository.insert({
+            ...usageIdentity,
             status: 'measured',
-            invocationId: id,
-            runId: RunId(request.runId),
-            phaseId: PhaseName(request.phaseId),
-            profile: request.profile,
-            provider: effectiveProvider,
-            model: effectiveModel,
             inputTokens: result.usage.inputTokens,
             outputTokens: result.usage.outputTokens,
             ...(result.usage.reasoningTokens !== undefined
@@ -455,10 +460,47 @@ export class AgentRuntimeRouter implements AgentPort {
             ...(result.usage.cachedTokens !== undefined
               ? { cachedTokens: result.usage.cachedTokens }
               : {}),
-            recordedAt: endedAt,
           });
-
+        } else {
+          this.opts.usageRepository.insert({
+            ...usageIdentity,
+            status: 'unknown',
+          });
+        }
+      } catch (err) {
+        try {
           if (this.opts.eventBus) {
+            const event: OrchestratorEvent = {
+              runId: request.runId,
+              level: 'warn',
+              type: 'agent.usage.failed',
+              message: `Usage persistence failed for invocation ${id}: ${err instanceof Error ? err.message : String(err)}`,
+              timestamp: endedAt.toISOString(),
+              metadata: {
+                invocationId: id,
+                phase: request.phaseId,
+                phaseId: request.phaseId,
+                profile: request.profile,
+                runtime: profile.runtime,
+                provider: effectiveProvider,
+                model: effectiveModel,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            };
+            this.opts.eventBus.publish(request.runId, event);
+          } else {
+            process.emitWarning(
+              `Usage persistence failed for invocation ${id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        } catch {
+          // Warning failure containment
+        }
+      }
+
+      if (result.usage) {
+        if (this.opts.eventBus) {
+          try {
             const event: OrchestratorEvent = {
               runId: request.runId,
               level: 'info',
@@ -469,6 +511,7 @@ export class AgentRuntimeRouter implements AgentPort {
                 phase: request.phaseId,
                 phaseId: request.phaseId,
                 profile: request.profile,
+                runtime: profile.runtime,
                 provider: effectiveProvider,
                 model: effectiveModel,
                 inputTokens: result.usage.inputTokens,
@@ -483,21 +526,36 @@ export class AgentRuntimeRouter implements AgentPort {
               },
             };
             this.opts.eventBus.publish(request.runId, event);
+          } catch {
+            // Event publication containment
           }
-        } else {
-          this.opts.usageRepository.insert({
-            status: 'unknown',
-            invocationId: id,
-            runId: RunId(request.runId),
-            phaseId: PhaseName(request.phaseId),
-            profile: request.profile,
-            provider: effectiveProvider,
-            model: effectiveModel,
-            recordedAt: endedAt,
-          });
         }
-      } catch {
-        // Non-critical: usage persistence failure should not prevent fallback
+      } else {
+        if (this.opts.eventBus) {
+          try {
+            const event: OrchestratorEvent = {
+              runId: request.runId,
+              level: 'warn',
+              type: 'agent.usage.unknown',
+              message: `Usage data unavailable for invocation ${id}`,
+              timestamp: endedAt.toISOString(),
+              metadata: {
+                runtime: profile.runtime,
+                invocationId: id,
+                phase: request.phaseId,
+                phaseId: request.phaseId,
+                profile: request.profile,
+                provider: effectiveProvider,
+                model: effectiveModel,
+                stdoutPath: result.stdoutPath,
+                diagnosticSource: result.stdoutPath,
+              },
+            };
+            this.opts.eventBus.publish(request.runId, event);
+          } catch {
+            // Warning failure containment
+          }
+        }
       }
     }
 
