@@ -159,7 +159,7 @@ module.exports = {
   options: {
     doNotFollow: { path: 'node_modules' },
     exclude: {
-      path: '(^|/)(node_modules|dist|coverage|\\.next|\\.ai-runs|\\.ai-worktrees|\\.ai-tmp|ai|\\.claude|\\.context|\\.review-context|\\.antigravitycli|cache|test-results|changes|review-reports)/',
+      path: '(^|/)(node_modules|dist|coverage|\\.next|\\.ai-runs|\\.ai-worktrees|\\.ai-tmp|ai|\\.claude|\\.context|\\.review-context|\\.antigravitycli|cache|test-results|changes|review-reports)/|\\.timestamp-\\d+-[a-z0-9]+\\.mjs$',
     },
     tsPreCompilationDeps: true,
     tsConfig: { fileName: 'tsconfig.base.json' },
