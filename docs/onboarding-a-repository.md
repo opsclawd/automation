@@ -33,47 +33,40 @@ Before the `implement` phase, the orchestrator prepares each worktree with a fix
 
 `--frozen-lockfile` fails if the lockfile disagrees with any `package.json`, so an uncommitted or stale lockfile breaks every run at setup, before an agent is invoked. The build step uses `--if-present`, so a repository with no `build` script is fine at this stage — but see the next section, because validation is stricter.
 
-### 3. Validation commands concatenate across config layers — they do not replace
+### 3. Target validation commands replace inherited defaults (or append with `additionalCommands`)
 
-This is the trap most likely to cost a run.
+Configuration is layered: automation's `.ai-orchestrator.json`, automation's `.ai-orchestrator.local.json`, then the target's committed and local files.
 
-Configuration is layered: automation's `.ai-orchestrator.json`, automation's `.ai-orchestrator.local.json`, then the target's committed and local files. For most keys a later layer overrides an earlier one. For `validation.commands` it does not — `packages/shared/src/config/loader.ts` concatenates:
+For `validation.commands`, target-layer configuration follows **target-ownership semantics**:
 
-```ts
-if (Array.isArray(base) && Array.isArray(override)) {
-  if (key === 'commands') {
-    return [...base, ...override];
-  }
-```
+- When a target repository specifies `validation.commands` in its `.ai-orchestrator.json` (or `.ai-orchestrator.local.json`), it **replaces** all inherited commands from the automation repository rather than concatenating. This allows target repositories to define only the validation gates applicable to their codebase (for example, a TypeScript-only target will not inherit automation-specific Bash test suites).
+- When a target repository wants to inherit automation defaults and append extra gates, it uses `validation.additionalCommands` to express the additive case explicitly.
+- Exact duplicate command strings are deduplicated stably across layers in first-surviving order.
+- Target command replacement also clears inherited `validation.tiers` unless the target supplies its own `tiers`. Target-declared tiers replace inherited tiers as a unit and are normalized against the effective command set (dropping any commands absent from the effective list, duplicate tier entries, and empty tiers).
 
-A target repository can therefore **add** validation commands but can never **remove** an inherited one. Declaring a smaller set does not narrow anything; it appends, and any command it repeats then runs twice.
-
-The practical consequence: **your repository must be able to satisfy every command in automation's default set**, currently
-
-```
-pnpm build   pnpm lint   pnpm typecheck   pnpm test   pnpm test:bash   pnpm boundaries
-```
-
-A missing script exits `254` (`ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`), and a repository with no `package.json` at all exits `1` (`ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`). Either way `validate` fails after the implementation has already been committed.
-
-`pnpm test:bash` is the usual casualty — it exists because this repository has a Bash suite, and a TypeScript-only target has no reason to. Until that is resolved, a target must provide the script even if it does nothing:
-
-```json
-"test:bash": "node -e \"console.log('no bash test suite in this repo; TypeScript monorepo')\""
-```
-
-That is a deliberately vacuous gate and should be treated as a temporary accommodation, not a pattern to copy elsewhere. Tracked in [#887](https://github.com/opsclawd/automation/issues/887); revisit this section when it lands.
-
-Because the lists concatenate, a target's own config should declare **only what automation lacks**:
+**Target-owned validation example (common case — replaces inherited defaults):**
 
 ```json
 {
   "validation": {
-    "commands": ["pnpm format"],
+    "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test"],
     "timeout": 600
   }
 }
 ```
+
+**Additive validation example (appends to inherited defaults):**
+
+```json
+{
+  "validation": {
+    "additionalCommands": ["pnpm format"],
+    "timeout": 600
+  }
+}
+```
+
+Every command in the effective list must exit `0`. A missing script exits `254` (`ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`), and a repository with no `package.json` at all exits `1` (`ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`). Either way `validate` fails after implementation has already been committed.
 
 ### 4. Verify the effective command list, do not infer it
 
@@ -160,9 +153,10 @@ cd /tmp/preflight
 pnpm install --frozen-lockfile        # must finish within 120s
 pnpm -r run --if-present build
 
-# every command from the effective list, each must exit 0
-for c in build lint typecheck test test:bash boundaries format; do
-  pnpm "$c" >/dev/null 2>&1; echo "pnpm $c -> exit=$?"
+# every command from the target's effective list, each must exit 0
+# (replace with the exact commands output by loadLayeredConfig above)
+for cmd in "pnpm build" "pnpm lint" "pnpm typecheck" "pnpm test"; do
+  $cmd >/dev/null 2>&1; echo "$cmd -> exit=$?"
 done
 
 cd /path/to/target
@@ -184,6 +178,6 @@ git -C /path/to/target status --porcelain                # empty
 - [ ] The six `ai:*` labels exist in the GitHub repository
 - [ ] Lockfile committed; `pnpm install --frozen-lockfile` succeeds in a clean worktree within 120s
 - [ ] Effective validation list verified with `loadLayeredConfig` and `targetRoot`; target layer `present: true`
-- [ ] Every command in the effective list exits 0 in a clean worktree
+- [ ] Every command in the effective target-owned list exits 0 in a clean worktree
 - [ ] Each gate proven to fail on a real violation, not merely to pass
 - [ ] For a greenfield repository: gates seeded by hand, and the bootstrap issue amended to say so

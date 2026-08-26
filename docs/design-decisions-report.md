@@ -146,6 +146,7 @@ The M1/M2 config covers validation, phase skip-list, and timeouts. Starting in M
 {
   "validation": {
     "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test"],
+    "additionalCommands": ["pnpm format"],
     "timeout": 300
   },
   "phases": {
@@ -192,6 +193,14 @@ The M1/M2 config covers validation, phase skip-list, and timeouts. Starting in M
 ```
 
 The `agent` section is the source of truth for runtime/model routing per Q27 and PRD §15.7. M1/M2 configs without an `agent` section are valid until M3 lands; M3 onward requires it.
+
+**Validation policy and layering semantics:**
+
+- `validation.commands` is authoritative: every command in the resolved effective list must execute and exit 0.
+- Target layers (`target/.ai-orchestrator.json` or `target/.ai-orchestrator.local.json`) own their gates: declaring `validation.commands` in a target layer completely replaces inherited commands rather than concatenating.
+- `validation.additionalCommands` provides an explicit directive when a target or local layer wishes to append commands to the inherited set.
+- Resolved commands are stably deduplicated in first-surviving order across both replacement and additions.
+- `validation.tiers` schedules execution of effective commands; tiers cannot introduce commands outside the effective set. Target command replacement clears inherited tiers unless the target provides its own `tiers`. Declared target tiers replace inherited tiers as a unit and are filtered/deduplicated against the effective command list.
 
 ## Q27 — Agent model/runtime selection
 
@@ -266,7 +275,7 @@ Confirmed. See Q26 for the full shape including the M3+ `agent` section (and PRD
 "loop iterations". Concretely:
 
 - The loop runs up to `maxIterations` review→fix→re-review cycles.
-- If the *last* cycle ended with `outcome: 'fixed'` (a fix commit was
+- If the _last_ cycle ended with `outcome: 'fixed'` (a fix commit was
   produced), the loop grants one trailing re-review to verify the fix.
   The trailing re-review does NOT count against `maxIterations`.
 - The escape hatch `phases.reviewFix.endOnReview: false` restores

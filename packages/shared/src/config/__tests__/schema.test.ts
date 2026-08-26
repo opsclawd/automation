@@ -196,3 +196,59 @@ describe('validation narrowByChangedFiles', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('validation additionalCommands', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: {
+      skip: [],
+      reviewFix: { maxIterations: 5 },
+      implement: { maxIterations: 1 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
+
+  it('accepts non-empty validation.additionalCommands entries', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      validation: {
+        ...baseConfig.validation,
+        additionalCommands: ['pnpm lint', 'pnpm build'],
+      },
+    });
+    expect(parsed.validation.additionalCommands).toEqual(['pnpm lint', 'pnpm build']);
+  });
+
+  it('accepts an empty validation.additionalCommands list', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      validation: {
+        ...baseConfig.validation,
+        additionalCommands: [],
+      },
+    });
+    expect(parsed.validation.additionalCommands).toEqual([]);
+  });
+
+  it('rejects blank validation.additionalCommands entries', () => {
+    const result = orchestratorConfigSchema.safeParse({
+      ...baseConfig,
+      validation: {
+        ...baseConfig.validation,
+        additionalCommands: ['   '],
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('continues to reject an empty validation.commands list', () => {
+    const result = orchestratorConfigSchema.safeParse({
+      ...baseConfig,
+      validation: {
+        ...baseConfig.validation,
+        commands: [],
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+});

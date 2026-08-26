@@ -93,32 +93,229 @@ describe('loadLayeredConfig', () => {
     expect(result.sources[1].present).toBe(true);
   });
 
-  it('applies target base after automation local (target overrides same key)', () => {
+  it('target commands replace inherited commands with a smaller deduplicated set', () => {
     const automationRoot = makeRepo({
-      '.ai-orchestrator.json': validConfig({ validation: { commands: ['a'] } }),
-      '.ai-orchestrator.local.json': JSON.stringify({ validation: { commands: ['b'] } }),
+      '.ai-orchestrator.json': validConfig({
+        validation: {
+          commands: [
+            'pnpm build',
+            'pnpm typecheck',
+            'pnpm lint',
+            'pnpm test',
+            'pnpm test:bash',
+            'pnpm boundaries',
+          ],
+        },
+      }),
     });
     const targetRoot = makeRepo({
-      '.ai-orchestrator.json': JSON.stringify({ validation: { commands: ['t'] } }),
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: {
+          commands: ['pnpm typecheck', 'pnpm lint', 'pnpm test', 'pnpm test', 'pnpm build'],
+        },
+      }),
     });
 
     const result = loadLayeredConfig({ automationRoot, targetRoot });
 
-    expect(result.config.validation.commands).toEqual(['a', 'b', 't']);
+    expect(result.config.validation.commands).toEqual([
+      'pnpm typecheck',
+      'pnpm lint',
+      'pnpm test',
+      'pnpm build',
+    ]);
+    expect(result.sources[2].present).toBe(true);
   });
 
-  it('applies target local after target base', () => {
+  it('target additionalCommands append without duplicating inherited commands', () => {
     const automationRoot = makeRepo({
-      '.ai-orchestrator.json': validConfig({ validation: { commands: ['a'] } }),
+      '.ai-orchestrator.json': validConfig({
+        validation: {
+          commands: ['pnpm build', 'pnpm test', 'pnpm lint'],
+        },
+      }),
     });
     const targetRoot = makeRepo({
-      '.ai-orchestrator.json': JSON.stringify({ validation: { commands: ['t-base'] } }),
-      '.ai-orchestrator.local.json': JSON.stringify({ validation: { commands: ['t-local'] } }),
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: {
+          additionalCommands: ['pnpm test', 'pnpm format'],
+        },
+      }),
     });
 
     const result = loadLayeredConfig({ automationRoot, targetRoot });
 
-    expect(result.config.validation.commands).toEqual(['a', 't-base', 't-local']);
+    expect(result.config.validation.commands).toEqual([
+      'pnpm build',
+      'pnpm test',
+      'pnpm lint',
+      'pnpm format',
+    ]);
+  });
+
+  it('deduplicates additions across layers in first-surviving order', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: { commands: ['a', 'b'] },
+      }),
+      '.ai-orchestrator.local.json': JSON.stringify({
+        validation: { additionalCommands: ['c', 'b', 'd'] },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: { additionalCommands: ['e', 'c', 'f'] },
+      }),
+      '.ai-orchestrator.local.json': JSON.stringify({
+        validation: { additionalCommands: ['g', 'd', 'e', 'h'] },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.commands).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  });
+
+  it('target local commands replace target base commands', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: { commands: ['auto-1', 'auto-2'] },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: { commands: ['t-base-1', 't-base-2'] },
+      }),
+      '.ai-orchestrator.local.json': JSON.stringify({
+        validation: { commands: ['t-local-1', 't-local-2'] },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.commands).toEqual(['t-local-1', 't-local-2']);
+  });
+
+  it('a target without validation command directives inherits automation commands', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: { commands: ['pnpm build', 'pnpm test'] },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: { timeout: 600 },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.commands).toEqual(['pnpm build', 'pnpm test']);
+    expect(result.config.validation.timeout).toBe(600);
+  });
+
+  it('target command replacement clears inherited tiers', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: {
+          commands: ['pnpm build', 'pnpm test', 'pnpm lint'],
+          tiers: [['pnpm build'], ['pnpm test', 'pnpm lint']],
+        },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: {
+          commands: ['pnpm test', 'pnpm lint'],
+        },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.commands).toEqual(['pnpm test', 'pnpm lint']);
+    expect(result.config.validation.tiers).toBeUndefined();
+    expect(
+      (result.rawMergedJson as { validation: { tiers?: unknown } }).validation.tiers,
+    ).toBeUndefined();
+  });
+
+  it('target tiers replace inherited tiers and normalize against effective commands', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: {
+          commands: ['a', 'b', 'c', 'd'],
+          tiers: [['a'], ['b', 'c']],
+        },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: {
+          commands: ['a', 'c', 'e'],
+          tiers: [['a', 'x'], ['c', 'a'], ['y'], ['e']],
+        },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.commands).toEqual(['a', 'c', 'e']);
+    expect(result.config.validation.tiers).toEqual([['a'], ['c'], ['e']]);
+  });
+
+  it('additionalCommands-only targets retain inherited tiers', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: {
+          commands: ['a', 'b'],
+          tiers: [['a'], ['b']],
+        },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: {
+          additionalCommands: ['c'],
+        },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.commands).toEqual(['a', 'b', 'c']);
+    expect(result.config.validation.tiers).toEqual([['a'], ['b']]);
+  });
+
+  it('rawMergedJson and fingerprint represent the resolved executable policy', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: { commands: ['pnpm build', 'pnpm test'] },
+      }),
+    });
+    const targetRoot1 = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: { commands: ['pnpm test'] },
+      }),
+    });
+    const targetRoot2 = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: { commands: ['pnpm build'] },
+      }),
+    });
+
+    const result1 = loadLayeredConfig({ automationRoot, targetRoot: targetRoot1 });
+    const result2 = loadLayeredConfig({ automationRoot, targetRoot: targetRoot2 });
+
+    expect(result1.fingerprint).not.toEqual(result2.fingerprint);
+    expect(
+      (result1.rawMergedJson as { validation: { commands: string[] } }).validation.commands,
+    ).toEqual(['pnpm test']);
+    expect(result1.config.validation.commands).toEqual(['pnpm test']);
+    expect(
+      (result2.rawMergedJson as { validation: { commands: string[] } }).validation.commands,
+    ).toEqual(['pnpm build']);
+    expect(result2.config.validation.commands).toEqual(['pnpm build']);
   });
 
   it('silently skips absent target layers', () => {
