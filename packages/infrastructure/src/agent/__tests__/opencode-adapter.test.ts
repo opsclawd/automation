@@ -11,9 +11,15 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
+import Database from 'better-sqlite3';
+import type { Database as DatabaseType } from 'better-sqlite3';
 import { AgentProfileName } from '@ai-sdlc/domain';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
-import { OpenCodeAgentAdapter, parseSessionLogUsage } from '../opencode-adapter.js';
+import {
+  OpenCodeAgentAdapter,
+  parseSessionLogUsage,
+  queryOpenCodeDbUsage,
+} from '../opencode-adapter.js';
 
 function makeWorktree(): string {
   const dir = mkdtempSync(join(tmpdir(), 'opencode-test-'));
@@ -1829,5 +1835,222 @@ describe('OpenCodeAgentAdapter usage capture', () => {
       clearTimeout(timer);
       await injectionPromise;
     }
+  }, 15000);
+});
+
+describe('queryOpenCodeDbUsage', () => {
+  function makeOpenCodeDb(dbPath: string): DatabaseType {
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE project (id text PRIMARY KEY);
+      CREATE TABLE session (
+        id text PRIMARY KEY,
+        project_id text NOT NULL,
+        slug text NOT NULL,
+        directory text NOT NULL,
+        title text NOT NULL,
+        version text NOT NULL,
+        time_created integer NOT NULL,
+        time_updated integer NOT NULL,
+        cost real DEFAULT 0 NOT NULL,
+        tokens_input integer DEFAULT 0 NOT NULL,
+        tokens_output integer DEFAULT 0 NOT NULL,
+        tokens_reasoning integer DEFAULT 0 NOT NULL,
+        tokens_cache_read integer DEFAULT 0 NOT NULL,
+        tokens_cache_write integer DEFAULT 0 NOT NULL
+      );
+      INSERT INTO project (id) VALUES ('proj-1');
+    `);
+    return db;
+  }
+
+  function insertSession(
+    db: DatabaseType,
+    row: {
+      id: string;
+      directory: string;
+      timeCreated: number;
+      tokensInput?: number;
+      tokensOutput?: number;
+      tokensReasoning?: number;
+      tokensCacheRead?: number;
+    },
+  ): void {
+    db.prepare(
+      `INSERT INTO session (
+        id, project_id, slug, directory, title, version, time_created, time_updated,
+        tokens_input, tokens_output, tokens_reasoning, tokens_cache_read
+      ) VALUES (@id, 'proj-1', @id, @directory, 't', 'v1', @timeCreated, @timeCreated,
+        @tokensInput, @tokensOutput, @tokensReasoning, @tokensCacheRead)`,
+    ).run({
+      id: row.id,
+      directory: row.directory,
+      timeCreated: row.timeCreated,
+      tokensInput: row.tokensInput ?? 0,
+      tokensOutput: row.tokensOutput ?? 0,
+      tokensReasoning: row.tokensReasoning ?? 0,
+      tokensCacheRead: row.tokensCacheRead ?? 0,
+    });
+  }
+
+  it('returns usage from a matching, populated session row', () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'opencode-db-'));
+    const dbPath = join(dbDir, 'opencode.db');
+    const db = makeOpenCodeDb(dbPath);
+    const start = 1_700_000_000_000;
+    insertSession(db, {
+      id: 'ses-1',
+      directory: '/wt/issue-1',
+      timeCreated: start + 2_300,
+      tokensInput: 30120,
+      tokensOutput: 4563,
+      tokensReasoning: 12,
+      tokensCacheRead: 1_114_932,
+    });
+    db.close();
+
+    const usage = queryOpenCodeDbUsage(dbPath, '/wt/issue-1', start);
+    expect(usage).toEqual({
+      inputTokens: 30120,
+      outputTokens: 4563,
+      reasoningTokens: 12,
+      cachedTokens: 1_114_932,
+    });
+  });
+
+  it('picks the session closest to start when multiple sessions share a directory', () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'opencode-db-'));
+    const dbPath = join(dbDir, 'opencode.db');
+    const db = makeOpenCodeDb(dbPath);
+    const start = 1_700_000_000_000;
+    // An earlier, unrelated invocation in the same worktree
+    insertSession(db, {
+      id: 'ses-prior',
+      directory: '/wt/issue-1',
+      timeCreated: start - 4_000,
+      tokensInput: 999,
+      tokensOutput: 999,
+    });
+    // This invocation's own session
+    insertSession(db, {
+      id: 'ses-this',
+      directory: '/wt/issue-1',
+      timeCreated: start + 1_500,
+      tokensInput: 500,
+      tokensOutput: 200,
+    });
+    db.close();
+
+    const usage = queryOpenCodeDbUsage(dbPath, '/wt/issue-1', start);
+    expect(usage).toEqual({ inputTokens: 500, outputTokens: 200 });
+  });
+
+  it('returns undefined when no session matches the directory', () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'opencode-db-'));
+    const dbPath = join(dbDir, 'opencode.db');
+    const db = makeOpenCodeDb(dbPath);
+    insertSession(db, {
+      id: 'ses-1',
+      directory: '/wt/other-issue',
+      timeCreated: 1_700_000_002_000,
+      tokensInput: 500,
+      tokensOutput: 200,
+    });
+    db.close();
+
+    expect(queryOpenCodeDbUsage(dbPath, '/wt/issue-1', 1_700_000_000_000)).toBeUndefined();
+  });
+
+  it('returns undefined when the matching session is outside the correlation window', () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'opencode-db-'));
+    const dbPath = join(dbDir, 'opencode.db');
+    const db = makeOpenCodeDb(dbPath);
+    const start = 1_700_000_000_000;
+    insertSession(db, {
+      id: 'ses-far',
+      directory: '/wt/issue-1',
+      timeCreated: start + 20 * 60_000, // 20 minutes later — outside the window
+      tokensInput: 500,
+      tokensOutput: 200,
+    });
+    db.close();
+
+    expect(queryOpenCodeDbUsage(dbPath, '/wt/issue-1', start)).toBeUndefined();
+  });
+
+  it('returns undefined for an all-zero session rather than reporting a fabricated measured usage', () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'opencode-db-'));
+    const dbPath = join(dbDir, 'opencode.db');
+    const db = makeOpenCodeDb(dbPath);
+    const start = 1_700_000_000_000;
+    insertSession(db, { id: 'ses-zero', directory: '/wt/issue-1', timeCreated: start + 100 });
+    db.close();
+
+    expect(queryOpenCodeDbUsage(dbPath, '/wt/issue-1', start)).toBeUndefined();
+  });
+
+  it('returns undefined when the database file does not exist', () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'opencode-db-'));
+    expect(
+      queryOpenCodeDbUsage(join(dbDir, 'nonexistent.db'), '/wt/issue-1', 1_700_000_000_000),
+    ).toBeUndefined();
+  });
+});
+
+describe('OpenCodeAgentAdapter usage capture (db priority)', () => {
+  it('prefers opencode.db usage over the session-log fallback when both are present', async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'opencode-db-'));
+    const dbPath = join(dbDir, 'opencode.db');
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'session-log-'));
+    const artifactsDir = mkdtempSync(join(tmpdir(), 'artifacts-'));
+    const wd = makeWorktree();
+    writeFileSync(join(wd, 'prompt.md'), 'test prompt');
+
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE project (id text PRIMARY KEY);
+      CREATE TABLE session (
+        id text PRIMARY KEY, project_id text NOT NULL, slug text NOT NULL,
+        directory text NOT NULL, title text NOT NULL, version text NOT NULL,
+        time_created integer NOT NULL, time_updated integer NOT NULL,
+        cost real DEFAULT 0 NOT NULL,
+        tokens_input integer DEFAULT 0 NOT NULL, tokens_output integer DEFAULT 0 NOT NULL,
+        tokens_reasoning integer DEFAULT 0 NOT NULL, tokens_cache_read integer DEFAULT 0 NOT NULL,
+        tokens_cache_write integer DEFAULT 0 NOT NULL
+      );
+      INSERT INTO project (id) VALUES ('proj-1');
+    `);
+    db.prepare(
+      `INSERT INTO session (id, project_id, slug, directory, title, version, time_created, time_updated, tokens_input, tokens_output)
+       VALUES ('ses-1', 'proj-1', 'ses-1', ?, 't', 'v1', ?, ?, 9001, 4002)`,
+    ).run(wd, Date.now(), Date.now());
+    db.close();
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-session-log-usage.sh'),
+      artifactsDir,
+      logDir: sessionLogDir,
+      dbPath,
+      quotaPollMs: 100,
+      timeoutMsDefault: 120_000,
+      repoRoot: wd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('test'),
+      promptPath: join(wd, 'prompt.md'),
+      expectedArtifacts: [],
+      cwd: wd,
+      runId: 'test-run-1',
+      repoId: 'test-repo',
+      phaseId: 'plan',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd: wd }).toString().trim(),
+      provider: 'deepseek',
+      model: 'deepseek-pro',
+    });
+
+    // fake-opencode-session-log-usage.sh's log fixture reports inputTokens: 1334 —
+    // if this were selected instead of the DB row, the assertion below would fail.
+    expect(result.usage).toEqual({ inputTokens: 9001, outputTokens: 4002 });
+    expect(result.usageSourcePaths).toEqual([dbPath]);
   }, 15000);
 });

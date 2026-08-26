@@ -1095,4 +1095,82 @@ exit 0
       rmSync(logDir, { recursive: true, force: true });
     }
   });
+
+  it('passes --output-format json so usage data is available in the response', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      expect(args).toContain('--output-format');
+      expect(args).toContain('json');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('AntigravityAgentAdapter usage capture (--output-format json)', () => {
+  it('extracts usage from the {"response","usage"} envelope', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-json-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('success');
+    expect(r.usage).toEqual({
+      inputTokens: 14633,
+      outputTokens: 55,
+      reasoningTokens: 53,
+      cachedTokens: 7,
+    });
+    expect(r.usageSourcePaths).toEqual([r.stdoutPath]);
+  });
+
+  it('degrades gracefully with no usage when stdout is not the JSON envelope', async () => {
+    // Fixtures/mocks (and any pre-upgrade agy binary) emit plain text on
+    // stdout. The adapter must not crash or misattribute usage in that case.
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('success');
+    expect(r.usage).toBeUndefined();
+    expect(r.usageSourcePaths).toBeUndefined();
+  });
+
+  it('corrects the NO_OUTPUT false negative that json mode introduces (empty response, no artifacts, no git changes)', async () => {
+    // runExternalCli's own NO_OUTPUT check tests raw stdout, which is the JSON
+    // envelope and therefore never empty. Without this correction, a
+    // genuinely empty model response would silently pass as success.
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-json-empty-response.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain('no_output');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('NO_OUTPUT');
+  });
+
+  it('does not apply the NO_OUTPUT correction when expectedArtifacts are declared', async () => {
+    const cwd = makeWorktree();
+    writeFileSync(join(cwd, 'result.md'), 'ok');
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-json-empty-response.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd, { expectedArtifacts: ['result.md'] }));
+    expect(r.outcome).toBe('success');
+    expect(r.contractViolations).not.toContain('no_output');
+  });
 });

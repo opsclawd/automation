@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
 import { remediateMissingArtifacts } from './artifact-remediation.js';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
@@ -23,6 +24,73 @@ export interface SessionLogUsage {
   outputTokens: number;
   reasoningTokens?: number;
   cachedTokens?: number;
+}
+
+// opencode's session log never carries per-turn usage (#939): the only `tokens=`
+// lines it emits are a byte-identical zero-valued template written at session
+// *creation*, filtered out by PROVIDER_LOG_SERVICES on purpose. Real, populated
+// usage lives in opencode's own SQLite state store instead — verified against
+// live data (#943): `session.tokens_input`/`tokens_output`/`tokens_reasoning`/
+// `tokens_cache_read` are non-zero and update as the session progresses.
+// parseSessionLogUsage is kept below as a defensive fallback in case opencode's
+// logging behavior changes, but it is not expected to ever match in production.
+interface OpenCodeSessionRow {
+  tokens_input: number;
+  tokens_output: number;
+  tokens_reasoning: number;
+  tokens_cache_read: number;
+}
+
+// Correlation window around the invocation's own start time. opencode creates
+// the session row near the start of the conversation, not the end (verified:
+// ~2.3s lag on a live invocation) — so match against `start`, not `start +
+// durationMs`. The upper bound is generous to tolerate slow-starting sessions
+// and any lag in opencode's own write commit.
+const SESSION_MATCH_BEFORE_START_MS = 5_000;
+const SESSION_MATCH_AFTER_START_MS = 10 * 60_000;
+
+export function queryOpenCodeDbUsage(
+  dbPath: string,
+  cwd: string,
+  startMs: number,
+): SessionLogUsage | undefined {
+  if (!existsSync(dbPath)) return undefined;
+  let db: Database.Database | undefined;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true, timeout: 2000 });
+    const row = db
+      .prepare(
+        `SELECT tokens_input, tokens_output, tokens_reasoning, tokens_cache_read
+         FROM session
+         WHERE directory = ? AND time_created BETWEEN ? AND ?
+         ORDER BY ABS(time_created - ?) ASC
+         LIMIT 1`,
+      )
+      .get(
+        cwd,
+        startMs - SESSION_MATCH_BEFORE_START_MS,
+        startMs + SESSION_MATCH_AFTER_START_MS,
+        startMs,
+      ) as OpenCodeSessionRow | undefined;
+    if (!row) return undefined;
+    // A session with no recorded activity is not the same as "no session found" —
+    // the caller falls back to the log-based path (and ultimately 'unknown') either
+    // way, but this keeps a genuinely-zero session from being reported as a match
+    // when nothing was actually measured.
+    if (row.tokens_input === 0 && row.tokens_output === 0) return undefined;
+    return {
+      inputTokens: row.tokens_input,
+      outputTokens: row.tokens_output,
+      ...(row.tokens_reasoning > 0 ? { reasoningTokens: row.tokens_reasoning } : {}),
+      ...(row.tokens_cache_read > 0 ? { cachedTokens: row.tokens_cache_read } : {}),
+    };
+  } catch {
+    // DB missing, locked, schema drift, or any other read failure: fall back
+    // to the log-based path rather than throwing out of the invocation.
+    return undefined;
+  } finally {
+    db?.close();
+  }
 }
 
 export function parseSessionLogUsage(content: string): SessionLogUsage | undefined {
@@ -73,6 +141,11 @@ export interface OpenCodeAdapterOptions {
   // <repoRoot>/apps/cli/ for artifacts that drifted to the main checkout
   // outside the worktree (cwd). The worktree path is always checked first.
   repoRoot?: string;
+  // Override the path to opencode's own SQLite state store. Defaults to
+  // ${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db, the real location
+  // (#943) — its `session` table carries actual per-session token usage,
+  // unlike the session log. Tests inject a temp path here.
+  dbPath?: string;
 }
 
 export class OpenCodeAgentAdapter implements AgentPort {
@@ -97,6 +170,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     // opencode's auth.json / opencode.db (both live under the data home). See #255.
     const xdgDataHome = process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share');
     const sessionLogDir = this.opts.logDir ?? join(xdgDataHome, 'opencode', 'log');
+    const dbPath = this.opts.dbPath ?? join(xdgDataHome, 'opencode', 'opencode.db');
     mkdirSync(sessionLogDir, { recursive: true });
     // Snapshot pre-existing logs so we only attribute files created by THIS run —
     // the real log dir is shared across all repos/worktrees (the #198 cross-talk source).
@@ -336,10 +410,19 @@ export class OpenCodeAgentAdapter implements AgentPort {
     writeFileSync(stdoutPath, transcript);
     writeFileSync(stderrPath, stderrForLog);
 
-    // Parse token usage from the session log transcripts
-    const usage = postExit?.transcript
-      ? parseSessionLogUsage(OpenCodeAgentAdapter.providerLines(postExit.transcript))
-      : undefined;
+    // Real usage lives in opencode's own SQLite state store (#943), not the
+    // session log (#939: confirmed dead, kept only as a defensive fallback).
+    const dbUsage = queryOpenCodeDbUsage(dbPath, request.cwd, start);
+    const usage =
+      dbUsage ??
+      (postExit?.transcript
+        ? parseSessionLogUsage(OpenCodeAgentAdapter.providerLines(postExit.transcript))
+        : undefined);
+    const usageSourcePaths = dbUsage
+      ? [dbPath]
+      : postExit?.candidatePaths && postExit.candidatePaths.length > 0
+        ? postExit.candidatePaths
+        : undefined;
 
     const ret: AgentInvocationResult = {
       runtime: 'opencode',
@@ -352,9 +435,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       contractViolations,
       outcome,
       ...(usage ? { usage: { ...usage } } : {}),
-      ...(postExit?.candidatePaths && postExit.candidatePaths.length > 0
-        ? { usageSourcePaths: postExit.candidatePaths }
-        : {}),
+      ...(usageSourcePaths ? { usageSourcePaths } : {}),
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
     if (request.stepId) ret.stepId = request.stepId;
