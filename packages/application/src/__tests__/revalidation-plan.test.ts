@@ -86,18 +86,18 @@ describe('Revalidation Scope Planner', () => {
         '@ai-sdlc/cli',
       ]);
       expect(result.commands).toEqual([
-        'pnpm --filter @ai-sdlc/application... build',
+        'pnpm --filter ...@ai-sdlc/application build',
         'pnpm exec eslint packages/application packages/infrastructure apps/api apps/cli --max-warnings=0',
-        'pnpm --filter @ai-sdlc/application... typecheck',
-        'pnpm --filter @ai-sdlc/application... test',
+        'pnpm --filter ...@ai-sdlc/application typecheck',
+        'pnpm --filter ...@ai-sdlc/application test',
         'pnpm boundaries',
       ]);
       expect(result.tiers).toEqual([
-        ['pnpm --filter @ai-sdlc/application... build'],
+        ['pnpm --filter ...@ai-sdlc/application build'],
         [
           'pnpm exec eslint packages/application packages/infrastructure apps/api apps/cli --max-warnings=0',
-          'pnpm --filter @ai-sdlc/application... typecheck',
-          'pnpm --filter @ai-sdlc/application... test',
+          'pnpm --filter ...@ai-sdlc/application typecheck',
+          'pnpm --filter ...@ai-sdlc/application test',
           'pnpm boundaries',
         ],
       ]);
@@ -123,10 +123,10 @@ describe('Revalidation Scope Planner', () => {
         '@ai-sdlc/cli',
       ]);
       expect(infraResult.commands).toEqual([
-        'pnpm --filter @ai-sdlc/infrastructure... build',
+        'pnpm --filter ...@ai-sdlc/infrastructure build',
         'pnpm exec eslint packages/infrastructure apps/api apps/cli --max-warnings=0',
-        'pnpm --filter @ai-sdlc/infrastructure... typecheck',
-        'pnpm --filter @ai-sdlc/infrastructure... test',
+        'pnpm --filter ...@ai-sdlc/infrastructure typecheck',
+        'pnpm --filter ...@ai-sdlc/infrastructure test',
         'pnpm boundaries',
       ]);
     }
@@ -145,10 +145,10 @@ describe('Revalidation Scope Planner', () => {
       expect(apiResult.changedPackage).toBe('@ai-sdlc/api');
       expect(apiResult.narrowedPackages).toEqual(['@ai-sdlc/api', '@ai-sdlc/cli']);
       expect(apiResult.commands).toEqual([
-        'pnpm --filter @ai-sdlc/api... build',
+        'pnpm --filter ...@ai-sdlc/api build',
         'pnpm exec eslint apps/api apps/cli --max-warnings=0',
-        'pnpm --filter @ai-sdlc/api... typecheck',
-        'pnpm --filter @ai-sdlc/api... test',
+        'pnpm --filter ...@ai-sdlc/api typecheck',
+        'pnpm --filter ...@ai-sdlc/api test',
         'pnpm boundaries',
       ]);
     }
@@ -540,19 +540,19 @@ describe('Revalidation Scope Planner', () => {
     expect(resultWithBats.mode).toBe('narrow');
     if (resultWithBats.mode === 'narrow') {
       expect(resultWithBats.commands).toEqual([
-        'pnpm --filter @ai-sdlc/application... build',
+        'pnpm --filter ...@ai-sdlc/application build',
         'pnpm exec eslint packages/application packages/infrastructure apps/api apps/cli --max-warnings=0',
-        'pnpm --filter @ai-sdlc/application... typecheck',
-        'pnpm --filter @ai-sdlc/application... test',
+        'pnpm --filter ...@ai-sdlc/application typecheck',
+        'pnpm --filter ...@ai-sdlc/application test',
         'pnpm test:bash',
         'pnpm boundaries',
       ]);
       expect(resultWithBats.tiers).toEqual([
-        ['pnpm --filter @ai-sdlc/application... build'],
+        ['pnpm --filter ...@ai-sdlc/application build'],
         [
           'pnpm exec eslint packages/application packages/infrastructure apps/api apps/cli --max-warnings=0',
-          'pnpm --filter @ai-sdlc/application... typecheck',
-          'pnpm --filter @ai-sdlc/application... test',
+          'pnpm --filter ...@ai-sdlc/application typecheck',
+          'pnpm --filter ...@ai-sdlc/application test',
           'pnpm test:bash',
           'pnpm boundaries',
         ],
@@ -598,7 +598,7 @@ describe('Revalidation Scope Planner', () => {
     expect(nonLeafArrayResult.mode).toBe('narrow');
     if (nonLeafArrayResult.mode === 'narrow') {
       expect(nonLeafArrayResult.commands).toEqual([
-        ['pnpm', '--filter', '@ai-sdlc/application...', 'build'],
+        ['pnpm', '--filter', '...@ai-sdlc/application', 'build'],
         [
           'pnpm',
           'exec',
@@ -609,8 +609,8 @@ describe('Revalidation Scope Planner', () => {
           'apps/cli',
           '--max-warnings=0',
         ],
-        ['pnpm', '--filter', '@ai-sdlc/application...', 'typecheck'],
-        ['pnpm', '--filter', '@ai-sdlc/application...', 'test'],
+        ['pnpm', '--filter', '...@ai-sdlc/application', 'typecheck'],
+        ['pnpm', '--filter', '...@ai-sdlc/application', 'test'],
         ['pnpm', 'boundaries'],
       ]);
     }

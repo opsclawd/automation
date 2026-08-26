@@ -258,24 +258,24 @@ describe('Compose Narrow Revalidation Integration', () => {
 
     // Narrowed commands
     expect(input.commands).toContain('pnpm boundaries');
-    expect(input.commands).toContain('pnpm --filter @ai-sdlc/application... build');
-    expect(input.commands).toContain('pnpm --filter @ai-sdlc/application... typecheck');
+    expect(input.commands).toContain('pnpm --filter ...@ai-sdlc/application build');
+    expect(input.commands).toContain('pnpm --filter ...@ai-sdlc/application typecheck');
     expect(input.commands).toContain(
       'pnpm exec eslint packages/application packages/infrastructure apps/api apps/cli --max-warnings=0',
     );
-    expect(input.commands).toContain('pnpm --filter @ai-sdlc/application... test');
+    expect(input.commands).toContain('pnpm --filter ...@ai-sdlc/application test');
     expect(input.commands).not.toContain('pnpm test:bash');
 
     // Matching rewritten tiers
     expect(input.tiers).toEqual([
       ['pnpm boundaries'],
       [
-        'pnpm --filter @ai-sdlc/application... build',
-        'pnpm --filter @ai-sdlc/application... typecheck',
+        'pnpm --filter ...@ai-sdlc/application build',
+        'pnpm --filter ...@ai-sdlc/application typecheck',
       ],
       [
         'pnpm exec eslint packages/application packages/infrastructure apps/api apps/cli --max-warnings=0',
-        'pnpm --filter @ai-sdlc/application... test',
+        'pnpm --filter ...@ai-sdlc/application test',
       ],
     ]);
   });
@@ -285,13 +285,13 @@ describe('Compose Narrow Revalidation Integration', () => {
       {
         file: 'packages/infrastructure/src/index.ts',
         expectedScope: ['@ai-sdlc/infrastructure', '@ai-sdlc/api', '@ai-sdlc/cli'],
-        filter: '@ai-sdlc/infrastructure...',
+        filter: '...@ai-sdlc/infrastructure',
         lintDirs: 'packages/infrastructure apps/api apps/cli',
       },
       {
         file: 'apps/api/src/compose.ts',
         expectedScope: ['@ai-sdlc/api', '@ai-sdlc/cli'],
-        filter: '@ai-sdlc/api...',
+        filter: '...@ai-sdlc/api',
         lintDirs: 'apps/api apps/cli',
       },
       {
@@ -567,10 +567,10 @@ describe('Compose Narrow Revalidation Integration', () => {
     // Global narrowed commands first, then task commands
     expect(input.commands).toEqual([
       'pnpm boundaries',
-      'pnpm --filter @ai-sdlc/api... build',
-      'pnpm --filter @ai-sdlc/api... typecheck',
+      'pnpm --filter ...@ai-sdlc/api build',
+      'pnpm --filter ...@ai-sdlc/api typecheck',
       'pnpm exec eslint apps/api apps/cli --max-warnings=0',
-      'pnpm --filter @ai-sdlc/api... test',
+      'pnpm --filter ...@ai-sdlc/api test',
       '! pnpm vitest run apps/api/src/__tests__/invert.test.ts',
       "pnpm vitest run 'apps/api/src/__tests__/task-new.test.ts' --passWithNoTests=false",
     ]);
@@ -611,6 +611,97 @@ describe('Compose Narrow Revalidation Integration', () => {
       'pnpm test:bash',
     ]);
     expect(validateHandler.opts.tiers).toEqual([
+      ['pnpm boundaries'],
+      ['pnpm -r build', 'pnpm -r typecheck'],
+      ['pnpm lint', 'pnpm -r test', 'pnpm test:bash'],
+    ]);
+  });
+
+  it('disabling validation.narrowByChangedFiles forces full validation plan', async () => {
+    const customConfig = {
+      validation: {
+        commands: [
+          'pnpm boundaries',
+          'pnpm -r build',
+          'pnpm -r typecheck',
+          'pnpm lint',
+          'pnpm -r test',
+          'pnpm test:bash',
+        ],
+        tiers: [
+          ['pnpm boundaries'],
+          ['pnpm -r build', 'pnpm -r typecheck'],
+          ['pnpm lint', 'pnpm -r test', 'pnpm test:bash'],
+        ],
+        timeout: 60,
+        narrowByChangedFiles: false,
+      },
+      phases: {
+        skip: [],
+        reviewFix: { maxIterations: 3 },
+        implement: { maxIterations: 3 },
+      },
+      timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      agent: {
+        defaultProfile: 'test',
+        profiles: {
+          test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+        },
+        phaseProfiles: {
+          'whole-pr-review': { profile: 'test' },
+          'fix-review': { profile: 'test' },
+        },
+      },
+    };
+    writeFileSync(join(rootDir, '.ai-orchestrator.json'), JSON.stringify(customConfig, null, 2));
+
+    const recordingValidation = new RecordingValidationAdapter();
+    const container = composeRoot({
+      repoRoot: rootDir,
+      scriptPath,
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      validationPort: recordingValidation,
+    });
+
+    const runId = 'test-run-narrow-disabled';
+    createTestRun(container, runId);
+
+    vi.spyOn(container.git, 'headCommitSha').mockResolvedValue('head-commit-sha');
+    vi.spyOn(container.git, 'changedFiles').mockResolvedValue([
+      'packages/application/src/revalidation-plan.ts',
+    ]);
+    vi.spyOn(container.git, 'status').mockResolvedValue('');
+
+    const ctx: StepLoopContext = {
+      loopId: 'loop-narrow-disabled',
+      runId: RunId(runId),
+      phaseId: PhaseName('implement'),
+      repoId: 'owner/repo',
+      cwd: rootDir,
+      stepIndex: 1,
+      stepTitle: 'Task 1',
+      iterationIndex: 2,
+      manifest: mockManifest,
+      planMd: '# Plan',
+      initialPreStepHead: 'baseline-sha',
+    };
+
+    const revalResult = await container.implementStepLoop!.deps.runRevalidation!(ctx);
+    expect(revalResult.passed).toBe(true);
+
+    expect(recordingValidation.inputs).toHaveLength(1);
+    const input = recordingValidation.inputs[0];
+
+    expect(input.validationScope).toEqual({ validationMode: 'full' });
+    expect(input.commands).toEqual([
+      'pnpm boundaries',
+      'pnpm -r build',
+      'pnpm -r typecheck',
+      'pnpm lint',
+      'pnpm -r test',
+      'pnpm test:bash',
+    ]);
+    expect(input.tiers).toEqual([
       ['pnpm boundaries'],
       ['pnpm -r build', 'pnpm -r typecheck'],
       ['pnpm lint', 'pnpm -r test', 'pnpm test:bash'],

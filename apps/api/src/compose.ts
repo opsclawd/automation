@@ -5146,7 +5146,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
 
           let plan: RevalidationPlan;
-          if (gitErrorOccurred) {
+          if (gitErrorOccurred || config.validation.narrowByChangedFiles === false) {
             plan = {
               mode: 'full',
               reason: 'missing_baseline',
