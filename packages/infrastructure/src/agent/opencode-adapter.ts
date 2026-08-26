@@ -115,6 +115,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       quotaMatch: string | null;
       providerMatch: string | null;
       transcript: string;
+      candidatePaths: string[];
     } | null = null;
     try {
       timeoutSignal =
@@ -351,6 +352,9 @@ export class OpenCodeAgentAdapter implements AgentPort {
       contractViolations,
       outcome,
       ...(usage ? { usage: { ...usage } } : {}),
+      ...(postExit?.candidatePaths && postExit.candidatePaths.length > 0
+        ? { usageSourcePaths: postExit.candidatePaths }
+        : {}),
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
     if (request.stepId) ret.stepId = request.stepId;
@@ -417,12 +421,14 @@ export class OpenCodeAgentAdapter implements AgentPort {
     quotaMatch: string | null;
     providerMatch: string | null;
     transcript: string;
+    candidatePaths: string[];
   } {
     let quotaMatch: string | null = null;
     let providerMatch: string | null = null;
     const transcripts: string[] = [];
+    const candidatePaths = this.candidateLogFiles(sessionLogDir, preexisting, cwd);
 
-    for (const logPath of this.candidateLogFiles(sessionLogDir, preexisting, cwd)) {
+    for (const logPath of candidatePaths) {
       try {
         const raw = readFileSync(logPath, 'utf-8');
         if (!raw) continue;
@@ -442,7 +448,12 @@ export class OpenCodeAgentAdapter implements AgentPort {
       }
     }
 
-    return { quotaMatch, providerMatch, transcript: transcripts.join('\n') };
+    return {
+      quotaMatch,
+      providerMatch,
+      transcript: transcripts.join('\n'),
+      candidatePaths,
+    };
   }
 
   private startWatchdog(

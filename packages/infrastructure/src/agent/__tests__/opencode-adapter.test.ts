@@ -1673,6 +1673,24 @@ describe('parseSessionLogUsage', () => {
     const result = parseSessionLogUsage(content);
     expect(result).toEqual({ inputTokens: 300, outputTokens: 150, cachedTokens: 75 });
   });
+
+  it('continues to ignore transcript prose outside provider and llm services', () => {
+    const content = [
+      'INFO  2026-06-03T12:00:00.000Z service=session session initialized',
+      'INFO  2026-06-03T12:00:01.000Z service=agent Assistant: here is some output tokens={"input":999,"output":888}',
+      'INFO  2026-06-03T12:00:02.000Z service=tool.registry read file content tokens={"input":500,"output":250}',
+      '2026-06-03T12:00:03.000Z arbitrary prose with tokens={"input":100,"output":50}',
+      'INFO  2026-06-03T12:00:04.000Z service=llm tokens={"input":42,"output":12}',
+    ].join('\n');
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 42, outputTokens: 12 });
+
+    const proseOnly = [
+      'INFO  2026-06-03T12:00:01.000Z service=agent tokens={"input":999,"output":888}',
+      'INFO  2026-06-03T12:00:02.000Z service=session session created with 0 tokens',
+    ].join('\n');
+    expect(parseSessionLogUsage(proseOnly)).toBeUndefined();
+  });
 });
 
 describe('OpenCodeAgentAdapter usage capture', () => {
@@ -1707,5 +1725,109 @@ describe('OpenCodeAgentAdapter usage capture', () => {
     expect(result.usage!.cachedTokens).toBe(42);
     expect(result.provider).toBe('deepseek');
     expect(result.model).toBe('deepseek-pro');
+  }, 15000);
+
+  it('returns every selected invocation log path as a usage source', async () => {
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'session-log-'));
+    const artifactsDir = mkdtempSync(join(tmpdir(), 'artifacts-'));
+    const wd = makeWorktree();
+    writeFileSync(join(wd, 'prompt.md'), 'test prompt');
+
+    const log1 = join(sessionLogDir, 'session-1.log');
+    const log2 = join(sessionLogDir, 'session-2.log');
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir,
+      logDir: sessionLogDir,
+      timeoutMsDefault: 1000,
+    });
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const injectionPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        writeFileSync(
+          log1,
+          `INFO 2026-06-03T12:00:00.000Z cwd=${wd}\nINFO 2026-06-03T12:00:01.000Z service=llm tokens={"input":100,"output":50}\n`,
+        );
+        writeFileSync(
+          log2,
+          `INFO 2026-06-03T12:00:00.000Z cwd=${wd}\nINFO 2026-06-03T12:00:02.000Z service=llm tokens={"input":200,"output":75}\n`,
+        );
+        resolve();
+      }, 200);
+    });
+
+    try {
+      const result = await adapter.invoke({
+        profile: AgentProfileName('test'),
+        promptPath: join(wd, 'prompt.md'),
+        expectedArtifacts: [],
+        cwd: wd,
+        runId: 'test-run-1',
+        repoId: 'test-repo',
+        phaseId: 'plan',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd: wd }).toString().trim(),
+        provider: 'deepseek',
+        model: 'deepseek-pro',
+      });
+
+      expect(result.usageSourcePaths).toBeDefined();
+      expect(result.usageSourcePaths).toContain(log1);
+      expect(result.usageSourcePaths).toContain(log2);
+      expect(result.usageSourcePaths).toHaveLength(2);
+      expect(result.usage).toEqual({ inputTokens: 300, outputTokens: 125 });
+    } finally {
+      clearTimeout(timer);
+      await injectionPromise;
+    }
+  }, 15000);
+
+  it('reports no measured usage for session creation zero templates', async () => {
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'session-log-'));
+    const artifactsDir = mkdtempSync(join(tmpdir(), 'artifacts-'));
+    const wd = makeWorktree();
+    writeFileSync(join(wd, 'prompt.md'), 'test prompt');
+
+    const logFile = join(sessionLogDir, 'session-init.log');
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir,
+      logDir: sessionLogDir,
+      timeoutMsDefault: 1000,
+    });
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const injectionPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        writeFileSync(
+          logFile,
+          `INFO 2026-06-03T12:00:00.000Z cwd=${wd} service=session session.created tokens={"input":0,"output":0}\n`,
+        );
+        resolve();
+      }, 200);
+    });
+
+    try {
+      const result = await adapter.invoke({
+        profile: AgentProfileName('test'),
+        promptPath: join(wd, 'prompt.md'),
+        expectedArtifacts: [],
+        cwd: wd,
+        runId: 'test-run-1',
+        repoId: 'test-repo',
+        phaseId: 'plan',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd: wd }).toString().trim(),
+        provider: 'deepseek',
+        model: 'deepseek-pro',
+      });
+
+      expect(result.usage).toBeUndefined();
+      expect(result.usageSourcePaths).toEqual([logFile]);
+    } finally {
+      clearTimeout(timer);
+      await injectionPromise;
+    }
   }, 15000);
 });
