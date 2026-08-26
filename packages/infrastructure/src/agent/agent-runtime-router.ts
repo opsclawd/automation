@@ -431,6 +431,9 @@ export class AgentRuntimeRouter implements AgentPort {
     if (result.endCommitSha) {
       patch.endCommitSha = result.endCommitSha;
     }
+    if (result.usageSourcePaths) {
+      patch.metadata = { usageSourcePaths: result.usageSourcePaths };
+    }
     this.opts.invocationRepository.update(id, patch);
 
     // Persist token usage if the adapter reported it or record unknown usage.
@@ -526,6 +529,7 @@ export class AgentRuntimeRouter implements AgentPort {
                 ? { cachedTokens: result.usage.cachedTokens }
                 : {}),
               durationMs: result.durationMs,
+              ...(result.usageSourcePaths ? { usageSourcePaths: result.usageSourcePaths } : {}),
             },
           };
           this.opts.eventBus.publish(request.runId, event);

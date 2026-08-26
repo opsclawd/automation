@@ -706,6 +706,11 @@ describe('AgentRuntimeRouter', () => {
       stdoutPath: '/tmp/stdout.log',
     });
 
+    const customInv = routerWithCustomSource['opts'].invocationRepository.findById(
+      AgentInvocationId('inv-custom-source'),
+    );
+    expect(customInv?.metadata?.usageSourcePaths).toEqual(['/tmp/custom-event-stream.jsonl']);
+
     events.length = 0;
     const routerWithDefaultSource = new AgentRuntimeRouter({
       agent: cfg(),
@@ -736,6 +741,60 @@ describe('AgentRuntimeRouter', () => {
       diagnosticSource: '/tmp/stdout.log',
       stdoutPath: '/tmp/stdout.log',
     });
+    const fallbackInv = routerWithDefaultSource['opts'].invocationRepository.findById(
+      AgentInvocationId('inv-fallback-source'),
+    );
+    expect(fallbackInv?.metadata?.usageSourcePaths).toEqual([]);
+  });
+
+  it('persists usageSourcePaths to invocation metadata and propagates to agent.usage event when usage is measured', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      publish: (_runId, event) => {
+        events.push(event);
+      },
+    };
+    const invRepo = new FakeAgentInvocationPort();
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 600,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usage: {
+            inputTokens: 120,
+            outputTokens: 45,
+          },
+          usageSourcePaths: ['/tmp/stdout.log.events.jsonl'],
+        }),
+      },
+      invocationRepository: invRepo,
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-measured-with-source',
+    });
+
+    await router.invoke(req());
+
+    const usageEvents = events.filter((e) => e.type === 'agent.usage');
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0].metadata).toMatchObject({
+      inputTokens: 120,
+      outputTokens: 45,
+      usageSourcePaths: ['/tmp/stdout.log.events.jsonl'],
+    });
+
+    const row = invRepo.findById(AgentInvocationId('inv-measured-with-source'));
+    expect(row).toBeDefined();
+    expect(row?.metadata?.usageSourcePaths).toEqual(['/tmp/stdout.log.events.jsonl']);
   });
 
   it('keeps measured zero classified as measured', async () => {
