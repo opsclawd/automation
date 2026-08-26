@@ -209,6 +209,52 @@ describe('ReviewFixLoop net-revert detection', () => {
     expect(result).toMatchObject({ phaseOutcome: 'passed', loopStatus: 'converged' });
   });
 
+  it('preserves convergence when an initially changed file was cleanly renamed (issue #66 repro)', async () => {
+    const harness = makeHarness({
+      initialChangedFiles: [
+        'apps/control-api/src/http/reviewer-identity-default.test.ts',
+        'src/fix.ts',
+      ],
+      finalChangedFiles: [
+        'apps/control-api/src/http/reviewer-identity-defaults.test.ts',
+        'src/fix.ts',
+      ],
+    });
+    harness.git.renamedFilesResults.set('run-start-sha|HEAD', [
+      {
+        oldPath: 'apps/control-api/src/http/reviewer-identity-default.test.ts',
+        newPath: 'apps/control-api/src/http/reviewer-identity-defaults.test.ts',
+      },
+    ]);
+
+    const result = await harness.loop.execute(inputWithBaseline());
+    expect(result).toMatchObject({ phaseOutcome: 'passed', loopStatus: 'converged' });
+  });
+
+  it('escalates when a file is renamed but its new path is not present in current changed files', async () => {
+    const harness = makeHarness({
+      initialChangedFiles: ['src/old-name.ts'],
+      finalChangedFiles: ['src/other.ts'],
+    });
+    // Renamed to src/new-name.ts, but current changed files does NOT contain src/new-name.ts
+    harness.git.renamedFilesResults.set('run-start-sha|HEAD', [
+      { oldPath: 'src/old-name.ts', newPath: 'src/new-name.ts' },
+    ]);
+
+    const result = await harness.loop.execute(inputWithBaseline());
+    expect(result).toMatchObject({
+      phaseOutcome: 'failed',
+      loopStatus: 'failed',
+      needsHumanReview: true,
+    });
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        type: 'review_fix.net_revert_detected',
+        metadata: expect.objectContaining({ revertedFiles: ['src/old-name.ts'] }),
+      }),
+    );
+  });
+
   it('fails closed when the final baseline comparison cannot be completed', async () => {
     const harness = makeHarness({
       initialChangedFiles: ['src/fix.ts'],

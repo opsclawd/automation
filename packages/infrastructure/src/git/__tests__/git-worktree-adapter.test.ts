@@ -816,6 +816,24 @@ describe('status()', () => {
   });
 });
 
+describe('renamedFiles()', () => {
+  it('detects file renames between two commits', async () => {
+    const repo = await makeTempRepo();
+    await mkdir(join(repo, 'src'), { recursive: true });
+    await writeFile(join(repo, 'src', 'old-name.ts'), 'export const x = 42;\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'add old-name']);
+    const midSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await git(repo, ['mv', 'src/old-name.ts', 'src/new-name.ts']);
+    await git(repo, ['commit', '-m', 'rename old-name to new-name']);
+    const finalSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    const renames = await adapter.renamedFiles!(repo, midSha, finalSha);
+    expect(renames).toEqual([{ oldPath: 'src/old-name.ts', newPath: 'src/new-name.ts' }]);
+  });
+});
+
 describe('commit()', () => {
   it('returns current HEAD sha as benign no-op when pre-commit hook refuses an empty commit', async () => {
     const repo = await makeTempRepo();
@@ -852,10 +870,7 @@ describe('commit()', () => {
 
     // Set up a pre-commit hook that exits non-zero due to lint/typecheck error on staged file
     const hookPath = join(repo, '.git', 'hooks', 'pre-commit');
-    await writeFile(
-      hookPath,
-      '#!/bin/sh\necho "ESLint found 1 error in staged files"\nexit 42\n',
-    );
+    await writeFile(hookPath, '#!/bin/sh\necho "ESLint found 1 error in staged files"\nexit 42\n');
     const { chmod } = await import('node:fs/promises');
     await chmod(hookPath, 0o755);
 

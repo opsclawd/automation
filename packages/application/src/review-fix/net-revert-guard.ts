@@ -52,7 +52,27 @@ export async function checkForNetReverts(input: {
       'HEAD',
     );
     const current = new Set(currentChangedFiles);
-    const revertedFiles = input.baseline.targetFiles.filter((path) => !current.has(path));
+    const candidateRevertedFiles = input.baseline.targetFiles.filter((path) => !current.has(path));
+    let revertedFiles = candidateRevertedFiles;
+
+    if (candidateRevertedFiles.length > 0 && typeof input.git.renamedFiles === 'function') {
+      try {
+        const renames = await input.git.renamedFiles(
+          input.cwd,
+          input.baseline.baselineCommitSha,
+          'HEAD',
+        );
+        const renamedOldPaths = new Set(
+          renames
+            .filter((pair) => current.has(pair.newPath))
+            .map((pair) => pair.oldPath),
+        );
+        revertedFiles = candidateRevertedFiles.filter((path) => !renamedOldPaths.has(path));
+      } catch {
+        // preserve candidateRevertedFiles if renamedFiles detection fails
+      }
+    }
+
     return revertedFiles.length > 0
       ? { kind: 'reverted', revertedFiles, currentChangedFiles }
       : { kind: 'pass', currentChangedFiles };

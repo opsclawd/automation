@@ -75,14 +75,12 @@ describe('maybeRetryTransientRevalidationFlake', () => {
 
     // Mock validationAdapter.run (for isolation check)
     const mockValidationAdapter = {
-      run: vi
-        .fn()
-        .mockResolvedValue([
-          {
-            command: 'pnpm --filter @ai-sdlc/other test -- out-of-scope.test.ts',
-            outcome: 'passed',
-          },
-        ]),
+      run: vi.fn().mockResolvedValue([
+        {
+          command: 'pnpm --filter @ai-sdlc/other test -- out-of-scope.test.ts',
+          outcome: 'passed',
+        },
+      ]),
     } as unknown as ValidationPort;
 
     // Mock runValidation.execute (for full revalidation retry)
@@ -214,14 +212,12 @@ describe('maybeRetryTransientRevalidationFlake', () => {
 
     // Mock isolation check returning failure
     const mockValidationAdapter = {
-      run: vi
-        .fn()
-        .mockResolvedValue([
-          {
-            command: 'pnpm --filter @ai-sdlc/other test -- out-of-scope.test.ts',
-            outcome: 'failed',
-          },
-        ]),
+      run: vi.fn().mockResolvedValue([
+        {
+          command: 'pnpm --filter @ai-sdlc/other test -- out-of-scope.test.ts',
+          outcome: 'failed',
+        },
+      ]),
     } as unknown as ValidationPort;
 
     const mockRunValidation = {
@@ -269,14 +265,12 @@ describe('maybeRetryTransientRevalidationFlake', () => {
     ];
 
     const mockValidationAdapter = {
-      run: vi
-        .fn()
-        .mockResolvedValue([
-          {
-            command: 'pnpm --filter @ai-sdlc/other test -- out-of-scope.test.ts',
-            outcome: 'passed',
-          },
-        ]),
+      run: vi.fn().mockResolvedValue([
+        {
+          command: 'pnpm --filter @ai-sdlc/other test -- out-of-scope.test.ts',
+          outcome: 'passed',
+        },
+      ]),
     } as unknown as ValidationPort;
 
     const mockRunValidation = {
@@ -363,14 +357,12 @@ describe('maybeRetryTransientRevalidationFlake', () => {
     ];
 
     const mockValidationAdapter = {
-      run: vi
-        .fn()
-        .mockResolvedValue([
-          {
-            command: 'pnpm --filter @ai-sdlc/other test -- out-of-scope.test.ts',
-            outcome: 'passed',
-          },
-        ]),
+      run: vi.fn().mockResolvedValue([
+        {
+          command: 'pnpm --filter @ai-sdlc/other test -- out-of-scope.test.ts',
+          outcome: 'passed',
+        },
+      ]),
     } as unknown as ValidationPort;
 
     const mockRunValidation = {
