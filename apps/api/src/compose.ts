@@ -192,6 +192,7 @@ import {
   type ValidationScopeSummary,
 } from '@ai-sdlc/application';
 import { discoverWorkspacePackages } from './workspace-package-discovery.js';
+import { findRepoRoot } from './cli/target-repo-root.js';
 import {
   ConfigError,
   DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS,
@@ -2084,10 +2085,14 @@ export async function validateTerminalFix(
 }
 
 export function composeRoot(opts: ComposeOptions): Container {
-  if (process.env.VITEST && !existsSync(join(opts.repoRoot, '.ai-orchestrator.json'))) {
+  const effectiveRepoRoot = findRepoRoot(opts.repoRoot);
+  const effectiveTargetRepoRoot =
+    opts.targetRepoRoot ?? (opts.repoRoot !== effectiveRepoRoot ? opts.repoRoot : undefined);
+
+  if (process.env.VITEST && !existsSync(join(effectiveRepoRoot, '.ai-orchestrator.json'))) {
     try {
       writeFileSync(
-        join(opts.repoRoot, '.ai-orchestrator.json'),
+        join(effectiveRepoRoot, '.ai-orchestrator.json'),
         JSON.stringify({
           validation: { commands: ['echo 1'], timeout: 10 },
           phases: {
@@ -2111,7 +2116,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   // IMPORTANT: `opts.repoRoot` (not `targetRoot`) is still the source of
   // truth for prompts, config, and scripts — those always come from the
   // automation repo, not the target.
-  const targetRoot = opts.targetRepoRoot ?? opts.repoRoot;
+  const targetRoot = effectiveTargetRepoRoot ?? effectiveRepoRoot;
   const runsDir = opts.runsDir ?? join(targetRoot, '.ai-runs');
   const envTmpdir = process.env.TMPDIR?.trim();
   const baseTmpDir =
@@ -2298,12 +2303,12 @@ export function composeRoot(opts: ComposeOptions): Container {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let sources: any;
   try {
-    const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
+    const cacheKey = `${effectiveRepoRoot}|${effectiveTargetRepoRoot ?? ''}`;
     let layered = layeredConfigCache.get(cacheKey);
     if (!layered) {
       layered = loadLayeredConfig({
-        automationRoot: opts.repoRoot,
-        ...(opts.targetRepoRoot !== undefined ? { targetRoot: opts.targetRepoRoot } : {}),
+        automationRoot: effectiveRepoRoot,
+        ...(effectiveTargetRepoRoot !== undefined ? { targetRoot: effectiveTargetRepoRoot } : {}),
       });
       layeredConfigCache.set(cacheKey, layered);
     }
@@ -2393,12 +2398,12 @@ export function composeRoot(opts: ComposeOptions): Container {
   let readyMaxDays = 7;
   let serveSweepIntervalSeconds = 0;
   try {
-    const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
+    const cacheKey = `${effectiveRepoRoot}|${effectiveTargetRepoRoot ?? ''}`;
     let sweepLayered = layeredConfigCache.get(cacheKey);
     if (!sweepLayered) {
       sweepLayered = loadLayeredConfig({
-        automationRoot: opts.repoRoot,
-        ...(opts.targetRepoRoot !== undefined ? { targetRoot: opts.targetRepoRoot } : {}),
+        automationRoot: effectiveRepoRoot,
+        ...(effectiveTargetRepoRoot !== undefined ? { targetRoot: effectiveTargetRepoRoot } : {}),
       });
       layeredConfigCache.set(cacheKey, sweepLayered);
     }
@@ -2410,12 +2415,12 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   let schedulerConfig = { globalConcurrency: 1, pollIntervalMs: 2000, shutdownGraceMs: 30_000 };
   try {
-    const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
+    const cacheKey = `${effectiveRepoRoot}|${effectiveTargetRepoRoot ?? ''}`;
     let sweepLayered = layeredConfigCache.get(cacheKey);
     if (!sweepLayered) {
       sweepLayered = loadLayeredConfig({
-        automationRoot: opts.repoRoot,
-        ...(opts.targetRepoRoot !== undefined ? { targetRoot: opts.targetRepoRoot } : {}),
+        automationRoot: effectiveRepoRoot,
+        ...(effectiveTargetRepoRoot !== undefined ? { targetRoot: effectiveTargetRepoRoot } : {}),
       });
       layeredConfigCache.set(cacheKey, sweepLayered);
     }
@@ -2740,12 +2745,12 @@ export function composeRoot(opts: ComposeOptions): Container {
   };
 
   try {
-    const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
+    const cacheKey = `${effectiveRepoRoot}|${effectiveTargetRepoRoot ?? ''}`;
     let layered = layeredConfigCache.get(cacheKey);
     if (!layered) {
       layered = loadLayeredConfig({
-        automationRoot: opts.repoRoot,
-        ...(opts.targetRepoRoot !== undefined ? { targetRoot: opts.targetRepoRoot } : {}),
+        automationRoot: effectiveRepoRoot,
+        ...(effectiveTargetRepoRoot !== undefined ? { targetRoot: effectiveTargetRepoRoot } : {}),
       });
       layeredConfigCache.set(cacheKey, layered);
     }
@@ -2759,7 +2764,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       > = {
         opencode: new OpenCodeAgentAdapter({
           artifactsDir: join(runsDir, 'agent-artifacts'),
-          repoRoot: opts.repoRoot,
+          repoRoot: effectiveRepoRoot,
         }),
       };
       if (needsPi) {
@@ -3818,7 +3823,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             now: () => new Date(),
           },
           {
-            promptsRoot: join(opts.repoRoot, 'prompts'),
+            promptsRoot: join(effectiveRepoRoot, 'prompts'),
             expectedBranch: `ai/issue-${run.issueNumber}`,
             baseBranch: run.baseBranch ?? opts.baseBranch ?? defaultBranch,
             ...(startCommitSha ? { startCommitSha } : {}),
@@ -5349,7 +5354,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       // Captured here (not inline in the closures below) because
       // planReviewRunFix's `opts` parameter (PlanFixOptions) shadows the
       // outer composeRoot `opts` (ComposeOptions) within its own body.
-      const planReviewPromptsRoot = join(opts.repoRoot, 'prompts');
+      const planReviewPromptsRoot = join(effectiveRepoRoot, 'prompts');
       const planReviewProfileName = config.phases.planReview?.enabled
         ? resolveProfileForPhaseBound!('plan-review')
         : undefined;
@@ -7420,7 +7425,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   };
 
   const runtimeCatalog = new DefaultRepositoryRuntimeCatalog({
-    automationRoot: targetRoot,
+    automationRoot: effectiveRepoRoot,
     stateRoot: baseTmpDir,
     controlPlaneDb: db,
     registry: registryBackedRepo,
