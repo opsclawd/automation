@@ -258,7 +258,7 @@ describe('ReviewFixLoop protected file policy', () => {
     expect(events.find((e) => e.type === 'task_boundary.violated')).toBeDefined();
   });
 
-  it('fails task boundary and rolls back when revertScopeFiles throws an error', async () => {
+  it('fails task boundary and rolls back when revertScopeFiles throws an error, emitting guard failure event', async () => {
     const { events, bus } = collectEvents();
     const rollbackCalls: string[] = [];
     const git = makeFakeGit({
@@ -289,7 +289,73 @@ describe('ReviewFixLoop protected file policy', () => {
     await loop.execute(baseInput());
 
     expect(rollbackCalls).toContain('sha-pre');
+    expect(events.find((e) => e.type === 'fix.protected_file_guard_failed')).toBeDefined();
     expect(events.find((e) => e.type === 'task_boundary.violated')).toBeDefined();
+  });
+
+  it('reverts .ai-orchestrator.json modification when declared non_goals in task manifest', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGit({
+      headSha: 'sha-fix-1',
+      changedFilesList: [
+        '.ai-orchestrator.json',
+        'packages/shared/src/config/schema.ts',
+        'packages/application/src/fix.ts',
+      ],
+    });
+    const revertScopeFiles = vi.fn<RevertScopeFilesPort>(
+      async ({ cwd: _cwd, baseline: _baseline, scopeFiles }) => ({
+        revertedScopeFiles: [...scopeFiles],
+        removedNewlyIgnoredFiles: [],
+        amendedHeadSha: 'sha-amended-3',
+      }),
+    );
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      revertScopeFiles,
+      runFix: async () => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-pre',
+      }),
+    });
+
+    const inputWithNonGoals = {
+      ...baseInput(),
+      manifest: {
+        version: 2,
+        task_count: 1,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task 1',
+            expected_files: ['packages/application/src/fix.ts'],
+            non_goals: ['.ai-orchestrator.json'],
+          },
+        ],
+      },
+    };
+
+    const loop = new ReviewFixLoop(deps);
+    const result = await loop.execute(inputWithNonGoals);
+
+    expect(revertScopeFiles).toHaveBeenCalledTimes(1);
+    expect(revertScopeFiles).toHaveBeenCalledWith({
+      cwd: '/wt',
+      baseline: 'sha-pre',
+      expectedHeadSha: 'sha-fix-1',
+      rewriteSafety: 'unpublished',
+      scopeFiles: ['.ai-orchestrator.json'],
+    });
+
+    const revertedEvent = events.find((e) => e.type === 'fix.protected_file_reverted');
+    expect(revertedEvent).toBeDefined();
+    expect(revertedEvent?.metadata.revertedScopeFiles).toEqual(['.ai-orchestrator.json']);
+    expect(revertedEvent?.metadata.amendedHeadSha).toBe('sha-amended-3');
+    expect(result.phaseOutcome).toBe('passed');
   });
 
   it('reverts protected files during auto-commit fallback when fixer leaves uncommitted changes and advances with amended SHA', async () => {

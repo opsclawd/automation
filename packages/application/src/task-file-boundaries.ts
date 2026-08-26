@@ -63,6 +63,7 @@ export function isProtectedTaskPath(path: string): boolean {
   if (!norm) return false;
   if (
     norm === '.gitignore' ||
+    norm.endsWith('/.gitignore') ||
     norm === '.ai-orchestrator.json' ||
     norm === '.github' ||
     norm.startsWith('.github/')
