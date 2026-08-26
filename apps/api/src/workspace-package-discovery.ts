@@ -32,7 +32,9 @@ const IGNORED_BATS_DIRECTORIES = new Set([
 ]);
 
 /**
- * Strip YAML comments outside single/double quotes.
+ * Strip YAML comments outside single/double quotes, respecting backslash-escaped
+ * quotes inside double-quoted strings (e.g. "foo\"bar") so an escaped quote does
+ * not prematurely end the quoted region.
  */
 function stripYamlComment(line: string): string {
   let inSingle = false;
@@ -41,6 +43,11 @@ function stripYamlComment(line: string): string {
 
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
+    if (char === '\\' && inDouble && i + 1 < line.length) {
+      result += char + line[i + 1];
+      i++;
+      continue;
+    }
     if (char === "'" && !inDouble) {
       inSingle = !inSingle;
       result += char;
@@ -55,6 +62,22 @@ function stripYamlComment(line: string): string {
   }
 
   return result;
+}
+
+/**
+ * Unquote a YAML scalar, honoring backslash-escaped double quotes/backslashes
+ * inside double-quoted strings and doubled single quotes inside single-quoted
+ * strings.
+ */
+function unquoteYamlScalar(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+  }
+  if (trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replace(/''/g, "'");
+  }
+  return trimmed;
 }
 
 /**
@@ -80,12 +103,29 @@ function parseWorkspaceYamlPackages(
       if (/^packages\s*:/.test(stripped)) {
         inPackagesSection = true;
         const afterColon = trimmed.slice(trimmed.indexOf(':') + 1).trim();
-        if (afterColon.startsWith('[') && afterColon.endsWith(']')) {
-          const inner = afterColon.slice(1, -1).trim();
+        if (afterColon.startsWith('[')) {
+          // Collect bracket content, which may span multiple lines.
+          let bracketContent = afterColon.slice(1);
+          let scanLine = i;
+          while (!bracketContent.includes(']')) {
+            scanLine++;
+            if (scanLine >= lines.length) {
+              return {
+                success: false,
+                reason: 'Unterminated packages array in pnpm-workspace.yaml',
+              };
+            }
+            const nextStripped = stripYamlComment(lines[scanLine] ?? '').trim();
+            bracketContent += ` ${nextStripped}`;
+          }
+          i = scanLine;
+
+          const closeIdx = bracketContent.indexOf(']');
+          const inner = bracketContent.slice(0, closeIdx).trim();
           if (inner.length > 0) {
             const items = inner.split(',');
             for (const item of items) {
-              const cleaned = item.trim().replace(/^['"]|['"]$/g, '');
+              const cleaned = unquoteYamlScalar(item);
               if (cleaned) {
                 patterns.push(cleaned);
               }
@@ -110,10 +150,7 @@ function parseWorkspaceYamlPackages(
       }
 
       if (trimmed.startsWith('-')) {
-        const itemVal = trimmed
-          .slice(1)
-          .trim()
-          .replace(/^['"]|['"]$/g, '');
+        const itemVal = unquoteYamlScalar(trimmed.slice(1));
         if (itemVal) {
           patterns.push(itemVal);
         }
@@ -476,7 +513,7 @@ async function packageHasBatsAsync(
         if (await walk(childRelDir)) {
           return true;
         }
-      } else if (entry.isFile() && name.endsWith('.bats')) {
+      } else if ((entry.isFile() || entry.isSymbolicLink()) && name.endsWith('.bats')) {
         return true;
       }
     }
@@ -525,7 +562,7 @@ function packageHasBatsSync(
         if (walk(childRelDir)) {
           return true;
         }
-      } else if (entry.isFile() && name.endsWith('.bats')) {
+      } else if ((entry.isFile() || entry.isSymbolicLink()) && name.endsWith('.bats')) {
         return true;
       }
     }
@@ -722,27 +759,37 @@ export async function discoverWorkspacePackages(
     return { success: false, reason: 'No workspace packages found matching workspace patterns' };
   }
 
+  const manifestResults = await Promise.all(
+    Array.from(candidateDirs).map(
+      async (
+        dir,
+      ): Promise<
+        | { success: true; descriptor: WorkspacePackageDescriptor }
+        | { success: false; reason: string }
+      > => {
+        const pkgJsonPath = path.join(resolvedRoot, dir, 'package.json');
+        let pkgJsonRaw: string;
+        try {
+          pkgJsonRaw = await fs.readFile(pkgJsonPath, 'utf-8');
+        } catch (err) {
+          return {
+            success: false,
+            reason: `Unreadable manifest in ${dir}: ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
+
+        const hasBats = await packageHasBatsAsync(resolvedRoot, dir, candidateDirs);
+        return parsePackageManifest(pkgJsonRaw, dir, hasBats);
+      },
+    ),
+  );
+
   const descriptors: WorkspacePackageDescriptor[] = [];
-
-  for (const dir of candidateDirs) {
-    const pkgJsonPath = path.join(resolvedRoot, dir, 'package.json');
-    let pkgJsonRaw: string;
-    try {
-      pkgJsonRaw = await fs.readFile(pkgJsonPath, 'utf-8');
-    } catch (err) {
-      return {
-        success: false,
-        reason: `Unreadable manifest in ${dir}: ${err instanceof Error ? err.message : String(err)}`,
-      };
+  for (const result of manifestResults) {
+    if (!result.success) {
+      return { success: false, reason: result.reason };
     }
-
-    const hasBats = await packageHasBatsAsync(resolvedRoot, dir, candidateDirs);
-    const parsed = parsePackageManifest(pkgJsonRaw, dir, hasBats);
-    if (!parsed.success) {
-      return { success: false, reason: parsed.reason };
-    }
-
-    descriptors.push(parsed.descriptor);
+    descriptors.push(result.descriptor);
   }
 
   return validateAndFinalizeDescriptors(descriptors);

@@ -490,6 +490,81 @@ packages: [ 'packages/*', "apps/*" ] # inline comment after bracketed list
     expect(result.descriptors[0]?.name).toBe('@ai-sdlc/bracket-pkg');
   });
 
+  it('correctly handles multiline inline array syntax in pnpm-workspace.yaml', async () => {
+    const workspaceYaml = `
+packages: [
+  'packages/*',
+  "apps/*"
+]
+`;
+    await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), workspaceYaml, 'utf-8');
+
+    const pkgDir = path.join(tmpDir, 'packages', 'multiline-pkg');
+    await fs.mkdir(pkgDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({ name: '@ai-sdlc/multiline-pkg' }),
+      'utf-8',
+    );
+
+    const result = await discover(tmpDir);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.descriptors).toHaveLength(1);
+    expect(result.descriptors[0]?.name).toBe('@ai-sdlc/multiline-pkg');
+  });
+
+  it('correctly unescapes escaped double quotes inside quoted workspace patterns', async () => {
+    const workspaceYaml = `packages:
+  - "packages/*"
+`;
+    await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), workspaceYaml, 'utf-8');
+
+    const pkgDir = path.join(tmpDir, 'packages', 'escaped-pkg');
+    await fs.mkdir(pkgDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({ name: '@ai-sdlc/escaped-pkg' }),
+      'utf-8',
+    );
+
+    const result = await discover(tmpDir);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.descriptors).toHaveLength(1);
+    expect(result.descriptors[0]?.name).toBe('@ai-sdlc/escaped-pkg');
+  });
+
+  it('detects symlinked .bats files when checking package test availability', async () => {
+    const workspaceYaml = `packages:
+  - 'packages/*'
+`;
+    await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), workspaceYaml, 'utf-8');
+
+    const pkgDir = path.join(tmpDir, 'packages', 'symlink-bats-pkg');
+    await fs.mkdir(pkgDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({ name: '@ai-sdlc/symlink-bats-pkg' }),
+      'utf-8',
+    );
+
+    const realBatsPath = path.join(pkgDir, 'real.bats');
+    await fs.writeFile(realBatsPath, '#!/usr/bin/env bats\n', 'utf-8');
+    await fs.symlink(realBatsPath, path.join(pkgDir, 'linked.bats'), 'file');
+    await fs.rm(realBatsPath);
+
+    const result = await discover(tmpDir);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    const desc = result.descriptors.find((d) => d.name === '@ai-sdlc/symlink-bats-pkg');
+    expect(desc).toBeDefined();
+    expect(desc?.hasBats).toBe(true);
+  });
+
   it('returns deterministic descriptors', async () => {
     const workspaceYaml1 = `packages:
   - 'packages/*'
