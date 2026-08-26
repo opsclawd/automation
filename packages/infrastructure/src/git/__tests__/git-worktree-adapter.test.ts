@@ -816,6 +816,56 @@ describe('status()', () => {
   });
 });
 
+describe('commit()', () => {
+  it('returns current HEAD sha as benign no-op when pre-commit hook refuses an empty commit', async () => {
+    const repo = await makeTempRepo();
+    // Reset core.hooksPath so repository .git/hooks/pre-commit is used
+    await git(repo, ['config', 'core.hooksPath', '.git/hooks']);
+    const headShaBefore = await git(repo, ['rev-parse', 'HEAD']);
+
+    // Set up a pre-commit hook that reformats dirty content to match HEAD, re-stages, and exits 1 (refusing empty commit)
+    const hookPath = join(repo, '.git', 'hooks', 'pre-commit');
+    await writeFile(
+      hookPath,
+      '#!/bin/sh\n' +
+        'printf "initial\\n" > README.md\n' +
+        'git add README.md\n' +
+        'echo "lint-staged prevented an empty git commit."\n' +
+        'exit 42\n',
+    );
+    const { chmod } = await import('node:fs/promises');
+    await chmod(hookPath, 0o755);
+
+    // Stage a file whose dirty content canonicalizes back to HEAD when formatted
+    await writeFile(join(repo, 'README.md'), 'initial   \n');
+    await git(repo, ['add', 'README.md']);
+
+    // adapter.commit should catch hook refusal, check diff --cached --quiet, find it clean, and return HEAD sha
+    const shaAfter = await adapter.commit(repo, 'auto-commit formatting debt');
+    expect(shaAfter).toBe(headShaBefore);
+  });
+
+  it('rethrows GitFailedError when pre-commit hook fails for a real reason (staged diff is non-empty)', async () => {
+    const repo = await makeTempRepo();
+    // Reset core.hooksPath so repository .git/hooks/pre-commit is used
+    await git(repo, ['config', 'core.hooksPath', '.git/hooks']);
+
+    // Set up a pre-commit hook that exits non-zero due to lint/typecheck error on staged file
+    const hookPath = join(repo, '.git', 'hooks', 'pre-commit');
+    await writeFile(
+      hookPath,
+      '#!/bin/sh\necho "ESLint found 1 error in staged files"\nexit 42\n',
+    );
+    const { chmod } = await import('node:fs/promises');
+    await chmod(hookPath, 0o755);
+
+    await writeFile(join(repo, 'README.md'), 'real modification\n');
+    await git(repo, ['add', 'README.md']);
+
+    await expect(adapter.commit(repo, 'feat: real change')).rejects.toThrow();
+  });
+});
+
 describe('changedFiles()', () => {
   it('returns normalized paths committed in the requested range', async () => {
     const repo = await makeTempRepo();
