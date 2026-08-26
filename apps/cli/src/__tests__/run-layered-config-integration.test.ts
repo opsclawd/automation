@@ -70,7 +70,7 @@ describe('run-validation layered config integration', () => {
     const testEnv = { ...process.env };
     delete testEnv.VITEST;
 
-    execFileSync(
+    const stdout = execFileSync(
       process.execPath,
       [
         '--import',
@@ -93,7 +93,10 @@ describe('run-validation layered config integration', () => {
           NODE_OPTIONS: '--conditions=development',
         },
       },
-    );
+    ).toString();
+
+    expect(stdout).toMatch(/target1/);
+    expect(stdout).not.toMatch(/base1/);
 
     const runDir = join(automationRoot, '.ai-runs', runId);
     const configSourcesPath = join(runDir, 'config-sources.json');
@@ -118,6 +121,7 @@ describe('run-validation layered config integration', () => {
       expect(Object.keys(src).sort()).toEqual(['kind', 'path', 'present']);
     }
     expect(rawBody).not.toMatch(/echo target1/);
+    expect(rawBody).not.toMatch(/"commands"\s*:/);
     expect(rawBody).not.toMatch(/api_key|secret|token/i);
   });
 
@@ -130,7 +134,7 @@ describe('run-validation layered config integration', () => {
     const testEnv = { ...process.env };
     delete testEnv.VITEST;
 
-    execFileSync(
+    const stdout = execFileSync(
       process.execPath,
       [
         '--import',
@@ -153,7 +157,11 @@ describe('run-validation layered config integration', () => {
           NODE_OPTIONS: '--conditions=development',
         },
       },
-    );
+    ).toString();
+
+    expect(stdout).toMatch(/base1/);
+    expect(stdout).toMatch(/base2/);
+    expect(stdout).toMatch(/target2-additive/);
 
     const runDir = join(automationRoot, '.ai-runs', runId);
     const configSourcesPath = join(runDir, 'config-sources.json');
@@ -182,6 +190,7 @@ describe('run-validation layered config integration', () => {
       expect(Object.keys(src).sort()).toEqual(['kind', 'path', 'present']);
     }
     expect(rawBody).not.toMatch(/echo target2-additive/);
+    expect(rawBody).not.toMatch(/"commands"\s*:/);
     expect(rawBody).not.toMatch(/api_key|secret|token/i);
   });
 
@@ -194,7 +203,7 @@ describe('run-validation layered config integration', () => {
     const testEnv = { ...process.env };
     delete testEnv.VITEST;
 
-    execFileSync(
+    const stdout = execFileSync(
       process.execPath,
       [
         '--import',
@@ -217,7 +226,10 @@ describe('run-validation layered config integration', () => {
           NODE_OPTIONS: '--conditions=development',
         },
       },
-    );
+    ).toString();
+
+    expect(stdout).toMatch(/base1/);
+    expect(stdout).toMatch(/base2/);
 
     const runDir = join(automationRoot, '.ai-runs', runId);
     const configSourcesPath = join(runDir, 'config-sources.json');
@@ -238,5 +250,7 @@ describe('run-validation layered config integration', () => {
     for (const src of content.sources) {
       expect(Object.keys(src).sort()).toEqual(['kind', 'path', 'present']);
     }
+    expect(rawBody).not.toMatch(/"commands"\s*:/);
+    expect(rawBody).not.toMatch(/api_key|secret|token/i);
   });
 });
