@@ -237,4 +237,44 @@ describe('CodexAgentAdapter', () => {
     expect(result.usageSourcePaths).toEqual([`${result.stdoutPath}.events.jsonl`]);
     expect(readFileSync(result.usageSourcePaths![0], 'utf-8')).toContain('turn.completed');
   });
+
+  it('reads cache and reasoning tokens from their real field names (#943)', async () => {
+    // Verified live against codex-cli 0.149.0: turn.completed's usage object
+    // uses cached_input_tokens and reasoning_output_tokens, not
+    // cache_read_tokens / reasoning_tokens — the old names silently matched
+    // nothing, which is why cached_tokens was NULL on every existing row.
+    const cwd = makeWorktree();
+    const shim = join(cwd, 'fake-codex-real-field-names.sh');
+    writeFileSync(
+      shim,
+      `#!/usr/bin/env bash\nset -euo pipefail\necho '{"type":"turn.completed","usage":{"input_tokens":45696,"cached_input_tokens":28160,"cache_write_input_tokens":0,"output_tokens":127,"reasoning_output_tokens":41}}'\nexit 0\n`,
+    );
+    execSync(`chmod +x ${shim}`);
+    const adapter = new CodexAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
+    const result = await adapter.invoke(req(cwd));
+    expect(result.usage).toEqual({
+      inputTokens: 45696,
+      outputTokens: 127,
+      reasoningTokens: 41,
+      cachedTokens: 28160,
+    });
+  });
+
+  it('falls back to the old cache_read_tokens/reasoning_tokens field names if an older codex build emits them', async () => {
+    const cwd = makeWorktree();
+    const shim = join(cwd, 'fake-codex-legacy-field-names.sh');
+    writeFileSync(
+      shim,
+      `#!/usr/bin/env bash\nset -euo pipefail\necho '{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50,"reasoning_tokens":5,"cache_read_tokens":30}}'\nexit 0\n`,
+    );
+    execSync(`chmod +x ${shim}`);
+    const adapter = new CodexAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
+    const result = await adapter.invoke(req(cwd));
+    expect(result.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 50,
+      reasoningTokens: 5,
+      cachedTokens: 30,
+    });
+  });
 });
