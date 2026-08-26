@@ -276,4 +276,77 @@ describe('RunValidation', () => {
 
     expect(port.lastInput?.commands).toEqual(['pnpm build', argvCommand]);
   });
+
+  it('RunValidation forwards a full scope summary unchanged', async () => {
+    const port = new FakeValidationPort();
+    port.result = [passResult(0, 'pnpm build')];
+    const repo = new FakeValidationRunRepository();
+    const { useCase } = makeUseCase(port, repo);
+
+    await useCase.execute({
+      runId: RUN,
+      phaseId: PhaseName('validate'),
+      cwd: '/work',
+      logDir: '/d',
+      commands: ['pnpm build'],
+      timeoutSeconds: 300,
+      validationScope: { validationMode: 'full' },
+    });
+
+    expect(port.lastInput?.validationScope).toEqual({ validationMode: 'full' });
+  });
+
+  it('RunValidation forwards a narrow closure unchanged', async () => {
+    const port = new FakeValidationPort();
+    port.result = [passResult(0, 'pnpm --filter @ai-sdlc/application build')];
+    const repo = new FakeValidationRunRepository();
+    const { useCase } = makeUseCase(port, repo);
+
+    const narrowedPackages = [
+      '@ai-sdlc/application',
+      '@ai-sdlc/infrastructure',
+      '@ai-sdlc/api',
+      '@ai-sdlc/cli',
+    ];
+    await useCase.execute({
+      runId: RUN,
+      phaseId: PhaseName('validate'),
+      cwd: '/work',
+      logDir: '/d',
+      commands: ['pnpm --filter @ai-sdlc/application build'],
+      timeoutSeconds: 300,
+      validationScope: {
+        validationMode: 'narrow',
+        narrowedPackages,
+      },
+    });
+
+    expect(port.lastInput?.validationScope).toEqual({
+      validationMode: 'narrow',
+      narrowedPackages: [
+        '@ai-sdlc/application',
+        '@ai-sdlc/infrastructure',
+        '@ai-sdlc/api',
+        '@ai-sdlc/cli',
+      ],
+    });
+  });
+
+  it('legacy callers may omit scope metadata', async () => {
+    const port = new FakeValidationPort();
+    port.result = [passResult(0, 'pnpm build')];
+    const repo = new FakeValidationRunRepository();
+    const { useCase } = makeUseCase(port, repo);
+
+    await useCase.execute({
+      runId: RUN,
+      phaseId: PhaseName('validate'),
+      cwd: '/work',
+      logDir: '/d',
+      commands: ['pnpm build'],
+      timeoutSeconds: 300,
+    });
+
+    expect(port.lastInput?.validationScope).toBeUndefined();
+  });
 });

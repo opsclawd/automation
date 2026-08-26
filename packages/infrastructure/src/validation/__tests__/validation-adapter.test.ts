@@ -421,10 +421,7 @@ describe('ProcessValidationAdapter', () => {
       const results = await adapter.run({
         cwd: process.cwd(),
         commands: ['echo tier1-cmd1', 'echo tier1-cmd2', 'echo tier2-cmd1'],
-        tiers: [
-          ['echo tier1-cmd1', 'echo tier1-cmd2'],
-          ['echo tier2-cmd1'],
-        ],
+        tiers: [['echo tier1-cmd1', 'echo tier1-cmd2'], ['echo tier2-cmd1']],
         timeoutSeconds: 30,
         logDir,
       });
@@ -454,6 +451,67 @@ describe('ProcessValidationAdapter', () => {
       expect(results[1].command).toBe('echo extra-cmd');
       expect(results[0].outcome).toBe('passed');
       expect(results[1].outcome).toBe('passed');
+    });
+  });
+
+  describe('validation scope metadata artifact serialization', () => {
+    it('adapter writes full mode without narrowed packages', async () => {
+      const logDir = freshDir();
+      const adapter = new ProcessValidationAdapter();
+      await adapter.run({
+        cwd: process.cwd(),
+        commands: ['exit 0'],
+        timeoutSeconds: 30,
+        logDir,
+        validationScope: { validationMode: 'full' },
+      });
+      const summary = JSON.parse(readFileSync(join(logDir, 'validation-result.json'), 'utf-8'));
+      expect(summary.passed).toBe(true);
+      expect(summary.validationMode).toBe('full');
+      expect(summary).not.toHaveProperty('narrowedPackages');
+      expect(summary.commands).toHaveLength(1);
+    });
+
+    it('adapter writes narrow mode with the complete closure', async () => {
+      const logDir = freshDir();
+      const adapter = new ProcessValidationAdapter();
+      const closure = [
+        '@ai-sdlc/application',
+        '@ai-sdlc/infrastructure',
+        '@ai-sdlc/api',
+        '@ai-sdlc/cli',
+      ];
+      await adapter.run({
+        cwd: process.cwd(),
+        commands: ['exit 0'],
+        timeoutSeconds: 30,
+        logDir,
+        validationScope: {
+          validationMode: 'narrow',
+          narrowedPackages: closure,
+        },
+      });
+      const summary = JSON.parse(readFileSync(join(logDir, 'validation-result.json'), 'utf-8'));
+      expect(summary.passed).toBe(true);
+      expect(summary.validationMode).toBe('narrow');
+      expect(summary.narrowedPackages).toEqual(closure);
+      expect(summary.commands).toHaveLength(1);
+    });
+
+    it('adapter preserves legacy artifact shape when summary is absent', async () => {
+      const logDir = freshDir();
+      const adapter = new ProcessValidationAdapter();
+      await adapter.run({
+        cwd: process.cwd(),
+        commands: ['exit 0'],
+        timeoutSeconds: 30,
+        logDir,
+      });
+      const summary = JSON.parse(readFileSync(join(logDir, 'validation-result.json'), 'utf-8'));
+      expect(summary.passed).toBe(true);
+      expect(summary).not.toHaveProperty('validationMode');
+      expect(summary).not.toHaveProperty('narrowedPackages');
+      expect(summary.commands).toHaveLength(1);
     });
   });
 });

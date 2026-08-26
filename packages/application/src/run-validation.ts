@@ -6,7 +6,11 @@ import {
   type ValidationCommandRecord,
   type Failure,
 } from '@ai-sdlc/domain';
-import type { ValidationPort, ValidationCommand } from './ports/validation-port.js';
+import type {
+  ValidationPort,
+  ValidationCommand,
+  ValidationScopeSummary,
+} from './ports/validation-port.js';
 import type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
 import {
   classifyCommandKind,
@@ -31,6 +35,7 @@ export interface RunValidationInputUC {
   timeoutSeconds: number;
   logPathPrefix?: string;
   env?: Record<string, string>;
+  validationScope?: ValidationScopeSummary;
 }
 
 export interface RunValidationOutput {
@@ -73,6 +78,7 @@ export class RunValidation {
       logDir: input.logDir,
       ...(input.logPathPrefix ? { logPathPrefix: input.logPathPrefix } : {}),
       ...(input.env ? { env: input.env } : {}),
+      ...(input.validationScope ? { validationScope: input.validationScope } : {}),
     });
 
     const commands: ValidationCommandRecord[] = results.map((r) => ({
