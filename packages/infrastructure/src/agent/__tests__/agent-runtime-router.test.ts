@@ -10,7 +10,7 @@ import {
   type MeasuredAgentUsage,
 } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
-import type { AgentPort, AgentUsagePort } from '@ai-sdlc/application/ports';
+import type { AgentPort, AgentUsagePort, EventBusPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
 import { AgentRuntimeRouter } from '../agent-runtime-router.js';
@@ -909,6 +909,77 @@ describe('AgentRuntimeRouter', () => {
     } finally {
       emitWarningSpy.mockRestore();
     }
+  });
+
+  it('publishes agent.usage events via eventBus even when usageRepository is omitted', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      publish: (_runId, event) => {
+        events.push(event);
+      },
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usage: { inputTokens: 10, outputTokens: 20 },
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-no-repo-usage',
+    });
+
+    await router.invoke(req());
+
+    const usageEvents = events.filter((e) => e.type === 'agent.usage');
+    expect(usageEvents).toHaveLength(1);
+  });
+
+  it('publishes agent.usage.unknown events via eventBus even when usageRepository is omitted', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      publish: (_runId, event) => {
+        events.push(event);
+      },
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-no-repo-unknown',
+    });
+
+    await router.invoke(req());
+
+    const unknownEvents = events.filter((e) => e.type === 'agent.usage.unknown');
+    expect(unknownEvents).toHaveLength(1);
   });
 
   describe('expected artifact cleanup', () => {

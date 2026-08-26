@@ -433,7 +433,7 @@ export class AgentRuntimeRouter implements AgentPort {
     }
     this.opts.invocationRepository.update(id, patch);
 
-    // Persist token usage if the adapter reported it or record unknown usage
+    // Persist token usage if the adapter reported it or record unknown usage.
     // NOTE: wrapped in try/catch so a DB error or event warning doesn't skip the
     // fallback check below. The invocation has already been updated as completed.
     if (this.opts.usageRepository) {
@@ -497,67 +497,69 @@ export class AgentRuntimeRouter implements AgentPort {
           // Warning failure containment
         }
       }
+    }
 
-      if (result.usage) {
+    // Emit usage telemetry regardless of whether persistence is enabled, so
+    // event-bus consumers (and the process-warning fallback) still see it.
+    if (result.usage) {
+      try {
         if (this.opts.eventBus) {
-          try {
-            const event: OrchestratorEvent = {
-              runId: request.runId,
-              level: 'info',
-              type: 'agent.usage',
-              message: `${request.phaseId}: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens`,
-              timestamp: endedAt.toISOString(),
-              metadata: {
-                phase: request.phaseId,
-                phaseId: request.phaseId,
-                profile: request.profile,
-                runtime: profile.runtime,
-                provider: effectiveProvider,
-                model: effectiveModel,
-                inputTokens: result.usage.inputTokens,
-                outputTokens: result.usage.outputTokens,
-                ...(result.usage.reasoningTokens !== undefined
-                  ? { reasoningTokens: result.usage.reasoningTokens }
-                  : {}),
-                ...(result.usage.cachedTokens !== undefined
-                  ? { cachedTokens: result.usage.cachedTokens }
-                  : {}),
-                durationMs: result.durationMs,
-              },
-            };
-            this.opts.eventBus.publish(request.runId, event);
-          } catch {
-            // Event publication containment
-          }
+          const event: OrchestratorEvent = {
+            runId: request.runId,
+            level: 'info',
+            type: 'agent.usage',
+            message: `${request.phaseId}: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens`,
+            timestamp: endedAt.toISOString(),
+            metadata: {
+              phase: request.phaseId,
+              phaseId: request.phaseId,
+              profile: request.profile,
+              runtime: profile.runtime,
+              provider: effectiveProvider,
+              model: effectiveModel,
+              inputTokens: result.usage.inputTokens,
+              outputTokens: result.usage.outputTokens,
+              ...(result.usage.reasoningTokens !== undefined
+                ? { reasoningTokens: result.usage.reasoningTokens }
+                : {}),
+              ...(result.usage.cachedTokens !== undefined
+                ? { cachedTokens: result.usage.cachedTokens }
+                : {}),
+              durationMs: result.durationMs,
+            },
+          };
+          this.opts.eventBus.publish(request.runId, event);
         }
-      } else {
-        try {
-          if (this.opts.eventBus) {
-            const event: OrchestratorEvent = {
-              runId: request.runId,
-              level: 'warn',
-              type: 'agent.usage.unknown',
-              message: `Usage data unavailable for invocation ${id}`,
-              timestamp: endedAt.toISOString(),
-              metadata: {
-                runtime: profile.runtime,
-                invocationId: id,
-                phase: request.phaseId,
-                phaseId: request.phaseId,
-                profile: request.profile,
-                provider: effectiveProvider,
-                model: effectiveModel,
-                stdoutPath: result.stdoutPath,
-                diagnosticSource: result.stdoutPath,
-              },
-            };
-            this.opts.eventBus.publish(request.runId, event);
-          } else {
-            process.emitWarning(`Usage data unavailable for invocation ${id}`);
-          }
-        } catch {
-          // Warning failure containment
+      } catch {
+        // Event publication containment
+      }
+    } else {
+      try {
+        if (this.opts.eventBus) {
+          const event: OrchestratorEvent = {
+            runId: request.runId,
+            level: 'warn',
+            type: 'agent.usage.unknown',
+            message: `Usage data unavailable for invocation ${id}`,
+            timestamp: endedAt.toISOString(),
+            metadata: {
+              runtime: profile.runtime,
+              invocationId: id,
+              phase: request.phaseId,
+              phaseId: request.phaseId,
+              profile: request.profile,
+              provider: effectiveProvider,
+              model: effectiveModel,
+              stdoutPath: result.stdoutPath,
+              diagnosticSource: result.stdoutPath,
+            },
+          };
+          this.opts.eventBus.publish(request.runId, event);
+        } else {
+          process.emitWarning(`Usage data unavailable for invocation ${id}`);
         }
+      } catch {
+        // Warning failure containment
       }
     }
 
