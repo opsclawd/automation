@@ -92,6 +92,10 @@ scratch. For example:
   adapters, fakes, mocks, or test doubles that implement or extend that interface/shape. Ensure all such
   files are included in the same task's `expected_files` (not `reference_files`) so they can be updated
   and pass typechecking (`TS2416`).
+- TOOLING AND TEST FRAMEWORK CONVENTION GROUNDING: When specifying a test framework, file extension, or
+  similar tooling choice for a new file, check sibling/analogous files in the repository and match their
+  established convention unless an explicit rationale is stated in the plan. Any intentional deviation
+  must be explicitly documented with its reason in the plan prose.
 
 ## CRITICAL RULES
 
