@@ -75,8 +75,8 @@ describe('migration 0007 agent-usage', () => {
     ).run();
 
     db.prepare(
-      `INSERT INTO agent_usage (invocation_id, run_uuid, phase_id, profile, provider, model, input_tokens, output_tokens, cached_tokens, recorded_at)
-      VALUES ('inv-1', 'r1', 'plan', 'opencode-frontier', 'deepseek', 'deepseek-pro', 1000, 500, 200, '2026-01-01T00:01:00.000Z')`,
+      `INSERT INTO agent_usage (invocation_id, run_uuid, phase_id, profile, provider, model, usage_status, input_tokens, output_tokens, cached_tokens, recorded_at)
+      VALUES ('inv-1', 'r1', 'plan', 'opencode-frontier', 'deepseek', 'deepseek-pro', 'measured', 1000, 500, 200, '2026-01-01T00:01:00.000Z')`,
     ).run();
 
     const row = db.prepare('SELECT * FROM v_cost_by_phase').get() as Record<string, unknown>;
@@ -109,8 +109,8 @@ describe('migration 0007 agent-usage', () => {
     ).run();
 
     db.prepare(
-      `INSERT INTO agent_usage (invocation_id, run_uuid, phase_id, profile, provider, model, input_tokens, output_tokens, cached_tokens, recorded_at)
-      VALUES ('inv-1', 'r1', 'plan', 'opencode-frontier', 'deepseek', 'deepseek-pro', 1000, 500, 200, '2026-01-01T00:01:00.000Z')`,
+      `INSERT INTO agent_usage (invocation_id, run_uuid, phase_id, profile, provider, model, usage_status, input_tokens, output_tokens, cached_tokens, recorded_at)
+      VALUES ('inv-1', 'r1', 'plan', 'opencode-frontier', 'deepseek', 'deepseek-pro', 'measured', 1000, 500, 200, '2026-01-01T00:01:00.000Z')`,
     ).run();
 
     const row = db.prepare('SELECT * FROM v_cost_by_phase').get() as Record<string, unknown>;
@@ -140,8 +140,8 @@ describe('migration 0007 agent-usage', () => {
     ).run();
 
     db.prepare(
-      `INSERT INTO agent_usage (invocation_id, run_uuid, phase_id, profile, provider, model, input_tokens, output_tokens, recorded_at)
-      VALUES ('inv-1', 'r1', 'plan', 'opencode-frontier', 'deepseek', 'deepseek-pro', 1000, 500, '2026-01-01T00:01:00.000Z')`,
+      `INSERT INTO agent_usage (invocation_id, run_uuid, phase_id, profile, provider, model, usage_status, input_tokens, output_tokens, recorded_at)
+      VALUES ('inv-1', 'r1', 'plan', 'opencode-frontier', 'deepseek', 'deepseek-pro', 'measured', 1000, 500, '2026-01-01T00:01:00.000Z')`,
     ).run();
 
     const row = db.prepare('SELECT * FROM v_cost_by_phase').get() as Record<string, unknown>;
@@ -172,10 +172,10 @@ describe('migration 0007 agent-usage', () => {
     db.prepare(
       `INSERT INTO agent_usage (
       invocation_id, run_uuid, phase_id, profile, provider, model,
-      input_tokens, output_tokens, recorded_at
+      usage_status, input_tokens, output_tokens, recorded_at
     ) VALUES (
       'inv-1', 'r1', 'plan', 'opencode-frontier', 'deepseek', 'deepseek-pro',
-      1234, 567, '2026-01-01T00:01:00.000Z'
+      'measured', 1234, 567, '2026-01-01T00:01:00.000Z'
     )`,
     ).run();
 

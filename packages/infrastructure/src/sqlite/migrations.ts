@@ -35,6 +35,7 @@ import * as addInitialPreStepHead from './migrations/0032-add-initial-pre-step-h
 import * as indexProfileStartedAt from './migrations/0033-index-agent-invocations-profile-started-at.js';
 import * as addStepRevertCounts from './migrations/0034-add-step-revert-counts.js';
 import * as addJobResumeDisposition from './migrations/0035-add-job-resume-disposition.js';
+import * as agentUsageStatus from './migrations/0036-agent-usage-status.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -72,6 +73,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: indexProfileStartedAt.version, sql: indexProfileStartedAt.sql },
   { version: addStepRevertCounts.version, sql: addStepRevertCounts.sql },
   { version: addJobResumeDisposition.version, sql: addJobResumeDisposition.sql },
+  { version: agentUsageStatus.version, sql: agentUsageStatus.sql },
 ];
 
 export function registerCustomFunctions(db: Db): void {

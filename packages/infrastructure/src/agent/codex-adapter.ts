@@ -90,7 +90,10 @@ export class CodexAgentAdapter implements AgentPort {
     });
 
     try {
+      const rawEventsPath = `${result.stdoutPath}.events.jsonl`;
       const stdoutLog = readFileSync(result.stdoutPath, 'utf-8');
+      writeFileSync(rawEventsPath, stdoutLog);
+      result.usageSourcePaths = [rawEventsPath];
       const lines = stdoutLog.split('\n');
 
       let cleanTranscript = '';

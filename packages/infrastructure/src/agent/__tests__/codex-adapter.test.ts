@@ -196,4 +196,45 @@ describe('CodexAgentAdapter', () => {
     expect(r.contractViolations).toContain('cancelled_by_orchestrator');
     expect(r.endCommitSha).toMatch(/^[0-9a-f]{40}$/);
   });
+
+  it('reports the inspected Codex event-stream path without fabricating usage when turn.completed is absent', async () => {
+    const cwd = makeWorktree();
+    const shim = join(cwd, 'fake-codex-no-turn-completed.sh');
+    writeFileSync(
+      shim,
+      `#!/usr/bin/env bash\nset -euo pipefail\necho '{"type":"thread.started"}'\necho '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Review findings: LGTM, no issues found."}}'\nexit 0\n`,
+    );
+    execSync(`chmod +x ${shim}`);
+    const adapter = new CodexAgentAdapter({
+      binaryPath: shim,
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke(req(cwd));
+    expect(result.outcome).toBe('success');
+    expect(result.usage).toBeUndefined();
+    expect(result.usageSourcePaths).toEqual([`${result.stdoutPath}.events.jsonl`]);
+    expect(readFileSync(result.usageSourcePaths![0], 'utf-8')).toContain('thread.started');
+    expect(readFileSync(result.stdoutPath, 'utf-8')).toBe(
+      'Review findings: LGTM, no issues found.',
+    );
+  });
+
+  it('assigns usage from turn.completed without accumulating other event usage', async () => {
+    const cwd = makeWorktree();
+    const shim = join(cwd, 'fake-codex-repeated-usage.sh');
+    writeFileSync(
+      shim,
+      `#!/usr/bin/env bash\nset -euo pipefail\necho '{"type":"thread.started"}'\necho '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Review findings: LGTM."},"usage":{"input_tokens":20,"output_tokens":10}}'\necho '{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}'\nexit 0\n`,
+    );
+    execSync(`chmod +x ${shim}`);
+    const adapter = new CodexAgentAdapter({
+      binaryPath: shim,
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke(req(cwd));
+    expect(result.outcome).toBe('success');
+    expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
+    expect(result.usageSourcePaths).toEqual([`${result.stdoutPath}.events.jsonl`]);
+    expect(readFileSync(result.usageSourcePaths![0], 'utf-8')).toContain('turn.completed');
+  });
 });

@@ -1,11 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeFileSync, mkdirSync, rmSync as rmSyncFs } from 'node:fs';
-import { AgentInvocationId, AgentProfileName, type AgentUsage } from '@ai-sdlc/domain';
+import {
+  AgentInvocationId,
+  AgentProfileName,
+  type AgentUsage,
+  type MeasuredAgentUsage,
+} from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
-import type { AgentPort, AgentUsagePort } from '@ai-sdlc/application/ports';
+import type { AgentPort, AgentUsagePort, EventBusPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
 import { AgentRuntimeRouter } from '../agent-runtime-router.js';
@@ -584,12 +589,14 @@ describe('AgentRuntimeRouter', () => {
     await router.invoke(req());
 
     expect(usageRepo.inserts).toHaveLength(1);
-    expect(usageRepo.inserts[0].inputTokens).toBe(500);
-    expect(usageRepo.inserts[0].outputTokens).toBe(200);
-    expect(usageRepo.inserts[0].reasoningTokens).toBe(100);
+    expect(usageRepo.inserts[0].status).toBe('measured');
+    const insertedUsage = usageRepo.inserts[0] as MeasuredAgentUsage;
+    expect(insertedUsage.inputTokens).toBe(500);
+    expect(insertedUsage.outputTokens).toBe(200);
+    expect(insertedUsage.reasoningTokens).toBe(100);
     // provider/model come from effective profile (cfg() uses anthropic/m)
-    expect(usageRepo.inserts[0].provider).toBe('anthropic');
-    expect(usageRepo.inserts[0].model).toBe('m');
+    expect(insertedUsage.provider).toBe('anthropic');
+    expect(insertedUsage.model).toBe('m');
 
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe('agent.usage');
@@ -598,58 +605,7 @@ describe('AgentRuntimeRouter', () => {
     expect(events[0].metadata.durationMs).toBe(1000);
   });
 
-  it('fallback still triggers when usage insert throws', async () => {
-    const events: OrchestratorEvent[] = [];
-    const eventBus = {
-      subscribe: () => () => {},
-      publish: (_runId: string, event: OrchestratorEvent) => {
-        events.push(event);
-      },
-    };
-    const usageRepo = new FakeAgentUsagePort();
-    usageRepo.insert = () => {
-      throw new Error('DB FULL');
-    };
-
-    class TimeoutWithUsageAdapter implements AgentPort {
-      async invoke(_req: AgentInvocationRequest): Promise<AgentInvocationResult> {
-        return {
-          runtime: 'opencode',
-          provider: 'deepseek',
-          model: 'deepseek-pro',
-          exitCode: 0,
-          durationMs: 1000,
-          stdoutPath: '/tmp/o',
-          stderrPath: '/tmp/e',
-          contractViolations: [],
-          outcome: 'timeout',
-          usage: {
-            inputTokens: 500,
-            outputTokens: 200,
-          },
-        };
-      }
-    }
-
-    const router = new AgentRuntimeRouter({
-      agent: cfg(),
-      adapters: { opencode: new TimeoutWithUsageAdapter() },
-      invocationRepository: new FakeAgentInvocationPort(),
-      eventBus,
-      usageRepository: usageRepo,
-      clock: () => FIXED_NOW,
-    });
-
-    const result = await router.invoke(req());
-
-    // Should still return a result (didn't crash)
-    expect(result.outcome).toBe('timeout');
-    // Should have attempted fallback (cfg() doesn't define fallback profiles,
-    // so the result is the original — but the key is it didn't throw)
-    expect(events.some((e) => e.type === 'phase.fallback.escalated')).toBe(false);
-  });
-
-  it('does not emit agent.usage event when adapter returns no usage', async () => {
+  it('persists unknown usage and warns with runtime, invocation, phase, profile, and stdout path', async () => {
     const events: OrchestratorEvent[] = [];
     const eventBus = {
       subscribe: () => () => {},
@@ -662,19 +618,498 @@ describe('AgentRuntimeRouter', () => {
     const router = new AgentRuntimeRouter({
       agent: cfg(),
       adapters: {
-        opencode: new StubAdapter({ exitCode: 0, outcome: 'success' } as AgentInvocationResult),
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+        }),
       },
       invocationRepository: new FakeAgentInvocationPort(),
       eventBus,
       usageRepository: usageRepo,
       clock: () => FIXED_NOW,
+      idFactory: () => 'inv-unknown-test',
     });
 
     await router.invoke(req());
 
-    expect(usageRepo.inserts).toHaveLength(0);
+    expect(usageRepo.inserts).toHaveLength(1);
+    expect(usageRepo.inserts[0]).toEqual({
+      status: 'unknown',
+      invocationId: 'inv-unknown-test',
+      runId: '00000000-0000-0000-0000-000000000001',
+      phaseId: 'plan-design',
+      profile: 'opencode-frontier',
+      provider: 'anthropic',
+      model: 'm',
+      recordedAt: FIXED_NOW,
+    });
+
+    const unknownEvents = events.filter((e) => e.type === 'agent.usage.unknown');
+    expect(unknownEvents).toHaveLength(1);
+    expect(unknownEvents[0].level).toBe('warn');
+    expect(unknownEvents[0].message.toLowerCase()).toContain('unavailable');
+    expect(unknownEvents[0].message.toLowerCase()).not.toContain('parsing failed');
+    expect(unknownEvents[0].metadata).toMatchObject({
+      runtime: 'opencode',
+      invocationId: 'inv-unknown-test',
+      phase: 'plan-design',
+      profile: 'opencode-frontier',
+      provider: 'anthropic',
+      model: 'm',
+      stdoutPath: '/tmp/stdout.log',
+    });
+  });
+
+  it('prefers adapter usage source paths in the unknown warning', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      publish: (_runId, event) => {
+        events.push(event);
+      },
+    };
+
+    const routerWithCustomSource = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usageSourcePaths: ['/tmp/custom-event-stream.jsonl'],
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-custom-source',
+    });
+
+    await routerWithCustomSource.invoke(req());
+
+    const unknownEvents = events.filter((e) => e.type === 'agent.usage.unknown');
+    expect(unknownEvents).toHaveLength(1);
+    expect(unknownEvents[0].metadata).toMatchObject({
+      diagnosticSource: '/tmp/custom-event-stream.jsonl',
+      stdoutPath: '/tmp/stdout.log',
+    });
+
+    const customInv = routerWithCustomSource['opts'].invocationRepository.findById(
+      AgentInvocationId('inv-custom-source'),
+    );
+    expect(customInv?.metadata?.usageSourcePaths).toEqual(['/tmp/custom-event-stream.jsonl']);
+
+    events.length = 0;
+    const routerWithDefaultSource = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usageSourcePaths: [],
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-fallback-source',
+    });
+
+    await routerWithDefaultSource.invoke(req());
+
+    expect(events.filter((e) => e.type === 'agent.usage.unknown')).toHaveLength(1);
+    expect(events[0].metadata).toMatchObject({
+      diagnosticSource: '/tmp/stdout.log',
+      stdoutPath: '/tmp/stdout.log',
+    });
+    const fallbackInv = routerWithDefaultSource['opts'].invocationRepository.findById(
+      AgentInvocationId('inv-fallback-source'),
+    );
+    expect(fallbackInv?.metadata?.usageSourcePaths).toEqual([]);
+  });
+
+  it('persists usageSourcePaths to invocation metadata and propagates to agent.usage event when usage is measured', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      publish: (_runId, event) => {
+        events.push(event);
+      },
+    };
+    const invRepo = new FakeAgentInvocationPort();
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 600,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usage: {
+            inputTokens: 120,
+            outputTokens: 45,
+          },
+          usageSourcePaths: ['/tmp/stdout.log.events.jsonl'],
+        }),
+      },
+      invocationRepository: invRepo,
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-measured-with-source',
+    });
+
+    await router.invoke(req());
+
     const usageEvents = events.filter((e) => e.type === 'agent.usage');
-    expect(usageEvents).toHaveLength(0);
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0].metadata).toMatchObject({
+      inputTokens: 120,
+      outputTokens: 45,
+      usageSourcePaths: ['/tmp/stdout.log.events.jsonl'],
+    });
+
+    const row = invRepo.findById(AgentInvocationId('inv-measured-with-source'));
+    expect(row).toBeDefined();
+    expect(row?.metadata?.usageSourcePaths).toEqual(['/tmp/stdout.log.events.jsonl']);
+  });
+
+  it('keeps measured zero classified as measured', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus = {
+      subscribe: () => () => {},
+      publish: (_runId: string, event: OrchestratorEvent) => {
+        events.push(event);
+      },
+    };
+    const usageRepo = new FakeAgentUsagePort();
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usage: {
+            inputTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+            cachedTokens: 0,
+          },
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      usageRepository: usageRepo,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-zero-test',
+    });
+
+    await router.invoke(req());
+
+    expect(usageRepo.inserts).toHaveLength(1);
+    expect(usageRepo.inserts[0].status).toBe('measured');
+    const insertedUsage = usageRepo.inserts[0] as MeasuredAgentUsage;
+    expect(insertedUsage.inputTokens).toBe(0);
+    expect(insertedUsage.outputTokens).toBe(0);
+    expect(insertedUsage.reasoningTokens).toBe(0);
+    expect(insertedUsage.cachedTokens).toBe(0);
+
+    const measuredEvents = events.filter((e) => e.type === 'agent.usage');
+    expect(measuredEvents).toHaveLength(1);
+    expect(measuredEvents[0].level).toBe('info');
+    expect(measuredEvents[0].metadata.inputTokens).toBe(0);
+    expect(measuredEvents[0].metadata.outputTokens).toBe(0);
+
+    const unknownEvents = events.filter((e) => e.type === 'agent.usage.unknown');
+    expect(unknownEvents).toHaveLength(0);
+  });
+
+  it('keeps fallback behavior unchanged and emits a warning when usage persistence throws', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus = {
+      subscribe: () => () => {},
+      publish: (_runId: string, event: OrchestratorEvent) => {
+        events.push(event);
+      },
+    };
+    const usageRepo = new FakeAgentUsagePort();
+    usageRepo.insert = () => {
+      throw new Error('UNIQUE constraint failed: agent_usage.invocation_id');
+    };
+
+    const fallbackConfig: AgentConfig = {
+      defaultProfile: 'opencode-frontier',
+      profiles: {
+        'opencode-frontier': {
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          timeoutMinutes: 1,
+        },
+        'pi-local': {
+          runtime: 'pi',
+          provider: 'local',
+          model: 'q',
+          timeoutMinutes: 1,
+        },
+      },
+      phaseProfiles: {
+        'plan-design': {
+          profile: 'opencode-frontier',
+          fallbackProfile: 'pi-local',
+          fallbackTriggers: ['timeout'],
+        },
+      },
+    };
+
+    const opencodeAdapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'm',
+      exitCode: 1,
+      durationMs: 1000,
+      stdoutPath: '/tmp/opencode.out',
+      stderrPath: '/tmp/opencode.err',
+      contractViolations: [],
+      outcome: 'timeout',
+    });
+
+    const piAdapter = new StubAdapter({
+      runtime: 'pi',
+      provider: 'local',
+      model: 'q',
+      exitCode: 0,
+      durationMs: 500,
+      stdoutPath: '/tmp/pi.out',
+      stderrPath: '/tmp/pi.err',
+      contractViolations: [],
+      outcome: 'success',
+      usage: {
+        inputTokens: 100,
+        outputTokens: 50,
+      },
+    });
+
+    let invocationCount = 0;
+    const router = new AgentRuntimeRouter({
+      agent: fallbackConfig,
+      adapters: { opencode: opencodeAdapter, pi: piAdapter },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      usageRepository: usageRepo,
+      clock: () => FIXED_NOW,
+      idFactory: () => `inv-${++invocationCount}`,
+    });
+
+    const result = await router.invoke(req());
+
+    expect(result.outcome).toBe('success');
+    expect(result.runtime).toBe('pi');
+
+    const failedEvents = events.filter((e) => e.type === 'agent.usage.failed');
+    expect(failedEvents.length).toBeGreaterThanOrEqual(1);
+    expect(failedEvents[0].level).toBe('warn');
+    expect(failedEvents[0].metadata.invocationId).toBe('inv-1');
+    expect(events.some((e) => e.type === 'phase.fallback.escalated')).toBe(true);
+
+    // Also verify process warning emission when eventBus is absent
+    const emitWarningSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+    try {
+      const routerWithoutBus = new AgentRuntimeRouter({
+        agent: fallbackConfig,
+        adapters: { opencode: opencodeAdapter, pi: piAdapter },
+        invocationRepository: new FakeAgentInvocationPort(),
+        usageRepository: usageRepo,
+        clock: () => FIXED_NOW,
+        idFactory: () => `inv-no-bus-${++invocationCount}`,
+      });
+
+      const res = await routerWithoutBus.invoke(req());
+      expect(res.outcome).toBe('success');
+      expect(res.runtime).toBe('pi');
+      expect(emitWarningSpy).toHaveBeenCalledWith(expect.stringContaining('inv-no-bus-3'));
+    } finally {
+      emitWarningSpy.mockRestore();
+    }
+  });
+
+  it('keeps invocation completion non-fatal when unknown warning publication throws', async () => {
+    const throwingEventBus = {
+      subscribe: () => () => {},
+      publish: () => {
+        throw new Error('Event bus broker down');
+      },
+    };
+    const usageRepo = new FakeAgentUsagePort();
+    const invRepo = new FakeAgentInvocationPort();
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+        }),
+      },
+      invocationRepository: invRepo,
+      eventBus: throwingEventBus,
+      usageRepository: usageRepo,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-throwing-eb',
+    });
+
+    const result = await router.invoke(req());
+
+    expect(result.outcome).toBe('success');
+    expect(invRepo.findById(AgentInvocationId('inv-throwing-eb'))?.outcome).toBe('success');
+    expect(usageRepo.inserts).toHaveLength(1);
+    expect(usageRepo.inserts[0].status).toBe('unknown');
+  });
+
+  it('emits fallback process.emitWarning when eventBus is omitted and usage is unknown', async () => {
+    const emitWarningSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+    try {
+      const usageRepo = new FakeAgentUsagePort();
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: {
+          opencode: new StubAdapter({
+            runtime: 'opencode',
+            provider: 'anthropic',
+            model: 'm',
+            exitCode: 0,
+            durationMs: 500,
+            stdoutPath: '/tmp/stdout.log',
+            stderrPath: '/tmp/stderr.log',
+            contractViolations: [],
+            outcome: 'success',
+          }),
+        },
+        invocationRepository: new FakeAgentInvocationPort(),
+        usageRepository: usageRepo,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-no-bus-unknown',
+      });
+
+      await router.invoke(req());
+
+      expect(usageRepo.inserts).toHaveLength(1);
+      expect(usageRepo.inserts[0].status).toBe('unknown');
+      expect(emitWarningSpy).toHaveBeenCalledWith(
+        'Usage data unavailable for invocation inv-no-bus-unknown',
+      );
+    } finally {
+      emitWarningSpy.mockRestore();
+    }
+  });
+
+  it('publishes agent.usage events via eventBus even when usageRepository is omitted', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      publish: (_runId, event) => {
+        events.push(event);
+      },
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usage: { inputTokens: 10, outputTokens: 20 },
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-no-repo-usage',
+    });
+
+    await router.invoke(req());
+
+    const usageEvents = events.filter((e) => e.type === 'agent.usage');
+    expect(usageEvents).toHaveLength(1);
+  });
+
+  it('publishes agent.usage.unknown events via eventBus even when usageRepository is omitted', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      publish: (_runId, event) => {
+        events.push(event);
+      },
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-no-repo-unknown',
+    });
+
+    await router.invoke(req());
+
+    const unknownEvents = events.filter((e) => e.type === 'agent.usage.unknown');
+    expect(unknownEvents).toHaveLength(1);
   });
 
   describe('expected artifact cleanup', () => {

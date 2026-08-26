@@ -79,7 +79,7 @@ describe('AgentRuntimeRouter caller-signalled fallback', () => {
       readPromptChars: () => 100,
       eventBus: {
         publish(_runId, ev) {
-          events.push(ev);
+          if (ev.type === 'phase.fallback.escalated') events.push(ev);
         },
       },
     });
@@ -156,7 +156,7 @@ describe('AgentRuntimeRouter caller-signalled fallback', () => {
       readPromptChars: () => 100,
       eventBus: {
         publish(_runId, ev) {
-          events.push(ev);
+          if (ev.type === 'phase.fallback.escalated') events.push(ev);
         },
       },
     });
@@ -217,7 +217,7 @@ describe('AgentRuntimeRouter caller-signalled fallback', () => {
       readPromptChars: () => 100,
       eventBus: {
         publish(_runId, ev) {
-          events.push(ev);
+          if (ev.type === 'phase.fallback.escalated') events.push(ev);
         },
       },
     });

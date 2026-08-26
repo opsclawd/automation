@@ -4,13 +4,15 @@ import {
   AgentProfileName,
   PhaseName,
   RunId,
-  type AgentUsage,
+  type MeasuredAgentUsage,
+  type UnknownAgentUsage,
 } from '@ai-sdlc/domain';
 import { openDatabase, applyMigrations, RunRepository } from '../../index.js';
 import { AgentUsageRepository } from '../agent-usage-repository.js';
 
-function sample(overrides: Partial<AgentUsage> = {}): AgentUsage {
+function sample(overrides: Partial<MeasuredAgentUsage> = {}): MeasuredAgentUsage {
   return {
+    status: 'measured',
     invocationId: AgentInvocationId('inv-1'),
     runId: RunId('00000000-0000-0000-0000-000000000001'),
     phaseId: PhaseName('plan-design'),
@@ -119,10 +121,61 @@ describe('AgentUsageRepository', () => {
     });
     repo.insert(usage);
     const got = repo.findById(usage.invocationId);
-    expect(got?.inputTokens).toBe(1234);
-    expect(got?.outputTokens).toBe(567);
-    expect(got?.reasoningTokens).toBeUndefined();
-    expect(got?.cachedTokens).toBeUndefined();
+    expect(got?.status).toBe('measured');
+    if (got?.status === 'measured') {
+      expect(got.inputTokens).toBe(1234);
+      expect(got.outputTokens).toBe(567);
+      expect(got.reasoningTokens).toBeUndefined();
+      expect(got.cachedTokens).toBeUndefined();
+    }
+  });
+
+  it('round-trips measured zero separately from unknown usage', () => {
+    const { db } = setupDb();
+    const repo = new AgentUsageRepository(db);
+
+    const zeroUsage: MeasuredAgentUsage = {
+      status: 'measured',
+      invocationId: AgentInvocationId('inv-1'),
+      runId: RunId('00000000-0000-0000-0000-000000000001'),
+      phaseId: PhaseName('plan-design'),
+      profile: AgentProfileName('opencode-frontier'),
+      provider: 'deepseek',
+      model: 'deepseek-pro',
+      inputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      cachedTokens: 0,
+      recordedAt: new Date('2026-06-01T12:00:00.000Z'),
+    };
+
+    const unknownUsage: UnknownAgentUsage = {
+      status: 'unknown',
+      invocationId: AgentInvocationId('inv-2'),
+      runId: RunId('00000000-0000-0000-0000-000000000001'),
+      phaseId: PhaseName('implement'),
+      profile: AgentProfileName('opencode-frontier'),
+      provider: 'deepseek',
+      model: 'deepseek',
+      recordedAt: new Date('2026-06-01T12:05:00.000Z'),
+    };
+
+    repo.insert(zeroUsage);
+    repo.insert(unknownUsage);
+
+    const gotZero = repo.findById(AgentInvocationId('inv-1'));
+    expect(gotZero).toEqual(zeroUsage);
+    expect(gotZero?.status).toBe('measured');
+    if (gotZero?.status === 'measured') {
+      expect(gotZero.inputTokens).toBe(0);
+      expect(gotZero.outputTokens).toBe(0);
+      expect(gotZero.reasoningTokens).toBe(0);
+      expect(gotZero.cachedTokens).toBe(0);
+    }
+
+    const gotUnknown = repo.findById(AgentInvocationId('inv-2'));
+    expect(gotUnknown).toEqual(unknownUsage);
+    expect(gotUnknown?.status).toBe('unknown');
   });
 
   it('lists by run', () => {
