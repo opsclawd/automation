@@ -115,15 +115,20 @@ export class CodexAgentAdapter implements AgentPort {
           } else if (ev.type === 'turn.failed') {
             detectedError = ev.error?.message ?? 'Unknown turn failure';
           } else if (ev.type === 'turn.completed' && ev.usage) {
+            // Field names verified live against codex-cli 0.149.0 (#943): the
+            // real event carries `cached_input_tokens` and
+            // `reasoning_output_tokens`, not `cache_read_tokens` /
+            // `reasoning_tokens` — the latter silently matched nothing,
+            // which is why cached_tokens was NULL on all 237 existing rows.
+            // Old names kept as a fallback in case an older codex version
+            // used them.
+            const reasoningTokens = ev.usage.reasoning_output_tokens ?? ev.usage.reasoning_tokens;
+            const cachedTokens = ev.usage.cached_input_tokens ?? ev.usage.cache_read_tokens;
             usage = {
               inputTokens: ev.usage.input_tokens ?? ev.usage.prompt_tokens ?? 0,
               outputTokens: ev.usage.output_tokens ?? ev.usage.completion_tokens ?? 0,
-              ...(ev.usage.reasoning_tokens !== undefined
-                ? { reasoningTokens: ev.usage.reasoning_tokens }
-                : {}),
-              ...(ev.usage.cache_read_tokens !== undefined
-                ? { cachedTokens: ev.usage.cache_read_tokens }
-                : {}),
+              ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+              ...(cachedTokens !== undefined ? { cachedTokens } : {}),
             };
           }
         } catch {

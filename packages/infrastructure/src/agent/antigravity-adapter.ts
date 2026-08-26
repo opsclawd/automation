@@ -8,6 +8,7 @@ import {
   unlinkSync,
   statSync,
   mkdirSync,
+  writeFileSync,
   promises as fsPromises,
 } from 'node:fs';
 import { resolve, join, dirname, basename, relative, isAbsolute } from 'node:path';
@@ -17,6 +18,104 @@ import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { runExternalCli } from './external-cli-runner.js';
+
+interface AntigravityJsonResponse {
+  response?: unknown;
+  usage?: unknown;
+}
+
+// Parses the {"response","usage",...} envelope produced by --output-format
+// json (verified live against agy 1.0.3). Returns undefined for anything that
+// isn't that exact shape — including plain-text stdout from fixtures/mocks
+// that don't model the JSON contract, and any future agy version that changes
+// it — so callers degrade to "no usage data" rather than crash.
+function parseAntigravityJsonResponse(
+  raw: string,
+): { response: string; usage: Record<string, unknown> } | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const { response, usage } = parsed as AntigravityJsonResponse;
+  if (typeof response !== 'string' || typeof usage !== 'object' || usage === null) return undefined;
+  return { response, usage: usage as Record<string, unknown> };
+}
+
+// Mutates `result` in place: attaches usage parsed from the --output-format
+// json envelope, and corrects a false negative that switching to json mode
+// introduces in runExternalCli's own NO_OUTPUT check. That check tests raw
+// stdout for emptiness, but raw stdout is now the JSON envelope, which is
+// never empty even when the model's actual response text is — so a
+// genuinely empty response would otherwise silently pass as a success.
+function applyAntigravityJsonUsage(
+  result: AgentInvocationResult,
+  request: AgentInvocationRequest,
+): void {
+  let rawStdout: string;
+  try {
+    rawStdout = existsSync(result.stdoutPath) ? readFileSync(result.stdoutPath, 'utf-8') : '';
+  } catch {
+    return;
+  }
+  const parsed = parseAntigravityJsonResponse(rawStdout);
+  if (!parsed) return;
+
+  const { response, usage: u } = parsed;
+
+  // Every other runtime's stdoutPath holds the plain model response, and it's
+  // read generically downstream (repair-loop transcript evidence, failure
+  // diagnostics — see readTail() callers in compose.ts) with no runtime-
+  // specific handling. Rewriting back to plain text here keeps that content
+  // human-readable instead of a JSON-escaped single line, without needing to
+  // special-case antigravity at every one of those call sites.
+  try {
+    writeFileSync(result.stdoutPath, response);
+  } catch {
+    // best-effort write
+  }
+  const inputTokens = typeof u.input_tokens === 'number' ? u.input_tokens : 0;
+  const outputTokens = typeof u.output_tokens === 'number' ? u.output_tokens : 0;
+  const reasoningTokens = typeof u.thinking_tokens === 'number' ? u.thinking_tokens : 0;
+  const cachedTokens = typeof u.cache_read_tokens === 'number' ? u.cache_read_tokens : 0;
+  if (inputTokens > 0 || outputTokens > 0) {
+    result.usage = {
+      inputTokens,
+      outputTokens,
+      ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
+      ...(cachedTokens > 0 ? { cachedTokens } : {}),
+    };
+    result.usageSourcePaths = [result.stdoutPath];
+  }
+
+  if (
+    result.outcome === 'success' &&
+    result.contractViolations.length === 0 &&
+    request.startCommitSha &&
+    result.endCommitSha === request.startCommitSha &&
+    !response.trim() &&
+    !(request.expectedArtifacts ?? []).length
+  ) {
+    let stderrContent = '';
+    try {
+      stderrContent = existsSync(result.stderrPath) ? readFileSync(result.stderrPath, 'utf-8') : '';
+    } catch {
+      // best-effort read
+    }
+    if (!stderrContent.trim()) {
+      result.outcome = 'contract_violation';
+      result.contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
+      const note = `NO_OUTPUT: agent exited 0 with empty response and no git changes\n${stderrContent}`;
+      try {
+        writeFileSync(result.stderrPath, note);
+      } catch {
+        // best-effort write
+      }
+    }
+  }
+}
 
 const AGY_MODEL_LABEL_EXCEPTIONS: Readonly<Record<string, string>> = Object.freeze({
   'gpt-oss-120b-medium': 'GPT-OSS 120B (Medium)',
@@ -274,6 +373,10 @@ export class AntigravityAgentAdapter implements AgentPort {
     // the identical invocation with --dangerously-skip-permissions completes
     // normally). Removing it trades a fast, wrong response (#709's symptom)
     // for a slow hang on nearly every invocation — strictly worse.
+    // --output-format json (verified live against agy 1.0.3, #943) wraps the
+    // plain response in {"response","usage",...}; `usage` carries real
+    // input/output/thinking/cache_read token counts, unlike default text mode
+    // which has no usage signal at all. This is read back below.
     const args = [
       '--dangerously-skip-permissions',
       '--add-dir',
@@ -281,6 +384,8 @@ export class AntigravityAgentAdapter implements AgentPort {
       '--print-timeout',
       `${printTimeoutMins}m`,
       ...(modelLabel !== null ? ['--model', modelLabel] : []),
+      '--output-format',
+      'json',
       '--print',
       prompt,
     ];
@@ -302,6 +407,8 @@ export class AntigravityAgentAdapter implements AgentPort {
       startCommitSha: request.startCommitSha,
       expectedArtifacts: request.expectedArtifacts,
     });
+
+    applyAntigravityJsonUsage(result, request);
 
     // Post: detect and recover artifacts wrongly written to scratch
     if (

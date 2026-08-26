@@ -1,10 +1,14 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { AgentProfileName } from '@ai-sdlc/domain';
-import { ClaudeCodeAgentAdapter } from '../claude-code-adapter.js';
+import {
+  ClaudeCodeAgentAdapter,
+  claudeProjectDirName,
+  parseClaudeTranscriptUsage,
+} from '../claude-code-adapter.js';
 
 const dirs: string[] = [];
 
@@ -189,5 +193,136 @@ exit 0
     const r = await adapter.invoke(req(cwd));
     expect(r.outcome).toBe('contract_violation');
     expect(readFileSync(r.stderrPath, 'utf-8')).toContain('NO_OUTPUT');
+  });
+});
+
+describe('claudeProjectDirName', () => {
+  it('replaces every / and . with -', () => {
+    expect(claudeProjectDirName('/home/x/.openclaw/y')).toBe('-home-x--openclaw-y');
+  });
+
+  it('handles a plain absolute path with no dots', () => {
+    expect(claudeProjectDirName('/home/x/repo')).toBe('-home-x-repo');
+  });
+});
+
+function assistantLine(id: string, usage: Record<string, number>): string {
+  return JSON.stringify({ type: 'assistant', message: { id, usage } });
+}
+
+describe('parseClaudeTranscriptUsage', () => {
+  it('sums input/output/cached tokens across unique messages', () => {
+    const content = [
+      assistantLine('msg_1', { input_tokens: 100, output_tokens: 20 }),
+      assistantLine('msg_2', {
+        input_tokens: 50,
+        output_tokens: 10,
+        cache_creation_input_tokens: 5,
+        cache_read_input_tokens: 3,
+      }),
+    ].join('\n');
+    const usage = parseClaudeTranscriptUsage(content);
+    expect(usage).toEqual({ inputTokens: 150, outputTokens: 30, cachedTokens: 8 });
+  });
+
+  it('dedupes multiple JSONL lines sharing the same message.id (one per content block)', () => {
+    // A single assistant API response is split across multiple lines (thinking,
+    // text, tool-use), each carrying an identical usage snapshot for that call.
+    const content = [
+      assistantLine('msg_1', { input_tokens: 100, output_tokens: 20 }),
+      assistantLine('msg_1', { input_tokens: 100, output_tokens: 20 }),
+      assistantLine('msg_1', { input_tokens: 100, output_tokens: 20 }),
+      assistantLine('msg_2', { input_tokens: 50, output_tokens: 10 }),
+    ].join('\n');
+    const usage = parseClaudeTranscriptUsage(content);
+    // Must count msg_1 once, not three times.
+    expect(usage).toEqual({ inputTokens: 150, outputTokens: 30 });
+  });
+
+  it('ignores non-assistant lines and malformed JSON', () => {
+    const content = [
+      JSON.stringify({ type: 'user', message: { content: 'hi' } }),
+      'not json at all',
+      assistantLine('msg_1', { input_tokens: 10, output_tokens: 5 }),
+    ].join('\n');
+    const usage = parseClaudeTranscriptUsage(content);
+    expect(usage).toEqual({ inputTokens: 10, outputTokens: 5 });
+  });
+
+  it('returns undefined when the transcript has no usage-bearing assistant lines', () => {
+    const content = [JSON.stringify({ type: 'user', message: { content: 'hi' } })].join('\n');
+    expect(parseClaudeTranscriptUsage(content)).toBeUndefined();
+  });
+
+  it('returns undefined for an empty transcript', () => {
+    expect(parseClaudeTranscriptUsage('')).toBeUndefined();
+  });
+});
+
+describe('ClaudeCodeAgentAdapter usage capture', () => {
+  it('reads usage from a newly created transcript file under transcriptsRoot', async () => {
+    const cwd = makeWorktree();
+    const transcriptsRoot = mkdtempSync(join(tmpdir(), 'claude-transcripts-'));
+    dirs.push(transcriptsRoot);
+    const projectDir = join(transcriptsRoot, claudeProjectDirName(cwd));
+    mkdirSync(projectDir, { recursive: true });
+
+    const shim = join(cwd, 'shim.sh');
+    // The shim simulates the real CLI writing a new transcript file as a side
+    // effect of the invocation, mirroring how Claude Code itself behaves.
+    writeFileSync(
+      shim,
+      `#!/usr/bin/env bash
+cat > "${join(projectDir, 'session-1.jsonl')}" <<'EOF'
+${assistantLine('msg_1', { input_tokens: 200, output_tokens: 40 })}
+EOF
+printf 'OK\\n'
+exit 0
+`,
+    );
+    execSync(`chmod +x ${shim}`);
+    const adapter = new ClaudeCodeAgentAdapter({
+      binaryPath: shim,
+      artifactsDir: cwd,
+      transcriptsRoot,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.usage).toEqual({ inputTokens: 200, outputTokens: 40 });
+    expect(r.usageSourcePaths).toEqual([join(projectDir, 'session-1.jsonl')]);
+  });
+
+  it('ignores transcript files that already existed before the invocation', async () => {
+    const cwd = makeWorktree();
+    const transcriptsRoot = mkdtempSync(join(tmpdir(), 'claude-transcripts-'));
+    dirs.push(transcriptsRoot);
+    const projectDir = join(transcriptsRoot, claudeProjectDirName(cwd));
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, 'preexisting.jsonl'),
+      assistantLine('msg_old', { input_tokens: 999, output_tokens: 999 }),
+    );
+
+    const adapter = new ClaudeCodeAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-claude-success.sh'),
+      artifactsDir: cwd,
+      transcriptsRoot,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.usage).toBeUndefined();
+    expect(r.usageSourcePaths).toBeUndefined();
+  });
+
+  it('omits usage when no matching project directory exists under transcriptsRoot', async () => {
+    const cwd = makeWorktree();
+    const transcriptsRoot = mkdtempSync(join(tmpdir(), 'claude-transcripts-'));
+    dirs.push(transcriptsRoot);
+    const adapter = new ClaudeCodeAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-claude-success.sh'),
+      artifactsDir: cwd,
+      transcriptsRoot,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.usage).toBeUndefined();
+    expect(r.usageSourcePaths).toBeUndefined();
   });
 });
