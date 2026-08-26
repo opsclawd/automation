@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeFileSync, mkdirSync, rmSync as rmSyncFs } from 'node:fs';
-import { AgentInvocationId, AgentProfileName, type AgentUsage } from '@ai-sdlc/domain';
+import {
+  AgentInvocationId,
+  AgentProfileName,
+  type AgentUsage,
+  type MeasuredAgentUsage,
+} from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
 import type { AgentPort, AgentUsagePort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
@@ -584,12 +589,14 @@ describe('AgentRuntimeRouter', () => {
     await router.invoke(req());
 
     expect(usageRepo.inserts).toHaveLength(1);
-    expect(usageRepo.inserts[0].inputTokens).toBe(500);
-    expect(usageRepo.inserts[0].outputTokens).toBe(200);
-    expect(usageRepo.inserts[0].reasoningTokens).toBe(100);
+    expect(usageRepo.inserts[0].status).toBe('measured');
+    const insertedUsage = usageRepo.inserts[0] as MeasuredAgentUsage;
+    expect(insertedUsage.inputTokens).toBe(500);
+    expect(insertedUsage.outputTokens).toBe(200);
+    expect(insertedUsage.reasoningTokens).toBe(100);
     // provider/model come from effective profile (cfg() uses anthropic/m)
-    expect(usageRepo.inserts[0].provider).toBe('anthropic');
-    expect(usageRepo.inserts[0].model).toBe('m');
+    expect(insertedUsage.provider).toBe('anthropic');
+    expect(insertedUsage.model).toBe('m');
 
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe('agent.usage');
@@ -672,7 +679,17 @@ describe('AgentRuntimeRouter', () => {
 
     await router.invoke(req());
 
-    expect(usageRepo.inserts).toHaveLength(0);
+    expect(usageRepo.inserts).toHaveLength(1);
+    expect(usageRepo.inserts[0]).toEqual({
+      status: 'unknown',
+      invocationId: expect.any(String),
+      runId: '00000000-0000-0000-0000-000000000001',
+      phaseId: 'plan-design',
+      profile: 'opencode-frontier',
+      provider: 'anthropic',
+      model: 'm',
+      recordedAt: FIXED_NOW,
+    });
     const usageEvents = events.filter((e) => e.type === 'agent.usage');
     expect(usageEvents).toHaveLength(0);
   });

@@ -14,26 +14,39 @@ interface Row {
   profile: string;
   provider: string;
   model: string;
-  input_tokens: number;
-  output_tokens: number;
+  usage_status: 'measured' | 'unknown';
+  input_tokens: number | null;
+  output_tokens: number | null;
   reasoning_tokens: number | null;
   cached_tokens: number | null;
   recorded_at: string;
 }
 
 function rowToUsage(r: Row): AgentUsage {
-  return {
+  const identity = {
     invocationId: AgentInvocationId(r.invocation_id),
     runId: RunId(r.run_uuid),
     phaseId: PhaseName(r.phase_id),
     profile: AgentProfileName(r.profile),
     provider: r.provider,
     model: r.model,
-    inputTokens: r.input_tokens,
-    outputTokens: r.output_tokens,
+    recordedAt: new Date(r.recorded_at),
+  };
+
+  if (r.usage_status === 'unknown') {
+    return {
+      ...identity,
+      status: 'unknown',
+    };
+  }
+
+  return {
+    ...identity,
+    status: 'measured',
+    inputTokens: r.input_tokens ?? 0,
+    outputTokens: r.output_tokens ?? 0,
     ...(r.reasoning_tokens !== null ? { reasoningTokens: r.reasoning_tokens } : {}),
     ...(r.cached_tokens !== null ? { cachedTokens: r.cached_tokens } : {}),
-    recordedAt: new Date(r.recorded_at),
   };
 }
 
@@ -41,14 +54,15 @@ export class AgentUsageRepository {
   constructor(private readonly db: Db) {}
 
   insert(usage: AgentUsage): void {
+    const isMeasured = usage.status === 'measured';
     this.db
       .prepare(
         `INSERT INTO agent_usage (
           invocation_id, run_uuid, phase_id, profile, provider, model,
-          input_tokens, output_tokens, reasoning_tokens, cached_tokens, recorded_at
+          usage_status, input_tokens, output_tokens, reasoning_tokens, cached_tokens, recorded_at
         ) VALUES (
           @invocationId, @runId, @phaseId, @profile, @provider, @model,
-          @inputTokens, @outputTokens, @reasoningTokens, @cachedTokens, @recordedAt
+          @usageStatus, @inputTokens, @outputTokens, @reasoningTokens, @cachedTokens, @recordedAt
         )`,
       )
       .run({
@@ -58,10 +72,11 @@ export class AgentUsageRepository {
         profile: usage.profile,
         provider: usage.provider,
         model: usage.model,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        reasoningTokens: usage.reasoningTokens ?? null,
-        cachedTokens: usage.cachedTokens ?? null,
+        usageStatus: usage.status,
+        inputTokens: isMeasured ? usage.inputTokens : null,
+        outputTokens: isMeasured ? usage.outputTokens : null,
+        reasoningTokens: isMeasured ? (usage.reasoningTokens ?? null) : null,
+        cachedTokens: isMeasured ? (usage.cachedTokens ?? null) : null,
         recordedAt: usage.recordedAt.toISOString(),
       });
   }
