@@ -64,6 +64,18 @@ function applyAntigravityJsonUsage(
   if (!parsed) return;
 
   const { response, usage: u } = parsed;
+
+  // Every other runtime's stdoutPath holds the plain model response, and it's
+  // read generically downstream (repair-loop transcript evidence, failure
+  // diagnostics — see readTail() callers in compose.ts) with no runtime-
+  // specific handling. Rewriting back to plain text here keeps that content
+  // human-readable instead of a JSON-escaped single line, without needing to
+  // special-case antigravity at every one of those call sites.
+  try {
+    writeFileSync(result.stdoutPath, response);
+  } catch {
+    // best-effort write
+  }
   const inputTokens = typeof u.input_tokens === 'number' ? u.input_tokens : 0;
   const outputTokens = typeof u.output_tokens === 'number' ? u.output_tokens : 0;
   const reasoningTokens = typeof u.thinking_tokens === 'number' ? u.thinking_tokens : 0;

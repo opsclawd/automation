@@ -1133,6 +1133,19 @@ describe('AntigravityAgentAdapter usage capture (--output-format json)', () => {
     expect(r.usageSourcePaths).toEqual([r.stdoutPath]);
   });
 
+  it('rewrites stdout.log to the plain response text, not the raw JSON envelope', async () => {
+    // Downstream repair-loop/evidence consumers (readTail(result.stdoutPath) in
+    // compose.ts) read this file generically across all runtimes with no
+    // antigravity-specific handling, so it must stay human-readable.
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-json-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(readFileSync(r.stdoutPath, 'utf-8')).toBe('PONG\n');
+  });
+
   it('degrades gracefully with no usage when stdout is not the JSON envelope', async () => {
     // Fixtures/mocks (and any pre-upgrade agy binary) emit plain text on
     // stdout. The adapter must not crash or misattribute usage in that case.
