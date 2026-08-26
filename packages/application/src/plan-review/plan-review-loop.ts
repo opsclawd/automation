@@ -2816,8 +2816,10 @@ export class PlanReviewLoop {
         continue;
       }
       if (frozenCitations.has(f.citation)) {
-        // A frozen finding re-flagged: eligible (still_open path).
-        eligible.push(f);
+        // A frozen finding re-flagged: eligible only if still open or disposition omitted.
+        if (f.disposition === undefined || f.disposition === 'still_open') {
+          eligible.push(f);
+        }
         continue;
       }
       if (recentSet.has(f.citation)) {
