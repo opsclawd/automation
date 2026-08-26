@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { loadLayeredConfig } from '@ai-sdlc/shared';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const runValidationScript = join(__dirname, '../run-validation.ts');
@@ -20,6 +21,7 @@ describe('run-validation layered config integration', () => {
   let automationRoot: string;
   let target1Root: string;
   let target2Root: string;
+  let target3Root: string;
 
   const BASE_CONFIG = {
     validation: { commands: ['echo base1', 'echo base2'], timeout: 300 },
@@ -45,15 +47,18 @@ describe('run-validation layered config integration', () => {
         validation: { additionalCommands: ['echo target2-additive'] },
       }),
     });
+    target3Root = makeRepo({});
     writeFileSync(join(automationRoot, 'pnpm-workspace.yaml'), 'packages: []\n');
     writeFileSync(join(target1Root, 'pnpm-workspace.yaml'), 'packages: []\n');
     writeFileSync(join(target2Root, 'pnpm-workspace.yaml'), 'packages: []\n');
+    writeFileSync(join(target3Root, 'pnpm-workspace.yaml'), 'packages: []\n');
   });
 
   afterEach(() => {
     rmSync(automationRoot, { recursive: true, force: true });
     rmSync(target1Root, { recursive: true, force: true });
     rmSync(target2Root, { recursive: true, force: true });
+    rmSync(target3Root, { recursive: true, force: true });
   });
 
   it('persists fingerprint and sources reflecting replaced commands in target repo', async () => {
@@ -99,7 +104,6 @@ describe('run-validation layered config integration', () => {
     expect(content.fingerprint).toBeDefined();
     expect(content.sources).toBeDefined();
 
-    const { loadLayeredConfig } = await import('@ai-sdlc/shared');
     const layered = loadLayeredConfig({ automationRoot, targetRoot: target1Root });
     const targetSource = layered.sources.find((s) => s.kind === 'target');
     expect(targetSource?.present).toBe(true);
@@ -160,7 +164,6 @@ describe('run-validation layered config integration', () => {
     expect(content.fingerprint).toBeDefined();
     expect(content.sources).toBeDefined();
 
-    const { loadLayeredConfig } = await import('@ai-sdlc/shared');
     const layered = loadLayeredConfig({ automationRoot, targetRoot: target2Root });
     const targetSource = layered.sources.find((s) => s.kind === 'target');
     expect(targetSource?.present).toBe(true);
@@ -180,5 +183,60 @@ describe('run-validation layered config integration', () => {
     }
     expect(rawBody).not.toMatch(/echo target2-additive/);
     expect(rawBody).not.toMatch(/api_key|secret|token/i);
+  });
+
+  it('applies base configuration unchanged when the target repo has no .ai-orchestrator.json', async () => {
+    expect(existsSync(join(automationRoot, '.ai-orchestrator.json'))).toBe(true);
+    expect(existsSync(join(target3Root, '.ai-orchestrator.json'))).toBe(false);
+
+    const runId = '00000000-0000-0000-0000-0000000000d3';
+
+    const testEnv = { ...process.env };
+    delete testEnv.VITEST;
+
+    execFileSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        runValidationScript,
+        '--cwd',
+        target3Root,
+        '--run-id',
+        runId,
+        '--repo-root',
+        automationRoot,
+        '--target-repo-root',
+        target3Root,
+        '--phase-id',
+        'validate',
+      ],
+      {
+        env: {
+          ...testEnv,
+          NODE_OPTIONS: '--conditions=development',
+        },
+      },
+    );
+
+    const runDir = join(automationRoot, '.ai-runs', runId);
+    const configSourcesPath = join(runDir, 'config-sources.json');
+    expect(existsSync(configSourcesPath)).toBe(true);
+
+    const rawBody = readFileSync(configSourcesPath, 'utf8');
+    const content = JSON.parse(rawBody);
+    expect(content.fingerprint).toBeDefined();
+    expect(content.sources).toBeDefined();
+
+    const layered = loadLayeredConfig({ automationRoot, targetRoot: target3Root });
+    const targetSource = layered.sources.find((s) => s.kind === 'target');
+    expect(targetSource?.present).toBe(false);
+    expect(layered.config.validation.commands).toEqual(['echo base1', 'echo base2']);
+    expect(content.fingerprint).toBe(layered.fingerprint);
+
+    expect(Object.keys(content).sort()).toEqual(['fingerprint', 'sources']);
+    for (const src of content.sources) {
+      expect(Object.keys(src).sort()).toEqual(['kind', 'path', 'present']);
+    }
   });
 });

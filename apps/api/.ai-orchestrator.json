@@ -1,5 +1,6 @@
 {
   "validation": {
-    "additionalCommands": ["echo 1"]
+    "additionalCommands": ["echo 1"],
+    "timeout": 10
   }
 }
