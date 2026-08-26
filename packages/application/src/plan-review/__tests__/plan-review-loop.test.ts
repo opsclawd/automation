@@ -3979,5 +3979,121 @@ describe('Task 1: snapshot seam - post-reopen verification', () => {
       );
       expect(events.map((e) => e.type)).toContain('plan-review.review.bypassed_for_arbitration');
     });
+
+    it('respects a re-cited frozen finding with disposition addressed and maintains reviewer pass verdict', async () => {
+      let reviewCalls = 0;
+      let fixCalls = 0;
+
+      const { deps } = makeDeps({
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          if (reviewCalls === 1) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'p1_found',
+              findings: [
+                {
+                  severity: 'P1',
+                  citation: 'task-manifest.json:Task 2',
+                  failureScenario: 'nested array instead of string',
+                  evidence: 'grounded',
+                },
+              ],
+            };
+          }
+          if (reviewCalls === 2) {
+            // Iteration 2 (delta re-review): re-cites the frozen finding with disposition: 'addressed' and verdict: 'pass'
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'pass',
+              findings: [
+                {
+                  severity: 'P1',
+                  citation: 'task-manifest.json:Task 2',
+                  failureScenario: 'nested array instead of string',
+                  evidence: 'grounded',
+                  disposition: 'addressed',
+                },
+              ],
+            };
+          }
+          // Iteration 3 (final_full): terminal clean review pass with no open findings
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success',
+            verdict: 'pass',
+            findings: [],
+          };
+        },
+        runFix: async (): Promise<PlanFixResult> => {
+          fixCalls++;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+            headBeforeFix: `fix-head-${fixCalls}`,
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.outcome).toBe('success');
+      expect(fixCalls).toBe(1);
+      expect(reviewCalls).toBe(3); // iter 1 (p1_found) -> fix -> iter 2 (pass delta) -> iter 3 (pass final_full)
+    });
+
+    it('forces p1_found when re-cited frozen finding has disposition still_open or undefined', async () => {
+      let reviewCalls = 0;
+
+      const { deps } = makeDeps({
+        runReview: async (): Promise<PlanReviewResult> => {
+          reviewCalls++;
+          if (reviewCalls === 1) {
+            return {
+              invocationId: `rev-${reviewCalls}`,
+              agentOutcome: 'success',
+              verdict: 'p1_found',
+              findings: [
+                {
+                  severity: 'P1',
+                  citation: 'task-manifest.json:Task 2',
+                  failureScenario: 'nested array instead of string',
+                  evidence: 'grounded',
+                },
+              ],
+            };
+          }
+          // Reviewer reports 'pass' but re-cites frozen finding with 'still_open' disposition
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success',
+            verdict: 'pass',
+            findings: [
+              {
+                severity: 'P1',
+                citation: 'task-manifest.json:Task 2',
+                failureScenario: 'nested array instead of string',
+                evidence: 'grounded',
+                disposition: 'still_open',
+              },
+            ],
+          };
+        },
+        runFix: async (): Promise<PlanFixResult> => {
+          return {
+            invocationId: 'fix-1',
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+            headBeforeFix: 'fix-head-1',
+          };
+        },
+      });
+
+      const out = await new PlanReviewLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iteration 2 verdict pass gets gate-manufactured to p1_found because disposition is still_open
+      expect(out.outcome).toBe('needs_human_review');
+    });
   });
 });
