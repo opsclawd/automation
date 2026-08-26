@@ -101,7 +101,7 @@ pnpm --filter @ai-sdlc/api dev repo refresh --id <repository-id>
 
 Disabling a Repository blocks new admission while already admitted work drains. A degraded, unreachable, or otherwise unavailable Repository is skipped without preventing healthy repositories from running. `repo refresh` re-resolves Git/GitHub metadata and health after an operator repairs a path or remote.
 
-Registration succeeds well before a repository is ready to run. A target must also present a clean working tree, a committed lockfile, and scripts satisfying every inherited validation command — note that `validation.commands` concatenate across config layers rather than replacing, so a target can add commands but never remove them. See [Onboarding a Repository](onboarding-a-repository.md) for the readiness checklist and pre-flight procedure.
+Registration succeeds well before a repository is ready to run. A target must also present a clean working tree, a committed lockfile, and scripts satisfying its effective validation commands (target `validation.commands` replaces inherited defaults; `validation.additionalCommands` appends additively). See [Onboarding a Repository](onboarding-a-repository.md) for the readiness checklist and pre-flight procedure.
 
 ## Start a run
 
@@ -257,7 +257,16 @@ The automation repository's `.ai-orchestrator.json` is required. A gitignored `.
 4. `target/.ai-orchestrator.local.json`
 5. supported CLI overrides
 
-Plain objects deep-merge. Arrays follow the loader's indexed deep-merge behavior. Phase routing maps are replaced as policy units rather than partially combined. The persisted Run records the effective configuration fingerprint and source paths without copying local configuration contents into artifacts.
+Plain objects deep-merge. Most arrays follow the loader's indexed deep-merge behavior. Phase routing maps are replaced as policy units rather than partially combined.
+
+Validation configuration is a policy exception with target ownership:
+
+- **Target replacement:** A target layer (`target/.ai-orchestrator.json` or `target/.ai-orchestrator.local.json`) declaring `validation.commands` completely replaces inherited commands rather than index-merging or concatenating, allowing target repositories to own their exact gates.
+- **Explicit additions:** `validation.additionalCommands` enables a target or local layer to explicitly append commands to the inherited set.
+- **Stable deduplication:** Commands are deduplicated by exact string equality in first-surviving order across both replacement and additions.
+- **Tier coherence:** `validation.tiers` acts as scheduling metadata for the effective command set: target command replacement clears inherited tiers unless the target provides its own `tiers`; target tiers replace inherited tiers as a unit and are filtered/deduplicated against the effective command set (dropping absent commands, duplicates, and empty tiers).
+
+The persisted Run records the effective configuration fingerprint and source paths without copying local configuration contents into artifacts.
 
 Key sections include:
 
