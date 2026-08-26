@@ -41,6 +41,11 @@ Look for these defect classes (the legacy bash loop enumerated the same):
    compiler, type checker) provides scope evidence for a diagnostic, that evidence is
    authoritative and cannot be rebutted. The reviewer should treat such evidence as
    conclusive.
+8. **Tooling and test framework convention grounding** — when a task declares or specifies a new file
+   (e.g., a new test file, script, or module), check whether its described test framework, file extension,
+   or tooling choices match what is dominant in the repository (or in sibling files in the same directory).
+   If a new file introduces an unexplained mismatch against existing repository conventions without a stated
+   rationale, flag it as a blocking finding (P1).
 
 ## OUTPUT
 

@@ -66,4 +66,19 @@ describe('plan-write scope prompts', () => {
     expect(planWritePrompt).toMatch(/empty/i);
     expect(planWritePrompt).toMatch(/explicit/i);
   });
+
+  it('plan-design and plan-write prompts instruct checking existing repo tooling conventions', () => {
+    const planDesignPrompt = loadPromptTemplate('plan-design', 'plan-design', { promptsRoot });
+    const planWritePrompt = loadPromptTemplate('plan-write', 'plan-write', { promptsRoot });
+    const repairPrompt = loadPromptTemplate('plan-write', 'plan-write-repair', { promptsRoot });
+
+    expect(planDesignPrompt).toContain('Tooling and testing conventions');
+    expect(planDesignPrompt).toMatch(/explicitly state which existing repository convention it follows/i);
+
+    expect(planWritePrompt).toContain('TOOLING AND TEST FRAMEWORK CONVENTION GROUNDING');
+    expect(planWritePrompt).toMatch(/check sibling or analogous files in the repository/i);
+
+    expect(repairPrompt).toContain('TOOLING AND TEST FRAMEWORK CONVENTION GROUNDING');
+    expect(repairPrompt).toMatch(/match their\s+established convention unless an explicit rationale is stated/i);
+  });
 });

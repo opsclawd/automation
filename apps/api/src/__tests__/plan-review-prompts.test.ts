@@ -244,6 +244,17 @@ describe('prompts/plan-review/plan-review.md', () => {
     expect(template).toContain('evidence token');
     expect(template).toContain('still_open');
   });
+
+  it('includes focus rule for tooling and test framework convention grounding', () => {
+    const template = readFileSync(
+      new URL('../../../../prompts/plan-review/plan-review.md', import.meta.url),
+      'utf-8',
+    );
+
+    expect(template).toContain('Tooling and test framework convention grounding');
+    expect(template).toContain('check whether its described test framework, file extension,');
+    expect(template).toContain('unexplained mismatch against existing repository conventions');
+  });
 });
 
 describe('readPlanReviewFinalExcerpts', () => {

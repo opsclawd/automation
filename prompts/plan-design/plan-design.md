@@ -20,6 +20,7 @@ Comments file: issue-comments.md (contains issue comments, may not exist)
    - Assumptions made (do not ask questions — state assumptions explicitly)
    - What is in scope and what is explicitly out of scope
    - Any risks or concerns identified from code analysis
+   - Tooling and testing conventions: when specifying a new script, test, or tooling surface, explicitly state which existing repository convention it follows (e.g., "tests use vitest, matching every other test file in this repo") rather than leaving tooling choices implicit.
 
 ## CRITICAL RULES
 
