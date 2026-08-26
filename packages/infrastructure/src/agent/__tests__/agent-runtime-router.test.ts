@@ -667,6 +667,77 @@ describe('AgentRuntimeRouter', () => {
     });
   });
 
+  it('prefers adapter usage source paths in the unknown warning', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      publish: (_runId, event) => {
+        events.push(event);
+      },
+    };
+
+    const routerWithCustomSource = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usageSourcePaths: ['/tmp/custom-event-stream.jsonl'],
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-custom-source',
+    });
+
+    await routerWithCustomSource.invoke(req());
+
+    const unknownEvents = events.filter((e) => e.type === 'agent.usage.unknown');
+    expect(unknownEvents).toHaveLength(1);
+    expect(unknownEvents[0].metadata).toMatchObject({
+      diagnosticSource: '/tmp/custom-event-stream.jsonl',
+      stdoutPath: '/tmp/stdout.log',
+    });
+
+    events.length = 0;
+    const routerWithDefaultSource = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 500,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usageSourcePaths: [],
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-fallback-source',
+    });
+
+    await routerWithDefaultSource.invoke(req());
+
+    expect(events.filter((e) => e.type === 'agent.usage.unknown')).toHaveLength(1);
+    expect(events[0].metadata).toMatchObject({
+      diagnosticSource: '/tmp/stdout.log',
+      stdoutPath: '/tmp/stdout.log',
+    });
+  });
+
   it('keeps measured zero classified as measured', async () => {
     const events: OrchestratorEvent[] = [];
     const eventBus = {

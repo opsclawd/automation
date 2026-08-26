@@ -67,5 +67,6 @@ export interface AgentInvocationResult {
     reasoningTokens?: number;
     cachedTokens?: number;
   };
+  usageSourcePaths?: string[];
   remediatedArtifacts?: { src: string; artifact: string }[];
 }

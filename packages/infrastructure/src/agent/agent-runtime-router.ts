@@ -534,6 +534,12 @@ export class AgentRuntimeRouter implements AgentPort {
         // Event publication containment
       }
     } else {
+      const sourcePaths =
+        result.usageSourcePaths && result.usageSourcePaths.length > 0
+          ? result.usageSourcePaths
+          : [result.stdoutPath];
+      const diagnosticSource = sourcePaths.join(', ');
+
       try {
         if (this.opts.eventBus) {
           const event: OrchestratorEvent = {
@@ -551,7 +557,8 @@ export class AgentRuntimeRouter implements AgentPort {
               provider: effectiveProvider,
               model: effectiveModel,
               stdoutPath: result.stdoutPath,
-              diagnosticSource: result.stdoutPath,
+              diagnosticSource,
+              ...(result.usageSourcePaths ? { usageSourcePaths: result.usageSourcePaths } : {}),
             },
           };
           this.opts.eventBus.publish(request.runId, event);
