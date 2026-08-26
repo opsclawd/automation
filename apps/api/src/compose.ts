@@ -187,7 +187,11 @@ import {
   verifyArbiterGrounding,
   orchestratorExcludePatterns,
   type StepRunResult,
+  planRevalidation,
+  type RevalidationPlan,
+  type ValidationScopeSummary,
 } from '@ai-sdlc/application';
+import { discoverWorkspacePackages } from './workspace-package-discovery.js';
 import {
   ConfigError,
   DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS,
@@ -496,6 +500,9 @@ export interface MaybeRetryTransientRevalidationFlakeInput {
   runValidation: RunValidation;
   validationAdapter: ValidationPort;
   eventBus?: EventBusPort | undefined;
+  effectiveCommands?: ValidationCommand[] | undefined;
+  effectiveTiers?: string[][] | undefined;
+  validationScope?: ValidationScopeSummary | undefined;
 }
 
 export async function maybeRetryTransientRevalidationFlake(
@@ -517,10 +524,7 @@ export async function maybeRetryTransientRevalidationFlake(
         ? c.stderrPath
         : join(input.revalidateLogDir, basename(c.stderrPath))
       : '';
-    const [stdoutTail, stderrTail] = await Promise.all([
-      readTail(stdoutAbs),
-      readTail(stderrAbs),
-    ]);
+    const [stdoutTail, stderrTail] = await Promise.all([readTail(stdoutAbs), readTail(stderrAbs)]);
     const extracted = extractFailedTestFilesFromOutput(stdoutTail + '\n' + stderrTail);
     for (const f of extracted) {
       failedTestFiles.add(f);
@@ -584,15 +588,18 @@ export async function maybeRetryTransientRevalidationFlake(
   }
 
   const retryLogDir = join(input.revalidateLogDir, 'flake-retry');
+  const effectiveCommands = input.effectiveCommands ?? input.config.validation.commands;
+  const effectiveTiers = input.effectiveTiers ?? input.config.validation.tiers;
   const vrRetry = await input.runValidation.execute({
     runId: RunId(input.runId),
     phaseId: PhaseName('validate'),
     cwd: input.cwd,
     logDir: retryLogDir,
-    commands: [...input.config.validation.commands, ...input.taskValidationCommands],
-    ...(input.config.validation.tiers ? { tiers: input.config.validation.tiers } : {}),
+    commands: [...effectiveCommands, ...input.taskValidationCommands],
+    ...(effectiveTiers ? { tiers: effectiveTiers } : {}),
     timeoutSeconds: input.config.validation.timeout,
     env: { GITHUB_REPOSITORY: input.repoId },
+    ...(input.validationScope ? { validationScope: input.validationScope } : {}),
   });
 
   const evalRetry = await evaluateRevalidationWithInvertedCommands({
@@ -1465,10 +1472,10 @@ export async function buildImplementStepFixPrompt(
 
   const hasScopeInfo = Boolean(
     (input.expectedFiles && input.expectedFiles.length > 0) ||
-      (input.permittedAreas && input.permittedAreas.length > 0) ||
-      (input.mayExtend && input.mayExtend.length > 0) ||
-      (input.nonGoals && input.nonGoals.length > 0) ||
-      (input.referenceFiles && input.referenceFiles.length > 0),
+    (input.permittedAreas && input.permittedAreas.length > 0) ||
+    (input.mayExtend && input.mayExtend.length > 0) ||
+    (input.nonGoals && input.nonGoals.length > 0) ||
+    (input.referenceFiles && input.referenceFiles.length > 0),
   );
 
   return [
@@ -1591,13 +1598,25 @@ export async function buildImplementStepFixPrompt(
           "You MUST respect the task's scope boundaries when applying fixes:",
           '',
           ...(input.expectedFiles && input.expectedFiles.length > 0
-            ? ['### Expected Files (must modify and commit)', ...input.expectedFiles.map((f) => `- ${f}`), '']
+            ? [
+                '### Expected Files (must modify and commit)',
+                ...input.expectedFiles.map((f) => `- ${f}`),
+                '',
+              ]
             : []),
           ...(input.permittedAreas && input.permittedAreas.length > 0
-            ? ['### Permitted Areas (may modify tracked files)', ...input.permittedAreas.map((f) => `- ${f}`), '']
+            ? [
+                '### Permitted Areas (may modify tracked files)',
+                ...input.permittedAreas.map((f) => `- ${f}`),
+                '',
+              ]
             : []),
           ...(input.mayExtend && input.mayExtend.length > 0
-            ? ['### May Extend (may modify exact files)', ...input.mayExtend.map((f) => `- ${f}`), '']
+            ? [
+                '### May Extend (may modify exact files)',
+                ...input.mayExtend.map((f) => `- ${f}`),
+                '',
+              ]
             : []),
           ...(input.nonGoals && input.nonGoals.length > 0
             ? ['### Non-Goals (must not modify)', ...input.nonGoals.map((f) => `- ${f}`), '']
@@ -4592,9 +4611,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           ...(task?.permitted_areas && task.permitted_areas.length > 0
             ? { permittedAreas: task.permitted_areas }
             : {}),
-          ...(task?.may_extend && task.may_extend.length > 0
-            ? { mayExtend: task.may_extend }
-            : {}),
+          ...(task?.may_extend && task.may_extend.length > 0 ? { mayExtend: task.may_extend } : {}),
           ...(task?.non_goals && task.non_goals.length > 0 ? { nonGoals: task.non_goals } : {}),
           ...(task?.reference_files && task.reference_files.length > 0
             ? { referenceFiles: task.reference_files }
@@ -5088,9 +5105,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             // Task manifest might not be present or parseable; fall back to global only
           }
 
+          let changedFiles: string[] = [];
+          const stepCtx = ctx as Partial<StepLoopContext> & { initialPreStepHead?: string };
+          const hasStepBaseline = Boolean(stepCtx.initialPreStepHead);
+          let gitErrorOccurred = false;
+
           try {
-            let changedFiles: string[] = [];
-            const stepCtx = ctx as Partial<StepLoopContext> & { initialPreStepHead?: string };
             if (stepCtx.initialPreStepHead) {
               const currentHead = await gitAdapter.headCommitSha(ctx.cwd);
               const committed = await gitAdapter.changedFiles(
@@ -5121,8 +5141,53 @@ export function composeRoot(opts: ComposeOptions): Container {
               });
             }
           } catch {
+            gitErrorOccurred = true;
             // Fall back to original taskValidationCommands if git diff/status checks fail
           }
+
+          let plan: RevalidationPlan;
+          if (gitErrorOccurred) {
+            plan = {
+              mode: 'full',
+              reason: 'missing_baseline',
+              commands: config.validation.commands,
+              ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
+            };
+          } else {
+            try {
+              const discoveryResult = await discoverWorkspacePackages(ctx.cwd);
+              if (!discoveryResult.success) {
+                plan = {
+                  mode: 'full',
+                  reason: 'invalid_descriptor',
+                  commands: config.validation.commands,
+                  ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
+                };
+              } else {
+                plan = planRevalidation({
+                  changedPaths: changedFiles,
+                  iterationIndex: ctx.iterationIndex,
+                  hasStepBaseline,
+                  descriptors: discoveryResult.descriptors,
+                  commands: config.validation.commands,
+                  ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
+                });
+              }
+            } catch {
+              plan = {
+                mode: 'full',
+                reason: 'invalid_descriptor',
+                commands: config.validation.commands,
+                ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
+              };
+            }
+          }
+
+          const validationScope: ValidationScopeSummary =
+            plan.mode === 'narrow'
+              ? { validationMode: 'narrow', narrowedPackages: plan.narrowedPackages }
+              : { validationMode: 'full' };
+
           const runDir =
             runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
           const revalidateLogDir = join(
@@ -5138,12 +5203,13 @@ export function composeRoot(opts: ComposeOptions): Container {
             phaseId: PhaseName('validate'),
             cwd: ctx.cwd,
             logDir: revalidateLogDir,
-            commands: [...config.validation.commands, ...taskValidationCommands],
-            ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
+            commands: [...plan.commands, ...taskValidationCommands],
+            ...(plan.tiers ? { tiers: plan.tiers } : {}),
             timeoutSeconds: config.validation.timeout,
             env: {
               GITHUB_REPOSITORY: (ctx as StepLoopContext).repoId,
             },
+            validationScope,
           });
           const evalResult = await evaluateRevalidationWithInvertedCommands({
             validationRunCommands: vr.validationRun.commands,
@@ -5180,6 +5246,9 @@ export function composeRoot(opts: ComposeOptions): Container {
               runValidation,
               validationAdapter,
               eventBus: persistingEventBus,
+              effectiveCommands: plan.commands,
+              effectiveTiers: plan.tiers,
+              validationScope,
             });
             if (flakeResult.retried) {
               revalPassed = flakeResult.passed;
