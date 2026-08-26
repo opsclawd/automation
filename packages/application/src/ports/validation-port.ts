@@ -10,6 +10,9 @@ export interface ValidationCommandResult {
   outcome: ValidationCommandOutcome;
 }
 export type ValidationCommand = string | string[];
+export type ValidationScopeSummary =
+  | { validationMode: 'full' }
+  | { validationMode: 'narrow'; narrowedPackages: string[] };
 export interface RunValidationInput {
   cwd: string;
   commands: ValidationCommand[];
@@ -18,6 +21,7 @@ export interface RunValidationInput {
   logDir: string;
   logPathPrefix?: string;
   env?: Record<string, string>;
+  validationScope?: ValidationScopeSummary;
 }
 export interface ValidationPort {
   run(input: RunValidationInput): Promise<ValidationCommandResult[]>;

@@ -13,7 +13,8 @@
       ["pnpm lint", "pnpm typecheck", "pnpm test", "pnpm test:bash", "pnpm boundaries"]
     ],
     "timeout": 300,
-    "forbiddenArtifactPaths": ["certification/"]
+    "forbiddenArtifactPaths": ["certification/"],
+    "narrowByChangedFiles": true
   },
   "phases": {
     "skip": [],

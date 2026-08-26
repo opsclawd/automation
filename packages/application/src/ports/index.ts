@@ -23,6 +23,7 @@ export { TrackedSourceDriftError } from './git-port.js';
 export type {
   ValidationPort,
   RunValidationInput,
+  ValidationScopeSummary,
   ValidationCommandResult,
   ValidationCommand,
 } from './validation-port.js';

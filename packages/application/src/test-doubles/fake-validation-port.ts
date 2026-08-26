@@ -6,6 +6,7 @@ import type {
 export class FakeValidationPort implements ValidationPort {
   result: ValidationCommandResult[] = [];
   lastInput?: RunValidationInput;
+
   async run(input: RunValidationInput): Promise<ValidationCommandResult[]> {
     this.lastInput = input;
     return this.result;
