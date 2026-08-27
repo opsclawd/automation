@@ -581,6 +581,86 @@ export async function loadManifest(
   return { status: 'missing', message: 'task-manifest.json not found' };
 }
 
+export type FileOwnershipField = 'expected_files' | 'files' | 'may_extend' | 'reference_files';
+
+export interface FileOwnershipClaim {
+  taskNumber: number;
+  field: FileOwnershipField;
+}
+
+export interface FileOwnershipResult {
+  owned: boolean;
+  claims: FileOwnershipClaim[];
+}
+
+const FILE_OWNERSHIP_FIELDS: readonly FileOwnershipField[] = [
+  'expected_files',
+  'files',
+  'may_extend',
+  'reference_files',
+];
+
+/**
+ * Answers whether any task explicitly names a normalized file in
+ * expected_files, legacy files, may_extend, or reference_files.
+ *
+ * Exclusions (non_goals) and permissions (permitted_areas) never create claims.
+ */
+export function isFileOwnedByAnyTask(filePath: string, manifest: unknown): FileOwnershipResult {
+  const norm = normalizeTaskPath(filePath);
+  if (!norm) {
+    return { owned: false, claims: [] };
+  }
+
+  if (!manifest || typeof manifest !== 'object') {
+    return { owned: false, claims: [] };
+  }
+
+  const manifestRecord = manifest as Record<string, unknown>;
+  if (!Array.isArray(manifestRecord.tasks)) {
+    return { owned: false, claims: [] };
+  }
+
+  const tasks = manifestRecord.tasks;
+  const claims: FileOwnershipClaim[] = [];
+  const seenKeys = new Set<string>();
+
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    if (!task || typeof task !== 'object') {
+      continue;
+    }
+    const taskNumber = getTaskNumber(task, i);
+    const taskRecord = task as Record<string, unknown>;
+
+    for (const field of FILE_OWNERSHIP_FIELDS) {
+      const rawEntries = taskRecord[field];
+      if (!Array.isArray(rawEntries)) {
+        continue;
+      }
+
+      for (const entry of rawEntries) {
+        if (typeof entry !== 'string') {
+          continue;
+        }
+        const normEntry = normalizeTaskPath(entry);
+        if (normEntry === norm) {
+          const key = `${taskNumber}:${field}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            claims.push({ taskNumber, field });
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    owned: claims.length > 0,
+    claims,
+  };
+}
+
 /**
  * Check whether a file path is genuinely unowned across the entire manifest.
  * A file is unowned iff:
