@@ -23,10 +23,13 @@ import {
   classifyTaskChanges,
   classifyUndeclaredFiles,
   getManifestBoundaries,
+  isFileOwnedByAnyTask,
   loadManifest,
   normalizeTaskPath,
   resolveEffectiveTaskScope,
   type ManifestLoadResult,
+  type PrematureImplementationRecord,
+  type TaskScopeClassification,
 } from '../task-file-boundaries.js';
 import { isProtectedFilePath } from '../scratch-file-remediation.js';
 import {
@@ -165,6 +168,34 @@ async function computeNewState(
     provisionallyClean: newFindings.length === 0,
     unresolvedRecords,
     dispositionHistory,
+  };
+}
+
+function mergeTaskScopeClassifications(
+  classifications: readonly TaskScopeClassification[],
+): TaskScopeClassification {
+  const prematureMap = new Map<string, PrematureImplementationRecord>();
+  for (const c of classifications) {
+    for (const rec of c.prematureImplementation) {
+      const key = `${rec.path}:${rec.taskNumber}`;
+      if (!prematureMap.has(key)) {
+        prematureMap.set(key, rec);
+      }
+    }
+  }
+  const prematureImplementation = Array.from(prematureMap.values()).sort(
+    (a, b) => a.path.localeCompare(b.path) || a.taskNumber - b.taskNumber,
+  );
+
+  return {
+    permittedPaths: [...new Set(classifications.flatMap((c) => c.permittedPaths))].sort(),
+    modifiedReferenceFiles: [
+      ...new Set(classifications.flatMap((c) => c.modifiedReferenceFiles)),
+    ].sort(),
+    nonGoalFiles: [...new Set(classifications.flatMap((c) => c.nonGoalFiles))].sort(),
+    prematureImplementation,
+    driftFiles: [...new Set(classifications.flatMap((c) => c.driftFiles))].sort(),
+    protectedFiles: [...new Set(classifications.flatMap((c) => c.protectedFiles ?? []))].sort(),
   };
 }
 
@@ -2817,7 +2848,7 @@ export class ReviewFixLoop {
         manifestObj && Array.isArray(manifestObj.tasks) ? manifestObj.tasks : undefined;
 
       const currentTaskNumber = loopInput.currentTaskNumber;
-      let currentScope;
+      let scopeClassification: TaskScopeClassification;
 
       if (currentTaskNumber !== undefined && Array.isArray(manifestTasks)) {
         const currentTask = manifestTasks.find((t, i) => {
@@ -2827,25 +2858,41 @@ export class ReviewFixLoop {
           }
           return i + 1 === currentTaskNumber;
         });
-        currentScope = resolveEffectiveTaskScope(currentTask);
+        const currentScope = resolveEffectiveTaskScope(currentTask);
+        scopeClassification = classifyTaskChanges({
+          candidates: committedFiles,
+          currentScope,
+          manifestTasks,
+          currentTaskNumber,
+        });
       } else {
         const scopes = (manifestTasks ?? []).map((t) => resolveEffectiveTaskScope(t));
-        currentScope = {
-          requiredFiles: [...new Set(scopes.flatMap((s) => s.requiredFiles))],
-          mayExtendFiles: [...new Set(scopes.flatMap((s) => s.mayExtendFiles))],
-          permittedAreas: [...new Set(scopes.flatMap((s) => s.permittedAreas))],
-          nonGoals: [...new Set(scopes.flatMap((s) => s.nonGoals))],
-          referenceFiles: [...new Set(scopes.flatMap((s) => s.referenceFiles))],
-        };
-      }
+        const unionedRequiredFiles = [...new Set(scopes.flatMap((s) => s.requiredFiles))];
+        const unionedMayExtendFiles = [...new Set(scopes.flatMap((s) => s.mayExtendFiles))];
+        const unionedPermittedAreas = [...new Set(scopes.flatMap((s) => s.permittedAreas))];
+        const unionedReferenceFiles = [...new Set(scopes.flatMap((s) => s.referenceFiles))];
+        const unionedNonGoals = [...new Set(scopes.flatMap((s) => s.nonGoals))];
 
-      const scopeClassification = classifyTaskChanges({
-        candidates: committedFiles,
-        currentScope,
-        ...(currentTaskNumber !== undefined && manifestTasks
-          ? { manifestTasks, currentTaskNumber }
-          : {}),
-      });
+        const classifications: TaskScopeClassification[] = [];
+        for (const candidate of committedFiles) {
+          const isOwned = isFileOwnedByAnyTask(candidate, manifestResult.manifest).owned;
+          const candidateScope = {
+            requiredFiles: unionedRequiredFiles,
+            mayExtendFiles: unionedMayExtendFiles,
+            permittedAreas: unionedPermittedAreas,
+            referenceFiles: unionedReferenceFiles,
+            nonGoals: isOwned ? [] : unionedNonGoals,
+          };
+          classifications.push(
+            classifyTaskChanges({
+              candidates: [candidate],
+              currentScope: candidateScope,
+            }),
+          );
+        }
+
+        scopeClassification = mergeTaskScopeClassifications(classifications);
+      }
 
       const prematurePaths = scopeClassification.prematureImplementation.map((p) => p.path);
       const violatingFiles = [
