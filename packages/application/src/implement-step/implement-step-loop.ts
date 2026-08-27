@@ -46,7 +46,16 @@ import {
   classifyTaskChanges,
   normalizeTaskPath,
   type TaskChangeCandidate,
+  type EffectiveTaskScope,
+  type TaskScopeClassification,
 } from '../task-file-boundaries.js';
+import {
+  reconcileTerminalFixScope,
+  MAX_TERMINAL_FIX_CHANGED_LINES,
+  TERMINAL_FIX_SCOPE_POLICY,
+  type ReconcileTerminalFixScopeResult,
+} from './terminal-fix-scope-policy.js';
+import type { GitFileChangeSummary } from '../ports/git-port.js';
 import { findInheritedFormattingDebtFiles } from '../inherited-formatting-debt.js';
 
 function normalizeMessage(message: string): string {
@@ -2725,7 +2734,8 @@ export class ImplementStepLoop {
           // Fall through to normal success path — verifier could not read the tree.
         }
 
-        const headAfterFix = verification.kind === 'advanced' ? verification.headAfterFix : undefined;
+        const headAfterFix =
+          verification.kind === 'advanced' ? verification.headAfterFix : undefined;
         if (headAfterFix) {
           const boundaryCheck = await this.checkTaskBoundary(
             ctx,
@@ -3000,6 +3010,7 @@ export class ImplementStepLoop {
         return { outcome: 'needs_human_review', loop };
       }
 
+      let autoExtendedFiles: string[] | undefined;
       if (deps.git && terminalFix.headBeforeFix !== undefined) {
         const headAfterFix = await deps.git.headCommitSha(baseCtx.cwd);
         const boundaryCheck = await this.checkTaskBoundary(
@@ -3009,19 +3020,152 @@ export class ImplementStepLoop {
           headAfterFix,
         );
         if (!boundaryCheck.ok) {
-          this.emit(
-            input,
-            'step.terminal_fix.rejected',
-            'warn',
-            terminalVerificationFailureMessage(boundaryCheck.message, undefined),
-            {
-              profile: deps.terminalFixProfile,
-              priorIterations: loop.iterations.length,
-              headAdvanced,
-              autoCommitted,
-            },
-          );
-          return { outcome: 'needs_human_review', loop };
+          // Attempt reconciliation only for drift violations when preconditions are met
+          let reconcileResult: ReconcileTerminalFixScopeResult | undefined;
+          const classification = boundaryCheck.classification;
+          const candidates = [
+            ...new Set([...(classification?.driftFiles ?? []), ...(boundaryCheck.files ?? [])]),
+          ];
+          const task =
+            input.manifest?.tasks?.find((t) => (t as { n?: number }).n === input.stepIndex) ??
+            input.manifest?.tasks?.[input.stepIndex - 1];
+          const currentScope = boundaryCheck.currentScope ?? resolveEffectiveTaskScope(task);
+
+          const gitPort = deps.git;
+          const fileChangeSummaryFn = gitPort?.fileChangeSummary;
+          const hasManifest =
+            input.manifest !== undefined &&
+            input.manifest !== null &&
+            typeof input.manifest === 'object';
+          const hasExactRange =
+            typeof terminalFix.headBeforeFix === 'string' &&
+            typeof headAfterFix === 'string' &&
+            terminalFix.headBeforeFix !== headAfterFix;
+
+          if (hasManifest && fileChangeSummaryFn && hasExactRange && classification) {
+            let fileSummaries: GitFileChangeSummary[] | undefined;
+            let inspectionError: string | undefined;
+            try {
+              fileSummaries = await fileChangeSummaryFn.call(
+                gitPort,
+                baseCtx.cwd,
+                terminalFix.headBeforeFix,
+                headAfterFix,
+              );
+            } catch (err: unknown) {
+              inspectionError = err instanceof Error ? err.message : String(err);
+            }
+
+            if (inspectionError !== undefined) {
+              reconcileResult = {
+                decision: 'reject',
+                granted: false,
+                policy: TERMINAL_FIX_SCOPE_POLICY,
+                reason: 'missing_summary',
+                rejections: [
+                  {
+                    reason: 'missing_summary',
+                    message: `Change-summary inspection failed: ${inspectionError}`,
+                  },
+                ],
+              };
+            } else {
+              reconcileResult = reconcileTerminalFixScope({
+                candidates,
+                currentScope,
+                manifest: input.manifest,
+                manifestTasks: input.manifest?.tasks,
+                currentTaskNumber: input.stepIndex,
+                fileSummaries,
+                ...(input.exemptUndeclaredFiles
+                  ? { exemptFiles: input.exemptUndeclaredFiles }
+                  : {}),
+              });
+            }
+          } else if (hasManifest && !fileChangeSummaryFn && classification) {
+            reconcileResult = {
+              decision: 'reject',
+              granted: false,
+              policy: TERMINAL_FIX_SCOPE_POLICY,
+              reason: 'missing_summary',
+              rejections: [
+                {
+                  reason: 'missing_summary',
+                  message: 'fileChangeSummary method is unavailable on git port',
+                },
+              ],
+            };
+          }
+
+          if (reconcileResult && reconcileResult.decision === 'grant' && reconcileResult.granted) {
+            autoExtendedFiles = [...reconcileResult.grantedPaths].sort();
+            const summaries = reconcileResult.evidence
+              .map((e) => e.summary)
+              .filter((s): s is NonNullable<typeof s> => s !== undefined);
+            const totalAdditions = summaries.reduce((sum, s) => sum + (s.additions ?? 0), 0);
+            const totalDeletions = summaries.reduce((sum, s) => sum + (s.deletions ?? 0), 0);
+
+            this.emit(
+              input,
+              'step.terminal_fix.scope_auto_extended',
+              'warn',
+              `terminal fix auto-extended scope for ${autoExtendedFiles.join(', ')} under policy ${reconcileResult.policy}`,
+              {
+                invocationId: terminalFix.invocationId,
+                stepIndex: input.stepIndex,
+                headBeforeFix: terminalFix.headBeforeFix,
+                headAfterFix,
+                range: `${terminalFix.headBeforeFix}..${headAfterFix}`,
+                grantedFiles: autoExtendedFiles,
+                files: autoExtendedFiles,
+                policy: reconcileResult.policy,
+                threshold: MAX_TERMINAL_FIX_CHANGED_LINES,
+                maxChangedLines: MAX_TERMINAL_FIX_CHANGED_LINES,
+                counts: {
+                  files: autoExtendedFiles.length,
+                  additions: totalAdditions,
+                  deletions: totalDeletions,
+                  totalChangedLines: totalAdditions + totalDeletions,
+                },
+                fileSummaries: summaries,
+                evidence: reconcileResult.evidence,
+              },
+            );
+          } else {
+            const rejectionReason =
+              reconcileResult && reconcileResult.decision === 'reject'
+                ? reconcileResult.reason
+                : undefined;
+            const allStakes =
+              reconcileResult && reconcileResult.decision === 'reject'
+                ? reconcileResult.rejections.flatMap((r) => r.stakes ?? [])
+                : [];
+
+            this.emit(
+              input,
+              'step.terminal_fix.rejected',
+              'warn',
+              terminalVerificationFailureMessage(boundaryCheck.message, undefined),
+              {
+                profile: deps.terminalFixProfile,
+                priorIterations: loop.iterations.length,
+                headAdvanced,
+                autoCommitted,
+                ...(terminalFix.invocationId !== undefined
+                  ? { invocationId: terminalFix.invocationId }
+                  : {}),
+                ...(rejectionReason !== undefined
+                  ? { reason: rejectionReason, rejectionReason }
+                  : {}),
+                ...(reconcileResult?.decision === 'reject'
+                  ? { rejections: reconcileResult.rejections }
+                  : {}),
+                ...(allStakes.length > 0 ? { stakes: allStakes, blockingStakes: allStakes } : {}),
+                files: boundaryCheck.files,
+              },
+            );
+            return { outcome: 'needs_human_review', loop };
+          }
         }
       }
 
@@ -3071,6 +3215,12 @@ export class ImplementStepLoop {
             ...(isTerminalRebuttal && terminalFix.rebuttal
               ? { rebuttal: terminalFix.rebuttal }
               : {}),
+            ...(terminalFix.invocationId !== undefined
+              ? { invocationId: terminalFix.invocationId }
+              : {}),
+            ...(autoExtendedFiles !== undefined && autoExtendedFiles.length > 0
+              ? { autoExtendedFiles, grantedFiles: autoExtendedFiles }
+              : {}),
           },
         );
         return { outcome: 'success', loop };
@@ -3088,6 +3238,12 @@ export class ImplementStepLoop {
           revalidationPassed,
           headAdvanced,
           autoCommitted,
+          ...(terminalFix.invocationId !== undefined
+            ? { invocationId: terminalFix.invocationId }
+            : {}),
+          ...(autoExtendedFiles !== undefined && autoExtendedFiles.length > 0
+            ? { autoExtendedFiles, grantedFiles: autoExtendedFiles }
+            : {}),
           ...(postRevalidationResult?.outcome === 'parse_error'
             ? {
                 revalidationOutcome: postRevalidationResult.outcome,
@@ -3166,7 +3322,21 @@ export class ImplementStepLoop {
     headBeforeFix: string,
     headAfterFix: string,
   ): Promise<
-    { ok: true; changedFiles: string[] } | { ok: false; message: string; files?: string[] }
+    | {
+        ok: true;
+        changedFiles: string[];
+        classification?: TaskScopeClassification;
+        committedFiles?: string[];
+        currentScope?: EffectiveTaskScope;
+      }
+    | {
+        ok: false;
+        message: string;
+        files?: string[];
+        classification?: TaskScopeClassification;
+        committedFiles?: string[];
+        currentScope?: EffectiveTaskScope;
+      }
   > {
     if (!this.deps.git || typeof this.deps.git.changedFiles !== 'function') {
       return { ok: true, changedFiles: [] };
@@ -3241,10 +3411,23 @@ export class ImplementStepLoop {
         prematureImplementation: scopeClassification.prematureImplementation,
         iterationIndex: ctx.iterationIndex,
       });
-      return { ok: false, message, files: violatingFiles };
+      return {
+        ok: false,
+        message,
+        files: violatingFiles,
+        classification: scopeClassification,
+        committedFiles,
+        currentScope,
+      };
     }
 
-    return { ok: true, changedFiles: committedFiles };
+    return {
+      ok: true,
+      changedFiles: committedFiles,
+      classification: scopeClassification,
+      committedFiles,
+      currentScope,
+    };
   }
 
   private emitEscalation(
