@@ -26,6 +26,14 @@ export interface PrematureImplementationRecord {
   taskNumber: number;
 }
 
+export type ManifestTaskStakeField = 'expected_files' | 'files' | 'reference_files' | 'non_goals';
+
+export interface ManifestTaskStake {
+  path: string;
+  taskNumber: number;
+  field: ManifestTaskStakeField;
+}
+
 export interface TaskScopeClassification {
   permittedPaths: string[];
   modifiedReferenceFiles: string[];
@@ -277,6 +285,84 @@ export function classifyTaskChanges(
     driftFiles: [...new Set(driftFiles)].sort(),
     protectedFiles: [...new Set(protectedFiles)].sort(),
   };
+}
+
+export function findManifestTaskStakes(
+  path: string,
+  manifestTasks?: readonly unknown[] | unknown,
+): ManifestTaskStake[] {
+  const normPath = normalizeTaskPath(path);
+  if (!normPath) return [];
+
+  let tasksArray: readonly unknown[] = [];
+  if (Array.isArray(manifestTasks)) {
+    tasksArray = manifestTasks;
+  } else if (
+    manifestTasks &&
+    typeof manifestTasks === 'object' &&
+    'tasks' in (manifestTasks as Record<string, unknown>) &&
+    Array.isArray((manifestTasks as Record<string, unknown>).tasks)
+  ) {
+    tasksArray = (manifestTasks as Record<string, unknown>).tasks as readonly unknown[];
+  } else {
+    return [];
+  }
+
+  const stakes: ManifestTaskStake[] = [];
+
+  for (let i = 0; i < tasksArray.length; i++) {
+    const task = tasksArray[i];
+    if (!task || typeof task !== 'object') continue;
+    const taskNum = getTaskNumber(task, i);
+    const record = task as Record<string, unknown>;
+
+    const expectedFiles = Array.isArray(record.expected_files) ? record.expected_files : [];
+    const files = Array.isArray(record.files) ? record.files : [];
+    const referenceFiles = Array.isArray(record.reference_files) ? record.reference_files : [];
+    const nonGoals = Array.isArray(record.non_goals) ? record.non_goals : [];
+
+    for (const raw of expectedFiles) {
+      if (typeof raw === 'string' && normalizeTaskPath(raw) === normPath) {
+        stakes.push({ path: normPath, taskNumber: taskNum, field: 'expected_files' });
+      }
+    }
+
+    for (const raw of files) {
+      if (typeof raw === 'string' && normalizeTaskPath(raw) === normPath) {
+        stakes.push({ path: normPath, taskNumber: taskNum, field: 'files' });
+      }
+    }
+
+    for (const raw of referenceFiles) {
+      if (typeof raw === 'string' && normalizeTaskPath(raw) === normPath) {
+        stakes.push({ path: normPath, taskNumber: taskNum, field: 'reference_files' });
+      }
+    }
+
+    for (const raw of nonGoals) {
+      if (typeof raw === 'string') {
+        const normNg = normalizeTaskPath(raw);
+        if (normNg && isNormalizedSegmentPrefixMatch(normNg, normPath)) {
+          stakes.push({ path: normPath, taskNumber: taskNum, field: 'non_goals' });
+        }
+      }
+    }
+  }
+
+  const seen = new Set<string>();
+  const uniqueStakes: ManifestTaskStake[] = [];
+  for (const s of stakes) {
+    const key = `${s.taskNumber}:${s.field}:${s.path}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueStakes.push(s);
+    }
+  }
+
+  return uniqueStakes.sort(
+    (a, b) =>
+      a.taskNumber - b.taskNumber || a.field.localeCompare(b.field) || a.path.localeCompare(b.path),
+  );
 }
 
 export function resolveEffectiveTaskScope(task: unknown): EffectiveTaskScope {
