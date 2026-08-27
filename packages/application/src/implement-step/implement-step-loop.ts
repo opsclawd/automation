@@ -45,8 +45,12 @@ import {
   resolveEffectiveTaskScope,
   classifyTaskChanges,
   normalizeTaskPath,
+  isUnownedTaskFile,
+  getFileDiffLineCount,
   type TaskChangeCandidate,
 } from '../task-file-boundaries.js';
+
+const MAX_TRIVIAL_DIFF_LINES = 10;
 import { findInheritedFormattingDebtFiles } from '../inherited-formatting-debt.js';
 
 function normalizeMessage(message: string): string {
@@ -3000,28 +3004,84 @@ export class ImplementStepLoop {
         return { outcome: 'needs_human_review', loop };
       }
 
+      let autoExtendedScopeFiles: string[] = [];
       if (deps.git && terminalFix.headBeforeFix !== undefined) {
         const headAfterFix = await deps.git.headCommitSha(baseCtx.cwd);
-        const boundaryCheck = await this.checkTaskBoundary(
+        let boundaryCheck = await this.checkTaskBoundary(
           baseCtx,
           input,
           terminalFix.headBeforeFix,
           headAfterFix,
         );
         if (!boundaryCheck.ok) {
-          this.emit(
-            input,
-            'step.terminal_fix.rejected',
-            'warn',
-            terminalVerificationFailureMessage(boundaryCheck.message, undefined),
-            {
-              profile: deps.terminalFixProfile,
-              priorIterations: loop.iterations.length,
-              headAdvanced,
-              autoCommitted,
-            },
-          );
-          return { outcome: 'needs_human_review', loop };
+          if (boundaryCheck.files && boundaryCheck.files.length > 0 && input.manifest) {
+            let diffText = '';
+            try {
+              diffText = await deps.git.diff(baseCtx.cwd, terminalFix.headBeforeFix, headAfterFix);
+            } catch {
+              diffText = '';
+            }
+
+            const task =
+              input.manifest.tasks?.find((t) => (t as { n?: number }).n === input.stepIndex) ??
+              input.manifest.tasks?.[input.stepIndex - 1];
+
+            if (task && typeof task === 'object') {
+              const taskRecord = task as Record<string, unknown>;
+              const currentMayExtend = Array.isArray(taskRecord.may_extend)
+                ? [...taskRecord.may_extend]
+                : [];
+
+              for (const file of boundaryCheck.files) {
+                if (isUnownedTaskFile(file, input.manifest, input.stepIndex)) {
+                  const lineCount = getFileDiffLineCount(diffText, file);
+                  if (lineCount.total > 0 && lineCount.total <= MAX_TRIVIAL_DIFF_LINES) {
+                    if (!currentMayExtend.includes(file)) {
+                      currentMayExtend.push(file);
+                      autoExtendedScopeFiles.push(file);
+                    }
+                  }
+                }
+              }
+
+              if (autoExtendedScopeFiles.length > 0) {
+                taskRecord.may_extend = currentMayExtend;
+                boundaryCheck = await this.checkTaskBoundary(
+                  baseCtx,
+                  input,
+                  terminalFix.headBeforeFix,
+                  headAfterFix,
+                );
+                this.emit(
+                  input,
+                  'step.terminal_fix.scope_auto_extended',
+                  'info',
+                  `terminal fixer auto-extended scope for ${autoExtendedScopeFiles.length} unowned file(s): ${autoExtendedScopeFiles.join(', ')}`,
+                  {
+                    profile: deps.terminalFixProfile,
+                    autoExtendedFiles: autoExtendedScopeFiles,
+                    stepIndex: input.stepIndex,
+                  },
+                );
+              }
+            }
+          }
+
+          if (!boundaryCheck.ok) {
+            this.emit(
+              input,
+              'step.terminal_fix.rejected',
+              'warn',
+              terminalVerificationFailureMessage(boundaryCheck.message, undefined),
+              {
+                profile: deps.terminalFixProfile,
+                priorIterations: loop.iterations.length,
+                headAdvanced,
+                autoCommitted,
+              },
+            );
+            return { outcome: 'needs_human_review', loop };
+          }
         }
       }
 
@@ -3068,6 +3128,12 @@ export class ImplementStepLoop {
             autoCommitted,
             verdictArtifact: terminalFix.verdict ?? null,
             resolvedBy: isTerminalRebuttal && !producedWork ? 'terminal_rebuttal' : 'terminal_fix',
+            ...(autoExtendedScopeFiles.length > 0
+              ? {
+                  autoExtendedScope: autoExtendedScopeFiles,
+                  autoExtendedBy: deps.terminalFixProfile,
+                }
+              : {}),
             ...(isTerminalRebuttal && terminalFix.rebuttal
               ? { rebuttal: terminalFix.rebuttal }
               : {}),
