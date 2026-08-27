@@ -1035,82 +1035,79 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     expect(result.loop.iterations[0]?.outcome).toBe('unresolved');
   });
 
-  it.fails(
-    'whole-PR review-fix accepts a claimed file despite unrelated tasks excluding its directory',
-    async () => {
-      const manifest = {
-        version: 2,
-        task_count: 4,
-        tasks: [
+  it('whole-PR review-fix accepts a claimed file despite unrelated tasks excluding its directory', async () => {
+    const manifest = {
+      version: 2,
+      task_count: 4,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['packages/domain/src/render-job.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2',
+          expected_files: ['packages/domain/src/other.ts'],
+        },
+        {
+          n: 3,
+          title: 'Task 3',
+          expected_files: ['packages/application/src/service.ts'],
+          non_goals: ['packages/domain'],
+        },
+        {
+          n: 4,
+          title: 'Task 4',
+          expected_files: ['packages/infrastructure/src/adapter.ts'],
+          non_goals: ['packages/domain'],
+        },
+      ],
+    };
+
+    vi.mocked(baseDeps.runReview)
+      .mockResolvedValueOnce({
+        invocationId: 'rev-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [
           {
-            n: 1,
-            title: 'Task 1',
-            expected_files: ['packages/domain/src/render-job.ts'],
-          },
-          {
-            n: 2,
-            title: 'Task 2',
-            expected_files: ['packages/domain/src/other.ts'],
-          },
-          {
-            n: 3,
-            title: 'Task 3',
-            expected_files: ['packages/application/src/service.ts'],
-            non_goals: ['packages/domain'],
-          },
-          {
-            n: 4,
-            title: 'Task 4',
-            expected_files: ['packages/infrastructure/src/adapter.ts'],
-            non_goals: ['packages/domain'],
+            severity: 'P1',
+            summary: 'bug in render job',
+            files: ['packages/domain/src/render-job.ts'],
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'rev-2',
+        agentOutcome: 'success',
+        verdict: 'pass',
+        offendingFindings: [],
+      });
+
+    git.changedFilesResults.set('head-0|head-1', ['packages/domain/src/render-job.ts']);
+
+    vi.mocked(baseDeps.runFix).mockImplementationOnce(async () => {
+      git.headByCwd.set('/tmp/wt', 'head-1');
+      return {
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'head-0',
+        summary: 'fixed render job',
       };
+    });
 
-      vi.mocked(baseDeps.runReview)
-        .mockResolvedValueOnce({
-          invocationId: 'rev-1',
-          agentOutcome: 'success',
-          verdict: 'fail',
-          offendingFindings: [
-            {
-              severity: 'P1',
-              summary: 'bug in render job',
-              files: ['packages/domain/src/render-job.ts'],
-            },
-          ],
-        })
-        .mockResolvedValueOnce({
-          invocationId: 'rev-2',
-          agentOutcome: 'success',
-          verdict: 'pass',
-          offendingFindings: [],
-        });
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({
+      ...baseInput,
+      manifest,
+      maxIterations: 2,
+    });
 
-      git.changedFilesResults.set('head-0|head-1', ['packages/domain/src/render-job.ts']);
-
-      vi.mocked(baseDeps.runFix).mockImplementationOnce(async () => {
-        git.headByCwd.set('/tmp/wt', 'head-1');
-        return {
-          invocationId: 'fix-1',
-          agentOutcome: 'success',
-          verdict: 'done_with_fixes',
-          headBeforeFix: 'head-0',
-          summary: 'fixed render job',
-        };
-      });
-
-      const loop = new ReviewFixLoop(baseDeps);
-      const result = await loop.execute({
-        ...baseInput,
-        manifest,
-        maxIterations: 2,
-      });
-
-      const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
-      expect(boundaryEvents).toHaveLength(0);
-      expect(baseDeps.rollbackFix).not.toHaveBeenCalled();
-      expect(result.phaseOutcome).toBe('passed');
-    },
-  );
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(0);
+    expect(baseDeps.rollbackFix).not.toHaveBeenCalled();
+    expect(result.phaseOutcome).toBe('passed');
+  });
 });
