@@ -4947,7 +4947,7 @@ describe('mid-task test discovery and validation command expansion', () => {
   });
 
   describe('terminal fixer scope auto-extension', () => {
-    it('accepts terminal fix touching an unowned file with a trivial diff and records scope auto-extension', async () => {
+    it('terminal fix auto-extends one genuinely unowned trivial file and preserves event metadata', async () => {
       const { bus, events } = collectEvents();
       let headSha = 'sha-1';
       const fakeGit = {
@@ -5012,116 +5012,122 @@ diff --git a/packages/infra/src/unowned.test.ts b/packages/infra/src/unowned.tes
       const out = await new ImplementStepLoop(deps).execute(input);
 
       expect(out.outcome).toBe('success');
-      const autoExtendedEvent = events.find((e) => e.type === 'step.terminal_fix.scope_auto_extended');
+      const autoExtendedEvent = events.find(
+        (e) => e.type === 'step.terminal_fix.scope_auto_extended',
+      );
       expect(autoExtendedEvent).toBeDefined();
-      expect(autoExtendedEvent?.metadata.autoExtendedFiles).toEqual(['packages/infra/src/unowned.test.ts']);
+      expect(autoExtendedEvent?.metadata.autoExtendedFiles).toEqual([
+        'packages/infra/src/unowned.test.ts',
+      ]);
 
       const acceptedEvent = events.find((e) => e.type === 'step.terminal_fix.accepted');
       expect(acceptedEvent).toBeDefined();
-      expect(acceptedEvent?.metadata.autoExtendedScope).toEqual(['packages/infra/src/unowned.test.ts']);
+      expect(acceptedEvent?.metadata.autoExtendedScope).toEqual([
+        'packages/infra/src/unowned.test.ts',
+      ]);
       expect(acceptedEvent?.metadata.autoExtendedBy).toBe('top-tier-fixer');
     });
 
-    it('rejects terminal fix touching two files in one commit when one is unowned and the other is listed in non_goals (real incident shape)', async () => {
-      const { bus, events } = collectEvents();
-      let headSha = 'sha-1';
-      const fakeGit = {
-        ...makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
-        headCommitSha: async () => headSha,
-        changedFiles: async (_cwd: string, base: string, head?: string) => {
-          if (base === 'sha-1' && head === 'sha-2') {
-            return ['packages/infra/src/audit-protections.test.ts', 'packages/infra/src/baseline-schema.test.ts'];
-          }
-          return [];
-        },
-        diff: async (_cwd: string, _base: string, _head?: string) => `
-diff --git a/packages/infra/src/audit-protections.test.ts b/packages/infra/src/audit-protections.test.ts
---- a/packages/infra/src/audit-protections.test.ts
-+++ b/packages/infra/src/audit-protections.test.ts
-@@ -10,1 +10,1 @@
--  expect(val).toBe(6);
-+  expect(val).toBe(7);
-diff --git a/packages/infra/src/baseline-schema.test.ts b/packages/infra/src/baseline-schema.test.ts
---- a/packages/infra/src/baseline-schema.test.ts
-+++ b/packages/infra/src/baseline-schema.test.ts
-@@ -10,1 +10,1 @@
--  expect(val).toBe(6);
-+  expect(val).toBe(7);
-`,
-      };
-
-      const manifest = {
-        version: 2,
-        task_count: 3,
-        tasks: [
-          { n: 1, title: 'Task 1', expected_files: ['packages/app/src/t1.ts'] },
-          {
-            n: 2,
-            title: 'Task 2',
-            expected_files: ['packages/app/src/migration007.ts'],
-            non_goals: ['packages/infra/src/baseline-schema.test.ts'],
+    it('terminal fix rejects the current task exact and directory non_goals', async () => {
+      for (const forbiddenFile of [
+        'packages/infra/src/exact-ng.ts',
+        'packages/blocked-dir/child.ts',
+      ]) {
+        const { bus, events } = collectEvents();
+        let headSha = 'sha-1';
+        const fakeGit = {
+          ...makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
+          headCommitSha: async () => headSha,
+          changedFiles: async (_cwd: string, base: string, head?: string) => {
+            if (base === 'sha-1' && head === 'sha-2') {
+              return ['packages/app/src/t1.ts', forbiddenFile];
+            }
+            return [];
           },
-          { n: 3, title: 'Task 3', expected_files: ['packages/infra/src/baseline-schema.test.ts'] },
-        ],
-      };
-
-      const deps = makeDeps({
-        events: bus,
-        git: fakeGit,
-        terminalFixProfile: AgentProfileName('top-tier-fixer'),
-        runSpecReview: async () => ({
-          invocationId: 'sr-fail',
-          agentOutcome: 'success',
-          verdict: 'fail',
-        }),
-        runFix: async (_ctx, opts) => {
-          if (opts.isTerminalFix) {
-            headSha = 'sha-2';
-            return {
-              invocationId: 'tf-1',
-              agentOutcome: 'success',
-              verdict: 'done_with_fixes',
-              headBeforeFix: 'sha-1',
-            };
-          }
-          return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
-        },
-        runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
-      });
-
-      const input: ImplementStepLoopInput = {
-        ...baseInput(),
-        manifest,
-        stepIndex: 2,
-        maxIterations: 1,
-      };
-
-      const out = await new ImplementStepLoop(deps).execute(input);
-
-      expect(out.outcome).toBe('needs_human_review');
-      const rejectedEvent = events.find((e) => e.type === 'step.terminal_fix.rejected');
-      expect(rejectedEvent).toBeDefined();
-    });
-
-    it('rejects terminal fix touching a file listed in downstream task expected_files (premature implementation)', async () => {
-      const { bus, events } = collectEvents();
-      let headSha = 'sha-1';
-      const fakeGit = {
-        ...makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
-        headCommitSha: async () => headSha,
-        changedFiles: async (_cwd: string, base: string, head?: string) => {
-          if (base === 'sha-1' && head === 'sha-2') {
-            return ['packages/app/src/t2.ts'];
-          }
-          return [];
-        },
-        diff: async (_cwd: string, _base: string, _head?: string) => `
-diff --git a/packages/app/src/t2.ts b/packages/app/src/t2.ts
---- a/packages/app/src/t2.ts
-+++ b/packages/app/src/t2.ts
+          diff: async (_cwd: string, _base: string, _head?: string) => `
+diff --git a/${forbiddenFile} b/${forbiddenFile}
+--- a/${forbiddenFile}
++++ b/${forbiddenFile}
 @@ -1,1 +1,1 @@
 -old
 +new
+`,
+        };
+
+        const manifest = {
+          version: 2,
+          task_count: 2,
+          tasks: [
+            {
+              n: 1,
+              title: 'Task 1',
+              expected_files: ['packages/app/src/t1.ts'],
+              non_goals: ['packages/infra/src/exact-ng.ts', 'packages/blocked-dir'],
+            },
+            { n: 2, title: 'Task 2', expected_files: ['packages/app/src/t2.ts'] },
+          ],
+        };
+
+        const deps = makeDeps({
+          events: bus,
+          git: fakeGit,
+          terminalFixProfile: AgentProfileName('top-tier-fixer'),
+          runSpecReview: async () => ({
+            invocationId: 'sr-fail',
+            agentOutcome: 'success',
+            verdict: 'fail',
+          }),
+          runFix: async (_ctx, opts) => {
+            if (opts.isTerminalFix) {
+              headSha = 'sha-2';
+              return {
+                invocationId: 'tf-1',
+                agentOutcome: 'success',
+                verdict: 'done_with_fixes',
+                headBeforeFix: 'sha-1',
+              };
+            }
+            return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
+          },
+          runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+        });
+
+        const input: ImplementStepLoopInput = {
+          ...baseInput(),
+          manifest,
+          stepIndex: 1,
+          maxIterations: 1,
+        };
+
+        const out = await new ImplementStepLoop(deps).execute(input);
+
+        expect(out.outcome).toBe('needs_human_review');
+        expect(
+          events.find((e) => e.type === 'step.terminal_fix.scope_auto_extended'),
+        ).toBeUndefined();
+        expect(events.find((e) => e.type === 'step.terminal_fix.rejected')).toBeDefined();
+      }
+    });
+
+    it('terminal fix ignores unrelated non_goals for an otherwise unowned file', async () => {
+      const { bus, events } = collectEvents();
+      let headSha = 'sha-1';
+      const fakeGit = {
+        ...makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
+        headCommitSha: async () => headSha,
+        changedFiles: async (_cwd: string, base: string, head?: string) => {
+          if (base === 'sha-1' && head === 'sha-2') {
+            return ['packages/app/src/t1.ts', 'packages/infra/src/unowned.test.ts'];
+          }
+          return [];
+        },
+        diff: async (_cwd: string, _base: string, _head?: string) => `
+diff --git a/packages/infra/src/unowned.test.ts b/packages/infra/src/unowned.test.ts
+--- a/packages/infra/src/unowned.test.ts
++++ b/packages/infra/src/unowned.test.ts
+@@ -10,1 +10,1 @@
+-  expect(val).toBe(6);
++  expect(val).toBe(7);
 `,
       };
 
@@ -5130,7 +5136,12 @@ diff --git a/packages/app/src/t2.ts b/packages/app/src/t2.ts
         task_count: 2,
         tasks: [
           { n: 1, title: 'Task 1', expected_files: ['packages/app/src/t1.ts'] },
-          { n: 2, title: 'Task 2', expected_files: ['packages/app/src/t2.ts'] },
+          {
+            n: 2,
+            title: 'Task 2',
+            expected_files: ['packages/app/src/t2.ts'],
+            non_goals: ['packages/infra'],
+          },
         ],
       };
 
@@ -5167,73 +5178,379 @@ diff --git a/packages/app/src/t2.ts b/packages/app/src/t2.ts
 
       const out = await new ImplementStepLoop(deps).execute(input);
 
-      expect(out.outcome).toBe('needs_human_review');
-      expect(events.find((e) => e.type === 'step.terminal_fix.rejected')).toBeDefined();
+      expect(out.outcome).toBe('success');
+      const autoExtendedEvent = events.find(
+        (e) => e.type === 'step.terminal_fix.scope_auto_extended',
+      );
+      expect(autoExtendedEvent).toBeDefined();
+      expect(autoExtendedEvent?.metadata.autoExtendedFiles).toEqual([
+        'packages/infra/src/unowned.test.ts',
+      ]);
     });
 
-    it('rejects terminal fix making a non-trivial change (>10 lines changed) to an otherwise-unowned file', async () => {
-      const { bus, events } = collectEvents();
-      let headSha = 'sha-1';
-      const largeDiffLines = Array.from({ length: 15 }, (_, i) => `+line ${i}`).join('\n');
-      const fakeGit = {
-        ...makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
-        headCommitSha: async () => headSha,
-        changedFiles: async (_cwd: string, base: string, head?: string) => {
-          if (base === 'sha-1' && head === 'sha-2') {
-            return ['packages/infra/src/unowned.ts'];
-          }
-          return [];
-        },
-        diff: async (_cwd: string, _base: string, _head?: string) => `
+    it('terminal fix rejects expected, legacy, may_extend, and reference claims from any task', async () => {
+      const claimTargets = [
+        'packages/infra/src/t2-exp.ts',
+        'packages/infra/src/t2-leg.ts',
+        'packages/infra/src/t2-ext.ts',
+        'packages/infra/src/t2-ref.ts',
+        'packages/infra/src/t1-ref.ts',
+      ];
+
+      const manifest = {
+        version: 2,
+        task_count: 2,
+        tasks: [
+          {
+            n: 1,
+            title: 'Task 1',
+            expected_files: ['packages/app/src/t1.ts'],
+            reference_files: ['packages/infra/src/t1-ref.ts'],
+          },
+          {
+            n: 2,
+            title: 'Task 2',
+            expected_files: ['packages/infra/src/t2-exp.ts'],
+            files: ['packages/infra/src/t2-leg.ts'],
+            may_extend: ['packages/infra/src/t2-ext.ts'],
+            reference_files: ['packages/infra/src/t2-ref.ts'],
+          },
+        ],
+      };
+
+      for (const targetFile of claimTargets) {
+        const { bus, events } = collectEvents();
+        let headSha = 'sha-1';
+        const fakeGit = {
+          ...makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
+          headCommitSha: async () => headSha,
+          changedFiles: async (_cwd: string, base: string, head?: string) => {
+            if (base === 'sha-1' && head === 'sha-2') {
+              return ['packages/app/src/t1.ts', targetFile];
+            }
+            return [];
+          },
+          diff: async (_cwd: string, _base: string, _head?: string) => `
+diff --git a/${targetFile} b/${targetFile}
+--- a/${targetFile}
++++ b/${targetFile}
+@@ -1,1 +1,1 @@
+-old
++new
+`,
+        };
+
+        const deps = makeDeps({
+          events: bus,
+          git: fakeGit,
+          terminalFixProfile: AgentProfileName('top-tier-fixer'),
+          runSpecReview: async () => ({
+            invocationId: 'sr-fail',
+            agentOutcome: 'success',
+            verdict: 'fail',
+          }),
+          runFix: async (_ctx, opts) => {
+            if (opts.isTerminalFix) {
+              headSha = 'sha-2';
+              return {
+                invocationId: 'tf-1',
+                agentOutcome: 'success',
+                verdict: 'done_with_fixes',
+                headBeforeFix: 'sha-1',
+              };
+            }
+            return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
+          },
+          runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+        });
+
+        const input: ImplementStepLoopInput = {
+          ...baseInput(),
+          manifest,
+          stepIndex: 1,
+          maxIterations: 1,
+        };
+
+        const out = await new ImplementStepLoop(deps).execute(input);
+
+        expect(out.outcome).toBe('needs_human_review');
+        expect(events.find((e) => e.type === 'step.terminal_fix.rejected')).toBeDefined();
+        expect(
+          events.find((e) => e.type === 'step.terminal_fix.scope_auto_extended'),
+        ).toBeUndefined();
+      }
+    });
+
+    it('terminal fix fails closed for protected paths and invalid or empty manifests', async () => {
+      // 1. Protected paths fail closed
+      for (const protectedFile of [
+        '.gitignore',
+        '.ai-orchestrator.json',
+        'task-manifest.json',
+        '.github/workflows/ci.yml',
+      ]) {
+        const { bus, events } = collectEvents();
+        let headSha = 'sha-1';
+        const fakeGit = {
+          ...makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
+          headCommitSha: async () => headSha,
+          changedFiles: async (_cwd: string, base: string, head?: string) => {
+            if (base === 'sha-1' && head === 'sha-2') {
+              return ['packages/app/src/t1.ts', protectedFile];
+            }
+            return [];
+          },
+          diff: async (_cwd: string, _base: string, _head?: string) => `
+diff --git a/${protectedFile} b/${protectedFile}
+--- a/${protectedFile}
++++ b/${protectedFile}
+@@ -1,1 +1,1 @@
+-old
++new
+`,
+        };
+
+        const manifest = {
+          version: 2,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['packages/app/src/t1.ts'] }],
+        };
+
+        const deps = makeDeps({
+          events: bus,
+          git: fakeGit,
+          terminalFixProfile: AgentProfileName('top-tier-fixer'),
+          runSpecReview: async () => ({
+            invocationId: 'sr-fail',
+            agentOutcome: 'success',
+            verdict: 'fail',
+          }),
+          runFix: async (_ctx, opts) => {
+            if (opts.isTerminalFix) {
+              headSha = 'sha-2';
+              return {
+                invocationId: 'tf-1',
+                agentOutcome: 'success',
+                verdict: 'done_with_fixes',
+                headBeforeFix: 'sha-1',
+              };
+            }
+            return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
+          },
+          runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+        });
+
+        const input: ImplementStepLoopInput = {
+          ...baseInput(),
+          manifest,
+          stepIndex: 1,
+          maxIterations: 1,
+        };
+
+        const out = await new ImplementStepLoop(deps).execute(input);
+
+        expect(out.outcome).toBe('needs_human_review');
+        expect(events.find((e) => e.type === 'step.terminal_fix.rejected')).toBeDefined();
+        expect(
+          events.find((e) => e.type === 'step.terminal_fix.scope_auto_extended'),
+        ).toBeUndefined();
+      }
+
+      // 2. Invalid or empty manifests fail closed
+      for (const invalidManifest of [undefined, { tasks: [] }, { tasks: null }]) {
+        const { bus, events } = collectEvents();
+        let headSha = 'sha-1';
+        const fakeGit = {
+          ...makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
+          headCommitSha: async () => headSha,
+          changedFiles: async (_cwd: string, base: string, head?: string) => {
+            if (base === 'sha-1' && head === 'sha-2') {
+              return ['packages/app/src/t1.ts', 'packages/infra/src/unowned.test.ts'];
+            }
+            return [];
+          },
+          diff: async (_cwd: string, _base: string, _head?: string) => `
+diff --git a/packages/infra/src/unowned.test.ts b/packages/infra/src/unowned.test.ts
+--- a/packages/infra/src/unowned.test.ts
++++ b/packages/infra/src/unowned.test.ts
+@@ -1,1 +1,1 @@
+-old
++new
+`,
+        };
+
+        const deps = makeDeps({
+          events: bus,
+          git: fakeGit,
+          terminalFixProfile: AgentProfileName('top-tier-fixer'),
+          runSpecReview: async () => ({
+            invocationId: 'sr-fail',
+            agentOutcome: 'success',
+            verdict: 'fail',
+          }),
+          runFix: async (_ctx, opts) => {
+            if (opts.isTerminalFix) {
+              headSha = 'sha-2';
+              return {
+                invocationId: 'tf-1',
+                agentOutcome: 'success',
+                verdict: 'done_with_fixes',
+                headBeforeFix: 'sha-1',
+              };
+            }
+            return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
+          },
+          runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+        });
+
+        const input: ImplementStepLoopInput = {
+          ...baseInput(),
+          manifest: invalidManifest as unknown as ImplementStepLoopInput['manifest'],
+          stepIndex: 1,
+          maxIterations: 1,
+        };
+
+        const out = await new ImplementStepLoop(deps).execute(input);
+
+        expect(out.outcome).toBe('needs_human_review');
+        expect(events.find((e) => e.type === 'step.terminal_fix.rejected')).toBeDefined();
+        expect(
+          events.find((e) => e.type === 'step.terminal_fix.scope_auto_extended'),
+        ).toBeUndefined();
+      }
+    });
+
+    it('terminal fix rejects zero-line and over-ten-line diffs', async () => {
+      // 1. Zero-line diff
+      {
+        const { bus, events } = collectEvents();
+        let headSha = 'sha-1';
+        const fakeGit = {
+          ...makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
+          headCommitSha: async () => headSha,
+          changedFiles: async (_cwd: string, base: string, head?: string) => {
+            if (base === 'sha-1' && head === 'sha-2') {
+              return ['packages/infra/src/unowned.ts'];
+            }
+            return [];
+          },
+          diff: async (_cwd: string, _base: string, _head?: string) => '',
+        };
+
+        const manifest = {
+          version: 2,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['packages/app/src/t1.ts'] }],
+        };
+
+        const deps = makeDeps({
+          events: bus,
+          git: fakeGit,
+          terminalFixProfile: AgentProfileName('top-tier-fixer'),
+          runSpecReview: async () => ({
+            invocationId: 'sr-fail',
+            agentOutcome: 'success',
+            verdict: 'fail',
+          }),
+          runFix: async (_ctx, opts) => {
+            if (opts.isTerminalFix) {
+              headSha = 'sha-2';
+              return {
+                invocationId: 'tf-1',
+                agentOutcome: 'success',
+                verdict: 'done_with_fixes',
+                headBeforeFix: 'sha-1',
+              };
+            }
+            return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
+          },
+          runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+        });
+
+        const input: ImplementStepLoopInput = {
+          ...baseInput(),
+          manifest,
+          stepIndex: 1,
+          maxIterations: 1,
+        };
+
+        const out = await new ImplementStepLoop(deps).execute(input);
+
+        expect(out.outcome).toBe('needs_human_review');
+        expect(events.find((e) => e.type === 'step.terminal_fix.rejected')).toBeDefined();
+        expect(
+          events.find((e) => e.type === 'step.terminal_fix.scope_auto_extended'),
+        ).toBeUndefined();
+      }
+
+      // 2. Over-ten-line diff (15 lines)
+      {
+        const { bus, events } = collectEvents();
+        let headSha = 'sha-1';
+        const largeDiffLines = Array.from({ length: 15 }, (_, i) => `+line ${i}`).join('\n');
+        const fakeGit = {
+          ...makeFakeGitPort({ headSha: 'sha-1', statusOutput: '' }),
+          headCommitSha: async () => headSha,
+          changedFiles: async (_cwd: string, base: string, head?: string) => {
+            if (base === 'sha-1' && head === 'sha-2') {
+              return ['packages/infra/src/unowned.ts'];
+            }
+            return [];
+          },
+          diff: async (_cwd: string, _base: string, _head?: string) => `
 diff --git a/packages/infra/src/unowned.ts b/packages/infra/src/unowned.ts
 --- a/packages/infra/src/unowned.ts
 +++ b/packages/infra/src/unowned.ts
 @@ -1,1 +1,15 @@
 ${largeDiffLines}
 `,
-      };
+        };
 
-      const manifest = {
-        version: 2,
-        task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1', expected_files: ['packages/app/src/t1.ts'] }],
-      };
+        const manifest = {
+          version: 2,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Task 1', expected_files: ['packages/app/src/t1.ts'] }],
+        };
 
-      const deps = makeDeps({
-        events: bus,
-        git: fakeGit,
-        terminalFixProfile: AgentProfileName('top-tier-fixer'),
-        runSpecReview: async () => ({
-          invocationId: 'sr-fail',
-          agentOutcome: 'success',
-          verdict: 'fail',
-        }),
-        runFix: async (_ctx, opts) => {
-          if (opts.isTerminalFix) {
-            headSha = 'sha-2';
-            return {
-              invocationId: 'tf-1',
-              agentOutcome: 'success',
-              verdict: 'done_with_fixes',
-              headBeforeFix: 'sha-1',
-            };
-          }
-          return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
-        },
-        runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
-      });
+        const deps = makeDeps({
+          events: bus,
+          git: fakeGit,
+          terminalFixProfile: AgentProfileName('top-tier-fixer'),
+          runSpecReview: async () => ({
+            invocationId: 'sr-fail',
+            agentOutcome: 'success',
+            verdict: 'fail',
+          }),
+          runFix: async (_ctx, opts) => {
+            if (opts.isTerminalFix) {
+              headSha = 'sha-2';
+              return {
+                invocationId: 'tf-1',
+                agentOutcome: 'success',
+                verdict: 'done_with_fixes',
+                headBeforeFix: 'sha-1',
+              };
+            }
+            return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
+          },
+          runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+        });
 
-      const input: ImplementStepLoopInput = {
-        ...baseInput(),
-        manifest,
-        stepIndex: 1,
-        maxIterations: 1,
-      };
+        const input: ImplementStepLoopInput = {
+          ...baseInput(),
+          manifest,
+          stepIndex: 1,
+          maxIterations: 1,
+        };
 
-      const out = await new ImplementStepLoop(deps).execute(input);
+        const out = await new ImplementStepLoop(deps).execute(input);
 
-      expect(out.outcome).toBe('needs_human_review');
-      expect(events.find((e) => e.type === 'step.terminal_fix.rejected')).toBeDefined();
+        expect(out.outcome).toBe('needs_human_review');
+        expect(events.find((e) => e.type === 'step.terminal_fix.rejected')).toBeDefined();
+        expect(
+          events.find((e) => e.type === 'step.terminal_fix.scope_auto_extended'),
+        ).toBeUndefined();
+      }
     });
 
     it('ordinary (non-terminal-fix) iterations fail closed on undeclared files regardless of ownership status', async () => {
@@ -5294,7 +5611,9 @@ diff --git a/packages/infra/src/unowned.ts b/packages/infra/src/unowned.ts
 
       await new ImplementStepLoop(deps).execute(input);
 
-      expect(events.find((e) => e.type === 'step.terminal_fix.scope_auto_extended')).toBeUndefined();
+      expect(
+        events.find((e) => e.type === 'step.terminal_fix.scope_auto_extended'),
+      ).toBeUndefined();
       expect(events.find((e) => e.type === 'task_boundary.violated')).toBeDefined();
     });
   });
