@@ -1006,7 +1006,7 @@ export function extractTargetTestFilesFromInvertedCommands(
 export function extractFailedTestFilesFromOutput(output: string): string[] {
   if (!output || !output.trim()) return [];
 
-  const hasVitestSummary = /\b(?:Test Files|Test Suites)\s+/i.test(output);
+  const hasVitestSummary = /\b(?:Test Files|Test Suites)\b/i.test(output);
 
   const found = new Set<string>();
   const lines = output.split('\n');
