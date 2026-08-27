@@ -1,5 +1,8 @@
 import { normalizeTaskPath } from '@ai-sdlc/domain';
-import { isOrchestratorArtifactPattern } from './artifacts/orchestrator-artifacts.js';
+import {
+  isOrchestratorArtifactPattern,
+  unquoteGitPath,
+} from './artifacts/orchestrator-artifacts.js';
 
 export { normalizeTaskPath };
 
@@ -682,12 +685,16 @@ export function getFileDiffLineCount(diffText: string, filePath: string): FileDi
   let deleted = 0;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
+    const rawLine = lines[i]!;
+    const line = rawLine.trimEnd();
     if (line.startsWith('diff --git ')) {
-      const match = /^diff --git (?:\"a\/(.+?)\"|a\/(.+?)) (?:\"b\/(.+?)\"|b\/(.+?))$/.exec(line);
+      const match =
+        /^diff --git (?:\"a\/((?:[^"\\]|\\.)*)\"|a\/(.+?)) (?:\"b\/((?:[^"\\]|\\.)*)\"|b\/(.+?))\r?$/.exec(
+          line,
+        );
       if (match) {
-        const rawA = match[1] ?? match[2];
-        const rawB = match[3] ?? match[4];
+        const rawA = match[1] !== undefined ? unquoteGitPath(`"${match[1]}"`) : match[2];
+        const rawB = match[3] !== undefined ? unquoteGitPath(`"${match[3]}"`) : match[4];
         const fileA = rawA ? normalizeTaskPath(rawA) : '';
         const fileB = rawB ? normalizeTaskPath(rawB) : '';
         inTargetFile =

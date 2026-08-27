@@ -4451,6 +4451,7 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     expect(failed).toBeDefined();
     expect(failed?.message).toContain('failed typecheck');
     expect(failed?.metadata.typecheckOutcome).toBe('fail');
+    expect(failed?.metadata.typecheckOutput).toBe('TS2304: Cannot find name foo');
     expect(failed?.metadata.headAdvanced).toBe(false);
     expect(failed?.metadata.autoCommitted).toBe(false);
   });

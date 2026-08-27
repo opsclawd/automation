@@ -3004,6 +3004,9 @@ export class ImplementStepLoop {
           ...(typecheckAfterFix?.outcome !== undefined
             ? { typecheckOutcome: typecheckAfterFix.outcome }
             : {}),
+          ...(typecheckAfterFix?.outcome === 'fail'
+            ? { typecheckOutput: typecheckAfterFix.output.slice(0, 2000) }
+            : {}),
         });
         return { outcome: 'needs_human_review', loop };
       }

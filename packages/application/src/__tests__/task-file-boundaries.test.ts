@@ -901,5 +901,43 @@ index 1234567..89abcdef 100644
       const count = getFileDiffLineCount(diffText, 'src/foo b/file.ts');
       expect(count).toEqual({ added: 2, deleted: 1, total: 3 });
     });
+
+    it('correctly handles quoted file paths containing escaped quote before space b/', () => {
+      const diffText = `
+diff --git "a/src/foo\\" b/file.ts" "b/src/foo\\" b/file.ts"
+index 1234567..89abcdef 100644
+--- "a/src/foo\\" b/file.ts"
++++ "b/src/foo\\" b/file.ts"
+@@ -1,2 +1,3 @@
+-old line
++new line 1
++new line 2
+`;
+      const count = getFileDiffLineCount(diffText, 'src/foo" b/file.ts');
+      expect(count).toEqual({ added: 2, deleted: 1, total: 3 });
+    });
+
+    it('correctly handles CRLF line endings with quoted and unquoted paths', () => {
+      const diffText =
+        'diff --git "a/src/foo b/file.ts" "b/src/foo b/file.ts"\r\n' +
+        'index 1234567..89abcdef 100644\r\n' +
+        '--- "a/src/foo b/file.ts"\r\n' +
+        '+++ "b/src/foo b/file.ts"\r\n' +
+        '@@ -1,2 +1,3 @@\r\n' +
+        '-old line\r\n' +
+        '+new line 1\r\n' +
+        '+new line 2\r\n' +
+        'diff --git a/src/unquoted.ts b/src/unquoted.ts\r\n' +
+        '--- a/src/unquoted.ts\r\n' +
+        '+++ b/src/unquoted.ts\r\n' +
+        '@@ -1,1 +1,2 @@\r\n' +
+        '-old line\r\n' +
+        '+new line 1\r\n';
+      const quotedCount = getFileDiffLineCount(diffText, 'src/foo b/file.ts');
+      expect(quotedCount).toEqual({ added: 2, deleted: 1, total: 3 });
+
+      const unquotedCount = getFileDiffLineCount(diffText, 'src/unquoted.ts');
+      expect(unquotedCount).toEqual({ added: 1, deleted: 1, total: 2 });
+    });
   });
 });
