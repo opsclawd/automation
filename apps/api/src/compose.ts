@@ -532,7 +532,37 @@ export async function maybeRetryTransientRevalidationFlake(
     }
   }
 
-  if (failedTestFiles.size === 0 || failedTestFiles.size > 5) {
+  if (failedTestFiles.size === 0) {
+    if (input.eventBus) {
+      input.eventBus.publish(input.runId, {
+        runId: input.runId,
+        level: 'warn',
+        type: 'revalidation.flake_retry_skipped',
+        message: 'Revalidation flake retry skipped: no failed test files parsed from output',
+        timestamp: new Date().toISOString(),
+        metadata: {
+          reason: 'no_failures',
+          failedTestFiles: [],
+        },
+      });
+    }
+    return { passed: false, failingCommands: input.failingCommands, retried: false };
+  }
+
+  if (failedTestFiles.size > 5) {
+    if (input.eventBus) {
+      input.eventBus.publish(input.runId, {
+        runId: input.runId,
+        level: 'warn',
+        type: 'revalidation.flake_retry_skipped',
+        message: `Revalidation flake retry skipped: too many failed test files (${failedTestFiles.size} > 5)`,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          reason: 'too_many_failures',
+          failedTestFiles: Array.from(failedTestFiles),
+        },
+      });
+    }
     return { passed: false, failingCommands: input.failingCommands, retried: false };
   }
 
