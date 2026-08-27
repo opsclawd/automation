@@ -45,7 +45,9 @@ import {
   resolveEffectiveTaskScope,
   classifyTaskChanges,
   normalizeTaskPath,
-  isUnownedTaskFile,
+  isFileOwnedByAnyTask,
+  isProtectedTaskPath,
+  isSegmentPrefixMatch,
   getFileDiffLineCount,
   type TaskChangeCandidate,
 } from '../task-file-boundaries.js';
@@ -2729,7 +2731,8 @@ export class ImplementStepLoop {
           // Fall through to normal success path — verifier could not read the tree.
         }
 
-        const headAfterFix = verification.kind === 'advanced' ? verification.headAfterFix : undefined;
+        const headAfterFix =
+          verification.kind === 'advanced' ? verification.headAfterFix : undefined;
         if (headAfterFix) {
           const boundaryCheck = await this.checkTaskBoundary(
             ctx,
@@ -2987,20 +2990,24 @@ export class ImplementStepLoop {
       }
 
       if (!producedWork && !isTerminalRebuttal) {
-        this.emit(
-          input,
-          'step.terminal_fix.failed',
-          'error',
-          `terminal fixer produced no verifiable work (agentOutcome: ${terminalFix.agentOutcome}, verdict: ${String(terminalFix.verdict)})`,
-          {
-            profile: deps.terminalFixProfile,
-            priorIterations: loop.iterations.length,
-            agentOutcome: terminalFix.agentOutcome,
-            verdict: terminalFix.verdict,
-            headAdvanced,
-            autoCommitted,
-          },
-        );
+        const failedTypecheck = typecheckAfterFix?.outcome === 'fail';
+        const msg = failedTypecheck
+          ? `terminal fixer produced changes that failed typecheck`
+          : `terminal fixer produced no verifiable work (agentOutcome: ${terminalFix.agentOutcome}, verdict: ${String(terminalFix.verdict)})`;
+        this.emit(input, 'step.terminal_fix.failed', 'error', msg, {
+          profile: deps.terminalFixProfile,
+          priorIterations: loop.iterations.length,
+          agentOutcome: terminalFix.agentOutcome,
+          verdict: terminalFix.verdict,
+          headAdvanced,
+          autoCommitted,
+          ...(typecheckAfterFix?.outcome !== undefined
+            ? { typecheckOutcome: typecheckAfterFix.outcome }
+            : {}),
+          ...(typecheckAfterFix?.outcome === 'fail'
+            ? { typecheckOutput: typecheckAfterFix.output.slice(0, 2000) }
+            : {}),
+        });
         return { outcome: 'needs_human_review', loop };
       }
 
@@ -3014,32 +3021,64 @@ export class ImplementStepLoop {
           headAfterFix,
         );
         if (!boundaryCheck.ok) {
-          if (boundaryCheck.files && boundaryCheck.files.length > 0 && input.manifest) {
-            let diffText = '';
-            try {
-              diffText = await deps.git.diff(baseCtx.cwd, terminalFix.headBeforeFix, headAfterFix);
-            } catch {
-              diffText = '';
-            }
+          const manifestTasks =
+            input.manifest &&
+            typeof input.manifest === 'object' &&
+            Array.isArray((input.manifest as Record<string, unknown>).tasks)
+              ? ((input.manifest as Record<string, unknown>).tasks as unknown[])
+              : undefined;
 
+          if (
+            boundaryCheck.files &&
+            boundaryCheck.files.length > 0 &&
+            manifestTasks &&
+            manifestTasks.length > 0
+          ) {
             const task =
-              input.manifest.tasks?.find((t) => (t as { n?: number }).n === input.stepIndex) ??
-              input.manifest.tasks?.[input.stepIndex - 1];
+              manifestTasks.find((t) => (t as { n?: number } | undefined)?.n === input.stepIndex) ??
+              manifestTasks[input.stepIndex - 1];
 
             if (task && typeof task === 'object') {
+              let diffText = '';
+              try {
+                diffText = await deps.git.diff(
+                  baseCtx.cwd,
+                  terminalFix.headBeforeFix,
+                  headAfterFix,
+                );
+              } catch {
+                diffText = '';
+              }
+
               const taskRecord = task as Record<string, unknown>;
+              const currentScope = resolveEffectiveTaskScope(task);
               const currentMayExtend = Array.isArray(taskRecord.may_extend)
                 ? [...taskRecord.may_extend]
                 : [];
 
-              for (const file of boundaryCheck.files) {
-                if (isUnownedTaskFile(file, input.manifest, input.stepIndex)) {
-                  const lineCount = getFileDiffLineCount(diffText, file);
-                  if (lineCount.total > 0 && lineCount.total <= MAX_TRIVIAL_DIFF_LINES) {
-                    if (!currentMayExtend.includes(file)) {
-                      currentMayExtend.push(file);
-                      autoExtendedScopeFiles.push(file);
-                    }
+              for (const candidate of boundaryCheck.files) {
+                const normCandidate = normalizeTaskPath(candidate);
+                if (!normCandidate) {
+                  continue;
+                }
+                if (isProtectedTaskPath(normCandidate)) {
+                  continue;
+                }
+                const isExcludedByCurrentTask = currentScope.nonGoals.some((ng) =>
+                  isSegmentPrefixMatch(ng, normCandidate),
+                );
+                if (isExcludedByCurrentTask) {
+                  continue;
+                }
+                if (isFileOwnedByAnyTask(normCandidate, input.manifest).owned) {
+                  continue;
+                }
+
+                const lineCount = getFileDiffLineCount(diffText, normCandidate);
+                if (lineCount.total > 0 && lineCount.total <= MAX_TRIVIAL_DIFF_LINES) {
+                  if (!currentMayExtend.includes(normCandidate)) {
+                    currentMayExtend.push(normCandidate);
+                    autoExtendedScopeFiles.push(normCandidate);
                   }
                 }
               }

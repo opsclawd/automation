@@ -1,5 +1,8 @@
 import { normalizeTaskPath } from '@ai-sdlc/domain';
-import { isOrchestratorArtifactPattern } from './artifacts/orchestrator-artifacts.js';
+import {
+  isOrchestratorArtifactPattern,
+  unquoteGitPath,
+} from './artifacts/orchestrator-artifacts.js';
 
 export { normalizeTaskPath };
 
@@ -581,75 +584,84 @@ export async function loadManifest(
   return { status: 'missing', message: 'task-manifest.json not found' };
 }
 
-/**
- * Check whether a file path is genuinely unowned across the entire manifest.
- * A file is unowned iff:
- * 1. It is not a system protected file (.gitignore, .ai-orchestrator.json, .github, orchestrator artifacts).
- * 2. It is not matched by the CURRENT task's own non_goals.
- * 3. It is not listed in any task's reference_files in the manifest (including current task).
- * 4. It is not listed in any OTHER task's expected_files/files or may_extend across the manifest.
- *
- * Note on (2): only the current task's own non_goals count as a disqualifying
- * exclusion here, not every task's. In practice, non_goals entries are broad
- * "this task doesn't touch that subsystem" statements (e.g. "packages/infrastructure",
- * "apps") that appear on nearly every task in a manifest — they scope what THAT
- * task should avoid, not a claim that the excluded area is owned or reserved by
- * anyone. Treating any task's non_goals as disqualifying makes almost every file
- * in a real multi-task manifest look "owned" by accident, since the non_goals of
- * unrelated tasks collectively span most of the repository. A file another task
- * genuinely owns is already caught by check (4) below (its expected_files/files/
- * may_extend); a non_goals entry adds no additional signal in that case. Only the
- * current task's own non_goals matters here, because overriding an instruction
- * given directly to the task currently being fixed is a different, real risk.
- */
-export function isUnownedTaskFile(
-  filePath: string,
-  manifest: unknown,
-  currentTaskNumber?: number,
-): boolean {
-  const norm = normalizeTaskPath(filePath);
-  if (!norm) return false;
+export type FileOwnershipField = 'expected_files' | 'files' | 'may_extend' | 'reference_files';
 
-  if (
-    isProtectedTaskPath(norm) ||
-    isOrchestratorArtifactPattern(norm) ||
-    norm === '.ai-orchestrator.json'
-  ) {
-    return false;
+export interface FileOwnershipClaim {
+  taskNumber: number;
+  field: FileOwnershipField;
+}
+
+export interface FileOwnershipResult {
+  owned: boolean;
+  claims: FileOwnershipClaim[];
+}
+
+const FILE_OWNERSHIP_FIELDS: readonly FileOwnershipField[] = [
+  'expected_files',
+  'files',
+  'may_extend',
+  'reference_files',
+];
+
+/**
+ * Answers whether any task explicitly names a normalized file in
+ * expected_files, legacy files, may_extend, or reference_files.
+ *
+ * Exclusions (non_goals) and permissions (permitted_areas) never create claims.
+ */
+export function isFileOwnedByAnyTask(filePath: string, manifest: unknown): FileOwnershipResult {
+  const norm = normalizeTaskPath(filePath);
+  if (!norm) {
+    return { owned: false, claims: [] };
   }
 
   if (!manifest || typeof manifest !== 'object') {
-    return false;
+    return { owned: false, claims: [] };
   }
 
   const manifestRecord = manifest as Record<string, unknown>;
-  const tasks = Array.isArray(manifestRecord.tasks) ? manifestRecord.tasks : [];
-  if (tasks.length === 0) return false;
+  if (!Array.isArray(manifestRecord.tasks)) {
+    return { owned: false, claims: [] };
+  }
+
+  const tasks = manifestRecord.tasks;
+  const claims: FileOwnershipClaim[] = [];
+  const seenKeys = new Set<string>();
 
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i];
-    const taskNum = getTaskNumber(task, i);
-    const scope = resolveEffectiveTaskScope(task);
-
-    if (
-      taskNum === currentTaskNumber &&
-      scope.nonGoals.some((ng) => isNormalizedSegmentPrefixMatch(ng, norm))
-    ) {
-      return false;
+    if (!task || typeof task !== 'object') {
+      continue;
     }
+    const taskNumber = getTaskNumber(task, i);
+    const taskRecord = task as Record<string, unknown>;
 
-    if (scope.referenceFiles.includes(norm)) {
-      return false;
-    }
+    for (const field of FILE_OWNERSHIP_FIELDS) {
+      const rawEntries = taskRecord[field];
+      if (!Array.isArray(rawEntries)) {
+        continue;
+      }
 
-    if (currentTaskNumber === undefined || taskNum !== currentTaskNumber) {
-      if (scope.requiredFiles.includes(norm) || scope.mayExtendFiles.includes(norm)) {
-        return false;
+      for (const entry of rawEntries) {
+        if (typeof entry !== 'string') {
+          continue;
+        }
+        const normEntry = normalizeTaskPath(entry);
+        if (normEntry === norm) {
+          const key = `${taskNumber}:${field}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            claims.push({ taskNumber, field });
+          }
+        }
       }
     }
   }
 
-  return true;
+  return {
+    owned: claims.length > 0,
+    claims,
+  };
 }
 
 export interface FileDiffLineCount {
@@ -673,13 +685,20 @@ export function getFileDiffLineCount(diffText: string, filePath: string): FileDi
   let deleted = 0;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
+    const rawLine = lines[i]!;
+    const line = rawLine.trimEnd();
     if (line.startsWith('diff --git ')) {
-      const match = /^diff --git "?a\/(.+?)"? "?b\/(.+?)"?$/.exec(line);
+      const match =
+        /^diff --git (?:\"a\/((?:[^"\\]|\\.)*)\"|a\/(.+?)) (?:\"b\/((?:[^"\\]|\\.)*)\"|b\/(.+?))\r?$/.exec(
+          line,
+        );
       if (match) {
-        const fileA = normalizeTaskPath(match[1]);
-        const fileB = normalizeTaskPath(match[2]);
-        inTargetFile = fileA === normTarget || fileB === normTarget;
+        const rawA = match[1] !== undefined ? unquoteGitPath(`"${match[1]}"`) : match[2];
+        const rawB = match[3] !== undefined ? unquoteGitPath(`"${match[3]}"`) : match[4];
+        const fileA = rawA ? normalizeTaskPath(rawA) : '';
+        const fileB = rawB ? normalizeTaskPath(rawB) : '';
+        inTargetFile =
+          (fileA !== '' && fileA === normTarget) || (fileB !== '' && fileB === normTarget);
       } else {
         inTargetFile = false;
       }

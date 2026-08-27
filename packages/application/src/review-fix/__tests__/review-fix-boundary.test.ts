@@ -1000,9 +1000,7 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
       invocationId: 'rev-1',
       agentOutcome: 'success',
       verdict: 'fail',
-      offendingFindings: [
-        { severity: 'P1', summary: 'bug in task 1', files: ['src/task1.ts'] },
-      ],
+      offendingFindings: [{ severity: 'P1', summary: 'bug in task 1', files: ['src/task1.ts'] }],
     });
 
     git.headByCwd.set('/tmp/wt', 'head-1');
@@ -1028,6 +1026,287 @@ describe('ReviewFixLoop task boundary enforcement (regression)', () => {
     expect(boundaryEvents).toHaveLength(1);
     expect(boundaryEvents[0]?.message).toContain(
       'premature implementation of files owned by downstream tasks: src/task2.ts (owned by task 2)',
+    );
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+    expect(result.loop.iterations[0]?.outcome).toBe('unresolved');
+  });
+
+  it('whole-PR review-fix accepts a claimed file despite unrelated tasks excluding its directory', async () => {
+    const manifest = {
+      version: 2,
+      task_count: 4,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['packages/domain/src/render-job.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2',
+          expected_files: ['packages/domain/src/other.ts'],
+        },
+        {
+          n: 3,
+          title: 'Task 3',
+          expected_files: ['packages/application/src/service.ts'],
+          non_goals: ['packages/domain'],
+        },
+        {
+          n: 4,
+          title: 'Task 4',
+          expected_files: ['packages/infrastructure/src/adapter.ts'],
+          non_goals: ['packages/domain'],
+        },
+      ],
+    };
+
+    vi.mocked(baseDeps.runReview)
+      .mockResolvedValueOnce({
+        invocationId: 'rev-1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [
+          {
+            severity: 'P1',
+            summary: 'bug in render job',
+            files: ['packages/domain/src/render-job.ts'],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        invocationId: 'rev-2',
+        agentOutcome: 'success',
+        verdict: 'pass',
+        offendingFindings: [],
+      });
+
+    git.changedFilesResults.set('head-0|head-1', ['packages/domain/src/render-job.ts']);
+
+    vi.mocked(baseDeps.runFix).mockImplementationOnce(async () => {
+      git.headByCwd.set('/tmp/wt', 'head-1');
+      return {
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'head-0',
+        summary: 'fixed render job',
+      };
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({
+      ...baseInput,
+      manifest,
+      maxIterations: 2,
+    });
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(0);
+    expect(baseDeps.rollbackFix).not.toHaveBeenCalled();
+    expect(result.phaseOutcome).toBe('passed');
+  });
+
+  it('whole-PR review-fix rejects an unclaimed file covered only by unioned non_goals', async () => {
+    const manifest = {
+      version: 2,
+      task_count: 3,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['packages/domain/src/render-job.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2',
+          expected_files: ['packages/application/src/service.ts'],
+          non_goals: ['packages/infrastructure'],
+        },
+        {
+          n: 3,
+          title: 'Task 3',
+          expected_files: ['packages/shared/src/index.ts'],
+        },
+      ],
+    };
+
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [
+        {
+          severity: 'P1',
+          summary: 'bug in render job',
+          files: ['packages/domain/src/render-job.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['packages/infrastructure/src/unclaimed.ts']);
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'touched unclaimed file covered by non_goals',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({
+      ...baseInput,
+      manifest,
+      maxIterations: 1,
+    });
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.phase).toBe('review-fix');
+    expect(boundaryEvents[0]?.message).toContain(
+      'review-fix modified undeclared files: packages/infrastructure/src/unclaimed.ts',
+    );
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+    expect(result.loop.iterations[0]?.outcome).toBe('unresolved');
+  });
+
+  it('whole-PR review-fix reports a genuinely undeclared file as drift', async () => {
+    const manifest = {
+      version: 2,
+      task_count: 2,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['packages/domain/src/render-job.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2',
+          expected_files: ['packages/application/src/service.ts'],
+        },
+      ],
+    };
+
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [
+        {
+          severity: 'P1',
+          summary: 'bug in render job',
+          files: ['packages/domain/src/render-job.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['packages/misc/src/drift.ts']);
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'touched genuinely undeclared drift file',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({
+      ...baseInput,
+      manifest,
+      maxIterations: 1,
+    });
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.phase).toBe('review-fix');
+    expect(boundaryEvents[0]?.message).toContain(
+      'review-fix modified undeclared files: packages/misc/src/drift.ts',
+    );
+    expect(
+      (boundaryEvents[0]?.metadata as { undeclaredFiles?: string[] })?.undeclaredFiles,
+    ).toEqual(['packages/misc/src/drift.ts']);
+    expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationIndex: 1 }),
+      'head-0',
+    );
+    expect(result.phaseOutcome).toBe('failed');
+    expect(result.loop.iterations[0]?.outcome).toBe('unresolved');
+  });
+
+  it('current-task review-fix preserves task-local non_goal precedence', async () => {
+    const manifest = {
+      version: 2,
+      task_count: 3,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['packages/domain/src/render-job.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2',
+          expected_files: ['packages/domain/src/other.ts'],
+        },
+        {
+          n: 3,
+          title: 'Task 3',
+          expected_files: ['packages/application/src/service.ts'],
+          non_goals: ['packages/domain'],
+        },
+      ],
+    };
+
+    vi.mocked(baseDeps.runReview).mockResolvedValueOnce({
+      invocationId: 'rev-1',
+      agentOutcome: 'success',
+      verdict: 'fail',
+      offendingFindings: [
+        {
+          severity: 'P1',
+          summary: 'bug in service',
+          files: ['packages/application/src/service.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set('/tmp/wt', 'head-1');
+    git.changedFilesResults.set('head-0|head-1', ['packages/domain/src/render-job.ts']);
+
+    vi.mocked(baseDeps.runFix).mockResolvedValueOnce({
+      invocationId: 'fix-1',
+      agentOutcome: 'success',
+      verdict: 'done_with_fixes',
+      headBeforeFix: 'head-0',
+      summary: 'touched task 1 file during task 3 fix',
+    });
+
+    const loop = new ReviewFixLoop(baseDeps);
+    const result = await loop.execute({
+      ...baseInput,
+      manifest,
+      currentTaskNumber: 3,
+      maxIterations: 1,
+    });
+
+    const boundaryEvents = events.filter((e) => e.type === 'task_boundary.violated');
+    expect(boundaryEvents).toHaveLength(1);
+    expect(boundaryEvents[0]?.phase).toBe('review-fix');
+    expect(boundaryEvents[0]?.message).toContain(
+      'review-fix modified undeclared files: packages/domain/src/render-job.ts',
     );
     expect(baseDeps.rollbackFix).toHaveBeenCalledWith(
       expect.objectContaining({ iterationIndex: 1 }),

@@ -5,7 +5,7 @@ import {
   loadManifest,
   isPathPermittedByScope,
   classifyTaskChanges,
-  isUnownedTaskFile,
+  isFileOwnedByAnyTask,
   getFileDiffLineCount,
   type EffectiveTaskScope,
   type TaskChangeCandidate,
@@ -639,85 +639,126 @@ describe('task-file-boundaries helpers', () => {
     });
   });
 
-  describe('isUnownedTaskFile', () => {
-    const manifest = {
-      version: 2,
-      task_count: 3,
-      tasks: [
-        {
-          n: 1,
-          title: 'Task 1',
-          expected_files: ['src/t1.ts'],
-          reference_files: ['src/t1-ref.ts'],
-        },
-        {
-          n: 2,
-          title: 'Task 2',
-          expected_files: ['src/t2.ts'],
-          non_goals: ['src/t2-ng.ts', 'src/ng-folder'],
-        },
-        {
-          n: 3,
-          title: 'Task 3',
-          expected_files: ['src/t3.ts'],
-          may_extend: ['src/t3-ext.ts'],
-        },
-      ],
-    };
+  describe('isFileOwnedByAnyTask', () => {
+    it('claim fields are exact normalized ownership claims with provenance', () => {
+      const manifest = {
+        version: 2,
+        task_count: 4,
+        tasks: [
+          {
+            n: 1,
+            expected_files: ['./src/a.ts'],
+          },
+          {
+            task_number: 2,
+            files: ['src//b.ts'],
+          },
+          {
+            // fallback index 2 -> taskNumber 3
+            may_extend: ['src/c.ts'],
+          },
+          {
+            n: 4,
+            reference_files: ['src/d.ts'],
+          },
+        ],
+      };
 
-    it('returns true for genuinely unowned files not claimed or excluded by any task', () => {
-      expect(isUnownedTaskFile('src/unowned.ts', manifest, 2)).toBe(true);
-      expect(
-        isUnownedTaskFile('packages/infrastructure/src/postgres/audit.test.ts', manifest, 2),
-      ).toBe(true);
+      expect(isFileOwnedByAnyTask('src/a.ts', manifest)).toEqual({
+        owned: true,
+        claims: [{ taskNumber: 1, field: 'expected_files' }],
+      });
+      expect(isFileOwnedByAnyTask('./src/b.ts', manifest)).toEqual({
+        owned: true,
+        claims: [{ taskNumber: 2, field: 'files' }],
+      });
+      expect(isFileOwnedByAnyTask('src//c.ts', manifest)).toEqual({
+        owned: true,
+        claims: [{ taskNumber: 3, field: 'may_extend' }],
+      });
+      expect(isFileOwnedByAnyTask('src/d.ts', manifest)).toEqual({
+        owned: true,
+        claims: [{ taskNumber: 4, field: 'reference_files' }],
+      });
+      expect(isFileOwnedByAnyTask('src/unowned.ts', manifest)).toEqual({
+        owned: false,
+        claims: [],
+      });
     });
 
-    it('returns false for files listed in another task expected_files, may_extend, or reference_files', () => {
-      expect(isUnownedTaskFile('src/t1.ts', manifest, 2)).toBe(false);
-      expect(isUnownedTaskFile('src/t1-ref.ts', manifest, 2)).toBe(false);
-      expect(isUnownedTaskFile('src/t3-ext.ts', manifest, 2)).toBe(false);
-    });
-
-    it('returns false for files listed in the CURRENT task own non_goals', () => {
-      expect(isUnownedTaskFile('src/t2-ng.ts', manifest, 2)).toBe(false);
-      expect(isUnownedTaskFile('src/ng-folder/nested.ts', manifest, 2)).toBe(false);
-    });
-
-    it('returns true for a file excluded only by an UNRELATED task non_goals, when no task claims it as required', () => {
-      // Task 2's non_goals do not disqualify a file when the current task is
-      // Task 1 and no task's expected_files/may_extend/reference_files claims
-      // the file. A non_goals entry scopes what THAT task avoids; it is not an
-      // ownership claim on behalf of anyone else.
-      expect(isUnownedTaskFile('src/ng-folder/nested.ts', manifest, 1)).toBe(true);
-    });
-
-    it('returns false when an unrelated task non_goals coincides with another task genuinely owning the file', () => {
-      // The real shadowing case (see issue #1066): a file excluded by one
-      // task's non_goals AND required by a different task is still correctly
-      // blocked here — not because of the non_goals entry, but because check
-      // (4) already disqualifies any file another task's expected_files/
-      // may_extend claims, regardless of who else lists it in non_goals.
-      const shadowManifest = {
+    it('returns every distinct claim in deterministic task and field order', () => {
+      const manifest = {
         version: 2,
         task_count: 2,
         tasks: [
-          { n: 1, title: 'Task 1', expected_files: ['src/shared.ts'] },
-          { n: 2, title: 'Task 2', expected_files: ['src/t2.ts'], non_goals: ['src/shared.ts'] },
+          {
+            n: 1,
+            expected_files: ['src/shared.ts', './src/shared.ts'],
+            files: ['src/shared.ts'],
+            may_extend: ['src/shared.ts'],
+            reference_files: ['src/shared.ts'],
+          },
+          {
+            n: 2,
+            expected_files: ['src/shared.ts'],
+            reference_files: ['src/shared.ts'],
+          },
         ],
       };
-      expect(isUnownedTaskFile('src/shared.ts', shadowManifest, 2)).toBe(false);
+
+      expect(isFileOwnedByAnyTask('src/shared.ts', manifest)).toEqual({
+        owned: true,
+        claims: [
+          { taskNumber: 1, field: 'expected_files' },
+          { taskNumber: 1, field: 'files' },
+          { taskNumber: 1, field: 'may_extend' },
+          { taskNumber: 1, field: 'reference_files' },
+          { taskNumber: 2, field: 'expected_files' },
+          { taskNumber: 2, field: 'reference_files' },
+        ],
+      });
     });
 
-    it('returns true for a real-world manifest shape where every task lists broad sibling-subsystem non_goals', () => {
-      // Regression for the exact incident that motivated this feature
-      // (comfy-content-orchestrator issue #96): Task 1 (domain-only) lists
-      // "packages/infrastructure" as a blanket non_goal, matching common
-      // manifest-authoring convention. That must not block a genuinely
-      // unowned file elsewhere under that directory from being auto-granted
-      // for a DIFFERENT task's terminal fix.
-      const realShapeManifest = {
+    it('non_goals and permitted_areas never create ownership', () => {
+      const manifest = {
         version: 2,
-        task_count: 4,
+        task_count: 2,
+        tasks: [
+          {
+            n: 1,
+            permitted_areas: ['src/dir', 'src/exact.ts'],
+            non_goals: ['src/exact.ts', 'src/dir'],
+          },
+          {
+            n: 2,
+            non_goals: ['src/broad-exclusion', 'src/other.ts'],
+            permitted_areas: ['packages/domain'],
+          },
+        ],
+      };
+
+      expect(isFileOwnedByAnyTask('src/exact.ts', manifest)).toEqual({
+        owned: false,
+        claims: [],
+      });
+      expect(isFileOwnedByAnyTask('src/dir/nested.ts', manifest)).toEqual({
+        owned: false,
+        claims: [],
+      });
+      expect(isFileOwnedByAnyTask('src/broad-exclusion/file.ts', manifest)).toEqual({
+        owned: false,
+        claims: [],
+      });
+      expect(isFileOwnedByAnyTask('packages/domain/src/file.ts', manifest)).toEqual({
+        owned: false,
+        claims: [],
+      });
+    });
+
+    it('reproduces issue 96 without treating broad sibling non_goals as claims', () => {
+      const manifest = {
+        version: 2,
+        task_count: 3,
         tasks: [
           {
             n: 1,
@@ -751,37 +792,71 @@ describe('task-file-boundaries helpers', () => {
           },
         ],
       };
+
       expect(
-        isUnownedTaskFile(
+        isFileOwnedByAnyTask(
           'packages/infrastructure/src/postgres/audit-protections.integration.test.ts',
-          realShapeManifest,
-          2,
+          manifest,
         ),
-      ).toBe(true);
-      // And the genuinely-owned-elsewhere file in the same shape must still be blocked.
+      ).toEqual({
+        owned: false,
+        claims: [],
+      });
+
       expect(
-        isUnownedTaskFile(
+        isFileOwnedByAnyTask(
           'packages/infrastructure/src/postgres/baseline-schema.integration.test.ts',
-          realShapeManifest,
-          2,
+          manifest,
         ),
-      ).toBe(false);
+      ).toEqual({
+        owned: true,
+        claims: [{ taskNumber: 3, field: 'expected_files' }],
+      });
+
+      expect(isFileOwnedByAnyTask('packages/domain/src/render-job.ts', manifest)).toEqual({
+        owned: true,
+        claims: [{ taskNumber: 1, field: 'expected_files' }],
+      });
     });
 
-    it('returns false for files listed in current task reference_files', () => {
-      expect(isUnownedTaskFile('src/t1-ref.ts', manifest, 1)).toBe(false);
-    });
+    it('returns no claims for invalid paths or manifests', () => {
+      const validManifest = {
+        tasks: [{ n: 1, expected_files: ['src/a.ts'] }],
+      };
 
-    it('returns false for system protected files', () => {
-      expect(isUnownedTaskFile('.gitignore', manifest, 2)).toBe(false);
-      expect(isUnownedTaskFile('.ai-orchestrator.json', manifest, 2)).toBe(false);
-      expect(isUnownedTaskFile('.github/workflows/ci.yml', manifest, 2)).toBe(false);
-      expect(isUnownedTaskFile('task-manifest.json', manifest, 2)).toBe(false);
-    });
-
-    it('returns false when manifest is invalid or empty', () => {
-      expect(isUnownedTaskFile('src/unowned.ts', undefined, 1)).toBe(false);
-      expect(isUnownedTaskFile('src/unowned.ts', { tasks: [] }, 1)).toBe(false);
+      expect(isFileOwnedByAnyTask('', validManifest)).toEqual({ owned: false, claims: [] });
+      expect(isFileOwnedByAnyTask('   ', validManifest)).toEqual({ owned: false, claims: [] });
+      expect(isFileOwnedByAnyTask('...', validManifest)).toEqual({ owned: false, claims: [] });
+      expect(isFileOwnedByAnyTask('src/a.ts', null)).toEqual({ owned: false, claims: [] });
+      expect(isFileOwnedByAnyTask('src/a.ts', undefined)).toEqual({ owned: false, claims: [] });
+      expect(isFileOwnedByAnyTask('src/a.ts', 'string-manifest')).toEqual({
+        owned: false,
+        claims: [],
+      });
+      expect(isFileOwnedByAnyTask('src/a.ts', 123)).toEqual({ owned: false, claims: [] });
+      expect(isFileOwnedByAnyTask('src/a.ts', {})).toEqual({ owned: false, claims: [] });
+      expect(isFileOwnedByAnyTask('src/a.ts', { tasks: null })).toEqual({
+        owned: false,
+        claims: [],
+      });
+      expect(isFileOwnedByAnyTask('src/a.ts', { tasks: 'not-an-array' })).toEqual({
+        owned: false,
+        claims: [],
+      });
+      expect(isFileOwnedByAnyTask('src/a.ts', { tasks: [] })).toEqual({
+        owned: false,
+        claims: [],
+      });
+      expect(isFileOwnedByAnyTask('src/a.ts', { tasks: [{}] })).toEqual({
+        owned: false,
+        claims: [],
+      });
+      expect(isFileOwnedByAnyTask('src/a.ts', { tasks: [null, undefined, 'string-task'] })).toEqual(
+        {
+          owned: false,
+          claims: [],
+        },
+      );
     });
   });
 
@@ -810,6 +885,59 @@ diff --git a/src/other.ts b/src/other.ts
 
       const missingCount = getFileDiffLineCount(diffText, 'src/absent.ts');
       expect(missingCount).toEqual({ added: 0, deleted: 0, total: 0 });
+    });
+
+    it('correctly handles quoted file paths containing " b/"', () => {
+      const diffText = `
+diff --git "a/src/foo b/file.ts" "b/src/foo b/file.ts"
+index 1234567..89abcdef 100644
+--- "a/src/foo b/file.ts"
++++ "b/src/foo b/file.ts"
+@@ -1,2 +1,3 @@
+-old line
++new line 1
++new line 2
+`;
+      const count = getFileDiffLineCount(diffText, 'src/foo b/file.ts');
+      expect(count).toEqual({ added: 2, deleted: 1, total: 3 });
+    });
+
+    it('correctly handles quoted file paths containing escaped quote before space b/', () => {
+      const diffText = `
+diff --git "a/src/foo\\" b/file.ts" "b/src/foo\\" b/file.ts"
+index 1234567..89abcdef 100644
+--- "a/src/foo\\" b/file.ts"
++++ "b/src/foo\\" b/file.ts"
+@@ -1,2 +1,3 @@
+-old line
++new line 1
++new line 2
+`;
+      const count = getFileDiffLineCount(diffText, 'src/foo" b/file.ts');
+      expect(count).toEqual({ added: 2, deleted: 1, total: 3 });
+    });
+
+    it('correctly handles CRLF line endings with quoted and unquoted paths', () => {
+      const diffText =
+        'diff --git "a/src/foo b/file.ts" "b/src/foo b/file.ts"\r\n' +
+        'index 1234567..89abcdef 100644\r\n' +
+        '--- "a/src/foo b/file.ts"\r\n' +
+        '+++ "b/src/foo b/file.ts"\r\n' +
+        '@@ -1,2 +1,3 @@\r\n' +
+        '-old line\r\n' +
+        '+new line 1\r\n' +
+        '+new line 2\r\n' +
+        'diff --git a/src/unquoted.ts b/src/unquoted.ts\r\n' +
+        '--- a/src/unquoted.ts\r\n' +
+        '+++ b/src/unquoted.ts\r\n' +
+        '@@ -1,1 +1,2 @@\r\n' +
+        '-old line\r\n' +
+        '+new line 1\r\n';
+      const quotedCount = getFileDiffLineCount(diffText, 'src/foo b/file.ts');
+      expect(quotedCount).toEqual({ added: 2, deleted: 1, total: 3 });
+
+      const unquotedCount = getFileDiffLineCount(diffText, 'src/unquoted.ts');
+      expect(unquotedCount).toEqual({ added: 1, deleted: 1, total: 2 });
     });
   });
 });
