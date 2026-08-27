@@ -199,6 +199,8 @@ describe('maybeRetryTransientRevalidationFlake', () => {
       `
  ❯ packages/other/src/__tests__/out-of-scope.integration.test.ts (1 test | 1 failed)
    × out-of-scope integration test failed
+
+ Test Files  1 failed (1)
 `,
       'utf-8',
     );
@@ -495,6 +497,8 @@ describe('maybeRetryTransientRevalidationFlake', () => {
     const vitestOutput = `
  ❯ packages/unrelated/src/__tests__/flaky.test.ts (1 test | 1 failed)
    × flaky out of scope test failed
+
+ Test Files  1 failed (1)
 `;
     writeFileSync(stdoutFile, vitestOutput, 'utf-8');
     writeFileSync(stderrFile, '', 'utf-8');
@@ -568,6 +572,8 @@ describe('maybeRetryTransientRevalidationFlake', () => {
     const vitestOutput = `
  ❯ packages/feature/src/__tests__/feature.test.ts (1 test | 1 failed)
    × in-scope test failed
+
+ Test Files  1 failed (1)
 `;
     writeFileSync(stdoutFile, vitestOutput, 'utf-8');
     writeFileSync(stderrFile, '', 'utf-8');
@@ -644,6 +650,8 @@ describe('maybeRetryTransientRevalidationFlake', () => {
  ❯ packages/pkg6/src/__tests__/f.test.ts (1 failed)
  ❯ packages/pkg7/src/__tests__/g.test.ts (1 failed)
  ❯ packages/pkg8/src/__tests__/h.test.ts (1 failed)
+
+ Test Files  8 failed (8)
 `;
     writeFileSync(stdoutFile, vitestOutput, 'utf-8');
     writeFileSync(stderrFile, '', 'utf-8');
