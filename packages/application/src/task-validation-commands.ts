@@ -27,10 +27,21 @@ function makeLiteralVitestStringStrict(command: string): string {
   if (
     !LITERAL_TEST_FILE.test(target) ||
     GLOB_METACHARACTERS.test(target) ||
-    /(?:&&|\|\||[;|<>])/.test(trailing) ||
-    trailing.split(/\s+/).filter((arg) => arg.length > 0 && !arg.startsWith('-')).length > 0
+    /(?:&&|\|\||[;|<>])/.test(trailing)
   ) {
     return command;
+  }
+
+  const trailingTokens = trailing.split(/\s+/).filter((arg) => arg.length > 0);
+  for (let i = 0; i < trailingTokens.length; i++) {
+    const arg = trailingTokens[i]!;
+    if (arg === '--config' || arg === '-c') {
+      i++;
+      continue;
+    }
+    if (!arg.startsWith('-')) {
+      return command;
+    }
   }
 
   if (PASS_WITH_NO_TESTS.test(command)) {
@@ -77,10 +88,17 @@ function makeLiteralVitestArgvStrict(command: string[]): string[] {
   if (!parsed) return command;
 
   const { target, trailing } = parsed;
+  const hasExtraPositional = trailing.some((arg, idx) => {
+    if (idx > 0 && (trailing[idx - 1] === '--config' || trailing[idx - 1] === '-c')) {
+      return false;
+    }
+    return !arg.startsWith('-');
+  });
+
   if (
     !LITERAL_TEST_FILE.test(target) ||
     GLOB_METACHARACTERS.test(target) ||
-    trailing.some((arg) => !arg.startsWith('-'))
+    hasExtraPositional
   ) {
     return command;
   }
@@ -566,11 +584,22 @@ export async function checkTaskValidationCommandsSatisfiability(
   return diagnostics.join('\n\n');
 }
 
+export interface BuildTargetedTestCommandOptions {
+  worktreeRoot?: string;
+  readWorktreeFile?: (relativePath: string) => Promise<string | null> | string | null;
+  fileExists?: (relativePath: string) => boolean;
+  onDiagnostic?: (diagnostic: string) => void;
+  diagnostics?: string[];
+}
+
 export interface ExpandTaskValidationCommandsOptions {
   changedFiles: string[];
   existingCommands: ValidationCommand[];
   worktreeRoot?: string;
   fileExists?: (relativePath: string) => boolean;
+  readWorktreeFile?: (relativePath: string) => Promise<string | null> | string | null;
+  onDiagnostic?: (diagnostic: string) => void;
+  diagnostics?: string[];
 }
 
 export function isTestFileCoveredByCommands(
@@ -651,10 +680,49 @@ export function isTestFileCoveredByCommands(
   return false;
 }
 
+function isPathMatchedByRunnerConfig(
+  targetPath: string,
+  include: string[],
+  exclude: string[],
+): boolean {
+  if (exclude.length > 0) {
+    for (const excl of exclude) {
+      if (globToRegex(excl).test(targetPath)) {
+        return false;
+      }
+    }
+  }
+
+  if (include.length > 0) {
+    const matchesInclude = include.some((inc) => globToRegex(inc).test(targetPath));
+    if (!matchesInclude) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function tryReadConfigFile(
+  relativePath: string,
+  options?: BuildTargetedTestCommandOptions,
+): string | null {
+  if (options?.readWorktreeFile) {
+    try {
+      const res = options.readWorktreeFile(relativePath);
+      if (typeof res === 'string') return res;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
 export function buildTargetedTestCommand(
   testPath: string,
   existingCommands: ValidationCommand[],
-): ValidationCommand {
+  options?: BuildTargetedTestCommandOptions,
+): ValidationCommand | null {
   const normTestPath = testPath.replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '');
   let detectedRunner: TestRunnerKind | null = null;
 
@@ -667,17 +735,108 @@ export function buildTargetedTestCommand(
     }
   }
 
-  switch (detectedRunner) {
-    case 'jest':
-      return `pnpm jest ${shellQuote(normTestPath)}`;
-    case 'playwright':
-      return `pnpm playwright test ${shellQuote(normTestPath)}`;
-    case 'pytest':
-      return `pytest ${shellQuote(normTestPath)}`;
-    case 'vitest':
-    default:
-      return makeLiteralVitestStringStrict(`pnpm vitest run ${shellQuote(normTestPath)}`);
+  const runner = detectedRunner ?? 'vitest';
+
+  if (runner !== 'vitest') {
+    switch (runner) {
+      case 'jest':
+        return `pnpm jest ${shellQuote(normTestPath)}`;
+      case 'playwright':
+        return `pnpm playwright test ${shellQuote(normTestPath)}`;
+      case 'pytest':
+        return `pytest ${shellQuote(normTestPath)}`;
+    }
   }
+
+  const defaultConfigs = getRunnerConfigFiles('vitest');
+
+  let defaultConfigName: string | null = null;
+  let defaultConfigContent: string | null = null;
+  for (const cfg of defaultConfigs) {
+    const content = tryReadConfigFile(cfg, options);
+    if (content !== null) {
+      defaultConfigName = cfg;
+      defaultConfigContent = content;
+      break;
+    }
+  }
+
+  const candidateConfigs = new Set<string>();
+
+  for (const cmd of existingCommands) {
+    const argv = parseCommandArgv(cmd);
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]!;
+      if (arg.startsWith('--config=')) {
+        const val = arg.slice('--config='.length).trim();
+        if (val) candidateConfigs.add(val);
+      } else if (arg === '--config' || arg === '-c') {
+        const next = argv[i + 1]?.trim();
+        if (next && !next.startsWith('-')) {
+          candidateConfigs.add(next);
+        }
+      }
+    }
+  }
+
+  const commonSiblingConfigs = [
+    'vitest.integration.config.ts',
+    'vitest.integration.config.js',
+    'vitest.integration.config.mts',
+    'vitest.integration.config.mjs',
+    'vitest.db.config.ts',
+    'vitest.e2e.config.ts',
+    'vitest.unit.config.ts',
+  ];
+  for (const commonCfg of commonSiblingConfigs) {
+    candidateConfigs.add(commonCfg);
+  }
+
+  for (const cfg of defaultConfigs) {
+    candidateConfigs.delete(cfg);
+  }
+
+  if (defaultConfigContent !== null) {
+    const { include, exclude } = parseRunnerConfigExclusions(defaultConfigContent);
+    if (isPathMatchedByRunnerConfig(normTestPath, include, exclude)) {
+      return makeLiteralVitestStringStrict(`pnpm vitest run ${shellQuote(normTestPath)}`);
+    }
+  }
+
+  for (const siblingCfg of candidateConfigs) {
+    const content = tryReadConfigFile(siblingCfg, options);
+    if (content === null) continue;
+
+    const { include, exclude } = parseRunnerConfigExclusions(content);
+    if (isPathMatchedByRunnerConfig(normTestPath, include, exclude)) {
+      return makeLiteralVitestStringStrict(
+        `pnpm vitest run ${shellQuote(normTestPath)} --config ${shellQuote(siblingCfg)}`,
+      );
+    }
+  }
+
+  if (defaultConfigContent === null) {
+    let anySiblingExisted = false;
+    for (const siblingCfg of candidateConfigs) {
+      if (tryReadConfigFile(siblingCfg, options) !== null) {
+        anySiblingExisted = true;
+        break;
+      }
+    }
+    if (!anySiblingExisted) {
+      return makeLiteralVitestStringStrict(`pnpm vitest run ${shellQuote(normTestPath)}`);
+    }
+  }
+
+  const diagnostic = `Targeted test command for "${normTestPath}" was suppressed: target path "${normTestPath}" is excluded or not included by any test runner configuration (${defaultConfigName ?? 'vitest.config'}).`;
+  if (options?.onDiagnostic) {
+    options.onDiagnostic(diagnostic);
+  }
+  if (options?.diagnostics) {
+    options.diagnostics.push(diagnostic);
+  }
+
+  return null;
 }
 
 export function expandTaskValidationCommandsWithNewTests(
@@ -744,9 +903,9 @@ export function expandTaskValidationCommandsWithNewTests(
     return filteredExisting;
   }
 
-  const newCommands = uncoveredTestFiles.map((testPath) =>
-    buildTargetedTestCommand(testPath, filteredExisting),
-  );
+  const newCommands = uncoveredTestFiles
+    .map((testPath) => buildTargetedTestCommand(testPath, filteredExisting, options))
+    .filter((cmd): cmd is ValidationCommand => cmd !== null);
 
   return [...filteredExisting, ...newCommands].filter((cmd) => !isRedundantValidationCommand(cmd));
 }
