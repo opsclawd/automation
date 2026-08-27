@@ -4397,6 +4397,64 @@ describe('ImplementStepLoop terminal fix escalation', () => {
     expect(failed?.metadata.autoCommitted).toBe(false);
   });
 
+  it('emits typecheck failure error and metadata when dirty terminal fix fails typecheck', async () => {
+    const { bus, events } = collectEvents();
+    const git = makeFakeGitPort({
+      headSha: 'sha-1',
+      statusOutput: ' M packages/application/src/index.ts\n',
+    });
+    let addCalled = false;
+    let commitCalled = false;
+    git.add = async () => {
+      addCalled = true;
+    };
+    git.commit = async () => {
+      commitCalled = true;
+      return 'sha-new';
+    };
+    let typecheckCalls = 0;
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runTypecheck: async () => {
+        typecheckCalls++;
+        // 1: initial pre-loop typecheck
+        if (typecheckCalls === 1) return { outcome: 'pass', output: '' };
+        // 2: pre-terminal-fix typecheck check
+        if (typecheckCalls === 2) return { outcome: 'pass', output: '' };
+        // 3: post-fix typecheck on dirty tree
+        return { outcome: 'fail', output: 'TS2304: Cannot find name foo' };
+      },
+      runSpecReview: async () => ({
+        invocationId: 'sr-fail',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async (_ctx, opts) =>
+        opts.isTerminalFix
+          ? {
+              invocationId: 'fix-terminal',
+              agentOutcome: 'success' as const,
+              verdict: 'done_with_fixes' as const,
+              headBeforeFix: 'sha-1',
+            }
+          : { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' },
+      terminalFixProfile: AgentProfileName('top-tier-fixer'),
+    });
+
+    const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(out.outcome).toBe('needs_human_review');
+    expect(addCalled).toBe(false);
+    expect(commitCalled).toBe(false);
+    const failed = events.find((e) => e.type === 'step.terminal_fix.failed');
+    expect(failed).toBeDefined();
+    expect(failed?.message).toContain('failed typecheck');
+    expect(failed?.metadata.typecheckOutcome).toBe('fail');
+    expect(failed?.metadata.headAdvanced).toBe(false);
+    expect(failed?.metadata.autoCommitted).toBe(false);
+  });
+
   // A clean tree with done_no_fixes_needed is the terminal fixer REBUTTING
   // the outstanding findings, not a failure — trust it via the deterministic
   // gate exactly like a terminal fix (run 01f3ef5c step 2 regression).

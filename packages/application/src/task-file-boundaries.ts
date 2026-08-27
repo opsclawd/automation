@@ -684,11 +684,14 @@ export function getFileDiffLineCount(diffText: string, filePath: string): FileDi
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (line.startsWith('diff --git ')) {
-      const match = /^diff --git "?a\/(.+?)"? "?b\/(.+?)"?$/.exec(line);
+      const match = /^diff --git (?:\"a\/(.+?)\"|a\/(.+?)) (?:\"b\/(.+?)\"|b\/(.+?))$/.exec(line);
       if (match) {
-        const fileA = normalizeTaskPath(match[1]);
-        const fileB = normalizeTaskPath(match[2]);
-        inTargetFile = fileA === normTarget || fileB === normTarget;
+        const rawA = match[1] ?? match[2];
+        const rawB = match[3] ?? match[4];
+        const fileA = rawA ? normalizeTaskPath(rawA) : '';
+        const fileB = rawB ? normalizeTaskPath(rawB) : '';
+        inTargetFile =
+          (fileA !== '' && fileA === normTarget) || (fileB !== '' && fileB === normTarget);
       } else {
         inTargetFile = false;
       }

@@ -886,5 +886,20 @@ diff --git a/src/other.ts b/src/other.ts
       const missingCount = getFileDiffLineCount(diffText, 'src/absent.ts');
       expect(missingCount).toEqual({ added: 0, deleted: 0, total: 0 });
     });
+
+    it('correctly handles quoted file paths containing " b/"', () => {
+      const diffText = `
+diff --git "a/src/foo b/file.ts" "b/src/foo b/file.ts"
+index 1234567..89abcdef 100644
+--- "a/src/foo b/file.ts"
++++ "b/src/foo b/file.ts"
+@@ -1,2 +1,3 @@
+-old line
++new line 1
++new line 2
+`;
+      const count = getFileDiffLineCount(diffText, 'src/foo b/file.ts');
+      expect(count).toEqual({ added: 2, deleted: 1, total: 3 });
+    });
   });
 });

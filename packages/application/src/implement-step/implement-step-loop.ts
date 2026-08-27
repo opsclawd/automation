@@ -2990,20 +2990,21 @@ export class ImplementStepLoop {
       }
 
       if (!producedWork && !isTerminalRebuttal) {
-        this.emit(
-          input,
-          'step.terminal_fix.failed',
-          'error',
-          `terminal fixer produced no verifiable work (agentOutcome: ${terminalFix.agentOutcome}, verdict: ${String(terminalFix.verdict)})`,
-          {
-            profile: deps.terminalFixProfile,
-            priorIterations: loop.iterations.length,
-            agentOutcome: terminalFix.agentOutcome,
-            verdict: terminalFix.verdict,
-            headAdvanced,
-            autoCommitted,
-          },
-        );
+        const failedTypecheck = typecheckAfterFix?.outcome === 'fail';
+        const msg = failedTypecheck
+          ? `terminal fixer produced changes that failed typecheck`
+          : `terminal fixer produced no verifiable work (agentOutcome: ${terminalFix.agentOutcome}, verdict: ${String(terminalFix.verdict)})`;
+        this.emit(input, 'step.terminal_fix.failed', 'error', msg, {
+          profile: deps.terminalFixProfile,
+          priorIterations: loop.iterations.length,
+          agentOutcome: terminalFix.agentOutcome,
+          verdict: terminalFix.verdict,
+          headAdvanced,
+          autoCommitted,
+          ...(typecheckAfterFix?.outcome !== undefined
+            ? { typecheckOutcome: typecheckAfterFix.outcome }
+            : {}),
+        });
         return { outcome: 'needs_human_review', loop };
       }
 
