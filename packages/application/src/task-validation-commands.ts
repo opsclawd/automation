@@ -703,13 +703,13 @@ function isPathMatchedByRunnerConfig(
   return true;
 }
 
-function tryReadConfigFile(
+async function tryReadConfigFile(
   relativePath: string,
   options?: BuildTargetedTestCommandOptions,
-): string | null {
+): Promise<string | null> {
   if (options?.readWorktreeFile) {
     try {
-      const res = options.readWorktreeFile(relativePath);
+      const res = await options.readWorktreeFile(relativePath);
       if (typeof res === 'string') return res;
     } catch {
       // ignore
@@ -718,11 +718,11 @@ function tryReadConfigFile(
   return null;
 }
 
-export function buildTargetedTestCommand(
+export async function buildTargetedTestCommand(
   testPath: string,
   existingCommands: ValidationCommand[],
   options?: BuildTargetedTestCommandOptions,
-): ValidationCommand | null {
+): Promise<ValidationCommand | null> {
   const normTestPath = testPath.replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '');
   let detectedRunner: TestRunnerKind | null = null;
 
@@ -753,7 +753,7 @@ export function buildTargetedTestCommand(
   let defaultConfigName: string | null = null;
   let defaultConfigContent: string | null = null;
   for (const cfg of defaultConfigs) {
-    const content = tryReadConfigFile(cfg, options);
+    const content = await tryReadConfigFile(cfg, options);
     if (content !== null) {
       defaultConfigName = cfg;
       defaultConfigContent = content;
@@ -796,18 +796,26 @@ export function buildTargetedTestCommand(
     candidateConfigs.delete(cfg);
   }
 
+  let hasExplicitExclusion = false;
+
   if (defaultConfigContent !== null) {
     const { include, exclude } = parseRunnerConfigExclusions(defaultConfigContent);
+    if (exclude.some((excl) => globToRegex(excl).test(normTestPath))) {
+      hasExplicitExclusion = true;
+    }
     if (isPathMatchedByRunnerConfig(normTestPath, include, exclude)) {
       return makeLiteralVitestStringStrict(`pnpm vitest run ${shellQuote(normTestPath)}`);
     }
   }
 
   for (const siblingCfg of candidateConfigs) {
-    const content = tryReadConfigFile(siblingCfg, options);
+    const content = await tryReadConfigFile(siblingCfg, options);
     if (content === null) continue;
 
     const { include, exclude } = parseRunnerConfigExclusions(content);
+    if (exclude.some((excl) => globToRegex(excl).test(normTestPath))) {
+      hasExplicitExclusion = true;
+    }
     if (isPathMatchedByRunnerConfig(normTestPath, include, exclude)) {
       return makeLiteralVitestStringStrict(
         `pnpm vitest run ${shellQuote(normTestPath)} --config ${shellQuote(siblingCfg)}`,
@@ -815,33 +823,24 @@ export function buildTargetedTestCommand(
     }
   }
 
-  if (defaultConfigContent === null) {
-    let anySiblingExisted = false;
-    for (const siblingCfg of candidateConfigs) {
-      if (tryReadConfigFile(siblingCfg, options) !== null) {
-        anySiblingExisted = true;
-        break;
-      }
+  if (hasExplicitExclusion) {
+    const diagnostic = `Targeted test command for "${normTestPath}" was suppressed: target path "${normTestPath}" is excluded or not included by any test runner configuration (${defaultConfigName ?? 'vitest.config'}).`;
+    if (options?.onDiagnostic) {
+      options.onDiagnostic(diagnostic);
     }
-    if (!anySiblingExisted) {
-      return makeLiteralVitestStringStrict(`pnpm vitest run ${shellQuote(normTestPath)}`);
+    if (options?.diagnostics) {
+      options.diagnostics.push(diagnostic);
     }
+
+    return null;
   }
 
-  const diagnostic = `Targeted test command for "${normTestPath}" was suppressed: target path "${normTestPath}" is excluded or not included by any test runner configuration (${defaultConfigName ?? 'vitest.config'}).`;
-  if (options?.onDiagnostic) {
-    options.onDiagnostic(diagnostic);
-  }
-  if (options?.diagnostics) {
-    options.diagnostics.push(diagnostic);
-  }
-
-  return null;
+  return makeLiteralVitestStringStrict(`pnpm vitest run ${shellQuote(normTestPath)}`);
 }
 
-export function expandTaskValidationCommandsWithNewTests(
+export async function expandTaskValidationCommandsWithNewTests(
   options: ExpandTaskValidationCommandsOptions,
-): ValidationCommand[] {
+): Promise<ValidationCommand[]> {
   const { changedFiles, existingCommands, worktreeRoot: _worktreeRoot, fileExists } = options;
   const filteredExisting = existingCommands.filter((cmd) => !isRedundantValidationCommand(cmd));
   if (!changedFiles || changedFiles.length === 0) {
@@ -903,9 +902,11 @@ export function expandTaskValidationCommandsWithNewTests(
     return filteredExisting;
   }
 
-  const newCommands = uncoveredTestFiles
-    .map((testPath) => buildTargetedTestCommand(testPath, filteredExisting, options))
-    .filter((cmd): cmd is ValidationCommand => cmd !== null);
+  const newCommandsPromises = uncoveredTestFiles.map((testPath) =>
+    buildTargetedTestCommand(testPath, filteredExisting, options),
+  );
+  const newCommandsRaw = await Promise.all(newCommandsPromises);
+  const newCommands = newCommandsRaw.filter((cmd): cmd is ValidationCommand => cmd !== null);
 
   return [...filteredExisting, ...newCommands].filter((cmd) => !isRedundantValidationCommand(cmd));
 }

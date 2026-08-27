@@ -590,7 +590,7 @@ export async function maybeRetryTransientRevalidationFlake(
 
   const isolatedLogDir = join(input.revalidateLogDir, 'isolation-check');
   for (const testFile of failedTestFiles) {
-    const isolatedCmd = buildTargetedTestCommand(testFile, input.config.validation.commands, {
+    const isolatedCmd = await buildTargetedTestCommand(testFile, input.config.validation.commands, {
       worktreeRoot: input.cwd,
       readWorktreeFile: (rel) => {
         try {
@@ -612,7 +612,9 @@ export async function maybeRetryTransientRevalidationFlake(
         }
       },
     });
-    if (!isolatedCmd) continue;
+    if (!isolatedCmd) {
+      return { passed: false, failingCommands: input.failingCommands, retried: false };
+    }
     try {
       const isolationRes = await input.validationAdapter.run({
         cwd: input.cwd,
@@ -5190,7 +5192,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             }
 
             if (changedFiles.length > 0) {
-              taskValidationCommands = expandTaskValidationCommandsWithNewTests({
+              taskValidationCommands = await expandTaskValidationCommandsWithNewTests({
                 changedFiles,
                 existingCommands: taskValidationCommands,
                 worktreeRoot: ctx.cwd,
