@@ -317,6 +317,7 @@ import {
   getGitCommitExcludePathspecsString,
   isProtectedFilePath,
 } from '@ai-sdlc/application';
+import { getHydratedWorktreePath } from '@ai-sdlc/application/ports';
 
 /**
  * Bounded Least Recently Used (LRU) Map implementation.
@@ -5468,9 +5469,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         cwd: string,
         _mode: import('@ai-sdlc/application').ReviewMode | undefined,
       ): Promise<import('@ai-sdlc/application').PlanReviewSnapshot | undefined> => {
-        const planMdPath = join(cwd, 'plan.md');
-        const manifestPath = join(cwd, 'task-manifest.json');
-        const designPath = join(cwd, 'design.md');
+        const planMdPath = join(cwd, getHydratedWorktreePath('plan.md'));
+        const manifestPath = join(cwd, getHydratedWorktreePath('task-manifest.json'));
+        const designPath = join(cwd, getHydratedWorktreePath('design.md'));
         let planMdDigest: string;
         try {
           planMdDigest = createHash('sha256')
