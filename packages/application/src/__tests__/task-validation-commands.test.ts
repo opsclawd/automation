@@ -423,7 +423,7 @@ describe('checkTaskValidationCommandsSatisfiability', () => {
 });
 
 describe('buildTargetedTestCommand and config exclusions', () => {
-  it('selects sibling config file when default vitest config excludes target path', () => {
+  it('selects sibling config file when default vitest config excludes target path', async () => {
     const defaultVitestConfig = `
       export default defineConfig({
         test: {
@@ -450,7 +450,7 @@ describe('buildTargetedTestCommand and config exclusions', () => {
     const targetPath =
       'packages/infrastructure/src/postgres/audit-protections.integration.test.ts';
 
-    const cmd = buildTargetedTestCommand(targetPath, ['pnpm test:db'], {
+    const cmd = await buildTargetedTestCommand(targetPath, ['pnpm test:db'], {
       readWorktreeFile: (rel) => files[rel] ?? null,
     });
 
@@ -460,7 +460,72 @@ describe('buildTargetedTestCommand and config exclusions', () => {
     );
   });
 
-  it('produces diagnostic and returns null when no config matches the target path', () => {
+  it('C1: async readWorktreeFile matching declared type produces routed command with --config', async () => {
+    const defaultVitestConfig = `
+      export default defineConfig({
+        test: {
+          include: ["packages/*/src/**/*.test.ts"],
+          exclude: ["**/*.integration.test.ts"],
+        }
+      });
+    `;
+
+    const integrationVitestConfig = `
+      export default defineConfig({
+        test: {
+          include: ["**/*.integration.test.ts"],
+          exclude: [],
+        }
+      });
+    `;
+
+    const files: Record<string, string> = {
+      'vitest.config.ts': defaultVitestConfig,
+      'vitest.integration.config.ts': integrationVitestConfig,
+    };
+
+    const targetPath =
+      'packages/infrastructure/src/postgres/audit-protections.integration.test.ts';
+
+    const cmd = await buildTargetedTestCommand(targetPath, ['pnpm test:db'], {
+      readWorktreeFile: async (rel) => files[rel] ?? null,
+    });
+
+    expect(cmd).not.toBeNull();
+    expect(cmd).toBe(
+      "pnpm vitest run 'packages/infrastructure/src/postgres/audit-protections.integration.test.ts' --config 'vitest.integration.config.ts' --passWithNoTests=false",
+    );
+  });
+
+  it('C3: no root config, unrelated sibling config present falls back conservatively to bare command', async () => {
+    const e2eConfig = `
+      export default defineConfig({
+        test: {
+          include: ["apps/web/e2e/**/*.spec.ts"],
+          exclude: [],
+        }
+      });
+    `;
+
+    const files: Record<string, string> = {
+      'vitest.e2e.config.ts': e2eConfig,
+    };
+
+    const targetPath = 'packages/application/src/__tests__/something.test.ts';
+    const diagnostics: string[] = [];
+
+    const cmd = await buildTargetedTestCommand(targetPath, ['pnpm test'], {
+      readWorktreeFile: (rel) => files[rel] ?? null,
+      diagnostics,
+    });
+
+    expect(cmd).toBe(
+      "pnpm vitest run 'packages/application/src/__tests__/something.test.ts' --passWithNoTests=false",
+    );
+    expect(diagnostics).toHaveLength(0);
+  });
+
+  it('produces diagnostic and returns null when no config matches the target path', async () => {
     const defaultVitestConfig = `
       export default defineConfig({
         test: {
@@ -477,7 +542,7 @@ describe('buildTargetedTestCommand and config exclusions', () => {
     const targetPath = 'packages/infrastructure/src/unmatched/test.integration.test.ts';
     const diagnostics: string[] = [];
 
-    const cmd = buildTargetedTestCommand(targetPath, [], {
+    const cmd = await buildTargetedTestCommand(targetPath, [], {
       readWorktreeFile: (rel) => files[rel] ?? null,
       diagnostics,
     });
@@ -489,7 +554,7 @@ describe('buildTargetedTestCommand and config exclusions', () => {
     );
   });
 
-  it('expandTaskValidationCommandsWithNewTests suppresses unmatched target commands and logs diagnostics', () => {
+  it('expandTaskValidationCommandsWithNewTests suppresses unmatched target commands and logs diagnostics', async () => {
     const defaultVitestConfig = `
       export default defineConfig({
         test: {
@@ -506,7 +571,7 @@ describe('buildTargetedTestCommand and config exclusions', () => {
 
     const diagnostics: string[] = [];
 
-    const result = expandTaskValidationCommandsWithNewTests({
+    const result = await expandTaskValidationCommandsWithNewTests({
       changedFiles: [
         'packages/infrastructure/src/postgres/audit-protections.integration.test.ts',
       ],
@@ -548,7 +613,7 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
     ).toBe(true);
   });
 
-  it('filters bare redundant commands while expanding targeted test execution for new tests', () => {
+  it('filters bare redundant commands while expanding targeted test execution for new tests', async () => {
     const existingCommands: ValidationCommand[] = [
       'git diff --check -- packages/infrastructure/src/git/existing.test.ts',
       'pnpm vitest run packages/infrastructure/src/git/existing.test.ts --passWithNoTests=false',
@@ -566,7 +631,7 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
       'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
     ]);
 
-    const result = expandTaskValidationCommandsWithNewTests({
+    const result = await expandTaskValidationCommandsWithNewTests({
       changedFiles,
       existingCommands,
       fileExists: (p) => existingFiles.has(p),
@@ -580,7 +645,7 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
     ]);
   });
 
-  it('does not duplicate targeted commands if already covered', () => {
+  it('does not duplicate targeted commands if already covered', async () => {
     const existingCommands: ValidationCommand[] = [
       'pnpm vitest run packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts --passWithNoTests=false',
     ];
@@ -591,7 +656,7 @@ describe('expandTaskValidationCommandsWithNewTests', () => {
       'packages/infrastructure/src/git/__tests__/delete-worktree-file.test.ts',
     ]);
 
-    const result = expandTaskValidationCommandsWithNewTests({
+    const result = await expandTaskValidationCommandsWithNewTests({
       changedFiles,
       existingCommands,
       fileExists: (p) => existingFiles.has(p),

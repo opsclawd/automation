@@ -187,6 +187,68 @@ describe('maybeRetryTransientRevalidationFlake', () => {
     expect(mockRunValidation.execute).not.toHaveBeenCalled();
   });
 
+  it('C2: fails closed (passed: false, retried: false) when isolation command is suppressed', async () => {
+    const stdoutFile = join(tempDir, 'stdout.log');
+    const stderrFile = join(tempDir, 'stderr.log');
+    writeFileSync(
+      stdoutFile,
+      `
+ ❯ packages/other/src/__tests__/out-of-scope.integration.test.ts (1 test | 1 failed)
+   × out-of-scope integration test failed
+`,
+      'utf-8',
+    );
+    writeFileSync(stderrFile, '', 'utf-8');
+
+    const failingCommands: ValidationRunCommandItem[] = [
+      {
+        command: 'pnpm -r test',
+        outcome: 'failed',
+        kind: 'test',
+        stdoutPath: stdoutFile,
+        stderrPath: stderrFile,
+      },
+    ];
+
+    // Create a root vitest.config.ts in tempDir that excludes integration tests so buildTargetedTestCommand suppresses it
+    const defaultVitestConfig = `
+      export default defineConfig({
+        test: {
+          include: ["packages/*/src/**/*.test.ts"],
+          exclude: ["**/*.integration.test.ts"],
+        }
+      });
+    `;
+    writeFileSync(join(tempDir, 'vitest.config.ts'), defaultVitestConfig, 'utf-8');
+
+    const mockValidationAdapter = {
+      run: vi.fn(),
+    } as unknown as ValidationPort;
+
+    const mockRunValidation = {
+      execute: vi.fn(),
+    } as unknown as RunValidation;
+
+    const result = await maybeRetryTransientRevalidationFlake({
+      runId: 'test-run-c2',
+      stepIndex: 1,
+      manifest: mockManifest,
+      taskValidationCommands: mockTaskValidationCommands,
+      failingCommands,
+      revalidateLogDir: tempDir,
+      cwd: tempDir,
+      repoId: 'owner/repo',
+      config: mockConfig,
+      runValidation: mockRunValidation,
+      validationAdapter: mockValidationAdapter,
+    });
+
+    expect(result.retried).toBe(false);
+    expect(result.passed).toBe(false);
+    expect(mockValidationAdapter.run).not.toHaveBeenCalled();
+    expect(mockRunValidation.execute).not.toHaveBeenCalled();
+  });
+
   it('does NOT retry when the failing test file also fails in isolation', async () => {
     const stdoutFile = join(tempDir, 'stdout.log');
     const stderrFile = join(tempDir, 'stderr.log');

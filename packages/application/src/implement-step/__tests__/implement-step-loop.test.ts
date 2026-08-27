@@ -4910,7 +4910,7 @@ describe('mid-task test discovery and validation command expansion', () => {
       runRevalidation: async (_ctx) => {
         // Revalidation evaluates changed files since initialPreStepHead and expands task commands
         const changedFiles = Array.from(filesInTree);
-        const expanded = expandTaskValidationCommandsWithNewTests({
+        const expanded = await expandTaskValidationCommandsWithNewTests({
           changedFiles,
           existingCommands: initialCommands,
           fileExists: (p) => filesInTree.has(p),
