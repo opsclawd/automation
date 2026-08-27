@@ -72,6 +72,8 @@ describe('GitWorktreeAdapter.fileChangeSummary()', () => {
     const headSha = await git(repo, ['rev-parse', 'HEAD']);
 
     const summaries = await adapter.fileChangeSummary(repo, baseSha, headSha);
+    expect(summaries).toHaveLength(5);
+    expect(summaries.some((s) => s.status === 'unknown')).toBe(false);
 
     const added = summaries.find((s) => s.path === 'added.txt');
     expect(added).toMatchObject({
@@ -96,6 +98,8 @@ describe('GitWorktreeAdapter.fileChangeSummary()', () => {
       path: 'renamed.txt',
       status: 'renamed',
       oldPath: 'to_rename.txt',
+      additions: 0,
+      deletions: 0,
       binary: false,
     });
 
@@ -103,9 +107,11 @@ describe('GitWorktreeAdapter.fileChangeSummary()', () => {
     expect(copied).toMatchObject({
       path: 'copied.txt',
       status: 'copied',
+      oldPath: 'to_rename.txt',
+      additions: 0,
+      deletions: 0,
       binary: false,
     });
-    expect(copied?.oldPath).toBeDefined();
 
     const typechanged = summaries.find((s) => s.path === 'to_typechange.txt');
     expect(typechanged).toMatchObject({

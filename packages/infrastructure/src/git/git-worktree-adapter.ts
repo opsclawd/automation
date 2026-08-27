@@ -6,6 +6,8 @@ import type {
   PushInput,
   ArtifactGuardPort,
   GitRenamePair,
+  GitFileChangeSummary,
+  GitFileChangeStatus,
 } from '@ai-sdlc/application/ports';
 import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { git, GitFailedError } from './git-runner.js';
@@ -265,16 +267,11 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     cwd: string,
     base: string,
     head = 'HEAD',
-  ): Promise<NonNullable<Awaited<ReturnType<NonNullable<GitPort['fileChangeSummary']>>>>> {
-    type GitFileChangeSummary = NonNullable<
-      Awaited<ReturnType<NonNullable<GitPort['fileChangeSummary']>>>
-    >[number];
-    type GitFileChangeStatus = GitFileChangeSummary['status'];
-
+  ): Promise<GitFileChangeSummary[]> {
     const range = `${base}..${head}`;
     const [nameStatusRaw, numstatRaw] = await Promise.all([
       git(cwd, ['diff', '-z', '-M', '-C', '--name-status', range]),
-      git(cwd, ['diff', '-z', '--numstat', range]),
+      git(cwd, ['diff', '-z', '-M', '-C', '--numstat', range]),
     ]);
 
     interface NameStatusEntry {
