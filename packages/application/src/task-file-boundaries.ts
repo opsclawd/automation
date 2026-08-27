@@ -585,9 +585,22 @@ export async function loadManifest(
  * Check whether a file path is genuinely unowned across the entire manifest.
  * A file is unowned iff:
  * 1. It is not a system protected file (.gitignore, .ai-orchestrator.json, .github, orchestrator artifacts).
- * 2. It is not matched by any task's non_goals in the manifest (including current task).
+ * 2. It is not matched by the CURRENT task's own non_goals.
  * 3. It is not listed in any task's reference_files in the manifest (including current task).
  * 4. It is not listed in any OTHER task's expected_files/files or may_extend across the manifest.
+ *
+ * Note on (2): only the current task's own non_goals count as a disqualifying
+ * exclusion here, not every task's. In practice, non_goals entries are broad
+ * "this task doesn't touch that subsystem" statements (e.g. "packages/infrastructure",
+ * "apps") that appear on nearly every task in a manifest — they scope what THAT
+ * task should avoid, not a claim that the excluded area is owned or reserved by
+ * anyone. Treating any task's non_goals as disqualifying makes almost every file
+ * in a real multi-task manifest look "owned" by accident, since the non_goals of
+ * unrelated tasks collectively span most of the repository. A file another task
+ * genuinely owns is already caught by check (4) below (its expected_files/files/
+ * may_extend); a non_goals entry adds no additional signal in that case. Only the
+ * current task's own non_goals matters here, because overriding an instruction
+ * given directly to the task currently being fixed is a different, real risk.
  */
 export function isUnownedTaskFile(
   filePath: string,
@@ -618,7 +631,10 @@ export function isUnownedTaskFile(
     const taskNum = getTaskNumber(task, i);
     const scope = resolveEffectiveTaskScope(task);
 
-    if (scope.nonGoals.some((ng) => isNormalizedSegmentPrefixMatch(ng, norm))) {
+    if (
+      taskNum === currentTaskNumber &&
+      scope.nonGoals.some((ng) => isNormalizedSegmentPrefixMatch(ng, norm))
+    ) {
       return false;
     }
 
