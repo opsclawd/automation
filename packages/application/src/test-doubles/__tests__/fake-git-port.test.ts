@@ -91,3 +91,50 @@ describe('FakeGitPort.fileContent()', () => {
     expect(defaultContent).toBe('fake content for HEAD:src/b.ts');
   });
 });
+
+describe('FakeGitPort.fileChangeSummary()', () => {
+  it('records fake change-summary calls and returns defensive copies', async () => {
+    const fakeGit = new FakeGitPort();
+    const initialSummary = [
+      {
+        path: 'src/a.ts',
+        status: 'modified' as const,
+        additions: 3,
+        deletions: 1,
+        binary: false,
+      },
+    ];
+    fakeGit.fileChangeSummaryResults.set('base|head', initialSummary);
+
+    const summaries = await fakeGit.fileChangeSummary('/test', 'base', 'head');
+    expect(summaries).toEqual(initialSummary);
+    expect(fakeGit.fileChangeSummaryCalls).toEqual([{ cwd: '/test', base: 'base', head: 'head' }]);
+
+    // Mutate the returned summary array and element to verify defensive copy
+    summaries[0]!.additions = 999;
+    summaries.push({
+      path: 'src/b.ts',
+      status: 'added' as const,
+      additions: 5,
+      deletions: 0,
+      binary: false,
+    });
+
+    const secondCall = await fakeGit.fileChangeSummary('/test', 'base', 'head');
+    expect(secondCall).toEqual([
+      {
+        path: 'src/a.ts',
+        status: 'modified',
+        additions: 3,
+        deletions: 1,
+        binary: false,
+      },
+    ]);
+
+    // Default head to HEAD when omitted
+    const defaultSummaries = await fakeGit.fileChangeSummary('/test', 'base');
+    expect(defaultSummaries).toEqual([]);
+    expect(fakeGit.fileChangeSummaryCalls).toHaveLength(3);
+    expect(fakeGit.fileChangeSummaryCalls[2]).toEqual({ cwd: '/test', base: 'base' });
+  });
+});

@@ -63,7 +63,30 @@ export interface GitPort {
   changedFiles(cwd: string, base: string, head?: string): Promise<string[]>;
   createdFiles(cwd: string, base: string, head?: string): Promise<string[]>;
   renamedFiles?(cwd: string, base: string, head?: string): Promise<GitRenamePair[]>;
+  /**
+   * Return typed file change summaries for the range `base..head` (defaulting `head` to HEAD).
+   * Absence or incomplete evidence must be treated as ineligible by consumers.
+   */
+  fileChangeSummary?(cwd: string, base: string, head?: string): Promise<GitFileChangeSummary[]>;
   fileContent(cwd: string, ref: string, path: string): Promise<string>;
+}
+
+export type GitFileChangeStatus =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'copied'
+  | 'type_changed'
+  | 'unknown';
+
+export interface GitFileChangeSummary {
+  path: string;
+  status: GitFileChangeStatus;
+  additions: number | null;
+  deletions: number | null;
+  binary: boolean;
+  oldPath?: string;
 }
 
 export interface GitRenamePair {

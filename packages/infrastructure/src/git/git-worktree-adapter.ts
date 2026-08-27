@@ -261,6 +261,244 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     return renames;
   }
 
+  async fileChangeSummary(
+    cwd: string,
+    base: string,
+    head = 'HEAD',
+  ): Promise<NonNullable<Awaited<ReturnType<NonNullable<GitPort['fileChangeSummary']>>>>> {
+    type GitFileChangeSummary = NonNullable<
+      Awaited<ReturnType<NonNullable<GitPort['fileChangeSummary']>>>
+    >[number];
+    type GitFileChangeStatus = GitFileChangeSummary['status'];
+
+    const range = `${base}..${head}`;
+    const [nameStatusRaw, numstatRaw] = await Promise.all([
+      git(cwd, ['diff', '-z', '-M', '-C', '--name-status', range]),
+      git(cwd, ['diff', '-z', '--numstat', range]),
+    ]);
+
+    interface NameStatusEntry {
+      path: string;
+      status: GitFileChangeStatus;
+      oldPath?: string;
+    }
+
+    const nameStatusEntries: NameStatusEntry[] = [];
+    const nameStatusParts = nameStatusRaw.split('\0');
+    let i = 0;
+    while (i < nameStatusParts.length) {
+      if (i === nameStatusParts.length - 1 && nameStatusParts[i] === '') {
+        break;
+      }
+      const rawCode = nameStatusParts[i] ?? '';
+      if (!rawCode) {
+        i++;
+        continue;
+      }
+      if (rawCode.startsWith('R') || rawCode.startsWith('C')) {
+        const status: GitFileChangeStatus = rawCode.startsWith('R') ? 'renamed' : 'copied';
+        const oldPathRaw = nameStatusParts[i + 1];
+        const newPathRaw = nameStatusParts[i + 2];
+        if (oldPathRaw === undefined || newPathRaw === undefined) {
+          nameStatusEntries.push({
+            path: 'unknown',
+            status: 'unknown',
+          });
+          i += 3;
+          continue;
+        }
+        const oldPath = oldPathRaw.replace(/\\/g, '/');
+        const newPath = newPathRaw.replace(/\\/g, '/');
+        nameStatusEntries.push({
+          path: newPath,
+          oldPath,
+          status,
+        });
+        i += 3;
+      } else {
+        const pathRaw = nameStatusParts[i + 1];
+        if (pathRaw === undefined) {
+          nameStatusEntries.push({
+            path: 'unknown',
+            status: 'unknown',
+          });
+          i += 2;
+          continue;
+        }
+        const path = pathRaw.replace(/\\/g, '/');
+        let status: GitFileChangeStatus = 'unknown';
+        if (rawCode === 'M' || rawCode.startsWith('M')) {
+          status = 'modified';
+        } else if (rawCode === 'A' || rawCode.startsWith('A')) {
+          status = 'added';
+        } else if (rawCode === 'D' || rawCode.startsWith('D')) {
+          status = 'deleted';
+        } else if (rawCode === 'T' || rawCode.startsWith('T')) {
+          status = 'type_changed';
+        }
+        nameStatusEntries.push({
+          path,
+          status,
+        });
+        i += 2;
+      }
+    }
+
+    interface NumstatEntry {
+      path: string;
+      oldPath?: string;
+      additions: number | null;
+      deletions: number | null;
+      binary: boolean;
+      malformed: boolean;
+    }
+
+    const numstatEntries: NumstatEntry[] = [];
+    const numstatParts = numstatRaw.split('\0');
+    let j = 0;
+    while (j < numstatParts.length) {
+      if (j === numstatParts.length - 1 && numstatParts[j] === '') {
+        break;
+      }
+      const token = numstatParts[j] ?? '';
+      if (!token) {
+        j++;
+        continue;
+      }
+      const firstTab = token.indexOf('\t');
+      const secondTab = firstTab === -1 ? -1 : token.indexOf('\t', firstTab + 1);
+      if (firstTab === -1 || secondTab === -1) {
+        numstatEntries.push({
+          path: 'unknown',
+          additions: null,
+          deletions: null,
+          binary: true,
+          malformed: true,
+        });
+        j++;
+        continue;
+      }
+
+      const addedStr = token.slice(0, firstTab);
+      const deletedStr = token.slice(firstTab + 1, secondTab);
+      const rest = token.slice(secondTab + 1);
+
+      let additions: number | null = null;
+      let deletions: number | null = null;
+      let binary = false;
+      let malformed = false;
+
+      if (addedStr === '-' && deletedStr === '-') {
+        binary = true;
+      } else {
+        const parsedAdd = Number.parseInt(addedStr, 10);
+        const parsedDel = Number.parseInt(deletedStr, 10);
+        if (Number.isNaN(parsedAdd) || Number.isNaN(parsedDel)) {
+          malformed = true;
+        } else {
+          additions = parsedAdd;
+          deletions = parsedDel;
+        }
+      }
+
+      if (rest === '') {
+        const oldPathRaw = numstatParts[j + 1];
+        const newPathRaw = numstatParts[j + 2];
+        if (oldPathRaw === undefined || newPathRaw === undefined) {
+          numstatEntries.push({
+            path: 'unknown',
+            additions: null,
+            deletions: null,
+            binary: true,
+            malformed: true,
+          });
+          j += 3;
+          continue;
+        }
+        const oldPath = oldPathRaw.replace(/\\/g, '/');
+        const newPath = newPathRaw.replace(/\\/g, '/');
+        numstatEntries.push({
+          path: newPath,
+          oldPath,
+          additions,
+          deletions,
+          binary,
+          malformed,
+        });
+        j += 3;
+      } else {
+        const path = rest.replace(/\\/g, '/');
+        numstatEntries.push({
+          path,
+          additions,
+          deletions,
+          binary,
+          malformed,
+        });
+        j++;
+      }
+    }
+
+    const nameStatusByPath = new Map<string, NameStatusEntry[]>();
+    for (const entry of nameStatusEntries) {
+      const list = nameStatusByPath.get(entry.path) ?? [];
+      list.push(entry);
+      nameStatusByPath.set(entry.path, list);
+    }
+
+    const numstatByPath = new Map<string, NumstatEntry[]>();
+    for (const entry of numstatEntries) {
+      const list = numstatByPath.get(entry.path) ?? [];
+      list.push(entry);
+      numstatByPath.set(entry.path, list);
+    }
+
+    const allPaths = new Set([...nameStatusByPath.keys(), ...numstatByPath.keys()]);
+    const summaries: GitFileChangeSummary[] = [];
+
+    for (const path of allPaths) {
+      const nsList = nameStatusByPath.get(path);
+      const numList = numstatByPath.get(path);
+
+      if ((nsList && nsList.length > 1) || (numList && numList.length > 1)) {
+        summaries.push({
+          path,
+          status: 'unknown',
+          additions: null,
+          deletions: null,
+          binary: true,
+        });
+        continue;
+      }
+
+      const ns = nsList?.[0];
+      const num = numList?.[0];
+
+      if (!ns || !num || num.malformed) {
+        summaries.push({
+          path,
+          status: 'unknown',
+          additions: num?.additions ?? null,
+          deletions: num?.deletions ?? null,
+          binary: num?.binary ?? false,
+          ...(ns?.oldPath ? { oldPath: ns.oldPath } : num?.oldPath ? { oldPath: num.oldPath } : {}),
+        });
+        continue;
+      }
+
+      summaries.push({
+        path,
+        status: ns.status,
+        additions: num.additions,
+        deletions: num.deletions,
+        binary: num.binary,
+        ...(ns.oldPath ? { oldPath: ns.oldPath } : num.oldPath ? { oldPath: num.oldPath } : {}),
+      });
+    }
+
+    return summaries.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
   async fileContent(cwd: string, ref: string, path: string): Promise<string> {
     return git(cwd, ['show', `${ref}:${path}`], undefined, undefined, { preserveOutput: true });
   }

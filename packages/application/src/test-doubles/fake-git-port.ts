@@ -1,4 +1,10 @@
-import type { GitPort, CreateWorktreeInput, PushInput, GitRenamePair } from '../ports/git-port.js';
+import type {
+  GitPort,
+  CreateWorktreeInput,
+  PushInput,
+  GitRenamePair,
+  GitFileChangeSummary,
+} from '../ports/git-port.js';
 import { TrackedSourceDriftError } from '../ports/git-port.js';
 
 export class FakeGitPort implements GitPort {
@@ -27,6 +33,8 @@ export class FakeGitPort implements GitPort {
   createdFilesCalls: Array<{ cwd: string; base: string; head?: string }> = [];
   renamedFilesResults = new Map<string, GitRenamePair[]>();
   renamedFilesCalls: Array<{ cwd: string; base: string; head?: string }> = [];
+  fileChangeSummaryResults = new Map<string, GitFileChangeSummary[]>();
+  fileChangeSummaryCalls: Array<{ cwd: string; base: string; head?: string }> = [];
   fileContentResults = new Map<string, string>();
   fileContentCalls: Array<{ cwd: string; ref: string; path: string }> = [];
 
@@ -175,6 +183,17 @@ export class FakeGitPort implements GitPort {
     this.renamedFilesCalls.push({ cwd, base, ...(head ? { head } : {}) });
     const key = `${base}|${head ?? 'HEAD'}`;
     return [...(this.renamedFilesResults.get(key) ?? [])];
+  }
+
+  async fileChangeSummary(
+    cwd: string,
+    base: string,
+    head?: string,
+  ): Promise<GitFileChangeSummary[]> {
+    this.fileChangeSummaryCalls.push({ cwd, base, ...(head !== undefined ? { head } : {}) });
+    const key = `${base}|${head ?? 'HEAD'}`;
+    const results = this.fileChangeSummaryResults.get(key) ?? [];
+    return results.map((summary) => ({ ...summary }));
   }
 
   async fileContent(cwd: string, ref: string, path: string): Promise<string> {
