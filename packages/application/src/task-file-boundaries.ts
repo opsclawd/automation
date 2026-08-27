@@ -580,3 +580,108 @@ export async function loadManifest(
 
   return { status: 'missing', message: 'task-manifest.json not found' };
 }
+
+/**
+ * Check whether a file path is genuinely unowned across the entire manifest.
+ * A file is unowned iff:
+ * 1. It is not a system protected file (.gitignore, .ai-orchestrator.json, .github, orchestrator artifacts).
+ * 2. It is not matched by any task's non_goals in the manifest (including current task).
+ * 3. It is not listed in any task's reference_files in the manifest (including current task).
+ * 4. It is not listed in any OTHER task's expected_files/files or may_extend across the manifest.
+ */
+export function isUnownedTaskFile(
+  filePath: string,
+  manifest: unknown,
+  currentTaskNumber?: number,
+): boolean {
+  const norm = normalizeTaskPath(filePath);
+  if (!norm) return false;
+
+  if (
+    isProtectedTaskPath(norm) ||
+    isOrchestratorArtifactPattern(norm) ||
+    norm === '.ai-orchestrator.json'
+  ) {
+    return false;
+  }
+
+  if (!manifest || typeof manifest !== 'object') {
+    return false;
+  }
+
+  const manifestRecord = manifest as Record<string, unknown>;
+  const tasks = Array.isArray(manifestRecord.tasks) ? manifestRecord.tasks : [];
+  if (tasks.length === 0) return false;
+
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    const taskNum = getTaskNumber(task, i);
+    const scope = resolveEffectiveTaskScope(task);
+
+    if (scope.nonGoals.some((ng) => isNormalizedSegmentPrefixMatch(ng, norm))) {
+      return false;
+    }
+
+    if (scope.referenceFiles.includes(norm)) {
+      return false;
+    }
+
+    if (currentTaskNumber === undefined || taskNum !== currentTaskNumber) {
+      if (scope.requiredFiles.includes(norm) || scope.mayExtendFiles.includes(norm)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+export interface FileDiffLineCount {
+  added: number;
+  deleted: number;
+  total: number;
+}
+
+/**
+ * Parse a unified diff string and return line additions and deletions for a target file.
+ */
+export function getFileDiffLineCount(diffText: string, filePath: string): FileDiffLineCount {
+  const normTarget = normalizeTaskPath(filePath);
+  if (!normTarget || !diffText) {
+    return { added: 0, deleted: 0, total: 0 };
+  }
+
+  const lines = diffText.split('\n');
+  let inTargetFile = false;
+  let added = 0;
+  let deleted = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.startsWith('diff --git ')) {
+      const match = /^diff --git "?a\/(.+?)"? "?b\/(.+?)"?$/.exec(line);
+      if (match) {
+        const fileA = normalizeTaskPath(match[1]);
+        const fileB = normalizeTaskPath(match[2]);
+        inTargetFile = fileA === normTarget || fileB === normTarget;
+      } else {
+        inTargetFile = false;
+      }
+      continue;
+    }
+
+    if (!inTargetFile) continue;
+
+    if (line.startsWith('--- ') || line.startsWith('+++ ')) {
+      continue;
+    }
+
+    if (line.startsWith('+')) {
+      added++;
+    } else if (line.startsWith('-')) {
+      deleted++;
+    }
+  }
+
+  return { added, deleted, total: added + deleted };
+}

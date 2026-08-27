@@ -5,6 +5,8 @@ import {
   loadManifest,
   isPathPermittedByScope,
   classifyTaskChanges,
+  isUnownedTaskFile,
+  getFileDiffLineCount,
   type EffectiveTaskScope,
   type TaskChangeCandidate,
 } from '../task-file-boundaries.js';
@@ -634,6 +636,93 @@ describe('task-file-boundaries helpers', () => {
         { path: 'src/unpermitted.ts', taskNumber: 2 },
       ]);
       expect(result.driftFiles).toEqual([]);
+    });
+  });
+
+  describe('isUnownedTaskFile', () => {
+    const manifest = {
+      version: 2,
+      task_count: 3,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: ['src/t1.ts'],
+          reference_files: ['src/t1-ref.ts'],
+        },
+        {
+          n: 2,
+          title: 'Task 2',
+          expected_files: ['src/t2.ts'],
+          non_goals: ['src/t2-ng.ts', 'src/ng-folder'],
+        },
+        {
+          n: 3,
+          title: 'Task 3',
+          expected_files: ['src/t3.ts'],
+          may_extend: ['src/t3-ext.ts'],
+        },
+      ],
+    };
+
+    it('returns true for genuinely unowned files not claimed or excluded by any task', () => {
+      expect(isUnownedTaskFile('src/unowned.ts', manifest, 2)).toBe(true);
+      expect(isUnownedTaskFile('packages/infrastructure/src/postgres/audit.test.ts', manifest, 2)).toBe(true);
+    });
+
+    it('returns false for files listed in another task expected_files, may_extend, or reference_files', () => {
+      expect(isUnownedTaskFile('src/t1.ts', manifest, 2)).toBe(false);
+      expect(isUnownedTaskFile('src/t1-ref.ts', manifest, 2)).toBe(false);
+      expect(isUnownedTaskFile('src/t3-ext.ts', manifest, 2)).toBe(false);
+    });
+
+    it('returns false for files listed in any task non_goals (including current or other task)', () => {
+      expect(isUnownedTaskFile('src/t2-ng.ts', manifest, 2)).toBe(false);
+      expect(isUnownedTaskFile('src/ng-folder/nested.ts', manifest, 1)).toBe(false);
+    });
+
+    it('returns false for files listed in current task reference_files', () => {
+      expect(isUnownedTaskFile('src/t1-ref.ts', manifest, 1)).toBe(false);
+    });
+
+    it('returns false for system protected files', () => {
+      expect(isUnownedTaskFile('.gitignore', manifest, 2)).toBe(false);
+      expect(isUnownedTaskFile('.ai-orchestrator.json', manifest, 2)).toBe(false);
+      expect(isUnownedTaskFile('.github/workflows/ci.yml', manifest, 2)).toBe(false);
+      expect(isUnownedTaskFile('task-manifest.json', manifest, 2)).toBe(false);
+    });
+
+    it('returns false when manifest is invalid or empty', () => {
+      expect(isUnownedTaskFile('src/unowned.ts', undefined, 1)).toBe(false);
+      expect(isUnownedTaskFile('src/unowned.ts', { tasks: [] }, 1)).toBe(false);
+    });
+  });
+
+  describe('getFileDiffLineCount', () => {
+    it('parses additions and deletions for target file from unified diff', () => {
+      const diffText = `
+diff --git a/src/unowned.ts b/src/unowned.ts
+index 1234567..89abcdef 100644
+--- a/src/unowned.ts
++++ b/src/unowned.ts
+@@ -10,2 +10,2 @@
+-  expect(val).toBe(6);
++  expect(val).toBe(7);
+diff --git a/src/other.ts b/src/other.ts
+--- a/src/other.ts
++++ b/src/other.ts
+@@ -1,3 +1,5 @@
++new line 1
++new line 2
+`;
+      const unownedCount = getFileDiffLineCount(diffText, 'src/unowned.ts');
+      expect(unownedCount).toEqual({ added: 1, deleted: 1, total: 2 });
+
+      const otherCount = getFileDiffLineCount(diffText, 'src/other.ts');
+      expect(otherCount).toEqual({ added: 2, deleted: 0, total: 2 });
+
+      const missingCount = getFileDiffLineCount(diffText, 'src/absent.ts');
+      expect(missingCount).toEqual({ added: 0, deleted: 0, total: 0 });
     });
   });
 });
