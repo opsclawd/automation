@@ -35,8 +35,18 @@ export type {
 } from './validation-port.js';
 export type { ValidationRunRepositoryPort } from './validation-run-repository-port.js';
 export type { PrReviewRepositoryPort } from './pr-review-repository-port.js';
-export type { ArtifactStore, WriteArtifactInput, Artifact } from './artifact-store.js';
-export { ArtifactNotFoundError } from './artifact-store.js';
+export type {
+  ArtifactStore,
+  WriteArtifactInput,
+  Artifact,
+  CanonicalDeliverableKey,
+} from './artifact-store.js';
+export {
+  ArtifactNotFoundError,
+  CANONICAL_DELIVERABLE_KEYS,
+  isCanonicalDeliverableKey,
+  getHydratedWorktreePath,
+} from './artifact-store.js';
 export type { AgentPort } from './agent-port.js';
 export type {
   AgentInvocationOutcome,
