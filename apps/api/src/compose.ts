@@ -5448,10 +5448,26 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const planReviewCheckDeterministicPlan = createDeterministicPlanCheck({
         readPlanMd: async (ctx) => {
+          const hydratedPath = join(ctx.cwd, getHydratedWorktreePath('plan.md'));
+          if (existsSync(hydratedPath)) {
+            return readFileSync(hydratedPath, 'utf-8');
+          }
+          const legacyPath = join(ctx.cwd, 'plan.md');
+          if (existsSync(legacyPath)) {
+            return readFileSync(legacyPath, 'utf-8');
+          }
           const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
           return artifacts.read(String(ctx.runId), 'plan.md');
         },
         readManifest: async (ctx) => {
+          const hydratedPath = join(ctx.cwd, getHydratedWorktreePath('task-manifest.json'));
+          if (existsSync(hydratedPath)) {
+            return readFileSync(hydratedPath, 'utf-8');
+          }
+          const legacyPath = join(ctx.cwd, 'task-manifest.json');
+          if (existsSync(legacyPath)) {
+            return readFileSync(legacyPath, 'utf-8');
+          }
           const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
           try {
             return await artifacts.read(String(ctx.runId), 'task-manifest.json');

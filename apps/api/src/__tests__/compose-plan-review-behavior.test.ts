@@ -1,5 +1,4 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { execFileSync } from 'node:child_process';
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PhaseName, AgentProfileName } from '@ai-sdlc/domain';
@@ -146,17 +145,11 @@ p1_found
       });
 
       const worktreeDir = path.join(harness.targetRoot, '.ai-worktrees', 'issue-1');
-      mkdirSync(worktreeDir, { recursive: true });
+      mkdirSync(path.join(worktreeDir, '.ai'), { recursive: true });
 
-      writeFileSync(path.join(worktreeDir, 'design.md'), VALID_DESIGN_MD);
-      writeFileSync(path.join(worktreeDir, 'plan.md'), VALID_PLAN_MD);
-      writeFileSync(path.join(worktreeDir, 'task-manifest.json'), VALID_TASK_MANIFEST_V2);
-      execFileSync('git', ['add', 'design.md', 'plan.md', 'task-manifest.json'], {
-        cwd: worktreeDir,
-      });
-      execFileSync('git', ['commit', '-m', 'feat: initial plan artifacts'], {
-        cwd: worktreeDir,
-      });
+      writeFileSync(path.join(worktreeDir, '.ai', 'design.md'), VALID_DESIGN_MD);
+      writeFileSync(path.join(worktreeDir, '.ai', 'plan.md'), VALID_PLAN_MD);
+      writeFileSync(path.join(worktreeDir, '.ai', 'task-manifest.json'), VALID_TASK_MANIFEST_V2);
 
       await harness.context.artifacts.write({
         runId: harness.run.uuid,

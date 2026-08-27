@@ -233,7 +233,9 @@ export function createPlanReviewOrdinaryFixScript(
     phaseId: 'plan-fix',
     invocationType: 'initial',
     handle: async (request) => {
-      const planPath = path.join(request.cwd, 'plan.md');
+      const planPath = existsSync(path.join(request.cwd, '.ai', 'plan.md'))
+        ? path.join(request.cwd, '.ai', 'plan.md')
+        : path.join(request.cwd, 'plan.md');
       let currentPlan = '';
       try {
         currentPlan = readFileSync(planPath, 'utf-8');
@@ -268,7 +270,9 @@ export function createPlanReviewTerminalFixScript(
     phaseId: 'plan-fix',
     invocationType: 'terminal_fix',
     handle: async (request) => {
-      const planPath = path.join(request.cwd, 'plan.md');
+      const planPath = existsSync(path.join(request.cwd, '.ai', 'plan.md'))
+        ? path.join(request.cwd, '.ai', 'plan.md')
+        : path.join(request.cwd, 'plan.md');
       let currentPlan = '';
       try {
         currentPlan = readFileSync(planPath, 'utf-8');
@@ -276,7 +280,9 @@ export function createPlanReviewTerminalFixScript(
       const updatedPlan = planModifier(currentPlan);
       writeFileSync(planPath, updatedPlan, 'utf-8');
 
-      const manifestPath = path.join(request.cwd, 'task-manifest.json');
+      const manifestPath = existsSync(path.join(request.cwd, '.ai', 'task-manifest.json'))
+        ? path.join(request.cwd, '.ai', 'task-manifest.json')
+        : path.join(request.cwd, 'task-manifest.json');
       let currentManifest = '';
       try {
         currentManifest = readFileSync(manifestPath, 'utf-8');
@@ -378,6 +384,8 @@ function initGitRepo(repoPath: string, identity: { name: string; email: string }
   execFileSync('git', ['config', 'user.name', identity.name], { cwd: repoPath });
   execFileSync('git', ['config', 'user.email', identity.email], { cwd: repoPath });
   execFileSync('git', ['checkout', '-b', 'main'], { cwd: repoPath });
+
+  writeFileSync(path.join(repoPath, '.gitignore'), '.ai/\n.ai-tmp/\n');
   writeFileSync(path.join(repoPath, 'README.md'), '# Baseline\n');
   // ReviewFixLoop's post-fix gate shells out to `pnpm -r build/typecheck` and
   // `pnpm lint` in the worktree (apps/api/src/compose.ts runPostFixGate).
@@ -393,7 +401,7 @@ function initGitRepo(repoPath: string, identity: { name: string; email: string }
       scripts: { build: 'exit 0', typecheck: 'exit 0', lint: 'exit 0' },
     }),
   );
-  execFileSync('git', ['add', 'README.md', 'package.json'], { cwd: repoPath });
+  execFileSync('git', ['add', '.'], { cwd: repoPath });
   execFileSync('git', ['commit', '-m', 'baseline'], { cwd: repoPath });
 }
 
