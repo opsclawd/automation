@@ -1,8 +1,23 @@
 import { type Stats } from 'node:fs';
-import { access, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import type { Artifact, ArtifactStore, WriteArtifactInput } from '@ai-sdlc/application/ports';
-import { ArtifactNotFoundError } from '@ai-sdlc/application/ports';
+import {
+  ArtifactNotFoundError,
+  CANONICAL_DELIVERABLE_KEYS,
+  getHydratedWorktreePath,
+  isCanonicalDeliverableKey,
+} from '@ai-sdlc/application/ports';
 
 interface FilesystemArtifactStoreOptions {
   durableRoot: string;
@@ -39,7 +54,7 @@ export function createFilesystemArtifactStore(
       );
       const worktreePath = await resolveArtifactPath(
         worktreeRoot,
-        normalizedPath,
+        getHydratedWorktreePath(normalizedPath),
         input.relativePath,
       );
 
@@ -63,16 +78,32 @@ export function createFilesystemArtifactStore(
     async read(runId: string, relativePath: string): Promise<string> {
       const normalizedPath = normalizeSafeRelativePath(relativePath);
       const durablePath = await resolveArtifactPath(durableRoot, normalizedPath, relativePath);
-      const worktreePath = await resolveArtifactPath(worktreeRoot, normalizedPath, relativePath);
-
       const durableContents = await readFileIfPresent(durablePath, relativePath);
       if (durableContents !== undefined) {
         return durableContents;
       }
 
-      const worktreeContents = await readFileIfPresent(worktreePath, relativePath);
-      if (worktreeContents !== undefined) {
-        return worktreeContents;
+      const hydratedRelativePath = getHydratedWorktreePath(normalizedPath);
+      const hydratedWorktreePath = await resolveArtifactPath(
+        worktreeRoot,
+        hydratedRelativePath,
+        relativePath,
+      );
+      const hydratedContents = await readFileIfPresent(hydratedWorktreePath, relativePath);
+      if (hydratedContents !== undefined) {
+        return hydratedContents;
+      }
+
+      if (isCanonicalDeliverableKey(normalizedPath)) {
+        const legacyWorktreePath = await resolveArtifactPath(
+          worktreeRoot,
+          normalizedPath,
+          relativePath,
+        );
+        const legacyContents = await readFileIfPresent(legacyWorktreePath, relativePath);
+        if (legacyContents !== undefined) {
+          return legacyContents;
+        }
       }
 
       throw new ArtifactNotFoundError(runId, relativePath);
@@ -93,6 +124,61 @@ export function createFilesystemArtifactStore(
     },
 
     async hydrateWorktree(runId: string): Promise<void> {
+      // 1. Legacy deliverable migration before durable hydration
+      for (const key of CANONICAL_DELIVERABLE_KEYS) {
+        const rootPath = await resolveArtifactPath(worktreeRoot, key, key);
+        const rootStat = await statIfPresent(rootPath);
+        if (!rootStat) {
+          continue;
+        }
+
+        if (!rootStat.isFile()) {
+          throw new InvalidArtifactPathError(
+            key,
+            'legacy deliverable at root is not a regular file',
+          );
+        }
+
+        const destRelativePath = getHydratedWorktreePath(key);
+        const destPath = await resolveArtifactPath(worktreeRoot, destRelativePath, key);
+        const destStat = await statIfPresent(destPath);
+
+        if (!destStat) {
+          await mkdir(dirname(destPath), { recursive: true });
+          await rename(rootPath, destPath);
+        } else {
+          if (!destStat.isFile()) {
+            throw new InvalidArtifactPathError(
+              destRelativePath,
+              'destination deliverable path is not a regular file',
+            );
+          }
+
+          const rootContents = await readFile(rootPath, 'utf8');
+          const destContents = await readFile(destPath, 'utf8');
+
+          if (rootContents === destContents) {
+            await unlink(rootPath);
+          } else {
+            const durableKeyPath = await resolveArtifactPath(durableRoot, key, key);
+            const durableDestPath = await resolveArtifactPath(durableRoot, destRelativePath, key);
+            const durableKeyStat = await statIfPresent(durableKeyPath);
+            const durableDestStat = await statIfPresent(durableDestPath);
+            const hasDurableCopy =
+              (durableKeyStat?.isFile() ?? false) || (durableDestStat?.isFile() ?? false);
+
+            if (hasDurableCopy) {
+              await unlink(rootPath);
+            } else {
+              throw new Error(
+                `Conflict hydrating deliverable '${key}': legacy root '${rootPath}' and destination '${destPath}' have differing content and no durable copy exists`,
+              );
+            }
+          }
+        }
+      }
+
+      // 2. Durable hydration loop
       const artifacts = await listRootArtifacts(durableRoot, runId);
       for (const artifact of artifacts) {
         const normalizedPath = normalizeSafeRelativePath(artifact.relativePath);
@@ -101,9 +187,10 @@ export function createFilesystemArtifactStore(
           normalizedPath,
           artifact.relativePath,
         );
+        const worktreeRelativePath = getHydratedWorktreePath(normalizedPath);
         const worktreePath = await resolveArtifactPath(
           worktreeRoot,
-          normalizedPath,
+          worktreeRelativePath,
           artifact.relativePath,
         );
 
@@ -112,10 +199,22 @@ export function createFilesystemArtifactStore(
           continue;
         }
 
-        const worktreeContents = await readFileIfPresent(worktreePath, artifact.relativePath);
+        const worktreeContents = await readFileIfPresent(worktreePath, worktreeRelativePath);
         if (worktreeContents !== durableContents) {
           await mkdir(dirname(worktreePath), { recursive: true });
           await writeFile(worktreePath, durableContents, 'utf8');
+        }
+
+        if (isCanonicalDeliverableKey(normalizedPath)) {
+          const legacyRootPath = await resolveArtifactPath(
+            worktreeRoot,
+            normalizedPath,
+            artifact.relativePath,
+          );
+          const legacyStat = await statIfPresent(legacyRootPath);
+          if (legacyStat?.isFile()) {
+            await unlink(legacyRootPath);
+          }
         }
       }
     },
