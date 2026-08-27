@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildTargetedTestCommand,
   buildTaskValidationCommands,
   checkRedTaskValidationParity,
   checkTaskValidationCommandsDeclarationMismatch,
@@ -418,6 +419,106 @@ describe('checkTaskValidationCommandsSatisfiability', () => {
     });
 
     expect(diagnostic).toBeNull();
+  });
+});
+
+describe('buildTargetedTestCommand and config exclusions', () => {
+  it('selects sibling config file when default vitest config excludes target path', () => {
+    const defaultVitestConfig = `
+      export default defineConfig({
+        test: {
+          include: ["packages/*/src/**/*.test.ts"],
+          exclude: ["**/*.integration.test.ts"],
+        }
+      });
+    `;
+
+    const integrationVitestConfig = `
+      export default defineConfig({
+        test: {
+          include: ["**/*.integration.test.ts"],
+          exclude: [],
+        }
+      });
+    `;
+
+    const files: Record<string, string> = {
+      'vitest.config.ts': defaultVitestConfig,
+      'vitest.integration.config.ts': integrationVitestConfig,
+    };
+
+    const targetPath =
+      'packages/infrastructure/src/postgres/audit-protections.integration.test.ts';
+
+    const cmd = buildTargetedTestCommand(targetPath, ['pnpm test:db'], {
+      readWorktreeFile: (rel) => files[rel] ?? null,
+    });
+
+    expect(cmd).not.toBeNull();
+    expect(cmd).toBe(
+      "pnpm vitest run 'packages/infrastructure/src/postgres/audit-protections.integration.test.ts' --config 'vitest.integration.config.ts' --passWithNoTests=false",
+    );
+  });
+
+  it('produces diagnostic and returns null when no config matches the target path', () => {
+    const defaultVitestConfig = `
+      export default defineConfig({
+        test: {
+          include: ["packages/*/src/**/*.test.ts"],
+          exclude: ["**/*.integration.test.ts", "**/unmatched/**"],
+        }
+      });
+    `;
+
+    const files: Record<string, string> = {
+      'vitest.config.ts': defaultVitestConfig,
+    };
+
+    const targetPath = 'packages/infrastructure/src/unmatched/test.integration.test.ts';
+    const diagnostics: string[] = [];
+
+    const cmd = buildTargetedTestCommand(targetPath, [], {
+      readWorktreeFile: (rel) => files[rel] ?? null,
+      diagnostics,
+    });
+
+    expect(cmd).toBeNull();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toContain(
+      'Targeted test command for "packages/infrastructure/src/unmatched/test.integration.test.ts" was suppressed',
+    );
+  });
+
+  it('expandTaskValidationCommandsWithNewTests suppresses unmatched target commands and logs diagnostics', () => {
+    const defaultVitestConfig = `
+      export default defineConfig({
+        test: {
+          include: ["packages/*/src/**/*.test.ts"],
+          exclude: ["**/*.integration.test.ts"],
+        }
+      });
+    `;
+
+    const files: Record<string, string> = {
+      'vitest.config.ts': defaultVitestConfig,
+      'packages/infrastructure/src/postgres/audit-protections.integration.test.ts': 'test content',
+    };
+
+    const diagnostics: string[] = [];
+
+    const result = expandTaskValidationCommandsWithNewTests({
+      changedFiles: [
+        'packages/infrastructure/src/postgres/audit-protections.integration.test.ts',
+      ],
+      existingCommands: ['pnpm vitest run src/unit.test.ts --passWithNoTests=false'],
+      fileExists: (rel) => Boolean(files[rel]),
+      readWorktreeFile: (rel) => files[rel] ?? null,
+      diagnostics,
+    });
+
+    expect(result).toEqual(['pnpm vitest run src/unit.test.ts --passWithNoTests=false']);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toContain('was suppressed');
   });
 });
 

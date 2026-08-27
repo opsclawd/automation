@@ -560,7 +560,29 @@ export async function maybeRetryTransientRevalidationFlake(
 
   const isolatedLogDir = join(input.revalidateLogDir, 'isolation-check');
   for (const testFile of failedTestFiles) {
-    const isolatedCmd = buildTargetedTestCommand(testFile, input.config.validation.commands);
+    const isolatedCmd = buildTargetedTestCommand(testFile, input.config.validation.commands, {
+      worktreeRoot: input.cwd,
+      readWorktreeFile: (rel) => {
+        try {
+          return readFileSync(resolve(input.cwd, rel), 'utf-8');
+        } catch {
+          return null;
+        }
+      },
+      onDiagnostic: (diag) => {
+        if (input.eventBus) {
+          input.eventBus.publish(input.runId, {
+            runId: input.runId,
+            level: 'warn',
+            type: 'revalidation.targeted_test_command_suppressed',
+            message: diag,
+            timestamp: new Date().toISOString(),
+            metadata: { testFile },
+          });
+        }
+      },
+    });
+    if (!isolatedCmd) continue;
     try {
       const isolationRes = await input.validationAdapter.run({
         cwd: input.cwd,
@@ -5143,6 +5165,23 @@ export function composeRoot(opts: ComposeOptions): Container {
                 existingCommands: taskValidationCommands,
                 worktreeRoot: ctx.cwd,
                 fileExists: (relPath) => existsSync(resolve(ctx.cwd, relPath)),
+                readWorktreeFile: (rel) => {
+                  try {
+                    return readFileSync(resolve(ctx.cwd, rel), 'utf-8');
+                  } catch {
+                    return null;
+                  }
+                },
+                onDiagnostic: (diag) => {
+                  persistingEventBus.publish(String(ctx.runId), {
+                    runId: String(ctx.runId),
+                    level: 'warn',
+                    type: 'revalidation.targeted_test_command_suppressed',
+                    message: diag,
+                    timestamp: new Date().toISOString(),
+                    metadata: { stepIndex: (ctx as StepLoopContext).stepIndex },
+                  });
+                },
               });
             }
           } catch {
