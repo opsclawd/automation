@@ -1095,6 +1095,8 @@ describe('inverted validation commands revalidation evaluation', () => {
 
  FAIL  packages/application/src/__tests__/my-proof.test.ts [ packages/application/src/__tests__/my-proof.test.ts ]
 Error: expected false to be true
+
+ Test Files  1 failed (1)
 `;
 
     expect(extractFailedTestFilesFromOutput(vitestOutput)).toEqual([
@@ -1104,6 +1106,8 @@ Error: expected false to be true
     const jestOutput = `
 FAIL packages/foo/src/bar.spec.tsx
   ● Bar component › renders error
+
+Test Suites: 1 failed, 1 total
 `;
     expect(extractFailedTestFilesFromOutput(jestOutput)).toEqual([
       'packages/foo/src/bar.spec.tsx',
@@ -1147,6 +1151,20 @@ not ok 1 scripts/lib/__tests__/fix-review-task-loop.bats
     ).toBe(false);
   });
 
+  it('returns [] when vitest output is truncated before summary line sentinel', () => {
+    const truncatedVitestOutput = `
+ RUN  v2.1.9 /app/apps/api
+
+ ❯ apps/api/src/__tests__/cli.test.ts (1)
+   × exits 1 on failed run
+   stderr: Error: command failed with code 1 at apps/api/src/__tests__/cli.test.ts:42
+
+ FAIL  apps/api/src/__tests__/cli.test.ts
+`;
+
+    expect(extractFailedTestFilesFromOutput(truncatedVitestOutput)).toEqual([]);
+  });
+
   it('evaluateRevalidationWithInvertedCommands excuses full-suite test failure when caused solely by inverted RED tests', async () => {
     const taskValidationCommands: ValidationCommand[] = [
       '! pnpm vitest run packages/application/src/__tests__/my-proof.test.ts',
@@ -1173,6 +1191,8 @@ not ok 1 scripts/lib/__tests__/fix-review-task-loop.bats
       '/tmp/test-stdout.log': `
  FAIL  packages/application/src/__tests__/my-proof.test.ts [ packages/application/src/__tests__/my-proof.test.ts ]
 Error: expected false to be true
+
+ Test Files  1 failed (1)
 `,
       '/tmp/test-stderr.log': '',
     };
@@ -1204,6 +1224,8 @@ Error: expected false to be true
       '/tmp/test-stdout.log': `
  FAIL  packages/application/src/__tests__/my-proof.test.ts
  FAIL  packages/application/src/review-fix/__tests__/unrelated.test.ts
+
+ Test Files  2 failed (2)
 `,
     };
 
