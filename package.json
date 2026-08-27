@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r --parallel test",
+    "test": "pnpm -r test",
     "test:coverage": "TMPDIR=/var/tmp vitest run --coverage",
     "test:bash": "TMPDIR=/tmp bats --jobs 4 scripts/lib/__tests__",
     "test:watch": "TMPDIR=/var/tmp vitest",

@@ -1006,6 +1006,8 @@ export function extractTargetTestFilesFromInvertedCommands(
 export function extractFailedTestFilesFromOutput(output: string): string[] {
   if (!output || !output.trim()) return [];
 
+  const hasVitestSummary = /\b(?:Test Files|Test Suites)\s+/i.test(output);
+
   const found = new Set<string>();
   const lines = output.split('\n');
 
@@ -1022,6 +1024,9 @@ export function extractFailedTestFilesFromOutput(output: string): string[] {
     while ((match = pattern.exec(output)) !== null) {
       const file = match[1];
       if (file) {
+        if (!hasVitestSummary && /\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(file)) {
+          continue;
+        }
         const norm = normalizeTaskPath(file);
         if (norm) found.add(norm);
       }
@@ -1040,6 +1045,9 @@ export function extractFailedTestFilesFromOutput(output: string): string[] {
       while ((match = fileCandidateRegex.exec(line)) !== null) {
         const file = match[1];
         if (file) {
+          if (!hasVitestSummary && /\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(file)) {
+            continue;
+          }
           const norm = normalizeTaskPath(file);
           if (norm) found.add(norm);
         }
