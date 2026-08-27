@@ -1,6 +1,8 @@
-import { type Stats } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, type Stats } from 'node:fs';
 import {
   access,
+  copyFile,
   mkdir,
   readdir,
   readFile,
@@ -124,9 +126,15 @@ export function createFilesystemArtifactStore(
     },
 
     async hydrateWorktree(runId: string): Promise<void> {
-      // 1. Legacy deliverable migration before durable hydration
+      const [resolveDurablePath, resolveWorktreePath] = await Promise.all([
+        createArtifactPathResolver(durableRoot),
+        createArtifactPathResolver(worktreeRoot),
+      ]);
+
+      // Migrate legacy root deliverables before durable hydration. This loop is
+      // the sole owner of legacy cleanup so every conflict follows one policy.
       for (const key of CANONICAL_DELIVERABLE_KEYS) {
-        const rootPath = await resolveArtifactPath(worktreeRoot, key, key);
+        const rootPath = await resolveWorktreePath(key, key);
         const rootStat = await statIfPresent(rootPath);
         if (!rootStat) {
           continue;
@@ -140,7 +148,7 @@ export function createFilesystemArtifactStore(
         }
 
         const destRelativePath = getHydratedWorktreePath(key);
-        const destPath = await resolveArtifactPath(worktreeRoot, destRelativePath, key);
+        const destPath = await resolveWorktreePath(destRelativePath, key);
         const destStat = await statIfPresent(destPath);
 
         if (!destStat) {
@@ -154,20 +162,15 @@ export function createFilesystemArtifactStore(
             );
           }
 
-          const rootContents = await readFile(rootPath, 'utf8');
-          const destContents = await readFile(destPath, 'utf8');
-
-          if (rootContents === destContents) {
+          if (await filesHaveSameContents(rootPath, rootStat, destPath, destStat)) {
             await unlink(rootPath);
           } else {
-            const durableKeyPath = await resolveArtifactPath(durableRoot, key, key);
-            const durableDestPath = await resolveArtifactPath(durableRoot, destRelativePath, key);
+            // Canonical deliverables are normalized at the durable root. A
+            // stray durable `.ai/<key>` is not an authoritative copy.
+            const durableKeyPath = await resolveDurablePath(key, key);
             const durableKeyStat = await statIfPresent(durableKeyPath);
-            const durableDestStat = await statIfPresent(durableDestPath);
-            const hasDurableCopy =
-              (durableKeyStat?.isFile() ?? false) || (durableDestStat?.isFile() ?? false);
 
-            if (hasDurableCopy) {
+            if (durableKeyStat?.isFile()) {
               await unlink(rootPath);
             } else {
               throw new Error(
@@ -178,43 +181,28 @@ export function createFilesystemArtifactStore(
         }
       }
 
-      // 2. Durable hydration loop
       const artifacts = await listRootArtifacts(durableRoot, runId);
       for (const artifact of artifacts) {
         const normalizedPath = normalizeSafeRelativePath(artifact.relativePath);
-        const durablePath = await resolveArtifactPath(
-          durableRoot,
-          normalizedPath,
-          artifact.relativePath,
-        );
         const worktreeRelativePath = getHydratedWorktreePath(normalizedPath);
-        const worktreePath = await resolveArtifactPath(
-          worktreeRoot,
-          worktreeRelativePath,
-          artifact.relativePath,
-        );
+        const worktreePath = await resolveWorktreePath(worktreeRelativePath, artifact.relativePath);
+        const worktreeStat = await statIfPresent(worktreePath);
 
-        const durableContents = await readFileIfPresent(durablePath, artifact.relativePath);
-        if (durableContents === undefined) {
-          continue;
+        if (worktreeStat?.isDirectory()) {
+          throw new InvalidArtifactPathError(worktreeRelativePath, 'path points to a directory');
         }
 
-        const worktreeContents = await readFileIfPresent(worktreePath, worktreeRelativePath);
-        if (worktreeContents !== durableContents) {
+        const alreadyHydrated =
+          worktreeStat !== undefined &&
+          (await filesHaveSameContents(
+            artifact.absolutePath,
+            artifact.bytes,
+            worktreePath,
+            worktreeStat,
+          ));
+        if (!alreadyHydrated) {
           await mkdir(dirname(worktreePath), { recursive: true });
-          await writeFile(worktreePath, durableContents, 'utf8');
-        }
-
-        if (isCanonicalDeliverableKey(normalizedPath)) {
-          const legacyRootPath = await resolveArtifactPath(
-            worktreeRoot,
-            normalizedPath,
-            artifact.relativePath,
-          );
-          const legacyStat = await statIfPresent(legacyRootPath);
-          if (legacyStat?.isFile()) {
-            await unlink(legacyRootPath);
-          }
+          await copyFile(artifact.absolutePath, worktreePath);
         }
       }
     },
@@ -252,26 +240,58 @@ async function resolveArtifactPath(
   normalizedPath: string,
   relativePath: string,
 ): Promise<string> {
-  const rootAbs = resolve(root);
-  const targetAbs = resolve(rootAbs, normalizedPath);
-  const rel = relative(rootAbs, targetAbs);
-  const insideRoot = targetAbs === rootAbs || (!isAbsolute(rel) && rel.split(sep)[0] !== '..');
-  if (!insideRoot) {
-    throw new InvalidArtifactPathError(relativePath, 'path may not escape the artifact root');
-  }
+  const resolveFromRoot = await createArtifactPathResolver(root);
+  return await resolveFromRoot(normalizedPath, relativePath);
+}
 
-  // Ensure root exists so we can get its canonical path
+async function createArtifactPathResolver(
+  root: string,
+): Promise<(normalizedPath: string, relativePath: string) => Promise<string>> {
+  const rootAbs = resolve(root);
   await mkdir(rootAbs, { recursive: true });
   const canonicalRoot = await realpath(rootAbs);
 
-  const canonicalTarget = await getExistingCanonicalPath(targetAbs);
-  const isInside =
-    canonicalTarget === canonicalRoot || canonicalTarget.startsWith(canonicalRoot + sep);
-  if (!isInside) {
-    throw new InvalidArtifactPathError(relativePath, 'path may not escape the artifact root');
+  return async (normalizedPath: string, relativePath: string): Promise<string> => {
+    const targetAbs = resolve(rootAbs, normalizedPath);
+    const rel = relative(rootAbs, targetAbs);
+    const insideRoot = targetAbs === rootAbs || (!isAbsolute(rel) && rel.split(sep)[0] !== '..');
+    if (!insideRoot) {
+      throw new InvalidArtifactPathError(relativePath, 'path may not escape the artifact root');
+    }
+
+    const canonicalTarget = await getExistingCanonicalPath(targetAbs);
+    const isInside =
+      canonicalTarget === canonicalRoot || canonicalTarget.startsWith(canonicalRoot + sep);
+    if (!isInside) {
+      throw new InvalidArtifactPathError(relativePath, 'path may not escape the artifact root');
+    }
+
+    return targetAbs;
+  };
+}
+
+async function filesHaveSameContents(
+  leftPath: string,
+  leftStat: Stats | number,
+  rightPath: string,
+  rightStat: Stats | number,
+): Promise<boolean> {
+  const leftSize = typeof leftStat === 'number' ? leftStat : Number(leftStat.size);
+  const rightSize = typeof rightStat === 'number' ? rightStat : Number(rightStat.size);
+  if (leftSize !== rightSize) {
+    return false;
   }
 
-  return targetAbs;
+  const [leftHash, rightHash] = await Promise.all([hashFile(leftPath), hashFile(rightPath)]);
+  return leftHash === rightHash;
+}
+
+async function hashFile(absolutePath: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(absolutePath)) {
+    hash.update(chunk);
+  }
+  return hash.digest('hex');
 }
 
 async function getExistingCanonicalPath(path: string): Promise<string> {
