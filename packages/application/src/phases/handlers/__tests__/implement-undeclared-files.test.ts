@@ -75,6 +75,90 @@ async function writePlanAndManifest(
 }
 
 describe('ImplementHandler undeclared files regression proof', () => {
+  it('allows committing orchestrator artifacts alongside declared deliverables without triggering undeclared file violation', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: change declared file and write implementation log',
+          expected_files: ['src/declared.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/declared.ts', 'implementation-log.md']);
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 1,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(runStep).toHaveBeenCalledTimes(1);
+    expect(events.filter((event) => event.type === 'step.declared_files_retry')).toHaveLength(0);
+    expect(events.filter((event) => event.type === 'step.completed')).toHaveLength(1);
+  });
+
+  it('blocks a step that commits a genuinely protected file like .gitignore or .github/', async () => {
+    const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    const steps = new FakeStepRepository();
+    const { ctx, events } = makeCtx(artifacts, git);
+
+    await writePlanAndManifest(artifacts, {
+      version: 2,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1: change declared file and modify gitignore',
+          expected_files: ['src/declared.ts'],
+        },
+      ],
+    });
+
+    git.headByCwd.set(ctx.cwd, 'pre-step');
+    git.changedFilesResults.set('pre-step|attempt-1', ['src/declared.ts', '.gitignore']);
+    git.changedFilesResults.set('pre-step|amended-1', ['src/declared.ts', '.gitignore']);
+
+    const revertScopeFiles = vi.fn(async () => ({
+      revertedScopeFiles: ['.gitignore'],
+      removedNewlyIgnoredFiles: [],
+      amendedHeadSha: 'amended-1',
+    }));
+
+    const runStep = vi.fn(async (): Promise<StepRunResult> => {
+      git.headByCwd.set(ctx.cwd, 'attempt-1');
+      return { outcome: 'success' };
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep,
+      maxDeclaredFilesRetries: 0,
+      revertScopeFiles,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    expect(events.filter((event) => event.type === 'step.failed')).toHaveLength(1);
+    const failedEvent = events.find((e) => e.type === 'step.failed');
+    expect(failedEvent?.message).toContain('committed undeclared files: .gitignore');
+  });
+
   it('retries a successful step that commits an unrelated undeclared file', async () => {
     const artifacts = new FakeArtifactStore();
     const git = new FakeGitPort();

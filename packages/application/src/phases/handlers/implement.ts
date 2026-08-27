@@ -16,6 +16,7 @@ import {
   unquoteGitPath,
   isUntrackedOrAddedStatusLine,
   orchestratorExcludePatterns,
+  isOrchestratorArtifactPattern,
 } from '../../artifacts/orchestrator-artifacts.js';
 
 import {
@@ -1296,12 +1297,16 @@ export class ImplementHandler implements PhaseHandler {
               }
             }
 
+            const blockingProtectedFiles = protectedFiles.filter(
+              (p) => !isOrchestratorArtifactPattern(p),
+            );
+
             const blockingUndeclaredFiles = [
               ...new Set([
                 ...driftFiles,
                 ...nonGoalFiles,
                 ...prematureImplementation.map((p) => p.path),
-                ...protectedFiles,
+                ...blockingProtectedFiles,
               ]),
             ].sort();
 
