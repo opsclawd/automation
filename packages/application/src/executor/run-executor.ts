@@ -47,8 +47,10 @@ import {
   classifyTaskChanges,
   loadManifest,
   resolveEffectiveTaskScope,
+  isProtectedTaskPath,
   type TaskChangeCandidate,
 } from '../task-file-boundaries.js';
+import { isProtectedFilePath } from '../scratch-file-remediation.js';
 
 export interface RunExecutorDeps {
   runRepository: RunRepositoryPort;
@@ -349,85 +351,6 @@ export class RunExecutor {
               );
             }
           } else if (input.resumeDisposition === 'preserve_working_tree') {
-            const manifestResult = await loadManifest(
-              { runId: run.uuid },
-              { cwd: ctxForResume.cwd, runId: run.uuid },
-              {
-                artifactStore: ctxForResume.artifacts,
-                readWorktreeFile: ctxForResume.readWorktreeFile,
-              },
-            );
-
-            if (manifestResult.status !== 'found') {
-              const failureMessage = `cannot preserve working tree: ${manifestResult.message}`;
-              const failure: Failure = {
-                runUuid: currentRun.uuid,
-                phase: firstIncompletePhase as string,
-                kind: 'setup_failed',
-                message: failureMessage,
-                canRetry: true,
-                suggestedAction: 'Ensure valid task-manifest.json exists in the artifact store.',
-                artifacts: [],
-                detectedAt: now(),
-              };
-              const phase: Phase = {
-                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
-                runUuid: currentRun.uuid,
-                name: firstIncompletePhase as string,
-                status: 'needs_human_review',
-                attempt: 1,
-                startedAt: now(),
-                completedAt: now(),
-              };
-              return this.needsHumanReviewRun(
-                currentRun,
-                firstIncompleteDef,
-                phase,
-                failure,
-                now(),
-                phases,
-              );
-            }
-
-            const manifest = manifestResult.manifest as Record<string, unknown>;
-            const tasks = Array.isArray(manifest.tasks) ? manifest.tasks : [];
-            const task = tasks.find((t: unknown) => {
-              if (!t || typeof t !== 'object') return false;
-              const rec = t as Record<string, unknown>;
-              return rec.n === resumableStep.index || rec.task_number === resumableStep.index;
-            }) as Record<string, unknown> | undefined;
-
-            if (!task) {
-              const failureMessage = `cannot preserve working tree: task ${resumableStep.index} not found in manifest`;
-              const failure: Failure = {
-                runUuid: currentRun.uuid,
-                phase: firstIncompletePhase as string,
-                kind: 'setup_failed',
-                message: failureMessage,
-                canRetry: true,
-                suggestedAction: 'Inspect task-manifest.json.',
-                artifacts: [],
-                detectedAt: now(),
-              };
-              const phase: Phase = {
-                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
-                runUuid: currentRun.uuid,
-                name: firstIncompletePhase as string,
-                status: 'needs_human_review',
-                attempt: 1,
-                startedAt: now(),
-                completedAt: now(),
-              };
-              return this.needsHumanReviewRun(
-                currentRun,
-                firstIncompleteDef,
-                phase,
-                failure,
-                now(),
-                phases,
-              );
-            }
-
             let statusOutput = '';
             try {
               statusOutput = await ctxForResume.git.status(ctxForResume.cwd);
@@ -462,74 +385,199 @@ export class RunExecutor {
               );
             }
 
-            const untrackedSet = new Set(
-              statusOutput
-                .split('\n')
-                .filter(isUntrackedOrAddedStatusLine)
-                .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
+            const isLeanPolicy =
+              currentRun.executionPolicy === 'standard' || currentRun.executionPolicy === 'strict';
+
+            if (isLeanPolicy) {
+              const dirtySourcePaths = uncommittedSourcePaths(statusOutput)
                 .map(normalizeTaskPath)
-                .filter(Boolean),
-            );
+                .filter(Boolean);
 
-            const dirtySourcePaths = uncommittedSourcePaths(statusOutput)
-              .map(normalizeTaskPath)
-              .filter(Boolean);
-
-            const candidates: TaskChangeCandidate[] = dirtySourcePaths.map((p) => ({
-              path: p,
-              tracked: !untrackedSet.has(p),
-            }));
-
-            const currentScope = resolveEffectiveTaskScope(task);
-            const classification = classifyTaskChanges({
-              candidates,
-              currentScope,
-              manifest,
-              currentTaskNumber: resumableStep.index,
-            });
-
-            const unapprovedPaths = [
-              ...new Set([
-                ...classification.modifiedReferenceFiles,
-                ...classification.nonGoalFiles,
-                ...classification.prematureImplementation.map((p) => p.path),
-                ...classification.driftFiles,
-                ...(classification.protectedFiles ?? []),
-              ]),
-            ].sort();
-
-            if (unapprovedPaths.length > 0) {
-              const failureMessage = `preserve mode rejected unpermitted dirty paths in worktree: ${unapprovedPaths.join(', ')}`;
-              const failure: Failure = {
-                runUuid: currentRun.uuid,
-                phase: firstIncompletePhase as string,
-                kind: 'setup_failed',
-                message: failureMessage,
-                canRetry: true,
-                suggestedAction: 'Clean or revert unpermitted dirty files before resuming.',
-                artifacts: [],
-                detectedAt: now(),
-              };
-              const phase: Phase = {
-                id: this.phaseId(currentRun.uuid, firstIncompletePhase),
-                runUuid: currentRun.uuid,
-                name: firstIncompletePhase as string,
-                status: 'needs_human_review',
-                attempt: 1,
-                startedAt: now(),
-                completedAt: now(),
-              };
-              return this.needsHumanReviewRun(
-                currentRun,
-                firstIncompleteDef,
-                phase,
-                failure,
-                now(),
-                phases,
+              const unapprovedPaths = dirtySourcePaths.filter(
+                (p) => isProtectedFilePath(p) || isProtectedTaskPath(p),
               );
-            }
 
-            approvedInboundPaths = [...classification.permittedPaths].sort();
+              if (unapprovedPaths.length > 0) {
+                const failureMessage = `preserve mode rejected unpermitted dirty paths in worktree: ${unapprovedPaths.join(', ')}`;
+                const failure: Failure = {
+                  runUuid: currentRun.uuid,
+                  phase: firstIncompletePhase as string,
+                  kind: 'setup_failed',
+                  message: failureMessage,
+                  canRetry: true,
+                  suggestedAction: 'Clean or revert unpermitted dirty files before resuming.',
+                  artifacts: [],
+                  detectedAt: now(),
+                };
+                const phase: Phase = {
+                  id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                  runUuid: currentRun.uuid,
+                  name: firstIncompletePhase as string,
+                  status: 'needs_human_review',
+                  attempt: 1,
+                  startedAt: now(),
+                  completedAt: now(),
+                };
+                return this.needsHumanReviewRun(
+                  currentRun,
+                  firstIncompleteDef,
+                  phase,
+                  failure,
+                  now(),
+                  phases,
+                );
+              }
+
+              approvedInboundPaths = [...dirtySourcePaths].sort();
+            } else {
+              const manifestResult = await loadManifest(
+                { runId: run.uuid },
+                { cwd: ctxForResume.cwd, runId: run.uuid },
+                {
+                  artifactStore: ctxForResume.artifacts,
+                  readWorktreeFile: ctxForResume.readWorktreeFile,
+                },
+              );
+
+              if (manifestResult.status !== 'found') {
+                const failureMessage = `cannot preserve working tree: ${manifestResult.message}`;
+                const failure: Failure = {
+                  runUuid: currentRun.uuid,
+                  phase: firstIncompletePhase as string,
+                  kind: 'setup_failed',
+                  message: failureMessage,
+                  canRetry: true,
+                  suggestedAction: 'Ensure valid task-manifest.json exists in the artifact store.',
+                  artifacts: [],
+                  detectedAt: now(),
+                };
+                const phase: Phase = {
+                  id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                  runUuid: currentRun.uuid,
+                  name: firstIncompletePhase as string,
+                  status: 'needs_human_review',
+                  attempt: 1,
+                  startedAt: now(),
+                  completedAt: now(),
+                };
+                return this.needsHumanReviewRun(
+                  currentRun,
+                  firstIncompleteDef,
+                  phase,
+                  failure,
+                  now(),
+                  phases,
+                );
+              }
+
+              const manifest = manifestResult.manifest as Record<string, unknown>;
+              const tasks = Array.isArray(manifest.tasks) ? manifest.tasks : [];
+              const task = tasks.find((t: unknown) => {
+                if (!t || typeof t !== 'object') return false;
+                const rec = t as Record<string, unknown>;
+                return rec.n === resumableStep.index || rec.task_number === resumableStep.index;
+              }) as Record<string, unknown> | undefined;
+
+              if (!task) {
+                const failureMessage = `cannot preserve working tree: task ${resumableStep.index} not found in manifest`;
+                const failure: Failure = {
+                  runUuid: currentRun.uuid,
+                  phase: firstIncompletePhase as string,
+                  kind: 'setup_failed',
+                  message: failureMessage,
+                  canRetry: true,
+                  suggestedAction: 'Inspect task-manifest.json.',
+                  artifacts: [],
+                  detectedAt: now(),
+                };
+                const phase: Phase = {
+                  id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                  runUuid: currentRun.uuid,
+                  name: firstIncompletePhase as string,
+                  status: 'needs_human_review',
+                  attempt: 1,
+                  startedAt: now(),
+                  completedAt: now(),
+                };
+                return this.needsHumanReviewRun(
+                  currentRun,
+                  firstIncompleteDef,
+                  phase,
+                  failure,
+                  now(),
+                  phases,
+                );
+              }
+
+              const untrackedSet = new Set(
+                statusOutput
+                  .split('\n')
+                  .filter(isUntrackedOrAddedStatusLine)
+                  .map((line) => unquoteGitPath(line.slice(3).trim()).replace(/\\/g, '/'))
+                  .map(normalizeTaskPath)
+                  .filter(Boolean),
+              );
+
+              const dirtySourcePaths = uncommittedSourcePaths(statusOutput)
+                .map(normalizeTaskPath)
+                .filter(Boolean);
+
+              const candidates: TaskChangeCandidate[] = dirtySourcePaths.map((p) => ({
+                path: p,
+                tracked: !untrackedSet.has(p),
+              }));
+
+              const currentScope = resolveEffectiveTaskScope(task);
+              const classification = classifyTaskChanges({
+                candidates,
+                currentScope,
+                manifest,
+                currentTaskNumber: resumableStep.index,
+              });
+
+              const unapprovedPaths = [
+                ...new Set([
+                  ...classification.modifiedReferenceFiles,
+                  ...classification.nonGoalFiles,
+                  ...classification.prematureImplementation.map((p) => p.path),
+                  ...classification.driftFiles,
+                  ...(classification.protectedFiles ?? []),
+                ]),
+              ].sort();
+
+              if (unapprovedPaths.length > 0) {
+                const failureMessage = `preserve mode rejected unpermitted dirty paths in worktree: ${unapprovedPaths.join(', ')}`;
+                const failure: Failure = {
+                  runUuid: currentRun.uuid,
+                  phase: firstIncompletePhase as string,
+                  kind: 'setup_failed',
+                  message: failureMessage,
+                  canRetry: true,
+                  suggestedAction: 'Clean or revert unpermitted dirty files before resuming.',
+                  artifacts: [],
+                  detectedAt: now(),
+                };
+                const phase: Phase = {
+                  id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+                  runUuid: currentRun.uuid,
+                  name: firstIncompletePhase as string,
+                  status: 'needs_human_review',
+                  attempt: 1,
+                  startedAt: now(),
+                  completedAt: now(),
+                };
+                return this.needsHumanReviewRun(
+                  currentRun,
+                  firstIncompleteDef,
+                  phase,
+                  failure,
+                  now(),
+                  phases,
+                );
+              }
+
+              approvedInboundPaths = [...classification.permittedPaths].sort();
+            }
           }
         } else if (isImplementPhase) {
           // Fresh implement phase — there is no in-progress step for
