@@ -2,6 +2,8 @@ export { PHASE_RESULT_REGISTRY, PHASE_NAME_MIGRATION_MAP } from './phase-registr
 export type { PhaseResultMeta } from './phase-registry.js';
 export { planDesignResultSchema } from './schemas/plan-design.js';
 export type { PlanDesignResult } from './schemas/plan-design.js';
+export { plannerPackageSchema } from './schemas/planner-package.js';
+export type { PlannerPackage } from './schemas/planner-package.js';
 export { planWriteResultSchema } from './schemas/plan-write.js';
 export type { PlanWriteResult } from './schemas/plan-write.js';
 export { implementResultSchema } from './schemas/implement.js';
