@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { resolveArbiterProfileName } from '../arbiter-profile.js';
 import { PHASE_RESULT_REGISTRY, PHASE_NAME_MIGRATION_MAP } from '@ai-sdlc/application';
 import { validateTerminalFix } from '../compose.js';
+import { PhaseName, RunId } from '@ai-sdlc/domain';
+import { createComposedOrchestrationHarness } from './helpers/composed-orchestration-harness.js';
 
 describe('plan-review compose wiring', () => {
   it('resolveArbiterProfileName returns the dedicated arbiter profile', () => {
@@ -91,7 +93,9 @@ describe('plan-review compose wiring', () => {
     );
 
     // Ensure artifactAgent.invoke catch does NOT return validationError
-    const invokeCatchMatch = fnSrc.match(/artifactAgent\.invoke[\s\S]*?catch[\s\S]*?\{([\s\S]*?)\}/);
+    const invokeCatchMatch = fnSrc.match(
+      /artifactAgent\.invoke[\s\S]*?catch[\s\S]*?\{([\s\S]*?)\}/,
+    );
     expect(invokeCatchMatch).toBeTruthy();
     expect(invokeCatchMatch![1]).not.toContain('validationError');
 
@@ -256,5 +260,294 @@ describe('plan-review compose wiring', () => {
     });
 
     expect(terminalSnapshots.has('test-run-456')).toBe(false);
+  });
+
+  it('computeSnapshot resolves deliverable paths using getHydratedWorktreePath for plan.md, task-manifest.json, and design.md', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const computeSnapshotMatch = composeSrc.match(
+      /const computeSnapshot = async[\s\S]*?(?=const planReviewRunReview)/,
+    );
+    expect(computeSnapshotMatch).toBeTruthy();
+    const snapshotSrc = computeSnapshotMatch![0];
+    expect(snapshotSrc).toContain("getHydratedWorktreePath('plan.md')");
+    expect(snapshotSrc).toContain("getHydratedWorktreePath('task-manifest.json')");
+    expect(snapshotSrc).toContain("getHydratedWorktreePath('design.md')");
+  });
+
+  const planReviewAgentConfig = {
+    validation: { commands: ['echo ok'], timeout: 60 },
+    phases: {
+      skip: [],
+      planReview: { enabled: true, maxIterations: 1 },
+      reviewFix: { maxIterations: 1 },
+      implement: { maxIterations: 1 },
+      fixValidate: { enabled: false, maxIterations: 3 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+    agent: {
+      defaultProfile: 'test',
+      profiles: {
+        test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+      },
+      phaseProfiles: {
+        'plan-review': { profile: 'test' },
+        'plan-fix': { profile: 'test' },
+        arbiter: { profile: 'test' },
+        'result-writer': { profile: 'test' },
+      },
+    },
+  };
+
+  it('plan-review read-only guard detects mutations to .ai/plan.md and reports logical label plan.md', async () => {
+    const findingsMd = `## verdict
+pass
+
+## findings
+`;
+    const mutatingReviewScript = {
+      phaseId: 'plan-review',
+      invocationType: 'initial',
+      handle: async (request: { cwd: string }) => {
+        writeFileSync(path.join(request.cwd, 'plan-review-findings.md'), findingsMd, 'utf-8');
+        writeFileSync(path.join(request.cwd, '.ai', 'plan.md'), '# Mutated Plan\n', 'utf-8');
+        return {
+          runtime: 'test' as const,
+          provider: 'test',
+          model: 'test',
+          exitCode: 0,
+          durationMs: 10,
+          stdout: findingsMd,
+          stderrPath: '/dev/null',
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      },
+    };
+
+    const harness = createComposedOrchestrationHarness({
+      repoFullName: 'owner/test-repo',
+      issueNumber: 1,
+      scripts: [mutatingReviewScript],
+      agentConfig: planReviewAgentConfig,
+    });
+
+    try {
+      const worktreeDir = path.join(harness.targetRoot, '.ai-worktrees', 'issue-1');
+      mkdirSync(path.join(worktreeDir, '.ai'), { recursive: true });
+
+      const VALID_DESIGN_MD = '# Test Design\n';
+      const VALID_PLAN_MD = '# Test Plan\n\n## Task 1: First Task\nDo the first thing.\n';
+      const VALID_TASK_MANIFEST_V2 = JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'First Task' }],
+      });
+
+      writeFileSync(path.join(worktreeDir, '.ai', 'design.md'), VALID_DESIGN_MD);
+      writeFileSync(path.join(worktreeDir, '.ai', 'plan.md'), VALID_PLAN_MD);
+      writeFileSync(path.join(worktreeDir, '.ai', 'task-manifest.json'), VALID_TASK_MANIFEST_V2);
+
+      await harness.context.artifacts.write({
+        runId: harness.run.uuid,
+        relativePath: 'design.md',
+        contents: VALID_DESIGN_MD,
+      });
+      await harness.context.artifacts.write({
+        runId: harness.run.uuid,
+        relativePath: 'plan.md',
+        contents: VALID_PLAN_MD,
+      });
+      await harness.context.artifacts.write({
+        runId: harness.run.uuid,
+        relativePath: 'task-manifest.json',
+        contents: VALID_TASK_MANIFEST_V2,
+      });
+
+      const planReviewHandler = harness.container.phaseRegistry.get(PhaseName('plan-review'));
+      expect(planReviewHandler).toBeDefined();
+
+      await planReviewHandler!.run(harness.context);
+
+      const events = harness.container.eventRepository.listByRunSince(
+        RunId(harness.run.uuid),
+        new Date(0),
+      );
+      const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
+      expect(violationEvents.length).toBeGreaterThan(0);
+      expect(violationEvents[0]!.metadata.files).toContain('plan.md');
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it('plan-review read-only guard detects mutations to .ai/task-manifest.json and reports logical label task-manifest.json', async () => {
+    const findingsMd = `## verdict
+pass
+
+## findings
+`;
+    const mutatingReviewScript = {
+      phaseId: 'plan-review',
+      invocationType: 'initial',
+      handle: async (request: { cwd: string }) => {
+        writeFileSync(path.join(request.cwd, 'plan-review-findings.md'), findingsMd, 'utf-8');
+        writeFileSync(
+          path.join(request.cwd, '.ai', 'task-manifest.json'),
+          JSON.stringify({ version: 2, task_count: 99, tasks: [] }),
+          'utf-8',
+        );
+        return {
+          runtime: 'test' as const,
+          provider: 'test',
+          model: 'test',
+          exitCode: 0,
+          durationMs: 10,
+          stdout: findingsMd,
+          stderrPath: '/dev/null',
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      },
+    };
+
+    const harness = createComposedOrchestrationHarness({
+      repoFullName: 'owner/test-repo',
+      issueNumber: 1,
+      scripts: [mutatingReviewScript],
+      agentConfig: planReviewAgentConfig,
+    });
+
+    try {
+      const worktreeDir = path.join(harness.targetRoot, '.ai-worktrees', 'issue-1');
+      mkdirSync(path.join(worktreeDir, '.ai'), { recursive: true });
+
+      const VALID_DESIGN_MD = '# Test Design\n';
+      const VALID_PLAN_MD = '# Test Plan\n\n## Task 1: First Task\nDo the first thing.\n';
+      const VALID_TASK_MANIFEST_V2 = JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'First Task' }],
+      });
+
+      writeFileSync(path.join(worktreeDir, '.ai', 'design.md'), VALID_DESIGN_MD);
+      writeFileSync(path.join(worktreeDir, '.ai', 'plan.md'), VALID_PLAN_MD);
+      writeFileSync(path.join(worktreeDir, '.ai', 'task-manifest.json'), VALID_TASK_MANIFEST_V2);
+
+      await harness.context.artifacts.write({
+        runId: harness.run.uuid,
+        relativePath: 'design.md',
+        contents: VALID_DESIGN_MD,
+      });
+      await harness.context.artifacts.write({
+        runId: harness.run.uuid,
+        relativePath: 'plan.md',
+        contents: VALID_PLAN_MD,
+      });
+      await harness.context.artifacts.write({
+        runId: harness.run.uuid,
+        relativePath: 'task-manifest.json',
+        contents: VALID_TASK_MANIFEST_V2,
+      });
+
+      const planReviewHandler = harness.container.phaseRegistry.get(PhaseName('plan-review'));
+      expect(planReviewHandler).toBeDefined();
+
+      await planReviewHandler!.run(harness.context);
+
+      const events = harness.container.eventRepository.listByRunSince(
+        RunId(harness.run.uuid),
+        new Date(0),
+      );
+      const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
+      expect(violationEvents.length).toBeGreaterThan(0);
+      expect(violationEvents[0]!.metadata.files).toContain('task-manifest.json');
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it('plan-review read-only guard detects mutations to .ai/design.md and reports logical label design.md', async () => {
+    const findingsMd = `## verdict
+pass
+
+## findings
+`;
+    const mutatingReviewScript = {
+      phaseId: 'plan-review',
+      invocationType: 'initial',
+      handle: async (request: { cwd: string }) => {
+        writeFileSync(path.join(request.cwd, 'plan-review-findings.md'), findingsMd, 'utf-8');
+        writeFileSync(path.join(request.cwd, '.ai', 'design.md'), '# Mutated Design\n', 'utf-8');
+        return {
+          runtime: 'test' as const,
+          provider: 'test',
+          model: 'test',
+          exitCode: 0,
+          durationMs: 10,
+          stdout: findingsMd,
+          stderrPath: '/dev/null',
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      },
+    };
+
+    const harness = createComposedOrchestrationHarness({
+      repoFullName: 'owner/test-repo',
+      issueNumber: 1,
+      scripts: [mutatingReviewScript],
+      agentConfig: planReviewAgentConfig,
+    });
+
+    try {
+      const worktreeDir = path.join(harness.targetRoot, '.ai-worktrees', 'issue-1');
+      mkdirSync(path.join(worktreeDir, '.ai'), { recursive: true });
+
+      const VALID_DESIGN_MD = '# Test Design\n';
+      const VALID_PLAN_MD = '# Test Plan\n\n## Task 1: First Task\nDo the first thing.\n';
+      const VALID_TASK_MANIFEST_V2 = JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'First Task' }],
+      });
+
+      writeFileSync(path.join(worktreeDir, '.ai', 'design.md'), VALID_DESIGN_MD);
+      writeFileSync(path.join(worktreeDir, '.ai', 'plan.md'), VALID_PLAN_MD);
+      writeFileSync(path.join(worktreeDir, '.ai', 'task-manifest.json'), VALID_TASK_MANIFEST_V2);
+
+      await harness.context.artifacts.write({
+        runId: harness.run.uuid,
+        relativePath: 'design.md',
+        contents: VALID_DESIGN_MD,
+      });
+      await harness.context.artifacts.write({
+        runId: harness.run.uuid,
+        relativePath: 'plan.md',
+        contents: VALID_PLAN_MD,
+      });
+      await harness.context.artifacts.write({
+        runId: harness.run.uuid,
+        relativePath: 'task-manifest.json',
+        contents: VALID_TASK_MANIFEST_V2,
+      });
+
+      const planReviewHandler = harness.container.phaseRegistry.get(PhaseName('plan-review'));
+      expect(planReviewHandler).toBeDefined();
+
+      await planReviewHandler!.run(harness.context);
+
+      const events = harness.container.eventRepository.listByRunSince(
+        RunId(harness.run.uuid),
+        new Date(0),
+      );
+      const violationEvents = events.filter((e) => e.type === 'plan-review.read_only_violation');
+      expect(violationEvents.length).toBeGreaterThan(0);
+      expect(violationEvents[0]!.metadata.files).toContain('design.md');
+    } finally {
+      harness.cleanup();
+    }
   });
 });

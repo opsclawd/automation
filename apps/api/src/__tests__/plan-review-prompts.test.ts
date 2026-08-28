@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as childProcess from 'node:child_process';
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FakeArtifactStore } from '@ai-sdlc/application/test-doubles';
@@ -373,7 +373,8 @@ describe('buildPlanReviewReviewScopeBlock (#716)', () => {
         'Declares the missing transition handler',
         '',
       ].join('\n');
-      writeFileSync(join(dir, 'plan.md'), planMdAfterFix, 'utf-8');
+      mkdirSync(join(dir, '.ai'), { recursive: true });
+      writeFileSync(join(dir, '.ai', 'plan.md'), planMdAfterFix, 'utf-8');
       const recentFixCitations = getRecentFixCitations(dir, planMdBeforeFix);
       expect(recentFixCitations.length).toBeGreaterThan(0);
 
@@ -683,9 +684,11 @@ describe('getRecentFixCitations (#716, rewritten for #1027)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'plan-review-citations-'));
     try {
       // plan.md is deliberately NOT git-tracked here, matching production:
-      // it is gitignored and written only via the artifact store. A
-      // git-diff-on-commit-SHA approach (the pre-#1027 implementation)
-      // would always see this as empty regardless of real changes.
+      // it is gitignored and written only via the artifact store, then
+      // materialized to <worktree>/.ai/plan.md by the artifact store's
+      // hydrateWorktree step (#1080). A git-diff-on-commit-SHA approach
+      // (the pre-#1027 implementation) would always see this as empty
+      // regardless of real changes.
       const before = ['# Plan', '', '## Task 1', 'Original text', ''].join('\n');
       const after = [
         '# Plan',
@@ -697,7 +700,8 @@ describe('getRecentFixCitations (#716, rewritten for #1027)', () => {
         'New task',
         '',
       ].join('\n');
-      writeFileSync(join(dir, 'plan.md'), after, 'utf-8');
+      mkdirSync(join(dir, '.ai'), { recursive: true });
+      writeFileSync(join(dir, '.ai', 'plan.md'), after, 'utf-8');
 
       const citations = getRecentFixCitations(dir, before);
       expect(citations.length).toBeGreaterThan(0);
@@ -715,7 +719,8 @@ describe('getRecentFixCitations (#716, rewritten for #1027)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'plan-review-citations-'));
     try {
       const text = ['# Plan', '', '## Task 1', 'Unchanged text', ''].join('\n');
-      writeFileSync(join(dir, 'plan.md'), text, 'utf-8');
+      mkdirSync(join(dir, '.ai'), { recursive: true });
+      writeFileSync(join(dir, '.ai', 'plan.md'), text, 'utf-8');
 
       const citations = getRecentFixCitations(dir, text);
       expect(citations).toEqual([]);

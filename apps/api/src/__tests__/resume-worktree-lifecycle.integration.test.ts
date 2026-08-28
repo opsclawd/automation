@@ -524,11 +524,13 @@ describe('resume worktree lifecycle integration', () => {
       contents: '',
     });
 
-    // Ensure plan.md is deleted from worktree to test rehydration
+    // Set a legacy root plan.md in worktree to test rehydration and migration
+    writeFileSync(path.join(harness.worktreeDir, 'plan.md'), '# Stale Legacy Root Plan\n');
     try {
-      rmSync(path.join(harness.worktreeDir, 'plan.md'), { force: true });
+      rmSync(path.join(harness.worktreeDir, '.ai', 'plan.md'), { force: true });
     } catch {}
-    expect(existsSync(path.join(harness.worktreeDir, 'plan.md'))).toBe(false);
+    expect(existsSync(path.join(harness.worktreeDir, 'plan.md'))).toBe(true);
+    expect(existsSync(path.join(harness.worktreeDir, '.ai', 'plan.md'))).toBe(false);
 
     // 4. API resume request without explicit disposition (defaults to reset_to_baseline)
     // Providing confirm: true for unsafe implement resume phase and x-repository-id header
@@ -588,11 +590,18 @@ describe('resume worktree lifecycle integration', () => {
     expect(existsSync(path.join(harness.worktreeDir, 'src', 'stale.ts'))).toBe(false);
     expect(readFileSync(path.join(harness.worktreeDir, 'README.md'), 'utf-8')).toBe('# Baseline\n');
 
-    // c. Durable artifacts survived and rehydrated into worktree
-    expect(existsSync(path.join(harness.worktreeDir, 'plan.md'))).toBe(true);
-    expect(readFileSync(path.join(harness.worktreeDir, 'plan.md'), 'utf-8')).toContain(
+    // c. Durable artifacts survived and rehydrated into worktree under .ai/ while deleting root copy
+    expect(existsSync(path.join(harness.worktreeDir, '.ai', 'plan.md'))).toBe(true);
+    expect(readFileSync(path.join(harness.worktreeDir, '.ai', 'plan.md'), 'utf-8')).toContain(
       '## Task 1: First Task',
     );
+    expect(existsSync(path.join(harness.worktreeDir, 'plan.md'))).toBe(false);
+    expect(existsSync(path.join(harness.worktreeDir, '.ai', 'task-manifest.json'))).toBe(true);
+    expect(existsSync(path.join(harness.worktreeDir, 'task-manifest.json'))).toBe(false);
+    expect(existsSync(path.join(harness.worktreeDir, '.ai', 'design.md'))).toBe(true);
+    expect(existsSync(path.join(harness.worktreeDir, 'design.md'))).toBe(false);
+    expect(existsSync(path.join(harness.worktreeDir, '.ai', 'issue.md'))).toBe(true);
+    expect(existsSync(path.join(harness.worktreeDir, 'issue.md'))).toBe(false);
 
     // d. Implement phase entered and completed successfully
     const finalRun = harness.container.runRepository.findByUuid(harness.run.uuid);
@@ -1334,5 +1343,237 @@ describe('resume worktree lifecycle integration', () => {
 
     // Untracked residue is gone from worktree
     expect(existsSync(path.join(harnessB.worktreeDir, 'ambient-review-probe.tmp'))).toBe(false);
+  }, 30_000);
+
+  it('resumes across plan-review boundary reading deliverables from .ai/ without root copies', async () => {
+    const planReviewScript: ScriptedAgentScript = {
+      phaseId: 'plan-review',
+      handle: async (request) => {
+        // Verify deliverables exist under .ai/ and root copies are absent
+        expect(existsSync(path.join(request.cwd, '.ai', 'plan.md'))).toBe(true);
+        expect(existsSync(path.join(request.cwd, '.ai', 'task-manifest.json'))).toBe(true);
+        expect(existsSync(path.join(request.cwd, '.ai', 'design.md'))).toBe(true);
+        expect(existsSync(path.join(request.cwd, 'plan.md'))).toBe(false);
+        expect(existsSync(path.join(request.cwd, 'task-manifest.json'))).toBe(false);
+        expect(existsSync(path.join(request.cwd, 'design.md'))).toBe(false);
+
+        const findingsPath = path.join(request.cwd, 'plan-review-findings.md');
+        writeFileSync(findingsPath, '## verdict\npass\n\n## findings\n', 'utf-8');
+        return {
+          runtime: 'test' as const,
+          provider: 'test',
+          model: 'test',
+          exitCode: 0,
+          durationMs: 10,
+          stdoutPath: '/dev/null',
+          stderrPath: '/dev/null',
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      },
+    };
+
+    const implementScript: ScriptedAgentScript = {
+      phaseId: 'implement',
+      handle: async (request) => {
+        expect(existsSync(path.join(request.cwd, '.ai', 'plan.md'))).toBe(true);
+        expect(existsSync(path.join(request.cwd, 'plan.md'))).toBe(false);
+
+        mkdirSync(path.join(request.cwd, 'src'), { recursive: true });
+        writeFileSync(path.join(request.cwd, 'src', 'task1.ts'), 'export const task1 = 1;\n');
+        execFileSync('git', ['add', '.'], { cwd: request.cwd });
+        execFileSync('git', ['commit', '-m', 'feat: task 1'], { cwd: request.cwd });
+        return {
+          runtime: 'test' as const,
+          provider: 'test',
+          model: 'test',
+          exitCode: 0,
+          durationMs: 10,
+          stdoutPath: '/dev/null',
+          stderrPath: '/dev/null',
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      },
+    };
+
+    const specReviewScript: ScriptedAgentScript = {
+      phaseId: 'spec-review',
+      handle: async (request) => {
+        writeFileSync(
+          path.join(request.cwd, 'result.json'),
+          JSON.stringify({ result: 'pass', reviewType: 'spec', findings: [] }),
+        );
+        return {
+          runtime: 'test' as const,
+          provider: 'test',
+          model: 'test',
+          exitCode: 0,
+          durationMs: 10,
+          stdoutPath: '/dev/null',
+          stderrPath: '/dev/null',
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      },
+    };
+
+    const qualityReviewScript: ScriptedAgentScript = {
+      phaseId: 'quality-review',
+      handle: async (request) => {
+        writeFileSync(
+          path.join(request.cwd, 'result.json'),
+          JSON.stringify({ result: 'pass', reviewType: 'quality', findings: [] }),
+        );
+        return {
+          runtime: 'test' as const,
+          provider: 'test',
+          model: 'test',
+          exitCode: 0,
+          durationMs: 10,
+          stdoutPath: '/dev/null',
+          stderrPath: '/dev/null',
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      },
+    };
+
+    const harness = trackHarness(
+      await createHarness({
+        scripts: [planReviewScript, implementScript, specReviewScript, qualityReviewScript],
+      }),
+    );
+
+    execFileSync(
+      'git',
+      ['worktree', 'add', '-b', `ai/issue-${harness.run.issueNumber}`, harness.worktreeDir, 'main'],
+      { cwd: harness.targetRoot },
+    );
+
+    // Durable state: run failed at plan-review
+    harness.container.runRepository.update(harness.run.uuid, {
+      status: 'failed',
+      currentPhase: 'plan-review',
+      completedPhases: ['read_issue', 'plan-design', 'plan-write'],
+    });
+
+    harness.container.phaseRepository.insert({
+      id: 'phase-read-issue-pr',
+      runUuid: harness.run.uuid,
+      name: 'read_issue',
+      status: 'passed',
+      attempt: 1,
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
+    harness.container.phaseRepository.insert({
+      id: 'phase-plan-design-pr',
+      runUuid: harness.run.uuid,
+      name: 'plan-design',
+      status: 'passed',
+      attempt: 1,
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
+    harness.container.phaseRepository.insert({
+      id: 'phase-plan-write-pr',
+      runUuid: harness.run.uuid,
+      name: 'plan-write',
+      status: 'passed',
+      attempt: 1,
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
+    harness.container.phaseRepository.insert({
+      id: 'phase-plan-review-pr',
+      runUuid: harness.run.uuid,
+      name: 'plan-review',
+      status: 'failed',
+      attempt: 1,
+      startedAt: new Date(),
+    });
+
+    // Write durable artifacts
+    await harness.context.artifacts.write({
+      runId: harness.run.uuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue.md',
+      contents: '# Issue 1\n',
+    });
+    await harness.context.artifacts.write({
+      runId: harness.run.uuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue-comments.md',
+      contents: '[]\n',
+    });
+    await harness.context.artifacts.write({
+      runId: harness.run.uuid,
+      phaseId: 'plan-design',
+      relativePath: 'design.md',
+      contents: '# Design\n',
+    });
+    await harness.context.artifacts.write({
+      runId: harness.run.uuid,
+      phaseId: 'plan-write',
+      relativePath: 'plan.md',
+      contents: '# Plan\n\n## Task 1: First Task\nImplement task 1\n',
+    });
+    await harness.context.artifacts.write({
+      runId: harness.run.uuid,
+      phaseId: 'plan-write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify({
+        version: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'First Task' }],
+      }),
+    });
+
+    // Put a legacy root copy in the worktree
+    writeFileSync(path.join(harness.worktreeDir, 'plan.md'), '# Legacy Root Plan\n');
+    expect(existsSync(path.join(harness.worktreeDir, 'plan.md'))).toBe(true);
+
+    // Resume via API
+    const apiRes = await harness.app.inject({
+      method: 'POST',
+      url: `/api/runs/${harness.run.uuid}/resume`,
+      headers: {
+        'x-repository-id': String(harness.run.repoId),
+      },
+      payload: { confirm: true },
+    });
+    expect(apiRes.statusCode).toBe(202);
+
+    // Worker executes
+    const workerId = WorkerId('worker-test-pr');
+    harness.container.workerRegistry!.register({
+      id: workerId,
+      repoId: harness.run.repoId,
+      hostname: os.hostname(),
+      processId: process.pid,
+      status: 'idle',
+      registeredAt: new Date(),
+      heartbeatAt: new Date(),
+    });
+
+    const workerDeps = harness.container.workerLoopDeps!(harness.run.repoId);
+    await workerLoop(workerId, {
+      ...workerDeps,
+      now: () => new Date(),
+      ttlMs: 60_000,
+    });
+
+    // Verification:
+    // hydrateWorktree created .ai/plan.md and deleted root plan.md
+    expect(existsSync(path.join(harness.worktreeDir, '.ai', 'plan.md'))).toBe(true);
+    expect(existsSync(path.join(harness.worktreeDir, 'plan.md'))).toBe(false);
+    expect(existsSync(path.join(harness.worktreeDir, '.ai', 'task-manifest.json'))).toBe(true);
+    expect(existsSync(path.join(harness.worktreeDir, 'task-manifest.json'))).toBe(false);
+    expect(existsSync(path.join(harness.worktreeDir, '.ai', 'design.md'))).toBe(true);
+    expect(existsSync(path.join(harness.worktreeDir, 'design.md'))).toBe(false);
+
+    const finalRun = harness.container.runRepository.findByUuid(harness.run.uuid);
+    expect(finalRun?.status).toBe('passed');
   }, 30_000);
 });

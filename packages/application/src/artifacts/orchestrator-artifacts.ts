@@ -68,6 +68,7 @@ export function isOrchestratorArtifactPattern(path: string): boolean {
   if (!path || typeof path !== 'string') return false;
   const normalized = path.replace(/\r$/, '').replace(/^(\.\/|\/)+/, '');
   if (!normalized) return false;
+  if (normalized.startsWith('.ai/')) return true;
   return getOrchestratorRegexes().some((regex) => regex.test(normalized));
 }
 

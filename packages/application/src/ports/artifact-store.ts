@@ -34,3 +34,26 @@ export interface ArtifactStore {
    */
   hydrateWorktree(runId: string): Promise<void>;
 }
+
+export const CANONICAL_DELIVERABLE_KEYS = [
+  'issue.md',
+  'issue-comments.md',
+  'design.md',
+  'plan.md',
+  'task-manifest.json',
+] as const;
+
+export type CanonicalDeliverableKey = (typeof CANONICAL_DELIVERABLE_KEYS)[number];
+
+const CANONICAL_DELIVERABLE_KEY_SET = new Set<string>(CANONICAL_DELIVERABLE_KEYS);
+
+export function isCanonicalDeliverableKey(key: string): key is CanonicalDeliverableKey {
+  return CANONICAL_DELIVERABLE_KEY_SET.has(key);
+}
+
+export function getHydratedWorktreePath(relativePath: string): string {
+  if (isCanonicalDeliverableKey(relativePath)) {
+    return `.ai/${relativePath}`;
+  }
+  return relativePath;
+}

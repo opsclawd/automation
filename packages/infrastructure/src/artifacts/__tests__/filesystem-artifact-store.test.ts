@@ -52,6 +52,33 @@ describe('createFilesystemArtifactStore', () => {
     }
   });
 
+  it('writes canonical deliverables to .ai in worktree root and not legacy root', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+
+      const artifact = await store.write({
+        runId: 'run-1',
+        phaseId: 'plan',
+        relativePath: 'plan.md',
+        contents: '# plan content\n',
+      });
+
+      expect(artifact.runId).toBe('run-1');
+      expect(artifact.phaseId).toBe('plan');
+      expect(artifact.relativePath).toBe('plan.md');
+      expect(artifact.absolutePath).toBe(join(durableRoot, 'plan.md'));
+      expect(artifact.bytes).toBe(Buffer.byteLength('# plan content\n'));
+      expect(artifact.createdAt).toBeInstanceOf(Date);
+
+      expect(readFileSync(join(durableRoot, 'plan.md'), 'utf8')).toBe('# plan content\n');
+      expect(readFileSync(join(worktreeRoot, '.ai', 'plan.md'), 'utf8')).toBe('# plan content\n');
+      expect(existsSync(join(worktreeRoot, 'plan.md'))).toBe(false);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
   it('reads the durable copy when durable and worktree copies differ', async () => {
     const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
     try {
@@ -236,36 +263,274 @@ describe('createFilesystemArtifactStore', () => {
     }
   });
 
-  it('hydrates the worktree from the durable root', async () => {
+  it('hydrates canonical deliverables into .ai and removes legacy root files', async () => {
     const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
     try {
       mkdirSync(durableRoot, { recursive: true });
       mkdirSync(worktreeRoot, { recursive: true });
 
-      const planPath = 'plan.md';
-      const manifestPath = 'task-manifest.json';
-      const planContent = '# Plan\n';
-      const manifestContent = '{"tasks": []}';
+      const deliverables = [
+        { key: 'issue.md', content: '# Issue\n' },
+        { key: 'issue-comments.md', content: '# Comments\n' },
+        { key: 'design.md', content: '# Design\n' },
+        { key: 'plan.md', content: '# Plan\n' },
+        { key: 'task-manifest.json', content: '{"tasks":[]}' },
+      ];
 
-      writeFileSync(join(durableRoot, planPath), planContent, 'utf8');
-      writeFileSync(join(durableRoot, manifestPath), manifestContent, 'utf8');
+      for (const { key, content } of deliverables) {
+        writeFileSync(join(durableRoot, key), content, 'utf8');
+        // Place a stale legacy root copy
+        writeFileSync(join(worktreeRoot, key), 'stale legacy copy', 'utf8');
+      }
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+      await store.hydrateWorktree('run-1');
+
+      for (const { key, content } of deliverables) {
+        // Must exist in .ai/
+        expect(existsSync(join(worktreeRoot, '.ai', key))).toBe(true);
+        expect(readFileSync(join(worktreeRoot, '.ai', key), 'utf8')).toBe(content);
+        // Must NOT exist at root
+        expect(existsSync(join(worktreeRoot, key))).toBe(false);
+      }
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves worktree paths for non-deliverable artifacts', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(join(durableRoot, 'logs'), { recursive: true });
+      mkdirSync(worktreeRoot, { recursive: true });
+
+      writeFileSync(join(durableRoot, 'implementation-log.md'), '# Implementation Log\n', 'utf8');
+      writeFileSync(join(durableRoot, 'logs', 'build.log'), 'build output', 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+      await store.hydrateWorktree('run-1');
+
+      // Non-deliverable artifacts must be preserved at their original relative paths
+      expect(existsSync(join(worktreeRoot, 'implementation-log.md'))).toBe(true);
+      expect(readFileSync(join(worktreeRoot, 'implementation-log.md'), 'utf8')).toBe(
+        '# Implementation Log\n',
+      );
+      expect(existsSync(join(worktreeRoot, '.ai', 'implementation-log.md'))).toBe(false);
+
+      expect(existsSync(join(worktreeRoot, 'logs', 'build.log'))).toBe(true);
+      expect(readFileSync(join(worktreeRoot, 'logs', 'build.log'), 'utf8')).toBe('build output');
+      expect(existsSync(join(worktreeRoot, '.ai', 'logs', 'build.log'))).toBe(false);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent on repeated hydration calls', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(worktreeRoot, { recursive: true });
+
+      writeFileSync(join(durableRoot, 'plan.md'), '# Plan\n', 'utf8');
+      writeFileSync(join(durableRoot, 'implementation-log.md'), '# Log\n', 'utf8');
 
       const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
 
-      // Initially worktree is empty
-      expect(existsSync(join(worktreeRoot, planPath))).toBe(false);
-      expect(existsSync(join(worktreeRoot, manifestPath))).toBe(false);
+      await store.hydrateWorktree('run-1');
+      const planContent1 = readFileSync(join(worktreeRoot, '.ai', 'plan.md'), 'utf8');
+      const logContent1 = readFileSync(join(worktreeRoot, 'implementation-log.md'), 'utf8');
 
+      // Second hydration should succeed without errors and maintain identical content
+      await store.hydrateWorktree('run-1');
+      const planContent2 = readFileSync(join(worktreeRoot, '.ai', 'plan.md'), 'utf8');
+      const logContent2 = readFileSync(join(worktreeRoot, 'implementation-log.md'), 'utf8');
+
+      expect(planContent1).toBe(planContent2);
+      expect(logContent1).toBe(logContent2);
+      expect(existsSync(join(worktreeRoot, 'plan.md'))).toBe(false);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('overwrites stale worktree copy with durable content during hydration', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(join(worktreeRoot, '.ai'), { recursive: true });
+
+      writeFileSync(join(durableRoot, 'plan.md'), '# Durable Plan\n', 'utf8');
+      writeFileSync(join(worktreeRoot, '.ai', 'plan.md'), '# Stale AI Plan\n', 'utf8');
+      writeFileSync(join(worktreeRoot, 'plan.md'), '# Stale Root Plan\n', 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
       await store.hydrateWorktree('run-1');
 
-      // Now artifacts should be in worktree
-      expect(readFileSync(join(worktreeRoot, planPath), 'utf8')).toBe(planContent);
-      expect(readFileSync(join(worktreeRoot, manifestPath), 'utf8')).toBe(manifestContent);
+      expect(readFileSync(join(worktreeRoot, '.ai', 'plan.md'), 'utf8')).toBe('# Durable Plan\n');
+      expect(existsSync(join(worktreeRoot, 'plan.md'))).toBe(false);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
 
-      // Verify it overwrites different content
-      writeFileSync(join(worktreeRoot, planPath), 'stale content', 'utf8');
+  it('overwrites equal-sized stale content during hydration', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(worktreeRoot, { recursive: true });
+
+      writeFileSync(join(durableRoot, 'implementation-log.md'), 'durable', 'utf8');
+      writeFileSync(join(worktreeRoot, 'implementation-log.md'), 'stale!!', 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
       await store.hydrateWorktree('run-1');
-      expect(readFileSync(join(worktreeRoot, planPath), 'utf8')).toBe(planContent);
+
+      expect(readFileSync(join(worktreeRoot, 'implementation-log.md'), 'utf8')).toBe('durable');
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates root-only legacy deliverable to .ai without data loss', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(worktreeRoot, { recursive: true });
+
+      const legacyPlan = '# Legacy Root Plan\n';
+      writeFileSync(join(worktreeRoot, 'plan.md'), legacyPlan, 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+      await store.hydrateWorktree('run-1');
+
+      expect(existsSync(join(worktreeRoot, '.ai', 'plan.md'))).toBe(true);
+      expect(readFileSync(join(worktreeRoot, '.ai', 'plan.md'), 'utf8')).toBe(legacyPlan);
+      expect(existsSync(join(worktreeRoot, 'plan.md'))).toBe(false);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails on root and .ai content conflict when durable copy is absent', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(join(worktreeRoot, '.ai'), { recursive: true });
+
+      writeFileSync(join(worktreeRoot, 'plan.md'), '# Root Plan\n', 'utf8');
+      writeFileSync(join(worktreeRoot, '.ai', 'plan.md'), '# AI Plan\n', 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+
+      await expect(store.hydrateWorktree('run-1')).rejects.toThrow(/conflict/i);
+
+      // Both copies must be preserved
+      expect(existsSync(join(worktreeRoot, 'plan.md'))).toBe(true);
+      expect(readFileSync(join(worktreeRoot, 'plan.md'), 'utf8')).toBe('# Root Plan\n');
+      expect(existsSync(join(worktreeRoot, '.ai', 'plan.md'))).toBe(true);
+      expect(readFileSync(join(worktreeRoot, '.ai', 'plan.md'), 'utf8')).toBe('# AI Plan\n');
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not treat a stray hydrated-path durable file as a canonical durable copy', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(join(durableRoot, '.ai'), { recursive: true });
+      mkdirSync(join(worktreeRoot, '.ai'), { recursive: true });
+
+      writeFileSync(join(durableRoot, '.ai', 'plan.md'), '# Stray Durable Plan\n', 'utf8');
+      writeFileSync(join(worktreeRoot, 'plan.md'), '# Legacy Root Plan\n', 'utf8');
+      writeFileSync(join(worktreeRoot, '.ai', 'plan.md'), '# Hydrated Plan\n', 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+
+      await expect(store.hydrateWorktree('run-1')).rejects.toThrow(/conflict/i);
+      expect(readFileSync(join(worktreeRoot, 'plan.md'), 'utf8')).toBe('# Legacy Root Plan\n');
+      expect(readFileSync(join(worktreeRoot, '.ai', 'plan.md'), 'utf8')).toBe('# Hydrated Plan\n');
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves source file if migration destination write fails', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(worktreeRoot, { recursive: true });
+
+      // Create a directory at .ai/plan.md so renaming/writing a file to .ai/plan.md fails
+      mkdirSync(join(worktreeRoot, '.ai', 'plan.md'), { recursive: true });
+      writeFileSync(join(worktreeRoot, 'plan.md'), '# Root Plan Content\n', 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+
+      await expect(store.hydrateWorktree('run-1')).rejects.toThrow();
+
+      // Source file must be preserved
+      expect(existsSync(join(worktreeRoot, 'plan.md'))).toBe(true);
+      expect(readFileSync(join(worktreeRoot, 'plan.md'), 'utf8')).toBe('# Root Plan Content\n');
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('removes redundant root copy if .ai already has identical content and durable copy is absent', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(join(worktreeRoot, '.ai'), { recursive: true });
+
+      const content = '# Identical Plan\n';
+      writeFileSync(join(worktreeRoot, 'plan.md'), content, 'utf8');
+      writeFileSync(join(worktreeRoot, '.ai', 'plan.md'), content, 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+      await store.hydrateWorktree('run-1');
+
+      expect(existsSync(join(worktreeRoot, '.ai', 'plan.md'))).toBe(true);
+      expect(readFileSync(join(worktreeRoot, '.ai', 'plan.md'), 'utf8')).toBe(content);
+      expect(existsSync(join(worktreeRoot, 'plan.md'))).toBe(false);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads canonical deliverable from .ai in worktree when durable copy is absent', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(join(worktreeRoot, '.ai'), { recursive: true });
+      writeFileSync(join(worktreeRoot, '.ai', 'plan.md'), '# Worktree AI Plan\n', 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+      await expect(store.read('run-1', 'plan.md')).resolves.toBe('# Worktree AI Plan\n');
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to legacy root in worktree when .ai and durable copies are absent', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(worktreeRoot, { recursive: true });
+      writeFileSync(join(worktreeRoot, 'plan.md'), '# Legacy Root Plan\n', 'utf8');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+      await expect(store.read('run-1', 'plan.md')).resolves.toBe('# Legacy Root Plan\n');
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws ArtifactNotFoundError when canonical deliverable is absent from durable, .ai, and root', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(worktreeRoot, { recursive: true });
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+      await expect(store.read('run-1', 'plan.md')).rejects.toThrow();
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
     }
