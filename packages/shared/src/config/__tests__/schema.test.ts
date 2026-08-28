@@ -252,3 +252,55 @@ describe('validation additionalCommands', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('executionPolicy', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: {
+      skip: [],
+      reviewFix: { maxIterations: 5 },
+      implement: { maxIterations: 1 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
+
+  it('defaults executionPolicy to legacy when omitted', () => {
+    const parsed = orchestratorConfigSchema.parse(baseConfig);
+    expect(parsed.executionPolicy).toBe('legacy');
+  });
+
+  it('accepts legacy executionPolicy explicitly', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      executionPolicy: 'legacy',
+    });
+    expect(parsed.executionPolicy).toBe('legacy');
+  });
+
+  it('accepts standard executionPolicy', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      executionPolicy: 'standard',
+    });
+    expect(parsed.executionPolicy).toBe('standard');
+  });
+
+  it('accepts strict executionPolicy', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      executionPolicy: 'strict',
+    });
+    expect(parsed.executionPolicy).toBe('strict');
+  });
+
+  it('rejects invalid executionPolicy values', () => {
+    const invalidValues = ['fast', 'relaxed', 'custom', '', 'LEGACY', 123];
+    for (const val of invalidValues) {
+      const result = orchestratorConfigSchema.safeParse({
+        ...baseConfig,
+        executionPolicy: val,
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+});

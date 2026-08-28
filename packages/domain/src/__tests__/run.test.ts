@@ -248,5 +248,64 @@ describe('Run state machine', () => {
       const resumed = resumeRun(r);
       expect(resumed.status).toBe('running');
     });
+
+    it('preserves executionPolicy through resumeRun', () => {
+      const r = failRun(createRun({ ...base, executionPolicy: 'standard' }), 'boom');
+      const resumed = resumeRun(r);
+      expect(resumed.executionPolicy).toBe('standard');
+
+      const rStrict = failRun(createRun({ ...base, executionPolicy: 'strict' }), 'boom');
+      const resumedStrict = resumeRun(rStrict, 'implement');
+      expect(resumedStrict.executionPolicy).toBe('strict');
+    });
+  });
+
+  describe('executionPolicy', () => {
+    it('defaults executionPolicy to legacy when omitted in createRun', () => {
+      const r = createRun(base);
+      expect(r.executionPolicy).toBe('legacy');
+    });
+
+    it('preserves explicit standard executionPolicy in createRun', () => {
+      const r = createRun({ ...base, executionPolicy: 'standard' });
+      expect(r.executionPolicy).toBe('standard');
+    });
+
+    it('preserves explicit strict executionPolicy in createRun', () => {
+      const r = createRun({ ...base, executionPolicy: 'strict' });
+      expect(r.executionPolicy).toBe('strict');
+    });
+
+    it('preserves executionPolicy across phase transitions and terminal states', () => {
+      let r = createRun({ ...base, executionPolicy: 'standard' });
+      r = startPhase(r, 'plan');
+      expect(r.executionPolicy).toBe('standard');
+      r = completePhase(r, 'plan');
+      expect(r.executionPolicy).toBe('standard');
+      r = startPhase(r, 'implement');
+      r = skipPhase(r, 'implement');
+      expect(r.executionPolicy).toBe('standard');
+
+      const passed = passRun(createRun({ ...base, executionPolicy: 'strict' }), new Date());
+      expect(passed.executionPolicy).toBe('strict');
+
+      const failed = failRun(createRun({ ...base, executionPolicy: 'standard' }), 'error');
+      expect(failed.executionPolicy).toBe('standard');
+
+      const blocked = blockRun(createRun({ ...base, executionPolicy: 'strict' }), 'blocked');
+      expect(blocked.executionPolicy).toBe('strict');
+
+      const review = markRunNeedsHumanReview(
+        createRun({ ...base, executionPolicy: 'standard' }),
+        'check',
+      );
+      expect(review.executionPolicy).toBe('standard');
+
+      const cancelled = cancelRun(
+        createRun({ ...base, executionPolicy: 'strict' }),
+        'user cancelled',
+      );
+      expect(cancelled.executionPolicy).toBe('strict');
+    });
   });
 });

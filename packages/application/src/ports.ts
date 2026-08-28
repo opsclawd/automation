@@ -5,6 +5,7 @@ import type {
   ClassifyExitInput,
   RunId,
   RepositoryId,
+  ExecutionPolicy,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
@@ -27,6 +28,7 @@ export interface RunRecord extends Run {
   baseBranch?: string;
   configFingerprint?: string;
   configSourcesJson?: string;
+  executionPolicy?: ExecutionPolicy;
 }
 
 export interface RunRepositoryUpdatePatch {
@@ -43,6 +45,7 @@ export interface RunRepositoryUpdatePatch {
   baseBranch?: string;
   configFingerprint?: string;
   configSourcesJson?: string;
+  executionPolicy?: ExecutionPolicy;
 }
 
 export type ListRunsFilter = {

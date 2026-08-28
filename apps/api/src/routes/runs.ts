@@ -12,6 +12,7 @@ import {
   RunRepositoryMismatchError,
   RunRepositoryMissingError,
   type ResumeDisposition,
+  type ExecutionPolicy,
 } from '@ai-sdlc/domain';
 import {
   planRunRecoveryAction,
@@ -103,12 +104,21 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
       repositoryId?: string;
       repo?: string;
       baseBranch?: string;
+      executionPolicy?: unknown;
     };
   }>('/api/runs', async (req, reply) => {
     const body = req.body ?? {};
     const issueNumber = Number(body.issueNumber);
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
       return reply.code(400).send({ error: 'invalid_issue_number' });
+    }
+    if (body.executionPolicy !== undefined) {
+      if (
+        typeof body.executionPolicy !== 'string' ||
+        !['legacy', 'standard', 'strict'].includes(body.executionPolicy)
+      ) {
+        return reply.code(400).send({ error: 'invalid_execution_policy' });
+      }
     }
     const ctx = resolveRepoContext(
       { headers: req.headers, query: (req.query ?? {}) as Record<string, unknown> },
@@ -141,6 +151,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         issueNumber,
         repoId: repositoryId,
         baseBranch: typeof body.baseBranch === 'string' ? body.baseBranch : undefined,
+        executionPolicy: (body.executionPolicy as ExecutionPolicy | undefined) ?? c.executionPolicy,
       });
       return reply.code(201).send({ run });
     } catch (err) {

@@ -6,7 +6,13 @@ import {
   RepositoryNotApprovedError,
   RepositoryValidationError,
 } from '@ai-sdlc/domain';
-import type { Failure, ClassifierEvent, RepositoryId, Repository } from '@ai-sdlc/domain';
+import type {
+  Failure,
+  ClassifierEvent,
+  RepositoryId,
+  Repository,
+  ExecutionPolicy,
+} from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
@@ -45,6 +51,7 @@ export interface StartIssueRunDeps {
   baseBranch?: string;
   model?: string;
   agentCli?: string;
+  executionPolicy?: ExecutionPolicy;
   tee?: boolean;
   now?: () => Date;
   logger?: { error: (msg: string, err?: unknown) => void };
@@ -55,6 +62,7 @@ export interface StartIssueRunInput {
   issueNumber: number;
   repoId?: RepositoryId | undefined;
   baseBranch?: string | undefined;
+  executionPolicy?: ExecutionPolicy | undefined;
 }
 
 export interface StartIssueRunOutput {
@@ -63,6 +71,7 @@ export interface StartIssueRunOutput {
   exitCode: number;
   status: 'passed' | 'failed' | 'cancelled';
   repoId: RepositoryId;
+  executionPolicy?: ExecutionPolicy;
 }
 
 export class StartIssueRun {
@@ -128,6 +137,7 @@ export class StartIssueRun {
       issueNumber: input.issueNumber,
       startedAt,
       repoId,
+      executionPolicy: input.executionPolicy ?? this.deps.executionPolicy ?? 'legacy',
     });
     this.deps.runRepository.insertIfNoActive(run);
 
@@ -179,6 +189,7 @@ export class StartIssueRun {
     if (baseBranch !== undefined) env.AI_BASE_BRANCH = baseBranch;
     if (this.deps.model !== undefined) env.AI_AGENT_MODEL = this.deps.model;
     if (this.deps.agentCli !== undefined) env.AI_RUNTIME = this.deps.agentCli;
+    if (run.executionPolicy !== undefined) env.AI_EXECUTION_POLICY = run.executionPolicy;
 
     const collectedEvents: ClassifierEvent[] = [];
     let classified = false;
@@ -332,6 +343,7 @@ export class StartIssueRun {
             exitCode: exec.exitCode,
             status: current.status as 'passed' | 'failed' | 'cancelled',
             repoId,
+            ...(run.executionPolicy !== undefined ? { executionPolicy: run.executionPolicy } : {}),
           };
         }
         if (finalStatus === 'failed') {
@@ -397,6 +409,9 @@ export class StartIssueRun {
               exitCode: exec.exitCode,
               status: 'passed',
               repoId,
+              ...(run.executionPolicy !== undefined
+                ? { executionPolicy: run.executionPolicy }
+                : {}),
             };
           }
           this.deps.runRepository.update(run.uuid, {
@@ -421,6 +436,7 @@ export class StartIssueRun {
           exitCode: exec.exitCode,
           status: finalStatus,
           repoId,
+          ...(run.executionPolicy !== undefined ? { executionPolicy: run.executionPolicy } : {}),
         };
       } finally {
         try {

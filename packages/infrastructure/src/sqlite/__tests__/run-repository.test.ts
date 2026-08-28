@@ -653,3 +653,77 @@ describe('SqliteRunRepository.list filtering', () => {
     expect(both.total).toBe(1);
   });
 });
+
+describe('SqliteRunRepository executionPolicy persistence', () => {
+  it('persists executionPolicy on insert and defaults to legacy when omitted', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+
+    repo.insert({
+      uuid: 'run-legacy-default',
+      displayId: 'issue-1-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+
+    repo.insert({
+      uuid: 'run-standard',
+      displayId: 'issue-2-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 2,
+      type: 'issue_to_pr',
+      executionPolicy: 'standard',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+
+    repo.insert({
+      uuid: 'run-strict',
+      displayId: 'issue-3-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 3,
+      type: 'issue_to_pr',
+      executionPolicy: 'strict',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+
+    expect(repo.findByUuid('run-legacy-default')?.executionPolicy).toBe('legacy');
+    expect(repo.findByUuid('run-standard')?.executionPolicy).toBe('standard');
+    expect(repo.findByUuid('run-strict')?.executionPolicy).toBe('strict');
+
+    db.close();
+  });
+
+  it('updates executionPolicy via update and atomicUpdateByUuid', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+
+    repo.insert({
+      uuid: 'run-update',
+      displayId: 'issue-1-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      executionPolicy: 'legacy',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+
+    repo.update('run-update', { executionPolicy: 'standard' });
+    expect(repo.findByUuid('run-update')?.executionPolicy).toBe('standard');
+
+    const updated = repo.atomicUpdateByUuid('run-update', { executionPolicy: 'strict' }, 'running');
+    expect(updated).toBe(true);
+    expect(repo.findByUuid('run-update')?.executionPolicy).toBe('strict');
+
+    db.close();
+  });
+});

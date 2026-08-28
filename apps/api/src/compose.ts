@@ -202,6 +202,7 @@ import {
   type OrchestratorConfig,
   PHASE_FALLBACKS,
   type AgentConfig,
+  type ExecutionPolicy,
 } from '@ai-sdlc/shared';
 
 interface SchedulerConfig {
@@ -857,6 +858,7 @@ export interface Container {
   runRepository: RunRepository;
   phaseRepository: PhaseRepository;
   phaseRegistry: PhaseHandlerRegistry;
+  executionPolicy: ExecutionPolicy;
   runExecutor?: RunExecutor;
   reapOrphanedTestWorkers: ReapOrphanedTestWorkers;
   eventRepository: EventRepository;
@@ -2394,6 +2396,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let fingerprint: string | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let sources: any;
+  let executionPolicy: ExecutionPolicy = 'legacy';
   try {
     const cacheKey = `${effectiveRepoRoot}|${effectiveTargetRepoRoot ?? ''}`;
     let layered = layeredConfigCache.get(cacheKey);
@@ -2406,6 +2409,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     }
     fingerprint = layered.fingerprint;
     sources = layered.sources;
+    executionPolicy = layered.config.executionPolicy ?? 'legacy';
   } catch {
     // Ignore error here; the main config loader below will throw if config is invalid/missing.
   }
@@ -2414,6 +2418,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     db,
     fingerprint,
     sources ? JSON.stringify(sources) : undefined,
+    executionPolicy,
   );
   const artifactRepository = new ArtifactRepository(db);
   const prReviewRepository = new PrReviewRepository(db);
@@ -3915,6 +3920,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             now: () => new Date(),
           },
           {
+            executionPolicy: run.executionPolicy ?? config.executionPolicy ?? 'legacy',
             promptsRoot: join(effectiveRepoRoot, 'prompts'),
             expectedBranch: `ai/issue-${run.issueNumber}`,
             baseBranch: run.baseBranch ?? opts.baseBranch ?? defaultBranch,
@@ -7802,6 +7808,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     runRepository,
     phaseRepository,
     phaseRegistry,
+    executionPolicy,
     reapOrphanedTestWorkers,
     ...(runExecutor !== undefined ? { runExecutor } : {}),
     eventRepository,
