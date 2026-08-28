@@ -28,6 +28,17 @@ export class CompoundHandler extends SingleShotAgentHandler {
   override async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
 
+    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    if (isLeanPolicy) {
+      emit(
+        `${String(this.phase)}.completed`,
+        'info',
+        `${String(this.phase)} skipped (lean policy no-op)`,
+        { policy: ctx.executionPolicy },
+      );
+      return { outcome: 'passed' };
+    }
+
     let headBefore: string;
     try {
       headBefore = await ctx.git.headCommitSha(ctx.cwd);

@@ -1,0 +1,218 @@
+import { describe, it, expect } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { loadPromptTemplate, renderPrompt } from '../prompts/index.js';
+import { FakeArtifactStore } from '../test-doubles/fake-artifact-store.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const promptsRoot = resolve(__dirname, '../../../../prompts');
+
+describe('Lean pipeline prompts (Issue #1103)', () => {
+  describe('Unified Planning prompt (prompts/plan-design/plan-unified.md)', () => {
+    it('loads and renders unified planning template with expected grounding and output contract', async () => {
+      const template = loadPromptTemplate('plan-design', 'plan-unified', { promptsRoot });
+
+      // Grounding & Authority
+      expect(template).toMatch(/issue and comments provided above/i);
+      expect(template).toMatch(/`AGENTS\.md`/);
+      expect(template).toMatch(/`CONTEXT\.md`/);
+      expect(template).toMatch(/relevant ADRs and design documentation/i);
+      expect(template).toMatch(
+        /Anchored Design, Non-goals, and Acceptance Criteria as authoritative/i,
+      );
+
+      // Output contract
+      expect(template).toContain('"design_md"');
+      expect(template).toContain('"plan_md"');
+      expect(template).toContain('result.json');
+
+      // Critical rules
+      expect(template).toMatch(/Do not modify source files or implement the issue/i);
+      expect(template).toMatch(/Do not ask questions/i);
+      expect(template).toMatch(/Do not switch git branches/i);
+
+      // Procedural reasoning choreography removed
+      expect(template).not.toContain('task_manifest');
+      expect(template).not.toContain('task-manifest');
+      expect(template).not.toContain('expected_files');
+      expect(template).not.toContain('permitted_areas');
+      expect(template).not.toContain('## Task 1:');
+      expect(template).not.toMatch(/RED task/i);
+      expect(template).not.toMatch(/PORT\/INTERFACE CHANGES/i);
+      expect(template).not.toMatch(/TEST-FIRST COMMIT ORDER/i);
+
+      // Render verification
+      const artifacts = new FakeArtifactStore();
+      const rendered = await renderPrompt(template, {
+        runId: 'run-test',
+        vars: { issue_number: '1103', cwd: '/tmp/wt' },
+        artifacts,
+      });
+      expect(rendered).toContain('WORKSPACE CONSTRAINTS');
+      expect(rendered).toContain('result.json');
+    });
+  });
+
+  describe('Lean Implementation prompt (prompts/implement/implement.md)', () => {
+    it('loads and renders lean implementation template allowing justified discoveries without manifest constraints', async () => {
+      const template = loadPromptTemplate('implement', 'implement', { promptsRoot });
+
+      // Grounding & Authority
+      expect(template).toContain('{{artifact?:issue.md}}');
+      expect(template).toContain('{{artifact:design.md}}');
+      expect(template).toContain('{{artifact:plan.md}}');
+      expect(template).toMatch(/`AGENTS\.md`/);
+      expect(template).toMatch(/`CONTEXT\.md`/);
+      expect(template).toMatch(/GitHub issue remains authoritative/i);
+
+      // On-the-fly implementation decisions permitted
+      expect(template).toMatch(
+        /Make any reasonable changes required to implement the issue correctly/i,
+      );
+      expect(template).toMatch(
+        /helpers, callers, tests, fixtures, or adjacent code that the plan did not anticipate/i,
+      );
+
+      // Anti-scope-creep & architectural boundary rules
+      expect(template).toMatch(/Avoid unrelated cleanup or refactoring/i);
+      expect(template).toMatch(/Follow repository architecture and engineering conventions/i);
+
+      // Output contract
+      expect(template).toContain('implementation-log.md');
+      expect(template).toContain('Status: DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT');
+
+      // Removal of manifest/file whitelist constraints
+      expect(template).not.toContain('task_manifest');
+      expect(template).not.toContain('task-manifest');
+      expect(template).not.toContain('manifest-declared');
+
+      // Render verification
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'run-test',
+        relativePath: 'issue.md',
+        contents: '# Issue 1103',
+      });
+      await artifacts.write({ runId: 'run-test', relativePath: 'design.md', contents: '# Design' });
+      await artifacts.write({ runId: 'run-test', relativePath: 'plan.md', contents: '# Plan' });
+
+      const rendered = await renderPrompt(template, {
+        runId: 'run-test',
+        vars: { issue_number: '1103', cwd: '/tmp/wt' },
+        artifacts,
+      });
+      expect(rendered).toContain('# Issue 1103');
+      expect(rendered).toContain('# Design');
+      expect(rendered).toContain('# Plan');
+      expect(rendered).toContain('implementation-log.md');
+    });
+  });
+
+  describe('Whole-Change Review prompt (prompts/review-fix/whole-change-review.md)', () => {
+    it('loads and renders whole-change review template with AC verification and material findings focus', async () => {
+      const template = loadPromptTemplate('review-fix', 'whole-change-review', { promptsRoot });
+
+      // Grounding & Read-only
+      expect(template).toMatch(/read-only review/i);
+      expect(template).toContain('{{var:complete_diff}}');
+      expect(template).toContain('{{var:validation_evidence}}');
+      expect(template).toContain('{{artifact?:issue.md}}');
+      expect(template).toContain('{{artifact:design.md}}');
+      expect(template).toContain('{{artifact:plan.md}}');
+
+      // Material findings focus & AC verification
+      expect(template).toMatch(/Look for material problems including/i);
+      expect(template).toMatch(
+        /Explicitly verify every Acceptance Criterion from the issue as PASS or FAIL/i,
+      );
+      expect(template).toMatch(/`APPROVE` if no merge-blocking defects remain/i);
+      expect(template).toMatch(/`REQUEST_CHANGES` if correction is required/i);
+
+      // Schema output
+      expect(template).toContain('result.json');
+      expect(template).toContain('"verdict"');
+      expect(template).toContain('"acceptance_criteria"');
+      expect(template).toContain('"findings"');
+
+      // No manifest dependencies or redundant severity taxonomy prose
+      expect(template).not.toContain('task_manifest');
+      expect(template).not.toContain('task-manifest');
+      expect(template).not.toMatch(/"critical": Security vulnerabilities/);
+
+      // Render verification
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'run-test',
+        relativePath: 'issue.md',
+        contents: '# Issue 1103',
+      });
+      await artifacts.write({ runId: 'run-test', relativePath: 'design.md', contents: '# Design' });
+      await artifacts.write({ runId: 'run-test', relativePath: 'plan.md', contents: '# Plan' });
+
+      const rendered = await renderPrompt(template, {
+        runId: 'run-test',
+        vars: {
+          issue_number: '1103',
+          cwd: '/tmp/wt',
+          complete_diff: 'diff --git a/test.ts b/test.ts',
+          validation_evidence: 'All 10 tests passed',
+        },
+        artifacts,
+      });
+      expect(rendered).toContain('diff --git a/test.ts b/test.ts');
+      expect(rendered).toContain('All 10 tests passed');
+    });
+  });
+
+  describe('Targeted Fix prompt (prompts/review-fix/targeted-fix.md)', () => {
+    it('loads and renders targeted fix template without git staging/commit choreography', async () => {
+      const template = loadPromptTemplate('review-fix', 'targeted-fix', { promptsRoot });
+
+      // Grounding
+      expect(template).toContain('{{var:review_findings}}');
+      expect(template).toContain('{{artifact?:issue.md}}');
+      expect(template).toContain('{{artifact:design.md}}');
+      expect(template).toContain('{{artifact:plan.md}}');
+
+      // Scope & Worktree State
+      expect(template).toMatch(/Fix ONLY what the review findings report/i);
+      expect(template).toMatch(
+        /leave the worktree in a finished state for deterministic validation/i,
+      );
+
+      // Output contract
+      expect(template).toContain('result.json');
+      expect(template).toContain('"result": "done_with_fixes"');
+
+      // Critical rules & No git staging/commit choreography
+      expect(template).not.toMatch(/git add/i);
+      expect(template).not.toMatch(/git commit/i);
+      expect(template).toMatch(/Do not create commits/i);
+      expect(template).toMatch(/Do not switch git branches/i);
+      expect(template).toMatch(/Do not ask questions/i);
+
+      // Render verification
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'run-test',
+        relativePath: 'issue.md',
+        contents: '# Issue 1103',
+      });
+      await artifacts.write({ runId: 'run-test', relativePath: 'design.md', contents: '# Design' });
+      await artifacts.write({ runId: 'run-test', relativePath: 'plan.md', contents: '# Plan' });
+
+      const rendered = await renderPrompt(template, {
+        runId: 'run-test',
+        vars: {
+          issue_number: '1103',
+          cwd: '/tmp/wt',
+          review_findings: '1. Broken null check in foo.ts',
+        },
+        artifacts,
+      });
+      expect(rendered).toContain('1. Broken null check in foo.ts');
+      expect(rendered).toContain('done_with_fixes');
+    });
+  });
+});

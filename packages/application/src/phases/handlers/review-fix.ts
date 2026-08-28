@@ -187,7 +187,7 @@ export class ReviewFixHandler implements PhaseHandler {
     let completeDiff = '';
     try {
       if (ctx.git?.diff) {
-        completeDiff = await ctx.git.diff(ctx.cwd, ctx.startCommitSha ?? baseBranch, 'HEAD');
+        completeDiff = await ctx.git.diff(ctx.cwd, ctx.startCommitSha ?? baseBranch);
       }
     } catch {
       completeDiff = '';
@@ -387,7 +387,11 @@ export class ReviewFixHandler implements PhaseHandler {
         cwd: ctx.cwd,
         review_findings: formattedFindings,
       },
-      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+      agentContract: {
+        requiredArtifacts: [],
+        mustNotChangeBranch: true,
+        mustNotCreateCommit: true,
+      },
       skipResultExtraction: true,
     });
 
@@ -492,11 +496,7 @@ export class ReviewFixHandler implements PhaseHandler {
     let fixDiff = '';
     try {
       if (ctx.git?.diff) {
-        fixDiff = await ctx.git.diff(
-          ctx.cwd,
-          headBeforeFix ?? ctx.startCommitSha ?? baseBranch,
-          'HEAD',
-        );
+        fixDiff = await ctx.git.diff(ctx.cwd, headBeforeFix ?? ctx.startCommitSha ?? baseBranch);
       }
     } catch {
       fixDiff = '';

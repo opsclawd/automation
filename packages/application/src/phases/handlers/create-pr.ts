@@ -7,6 +7,7 @@ import {
   uncommittedSourcePaths,
   formatDirtyPaths,
 } from '../../artifacts/orchestrator-artifacts.js';
+import { isProtectedFilePath } from '../../scratch-file-remediation.js';
 import { recordValidationHeadSha } from '../validation-headsha.js';
 import { RunId } from '@ai-sdlc/domain';
 import type { RunValidation } from '../../run-validation.js';
@@ -38,7 +39,7 @@ export class CreatePrHandler implements PhaseHandler {
 
     const writtenArtifacts: string[] = [];
 
-    // ── Stage -1: Clean-worktree gate — dirty source blocks PR creation ──
+    // ── Stage -1: Clean-worktree gate — dirty source blocks PR creation / application-owned staging ──
     let rawStatus: string;
     try {
       rawStatus = await ctx.git.status(ctx.cwd);
@@ -55,7 +56,48 @@ export class CreatePrHandler implements PhaseHandler {
       );
     }
 
-    const dirtyPaths = uncommittedSourcePaths(rawStatus);
+    let dirtyPaths = uncommittedSourcePaths(rawStatus);
+    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+
+    if (isLeanPolicy && dirtyPaths.length > 0) {
+      const unapprovedProtected = dirtyPaths.filter((p) => isProtectedFilePath(p));
+      if (unapprovedProtected.length > 0) {
+        const msg = `PR creation blocked by unpermitted protected files in worktree: ${unapprovedProtected.join(', ')}`;
+        emit('create_pr.blocked', 'error', msg, { paths: unapprovedProtected });
+        return this._fail(
+          ctx,
+          'git_failed',
+          msg,
+          false,
+          'Revert unpermitted changes to protected files before creating a PR.',
+          writtenArtifacts,
+        );
+      }
+
+      // Application owns staging and committing dirty source changes
+      emit(
+        'create_pr.staging',
+        'info',
+        `staging and committing ${dirtyPaths.length} modified files`,
+      );
+      try {
+        await ctx.git.add(ctx.cwd, dirtyPaths);
+        await ctx.git.commit(ctx.cwd, `feat: implement issue #${ctx.issueNumber}`, dirtyPaths);
+        dirtyPaths = [];
+      } catch (e) {
+        const msg = `failed to stage and commit changes: ${(e as Error).message}`;
+        emit('create_pr.failed', 'error', msg);
+        return this._fail(
+          ctx,
+          'git_failed',
+          msg,
+          false,
+          'Check git repository permissions and status.',
+          writtenArtifacts,
+        );
+      }
+    }
+
     if (dirtyPaths.length > 0) {
       const msg = `PR creation blocked by uncommitted source changes: ${formatDirtyPaths(dirtyPaths)}`;
       emit('create_pr.blocked', 'error', msg, { paths: dirtyPaths });

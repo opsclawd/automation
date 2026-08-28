@@ -4,7 +4,8 @@
 
 {{var:WORKSPACE_CONSTRAINTS}}
 
-You are working in the repository worktree to implement the approved planning package.
+Working directory: {{var:cwd}}
+Issue number: {{var:issue_number}}
 
 Issue description:
 {{artifact?:issue.md}}
@@ -20,33 +21,36 @@ Implementation plan:
 
 ## TASK
 
-Execute the implementation plan described in `plan.md` end-to-end to satisfy the issue requirements.
+Implement the GitHub issue completely.
 
-1. Review the issue requirements, design document, and implementation plan.
-2. Implement the required changes in the worktree. You may modify any files legitimately required to satisfy the issue while adhering to repository standards, type safety, and architectural boundaries.
-3. Do NOT touch protected configuration files (such as `.gitignore`, `.ai-orchestrator.json`, or `.github/*`) unless explicitly required by the issue.
-4. Stage new and modified implementation files explicitly and commit them cleanly:
-   ```bash
-   git add <files>
-   git commit -m "type: concise commit subject"
-   ```
-   Do not use `git add -A` (orchestrator artifacts must remain untracked).
+Use the issue, comments, design, and plan provided above as the authoritative requirements and guidance.
 
-## FINAL ACTION — Unconditional file write
+Also read:
+- `AGENTS.md`
+- `CONTEXT.md`
+- relevant ADRs and repository documentation
+- the current implementation and relevant tests
 
-Before you finish, you MUST write exactly one file named `implementation-log.md`
-at the worktree root (`./implementation-log.md`).
+Use the approved design and plan as guidance, but continue investigating the repository as you work. Make any reasonable changes required to implement the issue correctly, including helpers, callers, tests, fixtures, or adjacent code that the plan did not anticipate.
 
-The file MUST begin with:
+The GitHub issue remains authoritative. Do not silently violate its Anchored Design, Non-goals, or Acceptance Criteria.
+
+Follow repository architecture and engineering conventions. Avoid unrelated cleanup or refactoring that is not justified by the implementation.
+
+Add or update appropriate tests and run useful targeted validation while working.
+
+Implement the change completely and leave the worktree in a finished state for deterministic validation and independent review.
+
+## FINAL ACTION
+
+Write `./implementation-log.md` at the worktree root:
 
     Status: DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT
 
-followed by 1-3 lines describing what changed and a `Files changed:` section listing
-all paths touched in this run.
+followed by a concise summary of changes and a `Files changed:` section listing all paths touched.
 
 ## CRITICAL RULES
 
-- Do NOT ask questions. Make reasonable technical assumptions and document them.
-- Do NOT switch branches (no `git checkout`, `git switch`, `git stash branch`).
-- Do NOT write `.result` files.
+- Do not ask questions. Make reasonable technical decisions and document them.
+- Do not switch branches (no `git checkout`, `git switch`, `git stash branch`).
 - Write `./implementation-log.md` before stopping.

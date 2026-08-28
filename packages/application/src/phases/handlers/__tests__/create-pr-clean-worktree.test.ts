@@ -115,4 +115,93 @@ describe('CreatePrHandler clean-worktree gate', () => {
     expect(blockedEvent).toBeDefined();
     expect((blockedEvent?.metadata as { paths?: string[] })?.paths).toHaveLength(15);
   });
+
+  describe('lean execution policy (application-owned staging, committing, and revalidation)', () => {
+    function createRevalidateHandler(passed: boolean, calls: string[]) {
+      return new CreatePrHandler({
+        headBranch: () => 'feat/issue-7',
+        revalidate: {
+          runValidation: {
+            execute: async (input: { cwd: string }) => {
+              calls.push(input.cwd);
+              return {
+                passed,
+                validationRun: { commands: [] },
+              };
+            },
+          } as never,
+          commands: ['pnpm test'],
+          timeoutSeconds: 300,
+          logDir: '/tmp/revalidate',
+        },
+      });
+    }
+
+    it('stages, commits dirty source files, triggers revalidation on new commit HEAD, and creates PR', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+      };
+      git.statusByCwd.set('/tmp/wt', ' M packages/application/src/uncommitted.ts\n');
+
+      const revalidateCalls: string[] = [];
+      const leanHandler = createRevalidateHandler(true, revalidateCalls);
+      const result = await leanHandler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.addCalls).toEqual([
+        { cwd: '/tmp/wt', files: ['packages/application/src/uncommitted.ts'] },
+      ]);
+      expect(git.commits).toHaveLength(1);
+      expect(git.commits[0]?.message).toBe('feat: implement issue #7');
+      expect(revalidateCalls).toEqual(['/tmp/wt']);
+      expect(git.pushes).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+      expect(events.some((event) => event.type === 'create_pr.staging')).toBe(true);
+      expect(events.some((event) => event.type === 'create_pr.revalidating')).toBe(true);
+
+      const recordedHeadSha = (await artifacts.read(ctx.runUuid, 'validation.headsha')).trim();
+      expect(recordedHeadSha).toBe(git.commits[0]?.sha);
+    });
+
+    it('blocks PR creation when revalidation fails on the new control-plane commit', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+      };
+      git.statusByCwd.set('/tmp/wt', ' M packages/application/src/uncommitted.ts\n');
+
+      const revalidateCalls: string[] = [];
+      const leanHandler = createRevalidateHandler(false, revalidateCalls);
+      const result = await leanHandler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('validation_failed');
+      }
+      expect(git.commits).toHaveLength(1);
+      expect(revalidateCalls).toEqual(['/tmp/wt']);
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+    });
+
+    it('blocks PR creation under lean policy if dirty files include unpermitted protected files', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+      };
+      git.statusByCwd.set('/tmp/wt', ' M .gitignore\n M src/app.ts\n');
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.message).toContain('unpermitted protected files');
+      }
+      expect(git.commits).toEqual([]);
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+    });
+  });
 });
