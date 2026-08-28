@@ -163,4 +163,20 @@ describe('ValidateHandler clean-worktree gate', () => {
     expect(failedEvent).toBeDefined();
     expect((failedEvent?.metadata as { paths?: string[] })?.paths).toHaveLength(15);
   });
+
+  describe('lean execution policy', () => {
+    it('allows uncommitted source changes and executes validation commands under lean executionPolicy', async () => {
+      const { handler, ctx, git, validation } = fixture;
+      ctx.executionPolicy = 'standard';
+      git.statusByCwd.set(
+        '/tmp/wt',
+        ' M packages/application/src/a.ts\nA  packages/application/src/b.ts\n?? apps/web/src/c.tsx\n',
+      );
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(validation.lastInput?.cwd).toBe('/tmp/wt');
+    });
+  });
 });

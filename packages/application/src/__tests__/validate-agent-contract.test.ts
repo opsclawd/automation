@@ -403,6 +403,67 @@ describe('validateAgentContract', () => {
     });
   });
 
+  describe('mustNotCreateCommit', () => {
+    it('returns no violations when endCommitSha equals startCommitSha', async () => {
+      const sha = 'a'.repeat(40);
+      const result = await validateAgentContract({
+        contract: { mustNotCreateCommit: true },
+        invocation: sampleInv({
+          startCommitSha: sha,
+          endCommitSha: sha,
+        }),
+        ports: {
+          artifacts: new FakeArtifactStore(),
+          git: new FakeGitPort(),
+          github: new FakeGitHubPort(),
+        },
+        cwd: '/tmp',
+      });
+      expect(result).toEqual([]);
+    });
+
+    it('returns unexpected_commit when endCommitSha differs from startCommitSha', async () => {
+      const result = await validateAgentContract({
+        contract: { mustNotCreateCommit: true },
+        invocation: sampleInv({
+          startCommitSha: 'a'.repeat(40),
+          endCommitSha: 'b'.repeat(40),
+        }),
+        ports: {
+          artifacts: new FakeArtifactStore(),
+          git: new FakeGitPort(),
+          github: new FakeGitHubPort(),
+        },
+        cwd: '/tmp',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.UNEXPECTED_COMMIT);
+    });
+
+    it('returns unexpected_commit when endCommitSha is undefined and HEAD differs from startCommitSha', async () => {
+      const git = new FakeGitPort();
+      git.headByCwd.set('/tmp', 'b'.repeat(40));
+      const result = await validateAgentContract({
+        contract: { mustNotCreateCommit: true },
+        invocation: sampleInv({ startCommitSha: 'a'.repeat(40) }),
+        ports: { artifacts: new FakeArtifactStore(), git, github: new FakeGitHubPort() },
+        cwd: '/tmp',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.UNEXPECTED_COMMIT);
+    });
+
+    it('returns no violations when endCommitSha is undefined and HEAD equals startCommitSha', async () => {
+      const git = new FakeGitPort();
+      git.headByCwd.set('/tmp', 'a'.repeat(40));
+      const result = await validateAgentContract({
+        contract: { mustNotCreateCommit: true },
+        invocation: sampleInv({ startCommitSha: 'a'.repeat(40) }),
+        ports: { artifacts: new FakeArtifactStore(), git, github: new FakeGitHubPort() },
+        cwd: '/tmp',
+      });
+      expect(result).toEqual([]);
+    });
+  });
+
   describe('mustCreateCommit', () => {
     it('returns no violations when endCommitSha differs from startCommitSha', async () => {
       const result = await validateAgentContract({

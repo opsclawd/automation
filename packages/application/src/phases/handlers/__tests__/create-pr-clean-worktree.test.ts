@@ -115,4 +115,45 @@ describe('CreatePrHandler clean-worktree gate', () => {
     expect(blockedEvent).toBeDefined();
     expect((blockedEvent?.metadata as { paths?: string[] })?.paths).toHaveLength(15);
   });
+
+  describe('lean execution policy (application-owned staging and committing)', () => {
+    it('automatically stages and commits dirty source files and creates PR under lean policy', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+      };
+      git.statusByCwd.set('/tmp/wt', ' M packages/application/src/uncommitted.ts\n');
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.addCalls).toEqual([
+        { cwd: '/tmp/wt', files: ['packages/application/src/uncommitted.ts'] },
+      ]);
+      expect(git.commits).toHaveLength(1);
+      expect(git.commits[0]?.message).toBe('feat: implement issue #7');
+      expect(git.pushes).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+      expect(events.some((event) => event.type === 'create_pr.staging')).toBe(true);
+    });
+
+    it('blocks PR creation under lean policy if dirty files include unpermitted protected files', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+      };
+      git.statusByCwd.set('/tmp/wt', ' M .gitignore\n M src/app.ts\n');
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.message).toContain('unpermitted protected files');
+      }
+      expect(git.commits).toEqual([]);
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+    });
+  });
 });

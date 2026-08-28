@@ -86,6 +86,17 @@ export async function validateAgentContract(
     }
   }
 
+  if (contract.mustNotCreateCommit) {
+    try {
+      const endSha = invocation.endCommitSha ?? (await ports.git.headCommitSha(cwd));
+      if (endSha !== invocation.startCommitSha) {
+        violations.push(CONTRACT_VIOLATION_CODES.UNEXPECTED_COMMIT);
+      }
+    } catch {
+      violations.push(CONTRACT_VIOLATION_CODES.UNEXPECTED_COMMIT);
+    }
+  }
+
   if (contract.mustPush) {
     try {
       const endSha = invocation.endCommitSha ?? (await ports.git.headCommitSha(cwd));

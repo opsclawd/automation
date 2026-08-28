@@ -269,18 +269,14 @@ Add login route and handler.`;
   it('allows newly discovered helpers, callers, tests, and fixtures without manifest scope rejection', async () => {
     const git = ctx.git as FakeGitPort;
     const preSha = '0'.repeat(40);
-    const postSha = '1'.repeat(40);
-    git.changedFilesResults.set(`${preSha}|${postSha}`, [
-      'src/auth/service.ts',
-      'src/auth/helpers/token.ts',
-      'src/routes/caller.ts',
-      'test/fixtures/auth-data.json',
-      'test/regression/new-coverage.test.ts',
-    ]);
+    git.headByCwd.set(ctx.cwd, preSha);
+    git.statusByCwd.set(
+      ctx.cwd,
+      ' M src/auth/service.ts\n?? src/auth/helpers/token.ts\n?? test/fixtures/auth-data.json\n',
+    );
 
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('opencode-frontier', () => {
-      git.headByCwd.set(ctx.cwd, postSha);
       return successResult();
     });
 
@@ -301,6 +297,39 @@ Add login route and handler.`;
     expect(result.outcome).toBe('passed');
     const persistedSteps = steps.listForRun(ctx.runUuid as RunId);
     expect(persistedSteps[0]?.status).toBe('success');
+  });
+
+  it('fails with contract violation when agent creates an unexpected commit under lean policy', async () => {
+    const git = ctx.git as FakeGitPort;
+    const preSha = '0'.repeat(40);
+    const postSha = '1'.repeat(40);
+    git.headByCwd.set(ctx.cwd, preSha);
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', () => {
+      git.headByCwd.set(ctx.cwd, postSha);
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'implement',
+      relativePath: 'implementation-log.md',
+      contents: 'Status: DONE\nImplemented changes.\n',
+    });
+
+    const handler = new ImplementHandler({
+      steps,
+      runStep: runStepMock,
+    });
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('blocked');
+    if (result.outcome === 'blocked') {
+      expect(result.failure.kind).toBe('agent_contract_violation');
+      expect(result.failure.message).toContain('unexpected_commit');
+    }
   });
 
   it('inbound worktree cleanliness gate aborts implementation before agent invocation', async () => {

@@ -1666,7 +1666,11 @@ export class ImplementHandler implements PhaseHandler {
       step: 'implement',
       ...(template ? { template } : {}),
       vars: { issue_number: String(ctx.issueNumber), cwd: ctx.cwd },
-      agentContract: { requiredArtifacts: ['implementation-log.md'], mustNotChangeBranch: true },
+      agentContract: {
+        requiredArtifacts: ['implementation-log.md'],
+        mustNotChangeBranch: true,
+        mustNotCreateCommit: true,
+      },
       skipResultExtraction: true,
     });
 
@@ -1674,13 +1678,6 @@ export class ImplementHandler implements PhaseHandler {
       this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
       emit('step.failed', 'error', `step 1/1 failed`, { index: 1, total: 1 });
       return runResult;
-    }
-
-    // 8. Phase-boundary worktree cleanliness reconciliation
-    const reconciliation = await this.reconcilePhaseBoundary(ctx, emit);
-    if (reconciliation !== undefined) {
-      this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-      return reconciliation;
     }
 
     this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });

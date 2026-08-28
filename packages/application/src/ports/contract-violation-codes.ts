@@ -6,6 +6,7 @@ export const CONTRACT_VIOLATION_CODES = {
   INVALID_RESULT_VALUE: 'invalid_result_value',
   BRANCH_CHANGED: 'branch_changed',
   MISSING_COMMIT: 'missing_commit',
+  UNEXPECTED_COMMIT: 'unexpected_commit',
   NOT_PUSHED: 'not_pushed',
   REPLIES_NOT_POSTED: 'replies_not_posted',
   REPO_NOT_PROVIDED: 'repo_not_provided',

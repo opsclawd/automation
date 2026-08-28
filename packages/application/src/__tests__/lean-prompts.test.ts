@@ -164,4 +164,55 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(rendered).toContain('All 10 tests passed');
     });
   });
+
+  describe('Targeted Fix prompt (prompts/review-fix/targeted-fix.md)', () => {
+    it('loads and renders targeted fix template without git staging/commit choreography', async () => {
+      const template = loadPromptTemplate('review-fix', 'targeted-fix', { promptsRoot });
+
+      // Grounding
+      expect(template).toContain('{{var:review_findings}}');
+      expect(template).toContain('{{artifact?:issue.md}}');
+      expect(template).toContain('{{artifact:design.md}}');
+      expect(template).toContain('{{artifact:plan.md}}');
+
+      // Scope & Worktree State
+      expect(template).toMatch(/Fix ONLY what the review findings report/i);
+      expect(template).toMatch(
+        /leave the worktree in a finished state for deterministic validation/i,
+      );
+
+      // Output contract
+      expect(template).toContain('result.json');
+      expect(template).toContain('"result": "done_with_fixes"');
+
+      // Critical rules & No git staging/commit choreography
+      expect(template).not.toMatch(/git add/i);
+      expect(template).not.toMatch(/git commit/i);
+      expect(template).toMatch(/Do not create commits/i);
+      expect(template).toMatch(/Do not switch git branches/i);
+      expect(template).toMatch(/Do not ask questions/i);
+
+      // Render verification
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'run-test',
+        relativePath: 'issue.md',
+        contents: '# Issue 1103',
+      });
+      await artifacts.write({ runId: 'run-test', relativePath: 'design.md', contents: '# Design' });
+      await artifacts.write({ runId: 'run-test', relativePath: 'plan.md', contents: '# Plan' });
+
+      const rendered = await renderPrompt(template, {
+        runId: 'run-test',
+        vars: {
+          issue_number: '1103',
+          cwd: '/tmp/wt',
+          review_findings: '1. Broken null check in foo.ts',
+        },
+        artifacts,
+      });
+      expect(rendered).toContain('1. Broken null check in foo.ts');
+      expect(rendered).toContain('done_with_fixes');
+    });
+  });
 });

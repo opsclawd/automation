@@ -32,13 +32,8 @@ Implement the necessary fixes in the repository worktree to resolve all blocking
    - Fix ONLY what the review findings report. Do not expand scope or refactor unrelated code.
    - Respect repository architectural boundaries (inward dependencies only; do not import `@ai-sdlc/infrastructure` in `packages/application`).
 
-2. **Stage and Commit**:
-   Stage the modified source files explicitly and commit:
-   ```bash
-   git add <files>
-   git commit -m "fix: address whole-change review findings"
-   ```
-   Confirm the working tree is clean and HEAD has advanced.
+2. **Worktree State**:
+   - Make the required file modifications and leave the worktree in a finished state for deterministic validation.
 
 ## FINAL ACTION
 
@@ -51,7 +46,7 @@ Write `./result.json` with:
 
 ## CRITICAL RULES
 
-- Do NOT ask questions.
-- Do NOT switch git branches.
-- Commit all changes before writing `./result.json`.
+- Do not ask questions.
+- Do not switch git branches.
+- Do not create commits.
 - Write `./result.json` before stopping.

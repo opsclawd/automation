@@ -84,8 +84,9 @@ export class ValidateHandler implements PhaseHandler {
       return { outcome: 'failed', failure };
     }
 
+    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
     const dirtyPaths = uncommittedSourcePaths(statusOutput);
-    if (dirtyPaths.length > 0) {
+    if (!isLeanPolicy && dirtyPaths.length > 0) {
       let scratchReport:
         | { steps?: Array<{ stepIndex: number; totalSteps?: number; files: string[] }> }
         | undefined;
