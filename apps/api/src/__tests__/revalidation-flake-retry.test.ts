@@ -191,6 +191,89 @@ describe('maybeRetryTransientRevalidationFlake', () => {
     expect(mockRunValidation.execute).not.toHaveBeenCalled();
   });
 
+  it('does NOT emit "too many failed test files" warn event when size > 5 but all failed files are in-scope', async () => {
+    const publishedEvents: Record<string, unknown>[] = [];
+    const mockEventBus: EventBusPort = {
+      publish: (_runId: string, event: unknown) => {
+        publishedEvents.push(event as Record<string, unknown>);
+      },
+      subscribe: () => () => {},
+    };
+
+    const stdoutFile = join(tempDir, 'stdout.log');
+    const stderrFile = join(tempDir, 'stderr.log');
+    const vitestOutput = `
+ ❯ packages/pkg1/src/__tests__/a.test.ts (1 failed)
+ ❯ packages/pkg2/src/__tests__/b.test.ts (1 failed)
+ ❯ packages/pkg3/src/__tests__/c.test.ts (1 failed)
+ ❯ packages/pkg4/src/__tests__/d.test.ts (1 failed)
+ ❯ packages/pkg5/src/__tests__/e.test.ts (1 failed)
+ ❯ packages/pkg6/src/__tests__/f.test.ts (1 failed)
+
+ Test Files  6 failed (6)
+`;
+    writeFileSync(stdoutFile, vitestOutput, 'utf-8');
+    writeFileSync(stderrFile, '', 'utf-8');
+
+    const inScope6Manifest: TaskManifest = {
+      version: 1,
+      task_count: 1,
+      tasks: [
+        {
+          n: 1,
+          title: 'Task 1',
+          expected_files: [
+            'packages/pkg1/src/__tests__/a.test.ts',
+            'packages/pkg2/src/__tests__/b.test.ts',
+            'packages/pkg3/src/__tests__/c.test.ts',
+            'packages/pkg4/src/__tests__/d.test.ts',
+            'packages/pkg5/src/__tests__/e.test.ts',
+            'packages/pkg6/src/__tests__/f.test.ts',
+          ],
+        },
+      ],
+    };
+
+    const failingCommands: ValidationRunCommandItem[] = [
+      {
+        command: 'pnpm -r test',
+        outcome: 'failed',
+        kind: 'test',
+        stdoutPath: stdoutFile,
+        stderrPath: stderrFile,
+      },
+    ];
+
+    const mockValidationAdapter = {
+      run: vi.fn(),
+    } as unknown as ValidationPort;
+
+    const mockRunValidation = {
+      execute: vi.fn(),
+    } as unknown as RunValidation;
+
+    const result = await maybeRetryTransientRevalidationFlake({
+      runId: 'test-run-in-scope-6',
+      stepIndex: 1,
+      manifest: inScope6Manifest,
+      taskValidationCommands: mockTaskValidationCommands,
+      failingCommands,
+      revalidateLogDir: tempDir,
+      cwd: '/app',
+      repoId: 'owner/repo',
+      config: mockConfig,
+      runValidation: mockRunValidation,
+      validationAdapter: mockValidationAdapter,
+      eventBus: mockEventBus,
+    });
+
+    expect(result.retried).toBe(false);
+    expect(result.passed).toBe(false);
+    expect(mockValidationAdapter.run).not.toHaveBeenCalled();
+    expect(mockRunValidation.execute).not.toHaveBeenCalled();
+    expect(publishedEvents).toHaveLength(0);
+  });
+
   it('C2: fails closed (passed: false, retried: false) when isolation command is suppressed', async () => {
     const stdoutFile = join(tempDir, 'stdout.log');
     const stderrFile = join(tempDir, 'stderr.log');
