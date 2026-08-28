@@ -18,7 +18,9 @@ import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import {
   readWholeChangeReviewVerdict,
+  readNarrowVerificationVerdict,
   type WholeChangeVerdictOutcome,
+  type NarrowVerificationVerdictOutcome,
 } from '../../review-fix/read-verdicts.js';
 
 export interface ReviewFixHandlerOpts {
@@ -130,9 +132,8 @@ export class ReviewFixHandler implements PhaseHandler {
 
     // 1. Resume / idempotency check
     try {
-      const codeReview = await ctx.artifacts.read(ctx.runUuid, 'code-review.md');
       const wholeChangeResult = await ctx.artifacts.read(ctx.runUuid, 'whole-change-review.json');
-      if (codeReview.trim().length > 0 && wholeChangeResult.trim().length > 0) {
+      if (wholeChangeResult.trim().length > 0) {
         const parsed = JSON.parse(wholeChangeResult) as { verdict?: string };
         if (parsed.verdict === 'APPROVE' || parsed.verdict === 'approve') {
           emit(
@@ -146,6 +147,27 @@ export class ReviewFixHandler implements PhaseHandler {
       }
     } catch {
       // Artifacts not present, proceed with review
+    }
+
+    try {
+      const narrowVerificationResult = await ctx.artifacts.read(
+        ctx.runUuid,
+        'narrow-verification.json',
+      );
+      if (narrowVerificationResult.trim().length > 0) {
+        const parsed = JSON.parse(narrowVerificationResult) as { verdict?: string };
+        if (parsed.verdict === 'PASS' || parsed.verdict === 'pass') {
+          emit(
+            'review_fix.completed',
+            'info',
+            'narrow verification already passed (reusing existing verification)',
+            { policy: ctx.executionPolicy },
+          );
+          return { outcome: 'passed' };
+        }
+      }
+    } catch {
+      // Artifacts not present, proceed
     }
 
     // 2. Validate issue truth is present
@@ -318,15 +340,20 @@ export class ReviewFixHandler implements PhaseHandler {
       overrideReason: verdictOutcome.overrideReason,
     });
 
-    return this.runTargetedFix(ctx, emit, verdictOutcome);
+    return this.runTargetedFixAndVerification(ctx, emit, verdictOutcome);
   }
 
-  private async runTargetedFix(
+  private async runTargetedFixAndVerification(
     ctx: PhaseHandlerContext,
     emit: EventEmitter,
     reviewOutcome: Extract<WholeChangeVerdictOutcome, { ok: true }>,
   ): Promise<PhaseResult> {
-    emit('review_fix.targeted_fix_started', 'info', 'starting single targeted fix pass');
+    // === 1. TARGETED FIX ===
+    emit('review_fix.targeted_fix_started', 'info', 'starting single targeted fix pass', {
+      policy: ctx.executionPolicy,
+    });
+
+    const headBeforeFix = await ctx.git?.headCommitSha(ctx.cwd).catch(() => undefined);
 
     // Format findings for fix prompt
     const formattedFindings = this.formatFindingsForFix(reviewOutcome);
@@ -369,7 +396,18 @@ export class ReviewFixHandler implements PhaseHandler {
       return fixRunResult;
     }
 
-    // Deterministic validation of targeted fix
+    emit('review_fix.targeted_fix_completed', 'info', 'targeted fix pass completed', {
+      policy: ctx.executionPolicy,
+    });
+
+    // === 2. DETERMINISTIC REVALIDATION ===
+    emit(
+      'review_fix.revalidation_started',
+      'info',
+      'deterministic revalidation started after targeted fix',
+      { policy: ctx.executionPolicy },
+    );
+
     if (this.opts.revalidate) {
       try {
         const valResult = await this.opts.revalidate.runValidation.execute({
@@ -385,6 +423,9 @@ export class ReviewFixHandler implements PhaseHandler {
         if (!valResult.passed) {
           const failureMsg =
             valResult.failure?.message ?? 'deterministic validation failed after targeted fix';
+          emit('review_fix.revalidation_failed', 'error', failureMsg, {
+            policy: ctx.executionPolicy,
+          });
           emit('review_fix.failed', 'error', failureMsg);
           return {
             outcome: 'failed',
@@ -402,6 +443,9 @@ export class ReviewFixHandler implements PhaseHandler {
         }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
+        emit('review_fix.revalidation_failed', 'error', message, {
+          policy: ctx.executionPolicy,
+        });
         return this.fail(
           ctx,
           emit,
@@ -413,6 +457,7 @@ export class ReviewFixHandler implements PhaseHandler {
       const typecheckResult = await this.opts.runWorkspaceTypecheck({ cwd: ctx.cwd });
       if (!typecheckResult.ok) {
         const msg = `typecheck failed after targeted fix: ${typecheckResult.error}`;
+        emit('review_fix.revalidation_failed', 'error', msg, { policy: ctx.executionPolicy });
         emit('review_fix.failed', 'error', msg);
         return this.fail(ctx, emit, 'validation_failed', msg);
       }
@@ -432,12 +477,244 @@ export class ReviewFixHandler implements PhaseHandler {
     }
 
     emit(
-      'review_fix.completed',
+      'review_fix.revalidation_completed',
       'info',
-      'targeted fix applied and validated successfully — advancing to PR creation',
+      'deterministic revalidation passed after targeted fix',
       { policy: ctx.executionPolicy },
     );
-    return { outcome: 'passed' };
+
+    // === 3. NARROW VERIFICATION ===
+    emit('review_fix.verification_started', 'info', 'narrow verification started', {
+      policy: ctx.executionPolicy,
+    });
+
+    const baseBranch = ctx.expectedBranch ?? ctx.baseBranch ?? 'main';
+    let fixDiff = '';
+    try {
+      if (ctx.git?.diff) {
+        fixDiff = await ctx.git.diff(
+          ctx.cwd,
+          headBeforeFix ?? ctx.startCommitSha ?? baseBranch,
+          'HEAD',
+        );
+      }
+    } catch {
+      fixDiff = '';
+    }
+
+    let validationEvidence = 'Validation Status: passed';
+    try {
+      const valResult = await ctx.artifacts.read(ctx.runUuid, 'validation.result');
+      validationEvidence = `Validation result: ${valResult.trim()}`;
+    } catch {
+      // Best-effort
+    }
+
+    const verifyProfile =
+      ctx.resolveProfile?.('whole-change-review') ??
+      ctx.resolveProfile?.('spec-review') ??
+      ctx.resolveProfile?.('implement') ??
+      AgentProfileName('opencode-frontier');
+
+    let verifyTemplate: string | undefined;
+    if (ctx.promptsRoot) {
+      try {
+        verifyTemplate = loadPromptTemplate('review-fix', 'narrow-verification', {
+          promptsRoot: ctx.promptsRoot,
+        });
+      } catch {
+        // Handled in runSingleShotAgentPhase
+      }
+    }
+
+    const verifyRunResult = await runSingleShotAgentPhase(ctx, {
+      phase: this.phase,
+      profile: verifyProfile,
+      step: 'narrow-verification',
+      ...(verifyTemplate ? { template: verifyTemplate } : {}),
+      vars: {
+        issue_number: String(ctx.issueNumber),
+        cwd: ctx.cwd,
+        review_findings: formattedFindings,
+        validation_evidence: validationEvidence,
+        fix_diff: fixDiff || '(no diff)',
+      },
+      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+      skipResultExtraction: true,
+    });
+
+    if (verifyRunResult.outcome !== 'passed') {
+      emit('review_fix.verification_failed', 'error', 'narrow verifier invocation failed', {
+        policy: ctx.executionPolicy,
+      });
+      emit('review_fix.failed', 'error', 'narrow verifier invocation failed');
+      return verifyRunResult;
+    }
+
+    const verifyInvocation = {
+      id: AgentInvocationId(ctx.idFactory?.() ?? `${ctx.runUuid}:narrow-verification`),
+      runId: RunId(ctx.runUuid),
+      phaseId: PhaseName('narrow-verification'),
+      profile: verifyProfile,
+      runtime: 'opencode' as AgentRuntimeKind,
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      promptPath: '',
+      promptChars: 0,
+      stdoutPath: '',
+      stderrPath: '',
+      startedAt: ctx.now(),
+      endedAt: ctx.now(),
+      startCommitSha: headBeforeFix ?? ctx.startCommitSha ?? '',
+      exitCode: 0,
+      durationMs: 0,
+      timeoutMs: 0,
+      outcome: 'success' as const,
+      contractViolations: [],
+      resultJsonPath: 'result.json',
+    };
+
+    const originalFindingsCount =
+      reviewOutcome.findings.length +
+      reviewOutcome.acceptanceCriteria.filter((c) => c.result?.toUpperCase() === 'FAIL').length;
+
+    const verifyOutcome = await readNarrowVerificationVerdict(
+      verifyInvocation,
+      { artifacts: ctx.artifacts, agent: ctx.agent },
+      { cwd: ctx.cwd, originalFindingsCount },
+    );
+
+    if (!verifyOutcome.ok) {
+      emit(
+        'review_fix.verification_failed',
+        'error',
+        `Failed to parse narrow verification result: ${verifyOutcome.detail}`,
+        { policy: ctx.executionPolicy },
+      );
+      return this.fail(
+        ctx,
+        emit,
+        'invalid_result',
+        `Failed to parse narrow verification result: ${verifyOutcome.detail}`,
+        'Ensure the verifier returns result.json matching narrowVerificationResultSchema.',
+      );
+    }
+
+    // Persist verification artifacts
+    const formattedVerificationMd = this.formatVerificationMarkdown(verifyOutcome);
+    try {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: this.phase,
+        relativePath: 'verification.md',
+        contents: formattedVerificationMd,
+      });
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: this.phase,
+        relativePath: 'narrow-verification.json',
+        contents: JSON.stringify(
+          {
+            verdict: verifyOutcome.verdict,
+            findings_evaluations: verifyOutcome.evaluations,
+            obvious_regressions: verifyOutcome.regressions,
+            summary: verifyOutcome.summary,
+            overridden: verifyOutcome.overridden,
+            overrideReason: verifyOutcome.overrideReason,
+          },
+          null,
+          2,
+        ),
+      });
+    } catch {
+      // Best-effort artifact write
+    }
+
+    if (verifyOutcome.verdict === 'PASS') {
+      emit('review_fix.verification_completed', 'info', 'narrow verification passed', {
+        policy: ctx.executionPolicy,
+        verdict: 'PASS',
+        evaluationsCount: verifyOutcome.evaluations.length,
+      });
+      emit(
+        'review_fix.completed',
+        'info',
+        'targeted fix applied and verified successfully — advancing to PR creation',
+        { policy: ctx.executionPolicy },
+      );
+      return { outcome: 'passed' };
+    }
+
+    // Verification FAIL transitions to needs_human_review (explicit blocker state, no retry loop)
+    const failReason =
+      verifyOutcome.overrideReason ??
+      (verifyOutcome.regressions.length > 0
+        ? `Regressions detected: ${verifyOutcome.regressions.join('; ')}`
+        : 'Narrow verification rejected the fix');
+
+    emit('review_fix.verification_failed', 'error', `narrow verification failed: ${failReason}`, {
+      policy: ctx.executionPolicy,
+      verdict: 'FAIL',
+      reason: failReason,
+    });
+    emit('review_fix.failed', 'error', `narrow verification failed: ${failReason}`);
+
+    return {
+      outcome: 'needs_human_review',
+      failure: {
+        runUuid: ctx.runUuid,
+        phase: this.phase,
+        kind: 'needs_human_review',
+        message: `narrow verification failed: ${failReason}`,
+        canRetry: true,
+        suggestedAction:
+          'Inspect verification.md, code-review.md, and the latest fix, then intervene or resume.',
+        artifacts: [
+          'code-review.md',
+          'whole-change-review.json',
+          'verification.md',
+          'narrow-verification.json',
+        ],
+        detectedAt: ctx.now(),
+      },
+    };
+  }
+
+  private formatVerificationMarkdown(
+    outcome: Extract<NarrowVerificationVerdictOutcome, { ok: true }>,
+  ): string {
+    const lines: string[] = [
+      '# Narrow Verification Report',
+      '',
+      `**Verdict:** ${outcome.verdict}`,
+      ...(outcome.summary ? [`**Summary:** ${outcome.summary}`, ''] : ['']),
+      '## Findings Evaluations',
+      '',
+    ];
+
+    if (outcome.evaluations.length === 0) {
+      lines.push('No finding evaluations recorded.');
+    } else {
+      for (const ev of outcome.evaluations) {
+        lines.push(`### [${ev.resolved ? 'RESOLVED' : 'UNRESOLVED'}] ${ev.finding}`);
+        lines.push(`- **Evidence:** ${ev.evidence}`);
+        if (ev.rationale) {
+          lines.push(`- **Rationale:** ${ev.rationale}`);
+        }
+        lines.push('');
+      }
+    }
+
+    lines.push('## Obvious Regressions', '');
+    if (outcome.regressions.length === 0) {
+      lines.push('No obvious regressions detected in the touched area.');
+    } else {
+      for (const reg of outcome.regressions) {
+        lines.push(`- [REGRESSION] ${reg}`);
+      }
+    }
+
+    return lines.join('\n');
   }
 
   private formatFindingsForFix(outcome: Extract<WholeChangeVerdictOutcome, { ok: true }>): string {

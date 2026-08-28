@@ -224,6 +224,7 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
     const fakeAgent = ctx.agent as FakeAgentPort;
     fakeAgent.enqueue('opencode-frontier', successResult());
     fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', successResult());
 
     // Agent attempts empty approval without criteria verification
     await ctx.artifacts.write({
@@ -246,6 +247,7 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
 
   it('forces REQUEST_CHANGES if any acceptance criterion is FAIL', async () => {
     const fakeAgent = ctx.agent as FakeAgentPort;
+    fakeAgent.enqueue('opencode-frontier', successResult());
     fakeAgent.enqueue('opencode-frontier', successResult());
     fakeAgent.enqueue('opencode-frontier', successResult());
 
@@ -272,6 +274,7 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
 
   it('forces REQUEST_CHANGES if critical or high severity findings exist', async () => {
     const fakeAgent = ctx.agent as FakeAgentPort;
+    fakeAgent.enqueue('opencode-frontier', successResult());
     fakeAgent.enqueue('opencode-frontier', successResult());
     fakeAgent.enqueue('opencode-frontier', successResult());
 
@@ -332,13 +335,34 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
     expect(completedEvents).toHaveLength(1);
   });
 
-  it('enters single targeted fix pass on REQUEST_CHANGES and advances when deterministic validation passes', async () => {
+  it('enters single targeted fix and narrow verification pass on REQUEST_CHANGES and advances when both pass', async () => {
     const fakeAgent = ctx.agent as FakeAgentPort;
-    // First invocation: review requests changes
+    // 1: Reviewer requests changes
     fakeAgent.enqueue('opencode-frontier', successResult());
-    // Second invocation: targeted fixer runs
+    // 2: Targeted fixer runs
     fakeAgent.enqueue('opencode-frontier', successResult());
+    // 3: Narrow verifier runs and passes
+    fakeAgent.enqueue('opencode-frontier', async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          findings_evaluations: [
+            {
+              finding: 'Null dereference in src/fix.ts',
+              resolved: true,
+              evidence: 'Null check added in src/fix.ts:10',
+            },
+          ],
+          obvious_regressions: [],
+          summary: 'All findings verified resolved',
+        }),
+      });
+      return successResult();
+    });
 
+    // Reviewer result
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'result.json',
@@ -376,21 +400,37 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('passed');
-    // Reviewer (1) + Fixer (2) = 2 total agent calls
-    expect(fakeAgent.invocations).toHaveLength(2);
+    // Reviewer (1) + Fixer (2) + Verifier (3) = 3 total agent calls
+    expect(fakeAgent.invocations).toHaveLength(3);
     expect(mockRunValidation.execute).toHaveBeenCalled();
 
-    const targetedFixEvents = eventsOf(ctx, 'review_fix.targeted_fix_started');
-    expect(targetedFixEvents).toHaveLength(1);
+    // Verify telemetry sequence
+    expect(eventsOf(ctx, 'review_fix.started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'review_fix.changes_requested')).toHaveLength(1);
+    expect(eventsOf(ctx, 'review_fix.targeted_fix_started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'review_fix.targeted_fix_completed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'review_fix.revalidation_started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'review_fix.revalidation_completed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'review_fix.verification_started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'review_fix.verification_completed')).toHaveLength(1);
 
     const completedEvents = eventsOf(ctx, 'review_fix.completed');
     expect(completedEvents).toHaveLength(1);
-    expect(completedEvents[0]?.message).toContain(
-      'targeted fix applied and validated successfully',
+    expect(completedEvents[0]?.message).toContain('targeted fix applied and verified successfully');
+
+    // Verify persisted artifacts
+    const verificationMd = await ctx.artifacts.read(ctx.runUuid, 'verification.md');
+    expect(verificationMd).toContain('**Verdict:** PASS');
+    expect(verificationMd).toContain('[RESOLVED] Null dereference in src/fix.ts');
+
+    const narrowVerificationJson = await ctx.artifacts.read(
+      ctx.runUuid,
+      'narrow-verification.json',
     );
+    expect(JSON.parse(narrowVerificationJson).verdict).toBe('PASS');
   });
 
-  it('fails the run if deterministic validation fails after targeted fix', async () => {
+  it('fails the run if deterministic validation fails after targeted fix and does NOT call verifier or retry fixer', async () => {
     const fakeAgent = ctx.agent as FakeAgentPort;
     fakeAgent.enqueue('opencode-frontier', successResult());
     fakeAgent.enqueue('opencode-frontier', successResult());
@@ -445,6 +485,225 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
       expect(result.failure.kind).toBe('validation_failed');
       expect(result.failure.message).toBe('pnpm test exited with code 1');
     }
+    // Only Reviewer (1) and Fixer (2) ran. Verifier was NOT called, Fixer was NOT re-entered.
+    expect(fakeAgent.invocations).toHaveLength(2);
+    expect(eventsOf(ctx, 'review_fix.revalidation_failed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'review_fix.verification_started')).toHaveLength(0);
+  });
+
+  it('transitions to needs_human_review when narrow verification returns FAIL and does NOT loop back to fixer', async () => {
+    const fakeAgent = ctx.agent as FakeAgentPort;
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'FAIL',
+          findings_evaluations: [
+            {
+              finding: 'Null dereference',
+              resolved: false,
+              evidence: 'Null check still missing in line 42',
+            },
+          ],
+          obvious_regressions: [],
+          summary: 'Fix was incomplete',
+        }),
+      });
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'REQUEST_CHANGES',
+        acceptance_criteria: [{ criterion: 'Check 1', result: 'FAIL' }],
+        findings: [
+          {
+            severity: 'high',
+            evidence: 'Null dereference',
+            rationale: 'TypeError',
+            minimal_correction: 'Add check',
+          },
+        ],
+      }),
+    });
+
+    const mockRunValidation = {
+      execute: vi
+        .fn()
+        .mockResolvedValue({ passed: true, validationRun: { commands: ['pnpm test'] } }),
+    } as unknown as RunValidation;
+
+    const handler = new ReviewFixHandler({
+      runLoop: legacyRunLoopMock,
+      revalidate: {
+        runValidation: mockRunValidation,
+        commands: ['pnpm test'],
+        timeoutSeconds: 60,
+        logDir: '/tmp/logs',
+      },
+    });
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain('narrow verification failed');
+      expect(result.failure.artifacts).toContain('verification.md');
+      expect(result.failure.artifacts).toContain('narrow-verification.json');
+    }
+    // Reviewer (1) + Fixer (2) + Verifier (3) = exactly 3 invocations. No loop back to fixer!
+    expect(fakeAgent.invocations).toHaveLength(3);
+    expect(eventsOf(ctx, 'review_fix.verification_failed')).toHaveLength(1);
+  });
+
+  it('overrides verifier PASS to FAIL when an original finding remains unresolved and transitions to needs_human_review', async () => {
+    const fakeAgent = ctx.agent as FakeAgentPort;
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', async () => {
+      // Verifier attempts to return PASS despite resolved: false
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          findings_evaluations: [
+            {
+              finding: 'Null dereference',
+              resolved: false,
+              evidence: 'Check was not added',
+            },
+          ],
+          obvious_regressions: [],
+        }),
+      });
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'REQUEST_CHANGES',
+        acceptance_criteria: [{ criterion: 'Check 1', result: 'FAIL' }],
+        findings: [
+          {
+            severity: 'high',
+            evidence: 'Null dereference',
+            rationale: 'TypeError',
+            minimal_correction: 'Add check',
+          },
+        ],
+      }),
+    });
+
+    const handler = new ReviewFixHandler({ runLoop: legacyRunLoopMock });
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.message).toContain('Unresolved blocking findings');
+    }
+  });
+
+  it('overrides verifier PASS to FAIL when obvious regressions are reported in touched area', async () => {
+    const fakeAgent = ctx.agent as FakeAgentPort;
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          findings_evaluations: [
+            {
+              finding: 'Bug',
+              resolved: true,
+              evidence: 'Fixed',
+            },
+          ],
+          obvious_regressions: ['Broken import in file.ts'],
+        }),
+      });
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'REQUEST_CHANGES',
+        acceptance_criteria: [{ criterion: 'Check 1', result: 'FAIL' }],
+        findings: [
+          {
+            severity: 'high',
+            evidence: 'Bug',
+            rationale: 'Bug',
+            minimal_correction: 'Fix',
+          },
+        ],
+      }),
+    });
+
+    const handler = new ReviewFixHandler({ runLoop: legacyRunLoopMock });
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.message).toContain('Obvious regressions detected');
+    }
+  });
+
+  it('grounds narrow verifier prompt with original review findings, fix diff, and validation evidence', async () => {
+    const fakeAgent = ctx.agent as FakeAgentPort;
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          findings_evaluations: [{ finding: 'Finding', resolved: true, evidence: 'Fixed' }],
+        }),
+      });
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'REQUEST_CHANGES',
+        acceptance_criteria: [{ criterion: 'AC 1', result: 'FAIL', evidence: 'Failed evidence' }],
+        findings: [
+          {
+            severity: 'high',
+            evidence: 'Finding evidence',
+            rationale: 'Finding rationale',
+            minimal_correction: 'Finding correction',
+          },
+        ],
+      }),
+    });
+
+    const handler = new ReviewFixHandler({ runLoop: legacyRunLoopMock });
+    await handler.run(ctx);
+
+    // Prompt render call 1 = whole-change review, call 2 = targeted-fix, call 3 = narrow-verification
+    expect(mockRenderPrompt).toHaveBeenCalledTimes(3);
+    const verifierRenderCall = mockRenderPrompt.mock.calls[2];
+    expect(verifierRenderCall?.[1].vars.review_findings).toContain('FAILED ACCEPTANCE CRITERIA');
+    expect(verifierRenderCall?.[1].vars.review_findings).toContain('BLOCKING REVIEW FINDINGS');
+    expect(verifierRenderCall?.[1].vars.validation_evidence).toContain('passed');
+    expect(verifierRenderCall?.[1].vars.fix_diff).toBeDefined();
   });
 
   it('idempotently reuses existing approved review artifacts on resume', async () => {
@@ -473,6 +732,34 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
     const completedEvents = eventsOf(ctx, 'review_fix.completed');
     expect(completedEvents).toHaveLength(1);
     expect(completedEvents[0]?.message).toContain('reusing existing review');
+  });
+
+  it('idempotently reuses existing passed narrow-verification artifacts on resume', async () => {
+    const fakeAgent = ctx.agent as FakeAgentPort;
+
+    // Seed existing verification artifacts
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'review-fix',
+      relativePath: 'verification.md',
+      contents: '# Narrow Verification Report\n\n**Verdict:** PASS',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'review-fix',
+      relativePath: 'narrow-verification.json',
+      contents: JSON.stringify({ verdict: 'PASS', findings_evaluations: [] }),
+    });
+
+    const handler = new ReviewFixHandler({ runLoop: legacyRunLoopMock });
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(fakeAgent.invocations).toHaveLength(0); // 0 invocations — reused!
+
+    const completedEvents = eventsOf(ctx, 'review_fix.completed');
+    expect(completedEvents).toHaveLength(1);
+    expect(completedEvents[0]?.message).toContain('reusing existing verification');
   });
 
   it('delegates to legacy runLoop when executionPolicy is legacy', async () => {
