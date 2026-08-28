@@ -41,6 +41,7 @@ export class FakeRunRepository implements RunRepositoryPort {
     this.runs.set(run.uuid, {
       ...run,
       ...(run.baseBranch !== undefined ? { baseBranch: run.baseBranch } : {}),
+      executionPolicy: run.executionPolicy ?? 'legacy',
     } as RunRecord);
   }
 
@@ -77,6 +78,7 @@ export class FakeRunRepository implements RunRepositoryPort {
     if (patch.startCommitSha !== undefined) r.startCommitSha = patch.startCommitSha;
     if (patch.pid !== undefined) r.pid = patch.pid;
     if (patch.baseBranch !== undefined) r.baseBranch = patch.baseBranch;
+    if (patch.executionPolicy !== undefined) r.executionPolicy = patch.executionPolicy;
   }
 
   findByUuid(uuid: string): RunRecord | undefined {
@@ -270,6 +272,7 @@ export class FakeRunRepository implements RunRepositoryPort {
     if (patch.startCommitSha !== undefined) r.startCommitSha = patch.startCommitSha;
     if (patch.pid !== undefined) r.pid = patch.pid;
     if (patch.baseBranch !== undefined) r.baseBranch = patch.baseBranch;
+    if (patch.executionPolicy !== undefined) r.executionPolicy = patch.executionPolicy;
     this.updates.push({ uuid, patch });
     return true;
   }

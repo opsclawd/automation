@@ -1,5 +1,5 @@
 import { RepositoryId } from '@ai-sdlc/domain';
-import type { Run, RunStatus } from '@ai-sdlc/domain';
+import type { Run, RunStatus, ExecutionPolicy } from '@ai-sdlc/domain';
 import type { RunRepositoryUpdatePatch, ListRunsFilter } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
@@ -23,6 +23,7 @@ interface RunRow {
   base_branch: string | null;
   config_fingerprint: string | null;
   config_sources_json: string | null;
+  execution_policy: string | null;
 }
 
 /**
@@ -42,6 +43,7 @@ export interface RunRecord extends Run {
   baseBranch?: string;
   configFingerprint?: string;
   configSourcesJson?: string;
+  executionPolicy?: ExecutionPolicy;
 }
 
 /** Implements RunRepositoryPort (@ai-sdlc/application). */
@@ -50,15 +52,16 @@ export class RunRepository {
     private readonly db: Db,
     private readonly configFingerprint: string | null = null,
     private readonly configSourcesJson: string | null = null,
+    private readonly defaultExecutionPolicy: ExecutionPolicy = 'legacy',
   ) {}
 
   insert(run: Run, pid?: number): void {
     this.db
       .prepare(
         `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase,
-        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha, base_branch, config_fingerprint, config_sources_json)
+        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha, base_branch, config_fingerprint, config_sources_json, execution_policy)
          VALUES (@uuid, @display_id, @repo_id, @issue_number, @type, @status, @current_phase,
-           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha, @base_branch, @config_fingerprint, @config_sources_json)`,
+           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha, @base_branch, @config_fingerprint, @config_sources_json, @execution_policy)`,
       )
       .run({
         uuid: run.uuid,
@@ -78,6 +81,7 @@ export class RunRepository {
         base_branch: (run as RunRecord).baseBranch ?? null,
         config_fingerprint: (run as RunRecord).configFingerprint ?? this.configFingerprint ?? null,
         config_sources_json: (run as RunRecord).configSourcesJson ?? this.configSourcesJson ?? null,
+        execution_policy: run.executionPolicy ?? this.defaultExecutionPolicy ?? 'legacy',
       });
   }
 
@@ -159,6 +163,10 @@ export class RunRepository {
     if (patch.configSourcesJson !== undefined) {
       fields.push('config_sources_json = @config_sources_json');
       params.config_sources_json = patch.configSourcesJson;
+    }
+    if (patch.executionPolicy !== undefined) {
+      fields.push('execution_policy = @execution_policy');
+      params.execution_policy = patch.executionPolicy;
     }
     if (fields.length === 0) return false;
     const result = this.db
@@ -270,6 +278,10 @@ export class RunRepository {
     if (patch.configSourcesJson !== undefined) {
       fields.push('config_sources_json = @config_sources_json');
       params.config_sources_json = patch.configSourcesJson;
+    }
+    if (patch.executionPolicy !== undefined) {
+      fields.push('execution_policy = @execution_policy');
+      params.execution_policy = patch.executionPolicy;
     }
     if (fields.length === 0) return;
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid`).run(params);
@@ -411,5 +423,6 @@ function toRecord(row: RunRow): RunRecord {
     ...(row.base_branch !== null ? { baseBranch: row.base_branch } : {}),
     ...(row.config_fingerprint !== null ? { configFingerprint: row.config_fingerprint } : {}),
     ...(row.config_sources_json !== null ? { configSourcesJson: row.config_sources_json } : {}),
+    executionPolicy: (row.execution_policy as ExecutionPolicy) ?? 'legacy',
   };
 }

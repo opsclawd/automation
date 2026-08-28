@@ -692,6 +692,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             repoId,
             issueNumber: opts.issue,
             startedAt,
+            executionPolicy: c.executionPolicy,
             ...(effectiveBaseBranch ? { baseBranch: effectiveBaseBranch } : {}),
           });
 
@@ -720,10 +721,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               runId: run.displayId,
               level: 'info',
               type: 'run.config',
-              message: `run.config: executor=ts baseBranch=${effectiveBaseBranch || '(default)'}`,
+              message: `run.config: executor=ts executionPolicy=${run.executionPolicy ?? 'legacy'} baseBranch=${effectiveBaseBranch || '(default)'}`,
               timestamp: startedAt.toISOString(),
               metadata: {
                 executor: 'ts',
+                executionPolicy: run.executionPolicy ?? 'legacy',
                 baseBranch: effectiveBaseBranch || null,
               },
             });
@@ -1039,6 +1041,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const out = await c.startIssueRun.execute({
               issueNumber: opts.issue,
               repoId,
+              executionPolicy: c.executionPolicy,
             });
             // Use process.stdout.write with a callback (not console.log) because
             // process.exit() does not wait for stdout to flush.

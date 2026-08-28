@@ -1,4 +1,4 @@
-import type { PhaseName, Failure, AgentProfileName } from '@ai-sdlc/domain';
+import type { PhaseName, Failure, AgentProfileName, ExecutionPolicy } from '@ai-sdlc/domain';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
@@ -26,6 +26,7 @@ export interface PhaseHandlerContext {
    * Populated via buildPhaseHandlerContext() by the compose root.
    * Handlers that require these should assert at run() entry.
    */
+  executionPolicy?: ExecutionPolicy;
   promptsRoot?: string;
   startCommitSha?: string;
   expectedBranch?: string;
@@ -89,6 +90,7 @@ export function createEventEmitter(ctx: PhaseHandlerContext, phase: PhaseName): 
 export type PhaseHandlerContextFactory = (
   base: Omit<
     PhaseHandlerContext,
+    | 'executionPolicy'
     | 'promptsRoot'
     | 'startCommitSha'
     | 'expectedBranch'
@@ -106,6 +108,7 @@ export type PhaseHandlerContextFactory = (
   opts?: Partial<
     Pick<
       PhaseHandlerContext,
+      | 'executionPolicy'
       | 'promptsRoot'
       | 'startCommitSha'
       | 'expectedBranch'
@@ -126,6 +129,7 @@ export type PhaseHandlerContextFactory = (
 export function buildPhaseHandlerContext(
   base: Omit<
     PhaseHandlerContext,
+    | 'executionPolicy'
     | 'promptsRoot'
     | 'startCommitSha'
     | 'expectedBranch'
@@ -143,6 +147,7 @@ export function buildPhaseHandlerContext(
   opts?: Partial<
     Pick<
       PhaseHandlerContext,
+      | 'executionPolicy'
       | 'promptsRoot'
       | 'startCommitSha'
       | 'expectedBranch'

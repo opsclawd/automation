@@ -1246,4 +1246,63 @@ describe('StartIssueRun repository resolution', () => {
     await startIssueRun.execute({ issueNumber: 7, repoId: repoA.id });
     expect(capturedWorktreeRoot).toBe(`/srv/repos/repo-a-root/.ai-worktrees/issue-7`);
   });
+
+  it('populates executionPolicy on created run and threads into script environment', async () => {
+    const repoA = {
+      id: RepositoryId('a'.repeat(64)),
+      fullName: 'owner/repo-a',
+      enabled: true,
+      healthStatus: 'healthy',
+      localBasePath: '/repos/a',
+    } as unknown as Repository;
+    let capturedEnv: Record<string, string> | undefined;
+    const runRepo = new FakeRunRepository();
+    baseDeps({
+      runRepository: runRepo,
+      executionPolicy: 'strict',
+      repositoryPort: {
+        findById: (id) => (id === repoA.id ? repoA : undefined),
+        listEnabled: () => [repoA],
+      },
+      runBashScript: async ({ env }) => {
+        capturedEnv = env;
+        return { exitCode: 0, stdout: '', stderr: '', durationMs: 10 };
+      },
+    });
+
+    await startIssueRun.execute({ issueNumber: 42, repoId: repoA.id, executionPolicy: 'standard' });
+    const inserted = runRepo.inserted[0];
+    expect(inserted).toBeDefined();
+    expect(inserted?.executionPolicy).toBe('standard');
+    expect(capturedEnv?.AI_EXECUTION_POLICY).toBe('standard');
+  });
+
+  it('defaults executionPolicy to legacy when omitted', async () => {
+    const repoA = {
+      id: RepositoryId('a'.repeat(64)),
+      fullName: 'owner/repo-a',
+      enabled: true,
+      healthStatus: 'healthy',
+      localBasePath: '/repos/a',
+    } as unknown as Repository;
+    let capturedEnv: Record<string, string> | undefined;
+    const runRepo = new FakeRunRepository();
+    baseDeps({
+      runRepository: runRepo,
+      repositoryPort: {
+        findById: (id) => (id === repoA.id ? repoA : undefined),
+        listEnabled: () => [repoA],
+      },
+      runBashScript: async ({ env }) => {
+        capturedEnv = env;
+        return { exitCode: 0, stdout: '', stderr: '', durationMs: 10 };
+      },
+    });
+
+    await startIssueRun.execute({ issueNumber: 42, repoId: repoA.id });
+    const inserted = runRepo.inserted[0];
+    expect(inserted).toBeDefined();
+    expect(inserted?.executionPolicy).toBe('legacy');
+    expect(capturedEnv?.AI_EXECUTION_POLICY).toBe('legacy');
+  });
 });

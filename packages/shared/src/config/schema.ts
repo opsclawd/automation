@@ -411,8 +411,16 @@ const agentSchema = z
     }
   });
 
+export const EXECUTION_POLICIES = ['legacy', 'standard', 'strict'] as const;
+export const DEFAULT_EXECUTION_POLICY = 'legacy';
+
+export const executionPolicySchema = z.enum(EXECUTION_POLICIES).default(DEFAULT_EXECUTION_POLICY);
+
+export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;
+
 export const orchestratorConfigSchema = z
   .strictObject({
+    executionPolicy: executionPolicySchema,
     validation: validationSchema,
     phases: phasesSchema,
     timeouts: timeoutsSchema,

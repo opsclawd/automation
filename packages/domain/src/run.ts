@@ -1,5 +1,7 @@
 import type { RepositoryId } from './ids.js';
 
+export type ExecutionPolicy = 'legacy' | 'standard' | 'strict';
+
 export type RunStatus =
   | 'queued'
   | 'running'
@@ -19,6 +21,7 @@ export interface Run {
   issueNumber: number;
   type: 'issue_to_pr' | 'pr_review' | 'consolidate';
   baseBranch?: string;
+  executionPolicy?: ExecutionPolicy;
   status: RunStatus;
   currentPhase?: string;
   completedPhases: string[];
@@ -36,6 +39,7 @@ export interface CreateRunInput {
   startedAt: Date;
   type?: 'issue_to_pr' | 'pr_review' | 'consolidate';
   baseBranch?: string;
+  executionPolicy?: ExecutionPolicy;
 }
 
 export class RunStateError extends Error {
@@ -53,6 +57,7 @@ export function createRun(input: CreateRunInput): Run {
     issueNumber: input.issueNumber,
     type: input.type ?? 'issue_to_pr',
     ...(input.baseBranch !== undefined ? { baseBranch: input.baseBranch } : {}),
+    executionPolicy: input.executionPolicy ?? 'legacy',
     status: 'running',
     completedPhases: [],
     skippedPhases: [],
