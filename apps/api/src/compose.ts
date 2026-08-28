@@ -79,8 +79,12 @@ import {
   ImplementHandler,
   ValidateHandler,
   ReviewFixHandler,
+  InitialReviewHandler,
+  FixReviewHandler,
+  FollowUpReviewHandler,
   CompoundHandler,
   CreatePrHandler,
+  WaitMergeHandler,
   PostPrReviewHandler,
   PrReviewPoller,
   ProcessPrReviewComments,
@@ -6768,6 +6772,26 @@ export function composeRoot(opts: ComposeOptions): Container {
       );
 
       phaseRegistry.register(
+        new InitialReviewHandler({
+          profileName:
+            config.agent.phaseProfiles?.['initial-review']?.profile ?? 'opencode-frontier',
+        }),
+      );
+
+      phaseRegistry.register(
+        new FixReviewHandler({
+          profileName: config.agent.phaseProfiles?.['fix-review']?.profile ?? 'opencode-frontier',
+        }),
+      );
+
+      phaseRegistry.register(
+        new FollowUpReviewHandler({
+          profileName:
+            config.agent.phaseProfiles?.['follow-up-review']?.profile ?? 'opencode-frontier',
+        }),
+      );
+
+      phaseRegistry.register(
         new CreatePrHandler({
           headBranch: (ctx) => `ai/issue-${ctx.issueNumber}`,
           // review-fix and compound commit after validate, so the recorded
@@ -6782,6 +6806,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           },
         }),
       );
+
+      phaseRegistry.register(new WaitMergeHandler({}));
 
       phaseRegistry.register(
         new PostPrReviewHandler({

@@ -1,7 +1,6 @@
 import type {
   Run,
   Phase,
-  PhaseName,
   PhaseStatus,
   Failure,
   ResumeDisposition,
@@ -9,6 +8,7 @@ import type {
   RunId,
 } from '@ai-sdlc/domain';
 import {
+  PhaseName,
   startPhase,
   completePhase,
   skipPhase,
@@ -22,10 +22,12 @@ import type { PhaseDefinition } from '../phases/phase-definitions.js';
 import {
   CANONICAL_PHASE_ORDER,
   PHASE_DEFINITIONS,
+  getPhaseDefinition,
   orderedPhases,
   assertInputsAvailable,
   MissingRequiredInputError,
-} from '../phases/phase-definitions.js';
+  resolvePhaseGraph,
+} from '../phases/index.js';
 import type { RunRepositoryPort, FailureRepositoryPort, LoggerPort } from '../ports.js';
 import type { PhaseRepositoryPort } from '../ports/phase-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
@@ -84,12 +86,33 @@ export interface ExecuteRunOutput {
   phases: PhaseRecord[];
 }
 
+interface ExecutionState {
+  currentRun: Run;
+  skipSet: Set<string>;
+  completedSet: Set<string>;
+  previouslySkippedSet: Set<string>;
+  presentArtifacts: string[];
+  storedArtifacts: Set<string> | undefined;
+  phases: PhaseRecord[];
+  approvedInboundPaths: string[] | undefined;
+  now: () => Date;
+}
+
 export class HandlerNotWiredError extends Error {
   constructor(phase: string) {
     super(
       `Handler for phase "${phase}" is not wired — register a real PhaseHandler implementation before invoking RunExecutor`,
     );
     this.name = 'HandlerNotWiredError';
+  }
+}
+
+function hasHandler(registry: PhaseHandlerRegistryPort, phase: PhaseName): boolean {
+  try {
+    registry.get(phase);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -105,8 +128,9 @@ export class RunExecutor {
 
     // Validate skip list — throws if a phase isn't skippable or skipping
     // would orphan a required input in a downstream phase
-    orderedPhases(skip);
+    orderedPhases(skip, undefined, currentRun.executionPolicy);
 
+    const phaseGraph = resolvePhaseGraph(currentRun.executionPolicy);
     const skipSet: Set<string> = new Set(skip.map((s) => s as string));
     const completedSet = new Set(currentRun.completedPhases);
     const previouslySkippedSet = new Set(currentRun.skippedPhases);
@@ -114,17 +138,11 @@ export class RunExecutor {
     let approvedInboundPaths: string[] | undefined;
 
     if (input.resumeDisposition !== undefined) {
-      let firstIncompletePhase: PhaseName | undefined;
-      for (const phaseName of CANONICAL_PHASE_ORDER) {
-        if (
-          !completedSet.has(phaseName as string) &&
-          !previouslySkippedSet.has(phaseName as string) &&
-          !skipSet.has(phaseName as string)
-        ) {
-          firstIncompletePhase = phaseName;
-          break;
-        }
-      }
+      const firstIncompletePhase = phaseGraph.getFirstIncompletePhase({
+        completedPhases: completedSet,
+        skippedPhases: previouslySkippedSet,
+        skipSet,
+      });
 
       if (firstIncompletePhase) {
         const firstIncompleteDef = PHASE_DEFINITIONS[firstIncompletePhase]!;
@@ -793,302 +811,40 @@ export class RunExecutor {
       }
     }
 
-    // Main phase loop — iterate in canonical order. Skipped phases are
-    // recorded at their natural position so persisted phase ordering
-    // remains correct even when the run fails before reaching a skipped
-    // phase. Completed phases (resume scenario) accumulate their outputs
-    // so downstream input gating passes.
+    const executionState: ExecutionState = {
+      currentRun,
+      skipSet,
+      completedSet,
+      previouslySkippedSet,
+      presentArtifacts,
+      storedArtifacts,
+      phases,
+      approvedInboundPaths,
+      now,
+    };
+
+    const isLean =
+      currentRun.executionPolicy === 'standard' || currentRun.executionPolicy === 'strict';
+    if (isLean) {
+      return this.executeLean(input, executionState);
+    }
+    return this.executeLegacy(input, executionState);
+  }
+
+  private async executeLegacy(
+    input: ExecuteRunInput,
+    state: ExecutionState,
+  ): Promise<ExecuteRunOutput> {
+    const { run } = input;
+    const { now, phases } = state;
+
     for (const phaseName of CANONICAL_PHASE_ORDER) {
-      const phaseDef = PHASE_DEFINITIONS[phaseName]!;
-
-      // Phases that truly passed (were not skipped) accumulate declared
-      // outputs so downstream input gating can rely on them.  When
-      // storedArtifacts is available we verify each output against the
-      // store first; a mismatch fails the run immediately.
-      if (completedSet.has(phaseName as string) && !previouslySkippedSet.has(phaseName as string)) {
-        for (const output of phaseDef.outputs) {
-          if (storedArtifacts && !storedArtifacts.has(output)) {
-            return this.failOnResumeArtifactMismatch(currentRun, phaseDef, output, now(), phases);
-          }
-          if (!presentArtifacts.includes(output)) {
-            presentArtifacts.push(output);
-          }
-        }
-        phases.push({ phase: phaseName, status: 'passed' });
-        continue;
-      }
-
-      // Previously skipped phases are skipped again on resume but do NOT
-      // accumulate declared outputs — the handler chose not to produce them.
-      if (previouslySkippedSet.has(phaseName as string)) {
-        phases.push({ phase: phaseName, status: 'skipped' });
-        continue;
-      }
-
-      if (skipSet.has(phaseName as string)) {
-        currentRun = {
-          ...currentRun,
-          skippedPhases: [...currentRun.skippedPhases, phaseName as string],
-        };
-        const phase: Phase = {
-          id: this.phaseId(run.uuid, phaseName),
-          runUuid: run.uuid,
-          name: phaseName as string,
-          status: 'skipped',
-          attempt: 1,
-          startedAt: now(),
-          completedAt: now(),
-        };
-        this.deps.phaseRepository.insert(phase);
-        this.deps.runRepository.update(run.uuid, {
-          skippedPhases: currentRun.skippedPhases,
-        });
-        phases.push({ phase: phaseName, status: 'skipped' });
-        this.emit(
-          run.displayId,
-          run.uuid,
-          phaseName as string,
-          'info',
-          'phase.skipped',
-          `phase '${String(phaseName)}' skipped`,
-          now(),
-        );
-        continue;
-      }
-      const handler = this.deps.registry.get(phaseDef.name);
-
-      // Input gating
-      try {
-        assertInputsAvailable(phaseDef, presentArtifacts);
-      } catch (e) {
-        if (e instanceof MissingRequiredInputError) {
-          return this.failOnMissingInput(currentRun, phaseDef, e, now(), phases);
-        }
-        throw e;
-      }
-
-      // Transition: start phase
-      currentRun = startPhase(currentRun, phaseDef.name as string);
-
-      const existingPhases = this.deps.phaseRepository.listByRun(run.uuid);
-      const existingPhase = existingPhases.find((p) => p.name === phaseDef.name);
-      const phase: Phase = {
-        id: this.phaseId(run.uuid, phaseDef.name),
-        runUuid: run.uuid,
-        name: phaseDef.name as string,
-        status: 'running',
-        attempt: existingPhase?.attempt ?? 1,
-        startedAt: now(),
-      };
-      this.deps.phaseRepository.insert(phase);
-      this.deps.runRepository.update(run.uuid, { currentPhase: phaseDef.name as string });
-      this.emit(
-        run.displayId,
-        run.uuid,
-        phaseDef.name as string,
-        'info',
-        'phase.started',
-        `starting phase '${String(phaseDef.name)}'`,
-        now(),
-      );
-
-      // Re-read persisted run state — run may have been cancelled during phase
-      // start bookkeeping or a previous handler. If so, bail immediately instead
-      // of writing a terminal status that could resurrect the run.
-      const cancelled = this.deps.runRepository.findByUuid(run.uuid);
-      if (
-        cancelled &&
-        ['cancelled', 'failed', 'blocked', 'needs_human_review', 'passed'].includes(
-          cancelled.status,
-        )
-      ) {
-        return { run: cancelled, phases };
-      }
-
-      // Run handler
-      // Use `currentRun` (not the function-parameter `run`) so context-derived
-      // state like `priorPhaseName` reflects phases completed earlier in this
-      // same execution. The function-parameter `run` was captured before any
-      // phase completed, so its `completedPhases` would always be empty.
-      const ctx = this.buildContext(currentRun, approvedInboundPaths);
-      let result: PhaseResult;
-      try {
-        result = await handler.run(ctx);
-      } catch (err) {
-        // Re-read again — cancellation may have occurred during handler execution
-        const cancelledNow = this.deps.runRepository.findByUuid(run.uuid);
-        if (
-          cancelledNow &&
-          ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledNow.status)
-        ) {
-          return { run: cancelledNow, phases };
-        }
-        if (err instanceof HandlerNotWiredError) {
-          const failure: Failure = {
-            runUuid: currentRun.uuid,
-            phase: phaseDef.name as string,
-            kind: 'handler_not_wired',
-            message: err.message,
-            canRetry: false,
-            suggestedAction: `Phase handler for "${phaseDef.name}" is not wired. Register a real PhaseHandler implementation before invoking RunExecutor.`,
-            artifacts: [],
-            detectedAt: now(),
-          };
-          return this.blockRun(currentRun, phaseDef, phase, failure, now(), phases);
-        }
-        const failure: Failure = {
-          runUuid: currentRun.uuid,
-          phase: phaseDef.name as string,
-          kind: 'command_failed',
-          message: err instanceof Error ? err.message : String(err),
-          canRetry: false,
-          suggestedAction: 'Inspect handler execution error.',
-          artifacts: [],
-          detectedAt: now(),
-        };
-        return this.failRun(currentRun, phaseDef, phase, failure, now(), phases);
-      }
-
-      // Re-read persisted run state — cancellation may have occurred during handler execution.
-      // Skip this guard when the handler returned `resting`: some handlers (e.g.
-      // PostPrReviewHandler for timed_out/cancelled signals) set a terminal run
-      // status and then return resting, and the resting branch must still run its
-      // phase bookkeeping (update phase status, clear currentPhase).
-      const cancelledAfterHandler = this.deps.runRepository.findByUuid(run.uuid);
-      if (
-        cancelledAfterHandler &&
-        ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledAfterHandler.status) &&
-        result.outcome !== 'resting'
-      ) {
-        return { run: cancelledAfterHandler, phases };
-      }
-
-      switch (result.outcome) {
-        case 'deferred':
-        case 'passed': {
-          const status = result.outcome as 'deferred' | 'passed';
-          currentRun = completePhase(currentRun, phaseDef.name as string);
-          phase.status = status;
-          phase.completedAt = now();
-          for (const output of phaseDef.outputs) {
-            if (!presentArtifacts.includes(output)) {
-              presentArtifacts.push(output);
-            }
-          }
-          // Refresh artifact presence from the artifact store BEFORE
-          // persisting phase completion. If the store is unavailable we
-          // still have the declared outputs — no need to fail the phase.
-          try {
-            const stored = await ctx.artifacts.list(run.uuid);
-            for (const a of stored) {
-              if (!presentArtifacts.includes(a.relativePath)) {
-                presentArtifacts.push(a.relativePath);
-              }
-            }
-          } catch {
-            // non-fatal — declared outputs already accumulated
-          }
-          this.deps.phaseRepository.update(phase);
-          this.deps.runRepository.update(run.uuid, {
-            currentPhase: null,
-            completedPhases: currentRun.completedPhases,
-          });
-          // Deferred phases emit 'phase.completed' because the executor's
-          // processing is done — the handler returned, results are persisted,
-          // and the pipeline continues. Event consumers that need to distinguish
-          // can check the event message string (which says "deferred") or the
-          // run step's status field.
-          const eventMsg =
-            status === 'deferred'
-              ? `phase '${String(phaseDef.name)}' deferred — pipeline continues`
-              : `phase '${String(phaseDef.name)}' completed`;
-          phases.push({ phase: phaseDef.name, status });
-          this.emit(
-            run.displayId,
-            run.uuid,
-            phaseDef.name as string,
-            'info',
-            'phase.completed',
-            eventMsg,
-            now(),
-          );
-          break;
-        }
-        case 'skipped': {
-          currentRun = skipPhase(currentRun, phaseDef.name as string);
-          phase.status = 'skipped';
-          phase.completedAt = now();
-          // Refresh actual artifact presence from the artifact store —
-          // do NOT accumulate declared outputs (the handler chose not to run).
-          try {
-            const stored = await ctx.artifacts.list(run.uuid);
-            for (const a of stored) {
-              if (!presentArtifacts.includes(a.relativePath)) {
-                presentArtifacts.push(a.relativePath);
-              }
-            }
-          } catch {
-            // non-fatal — handler chose to skip, no declared outputs to lose
-          }
-          this.deps.phaseRepository.update(phase);
-          this.deps.runRepository.update(run.uuid, {
-            currentPhase: null,
-            skippedPhases: currentRun.skippedPhases,
-          });
-          // Do NOT accumulate declared outputs — the handler chose not to run
-          phases.push({ phase: phaseDef.name, status: 'skipped' });
-          this.emit(
-            run.displayId,
-            run.uuid,
-            phaseDef.name as string,
-            'info',
-            'phase.skipped',
-            `phase '${String(phaseDef.name)}' skipped by handler`,
-            now(),
-          );
-          break;
-        }
-        case 'resting': {
-          phase.status = 'resting';
-          phase.completedAt = now();
-          this.deps.phaseRepository.update(phase);
-          const restingRun = { ...currentRun };
-          delete restingRun.currentPhase;
-          this.deps.runRepository.update(run.uuid, {
-            currentPhase: null,
-          });
-          phases.push({ phase: phaseDef.name, status: 'resting' });
-          this.emit(
-            run.displayId,
-            run.uuid,
-            phaseDef.name as string,
-            'info',
-            'phase.resting',
-            `phase '${String(phaseDef.name)}' resting — run paused`,
-            now(),
-          );
-          return { run: restingRun, phases };
-        }
-        case 'failed': {
-          return this.failRun(currentRun, phaseDef, phase, result.failure, now(), phases);
-        }
-        case 'blocked': {
-          return this.blockRun(currentRun, phaseDef, phase, result.failure, now(), phases);
-        }
-        case 'needs_human_review': {
-          return this.needsHumanReviewRun(
-            currentRun,
-            phaseDef,
-            phase,
-            result.failure,
-            now(),
-            phases,
-          );
-        }
+      const step = await this.executeSinglePhase(phaseName, run, state);
+      if (step.status === 'terminal') {
+        return step.terminalResult!;
       }
     }
 
-    // Re-read persisted state — run may have been cancelled during the last handler
     const cancelledFinal = this.deps.runRepository.findByUuid(run.uuid);
     if (
       cancelledFinal &&
@@ -1097,17 +853,619 @@ export class RunExecutor {
       return { run: cancelledFinal, phases };
     }
 
-    // All phases passed — mark run passed
+    return this.passRun(state.currentRun, now, phases);
+  }
+
+  private async executeLean(
+    input: ExecuteRunInput,
+    state: ExecutionState,
+  ): Promise<ExecuteRunOutput> {
+    const { run } = input;
+    const { now, phases } = state;
+    const definitions = PHASE_DEFINITIONS;
+
+    // Seed presentArtifacts with outputs of all already-completed phases
+    for (const completedPhase of state.completedSet) {
+      const def = definitions[completedPhase as PhaseName];
+      if (def) {
+        for (const out of def.outputs) {
+          if (!state.presentArtifacts.includes(out)) {
+            state.presentArtifacts.push(out);
+          }
+        }
+      }
+      if (completedPhase === 'plan-design') {
+        if (!state.presentArtifacts.includes('plan.md')) {
+          state.presentArtifacts.push('plan.md');
+        }
+      }
+    }
+
+    // 1. read_issue
+    if (!state.completedSet.has('read_issue')) {
+      const step = await this.executeSinglePhase(PhaseName('read_issue'), run, state);
+      if (step.status === 'terminal') return step.terminalResult!;
+    }
+
+    // 2. plan-design (unified planning)
+    if (!state.completedSet.has('plan-design')) {
+      const step = await this.executeSinglePhase(PhaseName('plan-design'), run, state);
+      if (step.status === 'terminal') return step.terminalResult!;
+    }
+
+    // 3. implement
+    if (!state.completedSet.has('implement')) {
+      const step = await this.executeSinglePhase(PhaseName('implement'), run, state);
+      if (step.status === 'terminal') return step.terminalResult!;
+    }
+
+    // 4. validate (deterministic validation)
+    if (!state.completedSet.has('validate')) {
+      const step = await this.executeSinglePhase(PhaseName('validate'), run, state);
+      if (step.status === 'terminal') return step.terminalResult!;
+
+      if (step.status === 'deferred') {
+        // Validation deferred / failed -> Bounded 1-attempt repair via fix-validate
+        const fixStep = await this.executeSinglePhase(PhaseName('fix-validate'), run, state, {
+          forceRun: true,
+        });
+        if (fixStep.status === 'terminal') return fixStep.terminalResult!;
+        if (fixStep.status !== 'passed') {
+          return this.escalateToHumanReview(
+            state.currentRun,
+            PhaseName('fix-validate'),
+            'fix-validate repair attempt did not pass',
+            now(),
+            phases,
+          );
+        }
+
+        // Full deterministic revalidation
+        const revalStep = await this.executeSinglePhase(PhaseName('validate'), run, state, {
+          forceRun: true,
+        });
+        if (revalStep.status === 'terminal') return revalStep.terminalResult!;
+        if (revalStep.status !== 'passed') {
+          return this.escalateToHumanReview(
+            state.currentRun,
+            PhaseName('validate'),
+            'deterministic revalidation failed after fix-validate repair attempt',
+            now(),
+            phases,
+          );
+        }
+      }
+    }
+
+    // 5. Review & Convergence (#1107 Coordination)
+    const prAlreadyCompleted =
+      state.completedSet.has('create-pr') || state.completedSet.has('wait-merge');
+    if (!prAlreadyCompleted) {
+      const reviewPhaseName = hasHandler(this.deps.registry, PhaseName('initial-review'))
+        ? PhaseName('initial-review')
+        : PhaseName('review-fix');
+
+      if (!state.completedSet.has(reviewPhaseName as string)) {
+        const step = await this.executeSinglePhase(reviewPhaseName, run, state);
+        if (step.status === 'terminal') return step.terminalResult!;
+      }
+
+      // Check review verdict
+      let verdict = 'APPROVE';
+      const ctx = this.buildContext(state.currentRun, state.approvedInboundPaths);
+      try {
+        const wholeChangeResult = await ctx.artifacts.read(run.uuid, 'whole-change-review.json');
+        const parsed = JSON.parse(wholeChangeResult) as { verdict?: string };
+        verdict = (parsed.verdict ?? 'APPROVE').toUpperCase();
+      } catch {
+        try {
+          const ledgerRaw = await ctx.artifacts.read(run.uuid, 'finding-ledger.json');
+          const ledger = JSON.parse(ledgerRaw) as { entries?: Array<{ status?: string }> };
+          const hasUnresolved = ledger.entries?.some((e) => e.status === 'unresolved');
+          if (hasUnresolved) {
+            verdict = 'REQUEST_CHANGES';
+          }
+        } catch {
+          verdict = 'APPROVE';
+        }
+      }
+
+      if (verdict === 'REQUEST_CHANGES') {
+        // Review-Fix Convergence Loop
+        const maxReviewFixIterations = 4;
+        let iteration = 0;
+
+        while (iteration < maxReviewFixIterations) {
+          iteration++;
+
+          // A. fix-review
+          const fixReviewName = hasHandler(this.deps.registry, PhaseName('fix-review'))
+            ? PhaseName('fix-review')
+            : PhaseName('review-fix');
+          const fixStep = await this.executeSinglePhase(fixReviewName, run, state, {
+            forceRun: true,
+          });
+          if (fixStep.status === 'terminal') return fixStep.terminalResult!;
+
+          // B. deterministic validate after review fix
+          const valStep = await this.executeSinglePhase(PhaseName('validate'), run, state, {
+            forceRun: true,
+          });
+          if (valStep.status === 'terminal') return valStep.terminalResult!;
+          if (valStep.status === 'deferred') {
+            // Validation failed after fix -> bounded fix-validate attempt
+            const fixValStep = await this.executeSinglePhase(
+              PhaseName('fix-validate'),
+              run,
+              state,
+              {
+                forceRun: true,
+              },
+            );
+            if (fixValStep.status === 'terminal') return fixValStep.terminalResult!;
+            if (fixValStep.status !== 'passed') {
+              return this.escalateToHumanReview(
+                state.currentRun,
+                PhaseName('fix-validate'),
+                'validation repair failed after review fix',
+                now(),
+                phases,
+              );
+            }
+            const revalStep = await this.executeSinglePhase(PhaseName('validate'), run, state, {
+              forceRun: true,
+            });
+            if (revalStep.status === 'terminal') return revalStep.terminalResult!;
+            if (revalStep.status !== 'passed') {
+              return this.escalateToHumanReview(
+                state.currentRun,
+                PhaseName('validate'),
+                'revalidation failed after review fix repair',
+                now(),
+                phases,
+              );
+            }
+          }
+
+          // C. follow-up review
+          const followUpName = hasHandler(this.deps.registry, PhaseName('follow-up-review'))
+            ? PhaseName('follow-up-review')
+            : PhaseName('review-fix');
+          const follStep = await this.executeSinglePhase(followUpName, run, state, {
+            forceRun: true,
+          });
+          if (follStep.status === 'terminal') return follStep.terminalResult!;
+
+          let followUpVerdict = 'APPROVE';
+          try {
+            const followUpRaw = await ctx.artifacts.read(run.uuid, 'follow-up-review.json');
+            const parsed = JSON.parse(followUpRaw) as { verdict?: string };
+            followUpVerdict = (parsed.verdict ?? 'APPROVE').toUpperCase();
+          } catch {
+            try {
+              const ledgerRaw = await ctx.artifacts.read(run.uuid, 'finding-ledger.json');
+              const ledger = JSON.parse(ledgerRaw) as { entries?: Array<{ status?: string }> };
+              const hasUnresolved = ledger.entries?.some((e) => e.status === 'unresolved');
+              if (hasUnresolved) {
+                followUpVerdict = 'REQUEST_CHANGES';
+              }
+            } catch {
+              followUpVerdict = 'APPROVE';
+            }
+          }
+
+          if (followUpVerdict === 'APPROVE') {
+            break;
+          }
+
+          if (iteration >= maxReviewFixIterations) {
+            return this.escalateToHumanReview(
+              state.currentRun,
+              followUpName,
+              `review-fix convergence loop exhausted after ${maxReviewFixIterations} iterations without approval`,
+              now(),
+              phases,
+            );
+          }
+        }
+      }
+    }
+
+    // 6. create-pr
+    if (!state.completedSet.has('create-pr')) {
+      const step = await this.executeSinglePhase(PhaseName('create-pr'), run, state);
+      if (step.status === 'terminal') return step.terminalResult!;
+    }
+
+    // 7. wait-merge (terminal CI / merge waiting)
+    const waitMergePhase = hasHandler(this.deps.registry, PhaseName('wait-merge'))
+      ? PhaseName('wait-merge')
+      : hasHandler(this.deps.registry, PhaseName('post-pr-review'))
+        ? PhaseName('post-pr-review')
+        : undefined;
+
+    if (waitMergePhase) {
+      const step = await this.executeSinglePhase(waitMergePhase, run, state);
+      if (step.status === 'terminal') return step.terminalResult!;
+    }
+
+    // 8. Terminal success
+    const cancelledFinal = this.deps.runRepository.findByUuid(run.uuid);
+    if (
+      cancelledFinal &&
+      ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledFinal.status)
+    ) {
+      return { run: cancelledFinal, phases };
+    }
+
+    return this.passRun(state.currentRun, now, phases);
+  }
+
+  private async executeSinglePhase(
+    phaseName: PhaseName,
+    run: Run,
+    state: ExecutionState,
+    opts?: { forceRun?: boolean },
+  ): Promise<{
+    status: PhaseStatus | 'terminal';
+    terminalResult?: ExecuteRunOutput;
+  }> {
+    const {
+      now,
+      skipSet,
+      completedSet,
+      previouslySkippedSet,
+      presentArtifacts,
+      storedArtifacts,
+      phases,
+    } = state;
+    const phaseDef = PHASE_DEFINITIONS[phaseName] ?? getPhaseDefinition(phaseName);
+
+    if (
+      !opts?.forceRun &&
+      completedSet.has(phaseName as string) &&
+      !previouslySkippedSet.has(phaseName as string)
+    ) {
+      for (const output of phaseDef.outputs) {
+        if (storedArtifacts && !storedArtifacts.has(output)) {
+          const terminalResult = this.failOnResumeArtifactMismatch(
+            state.currentRun,
+            phaseDef,
+            output,
+            now(),
+            phases,
+          );
+          return { status: 'terminal', terminalResult };
+        }
+        if (!presentArtifacts.includes(output)) {
+          presentArtifacts.push(output);
+        }
+      }
+      phases.push({ phase: phaseName, status: 'passed' });
+      return { status: 'passed' };
+    }
+
+    if (!opts?.forceRun && previouslySkippedSet.has(phaseName as string)) {
+      phases.push({ phase: phaseName, status: 'skipped' });
+      return { status: 'skipped' };
+    }
+
+    if (skipSet.has(phaseName as string)) {
+      state.currentRun = {
+        ...state.currentRun,
+        skippedPhases: [...state.currentRun.skippedPhases, phaseName as string],
+      };
+      const phase: Phase = {
+        id: this.phaseId(run.uuid, phaseName),
+        runUuid: run.uuid,
+        name: phaseName as string,
+        status: 'skipped',
+        attempt: 1,
+        startedAt: now(),
+        completedAt: now(),
+      };
+      this.deps.phaseRepository.insert(phase);
+      this.deps.runRepository.update(run.uuid, {
+        skippedPhases: state.currentRun.skippedPhases,
+      });
+      phases.push({ phase: phaseName, status: 'skipped' });
+      this.emit(
+        run.displayId,
+        run.uuid,
+        phaseName as string,
+        'info',
+        'phase.skipped',
+        `phase '${String(phaseName)}' skipped`,
+        now(),
+      );
+      return { status: 'skipped' };
+    }
+
+    const handler = this.deps.registry.get(phaseDef.name);
+
+    // Input gating
+    try {
+      assertInputsAvailable(phaseDef, presentArtifacts);
+    } catch (e) {
+      if (e instanceof MissingRequiredInputError) {
+        const terminalResult = this.failOnMissingInput(
+          state.currentRun,
+          phaseDef,
+          e,
+          now(),
+          phases,
+        );
+        return { status: 'terminal', terminalResult };
+      }
+      throw e;
+    }
+
+    // Transition: start phase
+    state.currentRun = startPhase(state.currentRun, phaseDef.name as string);
+
+    const existingPhases = this.deps.phaseRepository.listByRun(run.uuid);
+    const existingPhase = existingPhases.find((p) => p.name === phaseDef.name);
+    const phase: Phase = {
+      id: this.phaseId(run.uuid, phaseDef.name),
+      runUuid: run.uuid,
+      name: phaseDef.name as string,
+      status: 'running',
+      attempt: existingPhase ? existingPhase.attempt + 1 : 1,
+      startedAt: now(),
+    };
+    this.deps.phaseRepository.insert(phase);
+    this.deps.runRepository.update(run.uuid, { currentPhase: phaseDef.name as string });
+    this.emit(
+      run.displayId,
+      run.uuid,
+      phaseDef.name as string,
+      'info',
+      'phase.started',
+      `starting phase '${String(phaseDef.name)}'`,
+      now(),
+    );
+
+    const cancelled = this.deps.runRepository.findByUuid(run.uuid);
+    if (
+      cancelled &&
+      ['cancelled', 'failed', 'blocked', 'needs_human_review', 'passed'].includes(cancelled.status)
+    ) {
+      return { status: 'terminal', terminalResult: { run: cancelled, phases } };
+    }
+
+    const ctx = this.buildContext(state.currentRun, state.approvedInboundPaths);
+    let result: PhaseResult;
+    try {
+      result = await handler.run(ctx);
+    } catch (err) {
+      const cancelledNow = this.deps.runRepository.findByUuid(run.uuid);
+      if (
+        cancelledNow &&
+        ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledNow.status)
+      ) {
+        return { status: 'terminal', terminalResult: { run: cancelledNow, phases } };
+      }
+      if (err instanceof HandlerNotWiredError) {
+        const failure: Failure = {
+          runUuid: state.currentRun.uuid,
+          phase: phaseDef.name as string,
+          kind: 'handler_not_wired',
+          message: err.message,
+          canRetry: false,
+          suggestedAction: `Phase handler for "${phaseDef.name}" is not wired. Register a real PhaseHandler implementation before invoking RunExecutor.`,
+          artifacts: [],
+          detectedAt: now(),
+        };
+        const terminalResult = this.blockRun(
+          state.currentRun,
+          phaseDef,
+          phase,
+          failure,
+          now(),
+          phases,
+        );
+        return { status: 'terminal', terminalResult };
+      }
+      const failure: Failure = {
+        runUuid: state.currentRun.uuid,
+        phase: phaseDef.name as string,
+        kind: 'command_failed',
+        message: err instanceof Error ? err.message : String(err),
+        canRetry: false,
+        suggestedAction: 'Inspect handler execution error.',
+        artifacts: [],
+        detectedAt: now(),
+      };
+      const terminalResult = this.failRun(
+        state.currentRun,
+        phaseDef,
+        phase,
+        failure,
+        now(),
+        phases,
+      );
+      return { status: 'terminal', terminalResult };
+    }
+
+    const cancelledAfterHandler = this.deps.runRepository.findByUuid(run.uuid);
+    if (
+      cancelledAfterHandler &&
+      ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledAfterHandler.status) &&
+      result.outcome !== 'resting'
+    ) {
+      return { status: 'terminal', terminalResult: { run: cancelledAfterHandler, phases } };
+    }
+
+    switch (result.outcome) {
+      case 'deferred':
+      case 'passed': {
+        const status = result.outcome as 'deferred' | 'passed';
+        state.currentRun = completePhase(state.currentRun, phaseDef.name as string);
+        phase.status = status;
+        phase.completedAt = now();
+        for (const output of phaseDef.outputs) {
+          if (!presentArtifacts.includes(output)) {
+            presentArtifacts.push(output);
+          }
+        }
+        try {
+          const stored = await ctx.artifacts.list(run.uuid);
+          for (const a of stored) {
+            if (!presentArtifacts.includes(a.relativePath)) {
+              presentArtifacts.push(a.relativePath);
+            }
+          }
+        } catch {
+          // non-fatal
+        }
+        this.deps.phaseRepository.update(phase);
+        this.deps.runRepository.update(run.uuid, {
+          currentPhase: null,
+          completedPhases: state.currentRun.completedPhases,
+        });
+        const eventMsg =
+          status === 'deferred'
+            ? `phase '${String(phaseDef.name)}' deferred — pipeline continues`
+            : `phase '${String(phaseDef.name)}' completed`;
+        phases.push({ phase: phaseDef.name, status });
+        this.emit(
+          run.displayId,
+          run.uuid,
+          phaseDef.name as string,
+          'info',
+          'phase.completed',
+          eventMsg,
+          now(),
+        );
+        return { status };
+      }
+      case 'skipped': {
+        state.currentRun = skipPhase(state.currentRun, phaseDef.name as string);
+        phase.status = 'skipped';
+        phase.completedAt = now();
+        try {
+          const stored = await ctx.artifacts.list(run.uuid);
+          for (const a of stored) {
+            if (!presentArtifacts.includes(a.relativePath)) {
+              presentArtifacts.push(a.relativePath);
+            }
+          }
+        } catch {
+          // non-fatal
+        }
+        this.deps.phaseRepository.update(phase);
+        this.deps.runRepository.update(run.uuid, {
+          currentPhase: null,
+          skippedPhases: state.currentRun.skippedPhases,
+        });
+        phases.push({ phase: phaseDef.name, status: 'skipped' });
+        this.emit(
+          run.displayId,
+          run.uuid,
+          phaseDef.name as string,
+          'info',
+          'phase.skipped',
+          `phase '${String(phaseDef.name)}' skipped by handler`,
+          now(),
+        );
+        return { status: 'skipped' };
+      }
+      case 'resting': {
+        phase.status = 'resting';
+        phase.completedAt = now();
+        this.deps.phaseRepository.update(phase);
+        const restingRun = { ...state.currentRun };
+        delete restingRun.currentPhase;
+        this.deps.runRepository.update(run.uuid, { currentPhase: null });
+        phases.push({ phase: phaseDef.name, status: 'resting' });
+        this.emit(
+          run.displayId,
+          run.uuid,
+          phaseDef.name as string,
+          'info',
+          'phase.resting',
+          `phase '${String(phaseDef.name)}' resting — run paused`,
+          now(),
+        );
+        return { status: 'terminal', terminalResult: { run: restingRun, phases } };
+      }
+      case 'failed': {
+        const terminalResult = this.failRun(
+          state.currentRun,
+          phaseDef,
+          phase,
+          result.failure,
+          now(),
+          phases,
+        );
+        return { status: 'terminal', terminalResult };
+      }
+      case 'blocked': {
+        const terminalResult = this.blockRun(
+          state.currentRun,
+          phaseDef,
+          phase,
+          result.failure,
+          now(),
+          phases,
+        );
+        return { status: 'terminal', terminalResult };
+      }
+      case 'needs_human_review': {
+        const terminalResult = this.needsHumanReviewRun(
+          state.currentRun,
+          phaseDef,
+          phase,
+          result.failure,
+          now(),
+          phases,
+        );
+        return { status: 'terminal', terminalResult };
+      }
+    }
+  }
+
+  private escalateToHumanReview(
+    currentRun: Run,
+    phaseName: PhaseName,
+    message: string,
+    now: Date,
+    phases: PhaseRecord[],
+  ): ExecuteRunOutput {
+    const phaseDef = PHASE_DEFINITIONS[phaseName] ?? getPhaseDefinition(phaseName);
+    const phase: Phase = {
+      id: this.phaseId(currentRun.uuid, phaseName),
+      runUuid: currentRun.uuid,
+      name: phaseName as string,
+      status: 'needs_human_review',
+      attempt: 1,
+      startedAt: now,
+      completedAt: now,
+    };
+    const failure: Failure = {
+      runUuid: currentRun.uuid,
+      phase: phaseName as string,
+      kind: 'needs_human_review',
+      message,
+      canRetry: true,
+      suggestedAction: 'Review the run artifacts, address unresolved issues, and resume.',
+      artifacts: [],
+      detectedAt: now,
+    };
+    return this.needsHumanReviewRun(currentRun, phaseDef, phase, failure, now, phases);
+  }
+
+  private passRun(currentRun: Run, now: () => Date, phases: PhaseRecord[]): ExecuteRunOutput {
     const finalRun = passRun(currentRun, now());
-    this.terminalStatusWrite(run.uuid, 'passed', {
+    this.terminalStatusWrite(currentRun.uuid, 'passed', {
       status: 'passed',
       currentPhase: null,
       completedAt: now(),
       failureReason: null,
     });
     this.emit(
-      run.displayId,
-      run.uuid,
+      currentRun.displayId,
+      currentRun.uuid,
       undefined,
       'info',
       'run.completed',

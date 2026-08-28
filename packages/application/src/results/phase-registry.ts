@@ -12,6 +12,7 @@ import { compoundResultSchema } from './schemas/compound.js';
 import { arbiterResultSchema } from './schemas/arbiter.js';
 import { fixValidateResultSchema } from './schemas/fix-validate.js';
 import { planFixResultSchema } from './schemas/plan-fix.js';
+import { followUpReviewResultSchema } from './schemas/follow-up-review.js';
 
 export interface PhaseResultMeta {
   schema: ZodTypeAny;
@@ -33,6 +34,10 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   compound: 'compound',
   'create-pr': 'create-pr',
   'review-fix': null,
+  'initial-review': null,
+  'fix-review': null,
+  'follow-up-review': null,
+  'wait-merge': null,
   read_issue: null,
   validate: null,
   'pr-review-poll': 'post-pr-review',
@@ -81,6 +86,16 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
     schema: wholeChangeReviewResultSchema,
     schemaContractText:
       '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "acceptance_criteria": Array<{\n    "criterion": string,\n    "result": "PASS" | "FAIL",\n    "evidence"?: string\n  }>,\n  "findings"?: Array<{\n    "severity": "critical" | "high" | "medium" | "low",\n    "files"?: string[],\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string\n  }>,\n  "summary"?: string\n}',
+  },
+  'initial-review': {
+    schema: wholeChangeReviewResultSchema,
+    schemaContractText:
+      '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "acceptance_criteria": Array<{\n    "criterion": string,\n    "result": "PASS" | "FAIL",\n    "evidence"?: string\n  }>,\n  "findings"?: Array<{\n    "severity": "critical" | "high" | "medium" | "low",\n    "files"?: string[],\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string\n  }>,\n  "summary"?: string\n}',
+  },
+  'follow-up-review': {
+    schema: followUpReviewResultSchema,
+    schemaContractText:
+      '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "evaluations": Array<{\n    "finding_id": string,\n    "resolved": boolean,\n    "evidence": string,\n    "rationale"?: string\n  }>,\n  "new_findings"?: Array<{\n    "severity": "critical" | "high" | "medium" | "low",\n    "files"?: string[],\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string\n  }>,\n  "summary"?: string\n}',
   },
   'narrow-verification': {
     schema: narrowVerificationResultSchema,

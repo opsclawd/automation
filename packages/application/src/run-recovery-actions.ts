@@ -1,7 +1,7 @@
 import { PhaseName } from '@ai-sdlc/domain';
 import type { RunRecord } from './ports.js';
 import type { Phase } from '@ai-sdlc/domain';
-import { getPhaseDefinition, CANONICAL_PHASE_ORDER } from './phases/index.js';
+import { getPhaseDefinition, resolvePhaseOrder } from './phases/index.js';
 
 export type RecoveryAction = 'cancel' | 'retry' | 'resume';
 
@@ -134,7 +134,8 @@ export function planRunRecoveryAction(input: {
       getPhaseDefinition(PhaseName(fromPhase));
       targetPhase = fromPhase;
     } else {
-      for (const name of CANONICAL_PHASE_ORDER) {
+      const phaseOrder = resolvePhaseOrder(run.executionPolicy);
+      for (const name of phaseOrder) {
         if (!run.completedPhases.includes(name) && !run.skippedPhases.includes(name)) {
           targetPhase = name;
           break;
