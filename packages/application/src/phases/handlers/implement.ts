@@ -1,5 +1,5 @@
 import { PhaseName } from '@ai-sdlc/domain';
-import type { FailureKind } from '@ai-sdlc/domain';
+import type { FailureKind, Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
 import type { StepRepositoryPort } from '../../ports/step-repository-port.js';
 import type { Step, RunId } from '@ai-sdlc/domain';
@@ -26,6 +26,8 @@ import {
   hasDeclaredSurface,
   resolveEffectiveTaskScope,
   classifyTaskChanges,
+  checkTaskBoundaries,
+  getManifestBoundaries,
 } from '../../task-file-boundaries.js';
 import type {
   EffectiveTaskScope,
@@ -43,6 +45,8 @@ import type {
 } from '../../ports/revert-scope-files-port.js';
 import type { DeleteWorktreeFilePort } from '../../ports/delete-worktree-file-port.js';
 import { isProtectedFilePath, remediateScratchFiles } from '../../scratch-file-remediation.js';
+import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
+import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 export type { ScratchFileStepRecord, ScratchFilesReport } from '../../scratch-file-remediation.js';
 
 interface DirtyClassification {
@@ -542,6 +546,11 @@ export class ImplementHandler implements PhaseHandler {
         })),
       };
       manifest = synthManifest;
+    }
+
+    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    if (isLeanPolicy) {
+      return this.runLean(ctx, emit, planMd, manifest, manifestPresent);
     }
 
     const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);
@@ -1504,6 +1513,320 @@ export class ImplementHandler implements PhaseHandler {
     }
 
     // Phase-boundary worktree reconciliation
+    const reconciliation = await this.reconcilePhaseBoundary(ctx, emit);
+    if (reconciliation !== undefined) {
+      return reconciliation;
+    }
+
+    emit('implement.completed', 'info', 'implement complete');
+    return { outcome: 'passed' };
+  }
+
+  private async runLean(
+    ctx: PhaseHandlerContext,
+    emit: EventEmitter,
+    planMd: string,
+    manifest: TaskManifest,
+    manifestPresent: boolean,
+  ): Promise<PhaseResult> {
+    // 1. Resume / idempotency check
+    const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);
+    const implementSteps = existing.filter((s) => s.phaseId === 'implement');
+    const isAlreadyComplete =
+      implementSteps.length > 0 && implementSteps.every((s) => s.status === 'success');
+    if (isAlreadyComplete) {
+      try {
+        const implLog = await ctx.artifacts.read(ctx.runUuid, 'implementation-log.md');
+        if (implLog.trim().length > 0) {
+          emit(
+            'step.skipped',
+            'info',
+            'step 1/1 already complete (reusing existing implementation)',
+            {
+              index: 1,
+              total: 1,
+              policy: ctx.executionPolicy,
+            },
+          );
+          emit(
+            'implement.completed',
+            'info',
+            'implement complete (reusing existing implementation)',
+            {
+              policy: ctx.executionPolicy,
+            },
+          );
+          return { outcome: 'passed' };
+        }
+      } catch {
+        // If implementation-log.md artifact is missing, proceed with implementation
+      }
+    }
+
+    // 2. Lint task size (if configured)
+    if (this.opts.lintTaskSize && manifestPresent) {
+      let lintResult: LintTaskSizeResult;
+      try {
+        lintResult = await this.opts.lintTaskSize(ctx.cwd, manifest);
+        if (!lintResult) {
+          lintResult = { ok: true, oversized: [] };
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        const isPathTraversal = message.includes('Path traversal detected');
+        const failureKind: FailureKind = isPathTraversal ? 'invalid_result' : 'unknown';
+        return this.fail(ctx, emit, failureKind, `lintTaskSize crashed: ${message}`);
+      }
+      for (const task of lintResult.oversized) {
+        emit(
+          'task_size.oversized',
+          'warn',
+          `task ${task.taskNum} targets oversized test file: ${task.file}`,
+          {
+            taskNum: task.taskNum,
+            taskTitle: task.taskTitle,
+            file: task.file,
+            lineCount: task.lineCount,
+            testCaseCount: task.testCaseCount,
+          },
+        );
+      }
+      if (!lintResult.ok) {
+        return this.fail(
+          ctx,
+          emit,
+          'invalid_result',
+          `task size linting blocked: ${lintResult.oversized.map((t) => `task ${t.taskNum} (${t.file})`).join(', ')} exceed thresholds`,
+          'Split tasks targeting oversized test files in plan.md.',
+        );
+      }
+    }
+
+    // 3. Worktree setup
+    if (this.opts.setup) {
+      try {
+        const result = await this.opts.setup(ctx.cwd);
+        if (!result.ok) {
+          return this.fail(ctx, emit, 'setup_failed', result.error ?? 'setup failed');
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        return this.fail(ctx, emit, 'setup_failed', `setup crashed: ${message}`);
+      }
+    }
+
+    // 4. Capture baseline pre-implementation commit SHA
+    let preStepHead: string;
+    try {
+      if (!ctx.git?.headCommitSha) {
+        throw new Error('ctx.git.headCommitSha is not available');
+      }
+      preStepHead = await ctx.git.headCommitSha(ctx.cwd);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return this.fail(ctx, emit, 'unknown', `failed baseline commit query: ${message}`);
+    }
+
+    // 5. Initialize step in step repository
+    const startedAt = ctx.now();
+    const existingStep = this.opts.steps.findByIndex(ctx.runUuid as RunId, this.phase, 1);
+    const step: Step = {
+      id: existingStep?.id ?? ctx.idFactory?.() ?? `${ctx.runUuid}:implement:1`,
+      runId: ctx.runUuid,
+      phaseId: this.phase,
+      index: 1,
+      title: 'Implement issue',
+      status: 'running',
+      startedAt,
+      initialPreStepHead: preStepHead,
+      revertCounts: {},
+    };
+    this.opts.steps.upsert(step);
+    emit('step.started', 'info', 'step 1/1: Implement issue', {
+      index: 1,
+      total: 1,
+      policy: ctx.executionPolicy,
+    });
+
+    // 6. Resolve profile
+    if (!ctx.resolveProfile) {
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: 'implement',
+        kind: 'command_failed',
+        message: 'resolveProfile not available on context',
+        canRetry: false,
+        suggestedAction: 'Ensure context is built with resolveProfile in the compose root.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+      this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+      emit('step.failed', 'error', failure.message, { index: 1, total: 1 });
+      emit('implement.failed', 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+
+    const profile = ctx.resolveProfile(this.phase);
+    if (!profile) {
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: 'implement',
+        kind: 'command_failed',
+        message: `resolveProfile returned empty for phase '${this.phase}'`,
+        canRetry: false,
+        suggestedAction: 'Ensure the phase profile is configured in the compose root.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+      this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+      emit('step.failed', 'error', failure.message, { index: 1, total: 1 });
+      emit('implement.failed', 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+
+    // 7. Load prompt template
+    let template: string | undefined;
+    if (ctx.promptsRoot) {
+      try {
+        template = loadPromptTemplate('implement', 'implement', {
+          promptsRoot: ctx.promptsRoot,
+        });
+      } catch {
+        try {
+          template = loadPromptTemplate('implement', 'task', {
+            promptsRoot: ctx.promptsRoot,
+          });
+        } catch {
+          // Handled by runSingleShotAgentPhase
+        }
+      }
+    }
+
+    // 8. Invoke agent single-shot
+    const runResult = await runSingleShotAgentPhase(ctx, {
+      phase: this.phase,
+      profile,
+      step: 'implement',
+      ...(template ? { template } : {}),
+      vars: { issue_number: String(ctx.issueNumber), cwd: ctx.cwd },
+      agentContract: { requiredArtifacts: ['implementation-log.md'], mustNotChangeBranch: true },
+      skipResultExtraction: true,
+    });
+
+    if (runResult.outcome !== 'passed') {
+      this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+      emit('step.failed', 'error', `step 1/1 failed`, { index: 1, total: 1 });
+      return runResult;
+    }
+
+    // 9. Post-implementation deterministic evaluation
+    let postStepHead: string | undefined;
+    let committedFiles: string[] = [];
+    try {
+      if (!ctx.git?.headCommitSha || typeof ctx.git?.changedFiles !== 'function') {
+        throw new Error('ctx.git.changedFiles is not available');
+      }
+      postStepHead = await ctx.git.headCommitSha(ctx.cwd);
+      committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead, postStepHead);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+      emit('step.failed', 'error', `commit coverage query failed: ${message}`, {
+        index: 1,
+        total: 1,
+      });
+      return this.fail(ctx, emit, 'unknown', `commit coverage query failed: ${message}`);
+    }
+
+    // Remediate scratch files
+    try {
+      const status = await ctx.git.status(ctx.cwd);
+      const boundaries = getManifestBoundaries(manifest);
+      const exemptSet = normalizedPathSet(this.opts.exemptUndeclaredFiles);
+      await remediateScratchFiles({
+        cwd: ctx.cwd,
+        runUuid: ctx.runUuid,
+        status,
+        writableFiles: boundaries.writableSet,
+        referenceFiles: boundaries.referenceSet,
+        exemptFiles: exemptSet,
+        artifacts: ctx.artifacts,
+        deleteWorktreeFile: this.opts.deleteWorktreeFile ?? ctx.deleteWorktreeFile,
+        emit,
+        phase: 'implement',
+        stepIndex: 1,
+        totalSteps: 1,
+        stepTitle: 'Implement issue',
+      });
+    } catch {
+      // Best-effort
+    }
+
+    // Check boundaries across all manifest tasks
+    const classification = checkTaskBoundaries(
+      committedFiles,
+      manifest,
+      this.opts.exemptUndeclaredFiles,
+    );
+
+    if (classification.modifiedReferenceFiles.length > 0) {
+      const failureMessage = `implement modified reference_files: ${classification.modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
+      this.opts.steps.upsert({ ...step, status: 'needs_human_review', completedAt: ctx.now() });
+      emit(
+        'step.needs_human_review',
+        'warn',
+        `implement needs human review: modified reference files (${classification.modifiedReferenceFiles.join(', ')})`,
+        {
+          index: 1,
+          total: 1,
+          modifiedReferenceFiles: classification.modifiedReferenceFiles,
+        },
+      );
+      const suggestedAction = `Update task-manifest.json to move ${classification.modifiedReferenceFiles.join(', ')} to expected_files, then resume the run.`;
+      return this.needsHumanReview(
+        ctx,
+        emit,
+        'needs_human_review',
+        failureMessage,
+        suggestedAction,
+        ['task-manifest.json'],
+      );
+    }
+
+    if (classification.undeclaredFiles.length > 0) {
+      const failureMessage = `implement committed undeclared files: ${classification.undeclaredFiles.join(', ')}`;
+      this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+      emit('step.failed', 'error', failureMessage, { index: 1, total: 1 });
+      return this.fail(
+        ctx,
+        emit,
+        'invalid_result',
+        failureMessage,
+        'Ensure the implementation only modifies files declared in task-manifest.json.',
+      );
+    }
+
+    // Phase-boundary worktree cleanliness reconciliation
+    const reconciliation = await this.reconcilePhaseBoundary(ctx, emit);
+    if (reconciliation !== undefined) {
+      this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+      return reconciliation;
+    }
+
+    this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
+    emit('step.completed', 'info', 'step 1/1 done', {
+      index: 1,
+      total: 1,
+      policy: ctx.executionPolicy,
+    });
+    emit('implement.completed', 'info', 'implement complete', { policy: ctx.executionPolicy });
+    return { outcome: 'passed' };
+  }
+
+  private async reconcilePhaseBoundary(
+    ctx: PhaseHandlerContext,
+    emit: EventEmitter,
+  ): Promise<PhaseResult | undefined> {
     try {
       const statusOutput = await ctx.git.status(ctx.cwd);
       const dirtyPaths = uncommittedSourcePaths(statusOutput);
@@ -1640,8 +1963,7 @@ export class ImplementHandler implements PhaseHandler {
       return this.fail(ctx, emit, 'unknown', `phase-boundary worktree check failed: ${msg}`);
     }
 
-    emit('implement.completed', 'info', 'implement complete');
-    return { outcome: 'passed' };
+    return undefined;
   }
 
   private async checkInboundWorktreeCleanliness(

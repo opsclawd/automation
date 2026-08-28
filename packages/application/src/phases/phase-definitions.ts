@@ -84,6 +84,7 @@ const _phaseDefinitions = {
     name: makePhaseName('implement'),
     inputs: { required: ['plan.md'], optional: [] },
     outputs: ['implementation-log.md'],
+    agentContract: { requiredArtifacts: ['implementation-log.md'], mustNotChangeBranch: true },
     retrySafety: 'unsafe',
     skippable: false,
   },
