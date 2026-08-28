@@ -181,4 +181,24 @@ describe('buildSpecReviewPrompt', () => {
     expect(absent).not.toContain('## TASK FILE SCOPE');
     expect(empty).not.toContain('## TASK FILE SCOPE');
   });
+
+  it('renders ## ISSUE BODY and ANCHORED DESIGN REVIEW RULES when issueBody is present', () => {
+    const prompt = buildSpecReviewPrompt({
+      ...makeOptions(),
+      issueBody: '# Issue\n\nFix the auth middleware to check tokens.',
+    });
+    expect(prompt).toContain('## ISSUE BODY');
+    expect(prompt).toContain('Fix the auth middleware to check tokens');
+    expect(prompt).toContain('## ANCHORED DESIGN REVIEW RULES');
+    expect(prompt).toContain('issue.md:N');
+    expect(prompt).toContain('Do NOT return `result: pass` with empty findings');
+  });
+
+  it('omits ## ISSUE BODY and ANCHORED DESIGN REVIEW RULES when issueBody is absent', () => {
+    const prompt = buildSpecReviewPrompt(makeOptions());
+    expect(prompt).not.toContain('## ISSUE BODY');
+    expect(prompt).not.toContain('ANCHORED DESIGN REVIEW RULES');
+    expect(prompt).not.toContain('issue.md:N');
+    expect(prompt).not.toContain('Do NOT return `result: pass` with empty findings');
+  });
 });

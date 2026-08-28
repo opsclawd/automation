@@ -100,6 +100,7 @@ export async function readPlanReviewExcerpts(
   fixExcerpt: string;
   manifestExcerpt: string;
   designExcerpt: string;
+  issueExcerpt: string;
 }> {
   return {
     planExcerpt: await readExcerpt(artifacts, runId, 'plan.md'),
@@ -107,6 +108,7 @@ export async function readPlanReviewExcerpts(
     fixExcerpt: await readExcerpt(artifacts, runId, PLAN_FIX_RESULT_ARTIFACT),
     manifestExcerpt: await readExcerpt(artifacts, runId, 'task-manifest.json'),
     designExcerpt: await readExcerpt(artifacts, runId, 'design.md'),
+    issueExcerpt: await readExcerpt(artifacts, runId, 'issue.md'),
   };
 }
 
@@ -118,12 +120,14 @@ export async function readPlanReviewFinalExcerpts(
   findingsExcerpt: string;
   manifestExcerpt: string;
   designExcerpt: string;
+  issueExcerpt: string;
 }> {
   return {
     planExcerpt: await readExcerpt(artifacts, runId, 'plan.md'),
     findingsExcerpt: await readExcerpt(artifacts, runId, PLAN_REVIEW_FINDINGS_ARTIFACT),
     manifestExcerpt: await readExcerpt(artifacts, runId, 'task-manifest.json'),
     designExcerpt: await readExcerpt(artifacts, runId, 'design.md'),
+    issueExcerpt: await readExcerpt(artifacts, runId, 'issue.md'),
   };
 }
 
@@ -139,6 +143,7 @@ export interface BuildPlanReviewArbiterPromptInputs {
   fixRebuttal: string;
   manifestExcerpt?: string;
   designExcerpt?: string;
+  issueExcerpt?: string;
 }
 
 export function buildPlanReviewArbiterPrompt(
@@ -187,6 +192,11 @@ export function buildPlanReviewArbiterPrompt(
     inputs.designExcerpt || '(empty)',
     '```',
     '',
+    '### issue.md (excerpt)',
+    '```',
+    inputs.issueExcerpt || '(empty)',
+    '```',
+    '',
     '### Fixer rebuttal (verbatim)',
     inputs.fixRebuttal || '(no rebuttal provided)',
     '',
@@ -227,6 +237,7 @@ export interface BuildPlanReviewFinalReviewArbiterPromptInputs {
   findingsExcerpt: string;
   manifestExcerpt?: string;
   designExcerpt?: string;
+  issueExcerpt?: string;
 }
 
 export function buildPlanReviewFinalReviewArbiterPrompt(
@@ -268,6 +279,11 @@ export function buildPlanReviewFinalReviewArbiterPrompt(
     '### design.md (excerpt)',
     '```',
     inputs.designExcerpt || '(empty)',
+    '```',
+    '',
+    '### issue.md (excerpt)',
+    '```',
+    inputs.issueExcerpt || '(empty)',
     '```',
     '',
     '## GROUNDING CONTRACT',

@@ -1,4 +1,3 @@
-// No captured result.json available; shape inferred from M4-05 issue spec.
 import { z } from 'zod';
 
 export const specReviewFindingSchema = z.object({

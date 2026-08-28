@@ -1063,6 +1063,7 @@ export interface BuildSpecReviewPromptOptions {
   typecheckSection: string;
   implReport?: string;
   declaredFiles?: string[];
+  issueBody?: string;
   scope: {
     mode: 'initial_full' | 'intermediate_delta' | 'final_full';
     dimensions?: Array<'spec' | 'quality'>;
@@ -1100,7 +1101,7 @@ function appendTaskFileScope(sections: string[], declaredFiles: string[] | undef
 }
 
 export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): string {
-  const { ctx, typecheckSection, implReport = '', scope, declaredFiles } = options;
+  const { ctx, typecheckSection, implReport = '', scope, declaredFiles, issueBody } = options;
   const { mode, baseIdentity, snapshotIdentity, unresolvedFindings, dispositions } = scope;
   const reportExcerpt = implReport.split('\n').slice(0, 50).join('\n');
 
@@ -1187,6 +1188,34 @@ export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): st
 
   appendTaskFileScope(sections, declaredFiles);
 
+  if (issueBody) {
+    sections.push(
+      '## ISSUE BODY',
+      '',
+      'The following is the full issue body for this implementation task. Use it as the',
+      'source of truth for what the implementation is required to achieve.',
+      '',
+      '```',
+      issueBody,
+      '```',
+      '',
+    );
+
+    sections.push(
+      '## ANCHORED DESIGN REVIEW RULES',
+      '',
+      'When the issue body contains an "Anchored Design" or "Acceptance Criteria" section:',
+      '',
+      '1. Every finding MUST cite the specific issue text it addresses using `issue.md:N`.',
+      '   A finding without an `issue.md:N` citation is considered ungrounded.',
+      '2. Do NOT return `result: pass` with empty findings — an empty-pass against an',
+      '   anchored-design issue is itself a failure condition.',
+      '3. If the implementation diverges from a symbol, dep shape, or file layout prescribed',
+      '   in the issue, that divergence MUST appear as a finding citing `issue.md:N`.',
+      '',
+    );
+  }
+
   sections.push(
     '## CONTEXT',
     '',
@@ -1196,6 +1225,9 @@ export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): st
     '',
     typecheckSection,
     '',
+  );
+
+  sections.push(
     '## OUTPUT',
     `Write ${ctx.cwd}/result.json with this shape (no extra keys, no comments):`,
     '',
@@ -1217,6 +1249,9 @@ export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): st
     "- Every finding's `summary` is required and MUST be non-empty.",
     '- `file` and `suggested_fix` are STRONGLY RECOMMENDED for actionable findings; they may be omitted when the defect spans multiple files or is a plan/letter deviation.',
     '- Do NOT omit `findings` on "fail" — the orchestrator\'s fixer and arbiter cannot act on a fail verdict without findings.',
+  );
+
+  sections.push(
     'Do NOT write to a relative path — use the full absolute path above.',
     'You MUST use your file-write tool to create result.json on disk. Printing the',
     'JSON in your chat response instead of writing the file is a contract violation —',
@@ -4364,6 +4399,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         } catch (err) {
           if (!(err instanceof ArtifactNotFoundError)) throw err;
         }
+        let issueBody = '';
+        try {
+          issueBody = await artifacts.read(String(ctx.runId), 'issue.md');
+        } catch (err) {
+          if (!(err instanceof ArtifactNotFoundError)) throw err;
+        }
         const declaredFiles = declaredFilesForStep(ctx.manifest, ctx.stepIndex);
         const additionalFiles = opts?.additionalEditableFiles ?? [];
         const mergedDeclaredFiles =
@@ -4375,6 +4416,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           typecheckSection,
           implReport,
           declaredFiles: mergedDeclaredFiles,
+          issueBody,
           scope,
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
@@ -4463,6 +4505,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           {
             blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
             cwd: ctx.cwd,
+            issueBodyPresent: !!issueBody,
             ...(specTranscriptEvidence ? { transcriptEvidence: specTranscriptEvidence } : {}),
           },
         );
@@ -5891,8 +5934,14 @@ export function composeRoot(opts: ComposeOptions): Container {
                 `plan-review-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
               );
               const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
-              const { planExcerpt, findingsExcerpt, fixExcerpt, manifestExcerpt, designExcerpt } =
-                await readPlanReviewExcerpts(artifacts, String(ctx.runId));
+              const {
+                planExcerpt,
+                findingsExcerpt,
+                fixExcerpt,
+                manifestExcerpt,
+                designExcerpt,
+                issueExcerpt,
+              } = await readPlanReviewExcerpts(artifacts, String(ctx.runId));
               const withGroundingSources = (result: ArbiterResult): PlanReviewArbiterResult =>
                 ({
                   ...result,
@@ -5906,6 +5955,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                   fixExcerpt,
                   manifestExcerpt,
                   designExcerpt,
+                  issueExcerpt,
                   fixRebuttal: fixResult.rebuttal ?? '',
                 },
               );
@@ -6000,7 +6050,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               `plan-review-final-review-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
             );
             const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
-            const { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt } =
+            const { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt, issueExcerpt } =
               await readPlanReviewFinalExcerpts(artifacts, String(ctx.runId));
             const withGroundingSources = (result: ArbiterResult): PlanReviewArbiterResult =>
               ({
@@ -6009,7 +6059,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               }) as PlanReviewArbiterResult;
             const arbiterPrompt = buildPlanReviewFinalReviewArbiterPrompt(
               { cwd: ctx.cwd, runId: String(ctx.runId) },
-              { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt },
+              { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt, issueExcerpt },
             );
             writeFileSync(promptPath, arbiterPrompt, 'utf-8');
 

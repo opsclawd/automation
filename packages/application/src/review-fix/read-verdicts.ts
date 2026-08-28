@@ -9,12 +9,6 @@ const SEVERITY_RANK: Record<string, number> = {
   high: 1,
   medium: 2,
   low: 3,
-  // The spec/quality review prompts instruct reviewers to emit P0-P3
-  // severities (see buildSpecReviewPrompt/buildQualityReviewPrompt in
-  // apps/api/src/compose.ts), while blockOnSeverity config speaks
-  // critical/high/medium/low. Without these aliases the gate can neither
-  // block nor override P-labeled findings, so the reviewer's raw verdict
-  // always rules and the severity dial is inert.
   p0: 0,
   p1: 1,
   p2: 2,
@@ -69,6 +63,7 @@ export interface ReadReviewVerdictOptions {
   blockOnSeverity?: string;
   cwd?: string;
   transcriptEvidence?: string;
+  issueBodyPresent?: boolean;
 }
 
 export function readReviewVerdict(
@@ -100,35 +95,63 @@ export async function readReviewVerdict(
       violationCode: r.violationCode,
     };
   }
-  const result = r.result as Omit<WholePrReviewResult, 'result'> & {
-    result: 'pass' | 'fail' | 'fabricated';
+  const raw = r.result as {
+    result?: 'pass' | 'fail' | 'fabricated';
+    findings?: Array<{
+      severity: string;
+      summary: string;
+      file?: string;
+      suggested_fix?: string;
+      files?: string[];
+    }>;
   };
 
-  if (result.result === 'fabricated') {
+  if (raw.result === 'fabricated') {
     if (opts?.allowFabricated) {
       return {
         ok: true,
         verdict: 'fabricated',
-        ...(result.findings && result.findings.length > 0
-          ? { offendingFindings: result.findings }
-          : {}),
+        ...(raw.findings && raw.findings.length > 0 ? { offendingFindings: raw.findings } : {}),
       };
     }
     return {
       ok: true,
       verdict: 'fail',
       offendingFindings:
-        result.findings && result.findings.length > 0
-          ? result.findings
+        raw.findings && raw.findings.length > 0
+          ? raw.findings
           : [{ severity: 'critical', summary: 'Fabricated evidence detected' }],
     };
   }
 
-  if (opts?.blockOnSeverity && result.findings.length > 0) {
-    const { blocked, offendingFindings } = severityGate(result.findings, opts.blockOnSeverity);
+  if (
+    opts?.issueBodyPresent &&
+    raw.result === 'pass' &&
+    (!raw.findings || raw.findings.length === 0)
+  ) {
+    return {
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [
+        {
+          severity: 'critical',
+          summary:
+            'Empty-pass verdict when issue.md is present — anchored-design review requires explicit findings citing issue.md:N',
+        },
+      ],
+    };
+  }
+
+  if (opts?.blockOnSeverity && raw.findings && raw.findings.length > 0) {
+    const normalizedFindings: WholePrReviewResult['findings'] = raw.findings.map((f) => ({
+      severity: f.severity,
+      summary: f.summary,
+      files: f.files ?? (f.file ? [f.file] : []),
+    }));
+    const { blocked, offendingFindings } = severityGate(normalizedFindings, opts.blockOnSeverity);
 
     if (blocked) {
-      if (result.result === 'pass') {
+      if (raw.result === 'pass') {
         return {
           ok: true,
           verdict: 'fail',
@@ -139,9 +162,9 @@ export async function readReviewVerdict(
       return { ok: true, verdict: 'fail', offendingFindings };
     }
 
-    const allBelow = allKnownSeveritiesBelowThreshold(result.findings, opts.blockOnSeverity);
+    const allBelow = allKnownSeveritiesBelowThreshold(normalizedFindings, opts.blockOnSeverity);
 
-    if (allBelow && result.result === 'fail') {
+    if (allBelow && raw.result === 'fail') {
       return {
         ok: true,
         verdict: 'pass',
@@ -151,16 +174,11 @@ export async function readReviewVerdict(
     }
   }
 
-  // Any fail verdict must carry its findings so downstream consumers
-  // (evidence check, rebuttal convergence, unfounded-pingpong detection)
-  // can inspect them — not just the severity-gate override paths above.
-  // See also: implRunFix in apps/api/src/compose.ts and arbiter-prompt.ts,
-  // which consume the same findings via phase-segregated archives.
-  if (result.result === 'fail' && result.findings.length > 0) {
-    return { ok: true, verdict: 'fail', offendingFindings: result.findings };
+  if (raw.result === 'fail' && raw.findings && raw.findings.length > 0) {
+    return { ok: true, verdict: 'fail', offendingFindings: raw.findings };
   }
 
-  return { ok: true, verdict: result.result };
+  return { ok: true, verdict: raw.result ?? 'pass' };
 }
 
 export async function readFixVerdict(
@@ -190,8 +208,6 @@ export async function readFixVerdict(
     ...(fixResult.out_of_scope_reasons && Object.keys(fixResult.out_of_scope_reasons).length > 0
       ? { outOfScopeReasons: fixResult.out_of_scope_reasons }
       : {}),
-    // The schema requires a non-empty rebuttal for done_no_fixes_needed;
-    // carry it so the loop can append it to code-review.md when accepted.
     ...(fixResult.result === 'done_no_fixes_needed' ? { rebuttal: fixResult.rebuttal } : {}),
   };
 }

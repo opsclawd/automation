@@ -80,6 +80,35 @@ describe('buildPlanReviewArbiterPrompt', () => {
     expect(prompt).toContain('finding_valid | finding_invalid | ambiguous | insufficient_evidence');
     expect(prompt).toContain('"outcome"');
   });
+
+  it('renders issueExcerpt when provided', () => {
+    const prompt = buildPlanReviewArbiterPrompt(
+      { cwd: '/wt', runId: 'run-1' },
+      {
+        planExcerpt: '# plan body',
+        findingsExcerpt: '# findings',
+        fixExcerpt: '{"verdict":"done_no_fixes_needed"}',
+        fixRebuttal: 'finding is wrong',
+        issueExcerpt: '# Issue\n\nFix auth tokens.',
+      },
+    );
+    expect(prompt).toContain('### issue.md (excerpt)');
+    expect(prompt).toContain('Fix auth tokens');
+  });
+
+  it('renders issueExcerpt as (empty) when omitted', () => {
+    const prompt = buildPlanReviewArbiterPrompt(
+      { cwd: '/wt', runId: 'run-1' },
+      {
+        planExcerpt: '# plan body',
+        findingsExcerpt: '# findings',
+        fixExcerpt: '{"verdict":"done_no_fixes_needed"}',
+        fixRebuttal: 'finding is wrong',
+      },
+    );
+    expect(prompt).toContain('### issue.md (excerpt)');
+    expect(prompt).toContain('(empty)');
+  });
 });
 
 describe('readPlanReviewExcerpts', () => {
@@ -102,6 +131,7 @@ describe('readPlanReviewExcerpts', () => {
       'fixExcerpt',
       'manifestExcerpt',
       'designExcerpt',
+      'issueExcerpt',
     ]);
   });
 
@@ -113,6 +143,7 @@ describe('readPlanReviewExcerpts', () => {
     expect(excerpts.fixExcerpt).toBe('');
     expect(excerpts.manifestExcerpt).toBe('');
     expect(excerpts.designExcerpt).toBe('');
+    expect(excerpts.issueExcerpt).toBe('');
   });
 });
 
@@ -158,6 +189,31 @@ describe('buildPlanReviewFinalReviewArbiterPrompt', () => {
     );
     expect(prompt).toContain('finding_valid | finding_invalid | ambiguous | insufficient_evidence');
     expect(prompt).toContain('"outcome"');
+  });
+
+  it('renders issueExcerpt when provided', () => {
+    const prompt = buildPlanReviewFinalReviewArbiterPrompt(
+      { cwd: '/wt', runId: 'run-1' },
+      {
+        planExcerpt: '# plan body',
+        findingsExcerpt: '# trailing findings',
+        issueExcerpt: '# Issue\n\nFix auth tokens.',
+      },
+    );
+    expect(prompt).toContain('### issue.md (excerpt)');
+    expect(prompt).toContain('Fix auth tokens');
+  });
+
+  it('renders issueExcerpt as (empty) when omitted', () => {
+    const prompt = buildPlanReviewFinalReviewArbiterPrompt(
+      { cwd: '/wt', runId: 'run-1' },
+      {
+        planExcerpt: '# plan body',
+        findingsExcerpt: '# trailing findings',
+      },
+    );
+    expect(prompt).toContain('### issue.md (excerpt)');
+    expect(prompt).toContain('(empty)');
   });
 });
 
@@ -279,6 +335,7 @@ describe('readPlanReviewFinalExcerpts', () => {
       'findingsExcerpt',
       'manifestExcerpt',
       'designExcerpt',
+      'issueExcerpt',
     ]);
   });
 
@@ -289,6 +346,7 @@ describe('readPlanReviewFinalExcerpts', () => {
     expect(excerpts.findingsExcerpt).toBe('');
     expect(excerpts.manifestExcerpt).toBe('');
     expect(excerpts.designExcerpt).toBe('');
+    expect(excerpts.issueExcerpt).toBe('');
   });
 });
 

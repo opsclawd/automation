@@ -332,7 +332,17 @@ describe('resume worktree lifecycle integration', () => {
       handle: async (request) => {
         writeFileSync(
           path.join(request.cwd, 'result.json'),
-          JSON.stringify({ result: 'pass', reviewType: 'spec', findings: [] }),
+          JSON.stringify({
+            result: 'pass',
+            reviewType: 'spec',
+            findings: [
+              {
+                severity: 'P3',
+                summary: 'Implementation matches issue requirements; no anchored-design gaps found',
+                file: 'src/task1.ts',
+              },
+            ],
+          }),
         );
         return {
           runtime: 'test' as const,
@@ -1208,7 +1218,18 @@ describe('resume worktree lifecycle integration', () => {
         handle: async (request) => {
           writeFileSync(
             path.join(request.cwd, 'result.json'),
-            JSON.stringify({ result: 'pass', reviewType: 'spec', findings: [] }),
+            JSON.stringify({
+              result: 'pass',
+              reviewType: 'spec',
+              findings: [
+                {
+                  severity: 'P3',
+                  summary:
+                    'Implementation matches issue requirements; no anchored-design gaps found',
+                  file: 'src/task1.ts',
+                },
+              ],
+            }),
           );
           return {
             runtime: 'test' as const,
@@ -1402,7 +1423,18 @@ describe('resume worktree lifecycle integration', () => {
       handle: async (request) => {
         writeFileSync(
           path.join(request.cwd, 'result.json'),
-          JSON.stringify({ result: 'pass', reviewType: 'spec', findings: [] }),
+          JSON.stringify({
+            result: 'pass',
+            reviewType: 'spec',
+            findings: [
+              {
+                severity: 'P3',
+                summary:
+                  'Implementation satisfies issue requirements; no anchored-design gaps found',
+                file: 'src/task1.ts',
+              },
+            ],
+          }),
         );
         return {
           runtime: 'test' as const,

@@ -75,7 +75,7 @@ const _phaseDefinitions = {
   },
   'plan-review': {
     name: makePhaseName('plan-review'),
-    inputs: { required: ['plan.md'], optional: [] },
+    inputs: { required: ['plan.md'], optional: ['issue.md'] },
     outputs: ['plan.md'], // in-place edits by plan-fix
     retrySafety: 'safe',
     skippable: true, // skipped when phases.planReview.enabled === false

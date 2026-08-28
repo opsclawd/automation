@@ -15,6 +15,7 @@ You MUST NOT modify `plan.md` or any other file. Your sole output is a single
 - `{{artifact:plan.md}}` — the plan to review
 - `{{artifact:design.md}}` — the design the plan must satisfy
 - `{{artifact:task-manifest.json}}` — the task manifest
+- `{{artifact?:issue.md}}` — the issue being addressed (optional)
 
 ## FOCUS
 
@@ -46,6 +47,11 @@ Look for these defect classes (the legacy bash loop enumerated the same):
    or tooling choices match what is dominant in the repository (or in sibling files in the same directory).
    If a new file introduces an unexplained mismatch against existing repository conventions without a stated
    rationale, flag it as a blocking finding (P1).
+9. **Anchored-design deviation** — when `issue.md` is present, the plan must address
+   the problem described in the issue. A plan that solves a different problem, addresses
+   a symptom rather than the root cause, or introduces a solution inconsistent with the
+   issue's constraints is a P1 finding. Ground the citation in `issue.md:N` and
+   `design.md:N.M` to show the deviation from the anchored design.
 
 ## OUTPUT
 
@@ -76,6 +82,7 @@ root with this exact shape:
 - `task-manifest.json:Task N` — references a task whose `n` field is N.
 - `design.md:N.M` — section anchor matching a markdown heading like
   `### N.M Title` (no `§` prefix; numbers match exactly).
+- `issue.md:N` — line N in the issue being addressed (when issue.md is present).
 
 A finding missing either the citation or the failure scenario, OR whose
 citation does not resolve against the actual artifacts in the worktree, is
