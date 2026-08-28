@@ -550,23 +550,6 @@ export async function maybeRetryTransientRevalidationFlake(
     return { passed: false, failingCommands: input.failingCommands, retried: false };
   }
 
-  if (failedTestFiles.size > 5) {
-    if (input.eventBus) {
-      input.eventBus.publish(input.runId, {
-        runId: input.runId,
-        level: 'warn',
-        type: 'revalidation.flake_retry_skipped',
-        message: `Revalidation flake retry skipped: too many failed test files (${failedTestFiles.size} > 5)`,
-        timestamp: new Date().toISOString(),
-        metadata: {
-          reason: 'too_many_failures',
-          failedTestFiles: Array.from(failedTestFiles),
-        },
-      });
-    }
-    return { passed: false, failingCommands: input.failingCommands, retried: false };
-  }
-
   let taskDeclaredFiles: string[] = [];
   if (input.manifest && typeof input.stepIndex === 'number' && input.stepIndex > 0) {
     taskDeclaredFiles = declaredFilesForStep(input.manifest, input.stepIndex);
@@ -589,8 +572,27 @@ export async function maybeRetryTransientRevalidationFlake(
     }
   }
 
+  const outOfScopeFailures = Array.from(failedTestFiles).filter((f) => !inScopeFiles.has(f));
+
+  if (outOfScopeFailures.length > 5) {
+    if (input.eventBus) {
+      input.eventBus.publish(input.runId, {
+        runId: input.runId,
+        level: 'warn',
+        type: 'revalidation.flake_retry_skipped',
+        message: `Revalidation flake retry skipped: too many failed test files (${outOfScopeFailures.length} > 5)`,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          reason: 'too_many_failures',
+          failedTestFiles: outOfScopeFailures,
+        },
+      });
+    }
+    return { passed: false, failingCommands: input.failingCommands, retried: false };
+  }
+
   const isolatedLogDir = join(input.revalidateLogDir, 'isolation-check');
-  for (const testFile of failedTestFiles) {
+  for (const testFile of outOfScopeFailures) {
     const isolatedCmd = await buildTargetedTestCommand(testFile, input.config.validation.commands, {
       worktreeRoot: input.cwd,
       readWorktreeFile: (rel) => {
