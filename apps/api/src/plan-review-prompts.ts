@@ -16,6 +16,7 @@ import type {
   ArtifactStore,
 } from '@ai-sdlc/application';
 import { parseTaskManifest } from '@ai-sdlc/application';
+import { getHydratedWorktreePath } from '@ai-sdlc/application/ports';
 
 export { parsePlanReviewFindings } from '@ai-sdlc/application/plan-review/parse-plan-review-findings';
 export type { PlanReviewFinding, PlanReviewStepOptions, PlanReviewSnapshot, EvidenceResolver };
@@ -537,14 +538,18 @@ export function createPlanReviewEvidenceResolver(
 
 /**
  * Compute citations for text introduced by the most recent fix invocation
- * (#716, design §2.5 / §7.1; rewritten for #1027). Returns line ranges
- * from a plain content diff between `planMdBeforeFix` (the full text of
- * plan.md captured immediately before the fix ran) and the CURRENT
- * plan.md file on disk, as `plan.md:N` or `plan.md:N-M` citations.
+ * (#716, design §2.5 / §7.1; rewritten for #1027; path updated for #1080).
+ * Returns line ranges from a plain content diff between `planMdBeforeFix`
+ * (the full text of plan.md captured immediately before the fix ran) and
+ * the CURRENT plan.md file on disk, as `plan.md:N` or `plan.md:N-M`
+ * citations.
  *
- * plan.md is gitignored/untracked (`.gitignore:/plan.md`) — it is written
- * via the artifact store's `write()`, never via `git commit`. The
- * original implementation computed `git diff <sha>..HEAD -- plan.md`,
+ * plan.md is gitignored/untracked (`.gitignore:/.ai/`) — it is written
+ * via the artifact store's `write()`, never via `git commit`. After the
+ * artifact store's `hydrateWorktree` (#1080) it lives at
+ * `<worktree>/.ai/plan.md` rather than the worktree root, so the
+ * canonical on-disk path is derived via `getHydratedWorktreePath`.
+ * The original implementation computed `git diff <sha>..HEAD -- plan.md`,
  * which is always empty for an untracked path regardless of real content
  * changes, since git has no history for it at any commit. That caused
  * `recentFixCitations` to always be `[]`, which — combined with
@@ -575,7 +580,13 @@ export function getRecentFixCitations(cwd: string, planMdBeforeFix: string | und
     try {
       diff = execFileSync(
         'git',
-        ['diff', '--no-index', '--unified=0', tempPath, join(cwd, 'plan.md')],
+        [
+          'diff',
+          '--no-index',
+          '--unified=0',
+          tempPath,
+          join(cwd, getHydratedWorktreePath('plan.md')),
+        ],
         { cwd, encoding: 'utf-8', maxBuffer: 1024 * 1024 },
       );
     } catch (err) {
