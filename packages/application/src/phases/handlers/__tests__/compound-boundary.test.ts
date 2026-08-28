@@ -995,32 +995,19 @@ describe('CompoundHandler task boundary enforcement (regression)', () => {
     expect(eventsOf(ctx, 'compound.boundary_violation')).toHaveLength(0);
   });
 
-  it('passes under lean execution policy when uncommitted changes exist without task-manifest.json', async () => {
+  it('returns a successful no-op without invoking agent or requiring artifacts under lean execution policy', async () => {
     ctx.executionPolicy = 'standard';
     const git = ctx.git as FakeGitPort;
     const agent = ctx.agent as FakeAgentPort;
-    agent.enqueue('pi-qwen-local', () => {
-      return successResult();
-    });
 
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'result.json',
-      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'compound.md',
-      contents: '# Learnings\n',
-    });
-
-    // Uncommitted dirty files in worktree without task-manifest.json
+    // Uncommitted dirty files in worktree without task-manifest.json and without compound.md
     git.statusByCwd.set(ctx.cwd, ' M src/feature/new-helper.ts\n?? test/new-feature.test.ts\n');
 
     const handler = new CompoundHandler();
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('passed');
+    expect(agent.invocations).toHaveLength(0); // No agent invoked
     expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
     expect(eventsOf(ctx, 'compound.failed')).toHaveLength(0);
   });

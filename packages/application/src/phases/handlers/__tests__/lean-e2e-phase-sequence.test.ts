@@ -215,21 +215,7 @@ describe('Lean End-to-End Phase Sequence (Issue #1103)', () => {
     const reviewResult = await reviewHandler.run(ctx);
     expect(reviewResult.outcome).toBe('passed');
 
-    // ── 4. Compound Phase ──
-    agent.enqueue('opencode-frontier', () => {
-      return makeSuccessAgentResult();
-    });
-    await artifacts.write({
-      runId: runUuid,
-      relativePath: 'result.json',
-      contents: JSON.stringify({ result: 'written', path: 'compound.md', summary: 'ok' }),
-    });
-    await artifacts.write({
-      runId: runUuid,
-      relativePath: 'compound.md',
-      contents: '# Compound Learnings\n',
-    });
-
+    // ── 4. Compound Phase (Lean No-Op) ──
     const compoundHandler = new CompoundHandler();
     const compoundResult = await compoundHandler.run(ctx);
     expect(compoundResult.outcome).toBe('passed');
@@ -278,5 +264,8 @@ describe('Lean End-to-End Phase Sequence (Issue #1103)', () => {
     expect(github.createdPrInputs[0]?.title).toBe(
       'Simplify lean prompts and move commits to control plane',
     );
+
+    // Exactly 2 agent invocations throughout whole run: 1 for implement, 1 for whole-change review (0 for compound)
+    expect(agent.invocations).toHaveLength(2);
   });
 });
