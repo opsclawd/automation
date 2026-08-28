@@ -111,7 +111,7 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
     legacyRunLoopMock = vi.fn();
 
     mockLoadPromptTemplate.mockReturnValue(
-      '# Whole Change Review\n\n{{artifact:issue.md}}\n{{artifact:design.md}}\n{{artifact:plan.md}}\n{{artifact:task-manifest.json}}\n{{var:complete_diff}}\n{{var:validation_evidence}}',
+      '# Whole Change Review\n\n{{artifact:issue.md}}\n{{artifact:design.md}}\n{{artifact:plan.md}}\n{{var:complete_diff}}\n{{var:validation_evidence}}',
     );
     mockRenderPrompt.mockResolvedValue('# Rendered Whole Change Review Prompt');
 
@@ -134,16 +134,6 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
       phaseId: 'plan-write',
       relativePath: 'plan.md',
       contents: '# Implementation Plan\n\n## Task 1: Review setup',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: 'plan-write',
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify({
-        version: 2,
-        task_count: 1,
-        tasks: [{ n: 1, title: 'Review setup' }],
-      }),
     });
     await ctx.artifacts.write({
       runId: ctx.runUuid,

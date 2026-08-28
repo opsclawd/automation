@@ -20,9 +20,6 @@ Design document:
 Implementation plan:
 {{artifact:plan.md}}
 
-Task manifest:
-{{artifact:task-manifest.json}}
-
 Deterministic validation evidence:
 ```
 {{var:validation_evidence}}
@@ -42,7 +39,7 @@ Review simultaneously for:
 2. **Anchored-Design Drift**: Did the implementation or plan drift from the issue's anchored design or `design.md`?
 3. **Correctness & Regressions**: Are there logic bugs, broken edge cases, unhandled errors, or regressions against existing behavior?
 4. **Architecture Boundaries & Layer Rules**: Are repository layer boundaries respected (dependencies flow inward only; `packages/application` never imports `@ai-sdlc/infrastructure`; ports & composition root patterns followed)?
-5. **Unintended Scope**: Are there extraneous file modifications, scope creep, or edits to files outside the declared plan/manifest surface?
+5. **Unintended Scope**: Are there extraneous file modifications, scope creep, or edits to files outside what is legitimately required to satisfy the issue?
 6. **Test Adequacy**: Are new features and bug fixes accompanied by thorough, deterministic tests? Are error paths tested?
 7. **Error & Recovery Behavior**: Are error conditions handled gracefully?
 8. **Security, Data Integrity, & Performance**: Are there security vulnerabilities, data loss risks, memory/process leaks, or unneeded overhead?

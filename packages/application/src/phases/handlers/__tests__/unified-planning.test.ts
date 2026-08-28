@@ -115,7 +115,7 @@ describe('Unified Planning (Issue #1092)', () => {
     mockRenderPrompt.mockResolvedValue('# Unified Planner Prompt Rendered\n\n# Issue 1092');
   });
 
-  it('standard planning requires exactly one successful LLM invocation and writes all 3 artifacts via application store', async () => {
+  it('standard planning requires exactly one successful LLM invocation and writes design.md and plan.md via application store', async () => {
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       phaseId: 'read_issue',
@@ -130,24 +130,6 @@ describe('Unified Planning (Issue #1092)', () => {
       design_md: '# Design Document\n\nArchitecture details.',
       plan_md:
         '# Implementation Plan\n\n## Task 1: Setup component\nDetails.\n\n## Task 2: Add tests\nDetails.',
-      task_manifest: {
-        version: 2,
-        task_count: 2,
-        tasks: [
-          {
-            n: 1,
-            title: 'Setup component',
-            task_type: 'standard',
-            expected_files: ['src/component.ts'],
-          },
-          {
-            n: 2,
-            title: 'Add tests',
-            task_type: 'standard',
-            expected_files: ['src/component.test.ts'],
-          },
-        ],
-      },
     };
 
     await ctx.artifacts.write({
@@ -165,7 +147,7 @@ describe('Unified Planning (Issue #1092)', () => {
     expect(eventsOf(ctx, 'plan-design.started')).toHaveLength(1);
     expect(eventsOf(ctx, 'plan-design.completed')).toHaveLength(1);
 
-    // Verify all 3 canonical artifacts written by application
+    // Verify canonical artifacts written by application (design.md and plan.md; no task-manifest.json)
     const artifacts = await ctx.artifacts.list(ctx.runUuid);
     const designArt = artifacts.find((a) => a.relativePath === 'design.md');
     const planArt = artifacts.find((a) => a.relativePath === 'plan.md');
@@ -173,15 +155,10 @@ describe('Unified Planning (Issue #1092)', () => {
 
     expect(designArt).toBeDefined();
     expect(planArt).toBeDefined();
-    expect(manifestArt).toBeDefined();
+    expect(manifestArt).toBeUndefined();
 
     expect(await ctx.artifacts.read(ctx.runUuid, 'design.md')).toBe(validPackage.design_md);
     expect(await ctx.artifacts.read(ctx.runUuid, 'plan.md')).toBe(validPackage.plan_md);
-    const parsedManifest = JSON.parse(await ctx.artifacts.read(ctx.runUuid, 'task-manifest.json'));
-    expect(parsedManifest.version).toBe(2);
-    expect(parsedManifest.task_count).toBe(2);
-    expect(parsedManifest.tasks[0].title).toBe('Setup component');
-    expect(parsedManifest.tasks[1].title).toBe('Add tests');
 
     // 2. Plan-write runs: reuses existing artifacts and makes 0 agent calls
     const writeHandler = new PlanWriteHandler();
@@ -219,28 +196,10 @@ describe('Unified Planning (Issue #1092)', () => {
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('opencode-frontier', successResult());
 
-    // Incoherent plan: manifest has 2 tasks but plan.md only defines Task 1, plus unclosed code fence
+    // Incoherent plan: unclosed code fence
     const invalidPackage = {
       design_md: '# Design\n\nSome design.',
       plan_md: '# Plan\n\n## Task 1: Setup\n```ts\nconst x = 1;\n',
-      task_manifest: {
-        version: 2,
-        task_count: 2,
-        tasks: [
-          {
-            n: 1,
-            title: 'Setup',
-            task_type: 'standard',
-            expected_files: ['src/file.ts'],
-          },
-          {
-            n: 2,
-            title: 'Missing Task 2',
-            task_type: 'standard',
-            expected_files: ['src/file2.ts'],
-          },
-        ],
-      },
     };
 
     await ctx.artifacts.write({
@@ -275,7 +234,7 @@ describe('Unified Planning (Issue #1092)', () => {
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'result.json',
-      contents: '{"design_md": "Only design, missing plan_md and task_manifest"}',
+      contents: '{"design_md": "Only design, missing plan_md"}',
     });
 
     const handler = new PlanDesignHandler();
@@ -347,11 +306,6 @@ describe('Unified Planning (Issue #1092)', () => {
       runId: ctx.runUuid,
       relativePath: 'plan.md',
       contents: '# Existing Plan',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
-      contents: '{"version": 1, "task_count": 0, "tasks": []}',
     });
 
     const agent = ctx.agent as FakeAgentPort;

@@ -15,6 +15,19 @@ describe('plannerPackageSchema', () => {
     ],
   };
 
+  it('accepts a valid planner package without task_manifest', () => {
+    const parsed = plannerPackageSchema.safeParse({
+      design_md: '# Design\n\nSome design',
+      plan_md: '# Plan\n\n## Task 1: Initial setup',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.design_md).toBe('# Design\n\nSome design');
+      expect(parsed.data.plan_md).toBe('# Plan\n\n## Task 1: Initial setup');
+      expect(parsed.data.task_manifest).toBeUndefined();
+    }
+  });
+
   it('accepts a valid planner package with object task_manifest', () => {
     const parsed = plannerPackageSchema.safeParse({
       design_md: '# Design\n\nSome design',
