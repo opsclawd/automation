@@ -14,7 +14,7 @@ describe('normalizePhaseId', () => {
 });
 
 describe('PHASE_RESULT_REGISTRY', () => {
-  it('contains all 12 expected phases', () => {
+  it('contains all expected phases', () => {
     const expected = [
       'implement',
       'quality-review',
@@ -26,6 +26,8 @@ describe('PHASE_RESULT_REGISTRY', () => {
       'compound',
       'fix-validate',
       'arbiter',
+      'plan-design',
+      'plan-write',
       'plan-review-arbiter',
       'implement-final-review-arbiter',
       'plan-fix',
@@ -44,6 +46,8 @@ describe('PHASE_RESULT_REGISTRY', () => {
     'compound',
     'fix-validate',
     'arbiter',
+    'plan-design',
+    'plan-write',
     'plan-review-arbiter',
     'implement-final-review-arbiter',
     'plan-fix',

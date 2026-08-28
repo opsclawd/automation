@@ -1,4 +1,6 @@
 import type { ZodTypeAny } from 'zod';
+import { planDesignResultSchema } from './schemas/plan-design.js';
+import { planWriteResultSchema } from './schemas/plan-write.js';
 import { implementResultSchema } from './schemas/implement.js';
 import { qualityReviewResultSchema } from './schemas/quality-review.js';
 import { fixReviewResultSchema } from './schemas/fix-review.js';
@@ -24,8 +26,8 @@ export function normalizePhaseId(phaseId: string): string {
 // Phases with no result entry (null) do not produce result.json artifacts.
 // TODO: converge PHASE_RESULT_REGISTRY into CANONICAL_PHASE_ORDER so there's one source of truth.
 export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
-  'plan-design': null,
-  'plan-write': null,
+  'plan-design': 'plan-design',
+  'plan-write': 'plan-write',
   'plan-review': null,
   implement: 'implement',
   compound: 'compound',
@@ -38,6 +40,16 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
 };
 
 export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
+  'plan-design': {
+    schema: planDesignResultSchema,
+    schemaContractText:
+      '{\n  "result"?: "ready" | "blocked",\n  "summary"?: string,\n  "design_md": string\n}',
+  },
+  'plan-write': {
+    schema: planWriteResultSchema,
+    schemaContractText:
+      '{\n  "result"?: "ready" | "blocked",\n  "plan_md": string,\n  "task_manifest"?: object | string\n}',
+  },
   implement: {
     schema: implementResultSchema,
     schemaContractText:

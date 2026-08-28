@@ -13,8 +13,8 @@ Comments file: `issue-comments.md` (may not exist)
 
 1. Load the writing-plans skill: say exactly `/skill writing-plans` to activate it.
 2. Read `design.md`, `issue.md`, and `issue-comments.md` (if it exists).
-3. Using the writing-plans skill guidance, produce a complete implementation plan at `./plan.md`.
-4. ALSO write `./task-manifest.json` alongside `plan.md` (see schema below).
+3. Using the writing-plans skill guidance, produce a complete implementation plan and task manifest.
+4. Format your output as a JSON object in `result.json` containing `plan_md` and `task_manifest` (see schema below).
 
 The plan MUST include:
 
@@ -133,15 +133,30 @@ If ANY of these patterns exist, add this HTML comment to the VERY FIRST LINE of 
 
 If none exist, do NOT add the comment. Simple/mechanical plans (adapters, CRUD, schema changes) should skip review.
 
+## OUTPUT
+
+Write a single file named `result.json` at the working-directory root with this exact shape:
+
+```json
+{
+  "result": "ready",
+  "plan_md": "<complete markdown implementation plan>",
+  "task_manifest": {
+    "version": 2,
+    "task_count": N,
+    "tasks": [ ... ]
+  }
+}
+```
+
 ## CRITICAL RULES
 
 - Do NOT ask questions. Make reasonable assumptions and document them.
-- Do NOT rely on agent memory. Write everything to `plan.md`.
+- Do NOT write `plan.md` or `task-manifest.json` to the worktree. Return them in the `plan_md` and `task_manifest` fields of `result.json`.
 - Do NOT switch branches (no `git checkout`, `git switch`, `git stash branch`).
-- Stop after writing `plan.md` AND `task-manifest.json`. Do not implement anything.
+- Stop after writing `result.json`. Do not implement anything.
 - All shell commands in the plan MUST be relative — no absolute paths, no `cd` to directories outside the worktree.
-- Do NOT edit any source files (`*.ts`, `*.js`, `*.sh`, `*.py`, etc.). Your ONLY output is `plan.md` and `task-manifest.json`.
+- Do NOT edit any source files (`*.ts`, `*.js`, `*.sh`, `*.py`, etc.). Your ONLY output is `result.json`.
 - When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code. Real task headings start at column 0; anything indented is treated as an example. Violating this rule causes task extraction to misread the plan.
 - Do NOT create standalone "run validation suite" or "make CI green" tasks.
 - Task numbers in `plan.md` headings MUST be plain integers (e.g., `## Task 4`) matching `tasks[].n` in the manifest. Letter suffixes (`## Task 4a`) are forbidden and will cause validation to fail.
-- Write `plan.md` first, then `task-manifest.json`.

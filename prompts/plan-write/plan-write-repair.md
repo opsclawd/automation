@@ -97,11 +97,27 @@ scratch. For example:
   established convention unless an explicit rationale is stated in the plan. Any intentional deviation
   must be explicitly documented with its reason in the plan prose.
 
+## OUTPUT
+
+Write a single file named `result.json` at the working-directory root with this exact shape:
+
+```json
+{
+  "result": "ready",
+  "plan_md": "<repaired markdown implementation plan>",
+  "task_manifest": {
+    "version": 2,
+    "task_count": N,
+    "tasks": [ ... ]
+  }
+}
+```
+
 ## CRITICAL RULES
 
 - Do NOT ask questions. Make the fix directly.
+- Do NOT write `plan.md` or `task-manifest.json` to the worktree. Return them in the `plan_md` and `task_manifest` fields of `result.json`.
 - Do NOT switch branches (no `git checkout`, `git switch`, `git stash branch`).
-- Do NOT edit any source files (`*.ts`, `*.js`, `*.sh`, `*.py`, etc.). Your ONLY output is `plan.md`
-  and `task-manifest.json`.
+- Do NOT edit any source files (`*.ts`, `*.js`, `*.sh`, `*.py`, etc.). Your ONLY output is `result.json`.
 - Do NOT create standalone "run validation suite" or "make CI green" tasks.
-- Write `plan.md` first, then `task-manifest.json`.
+- Stop after writing `result.json`. Do not implement anything.

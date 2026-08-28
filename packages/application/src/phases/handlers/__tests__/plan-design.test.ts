@@ -153,7 +153,7 @@ describe('PlanDesignHandler', () => {
       contents: '# Test Issue\n\nBody text.\n',
     });
 
-    // Seed the agent to return success with a valid result.json
+    // Seed the agent to return success with a valid result.json containing design_md
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('opencode-frontier', successResult());
 
@@ -164,14 +164,8 @@ describe('PlanDesignHandler', () => {
       contents: JSON.stringify({
         result: 'ready',
         summary: 'design is ready',
+        design_md: '# Design\n\nSome design content.',
       }),
-    });
-
-    // Seed design.md (the required output artifact)
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'design.md',
-      contents: '# Design\n\nSome design content.',
     });
 
     const handler = new PlanDesignHandler();
@@ -185,14 +179,82 @@ describe('PlanDesignHandler', () => {
     const req = agent.invocations[0]!;
     expect(req.profile).toBe('opencode-frontier');
     expect(req.phaseId).toBe('plan-design');
-    expect(req.expectedArtifacts).toContain('design.md');
+    expect(req.expectedArtifacts).toContain('result.json');
     expect(req.startCommitSha).toBe('abc123');
+
+    // Verify design.md artifact was written by handler
+    const designArtifact = (await ctx.artifacts.list(ctx.runUuid)).find(
+      (a) => a.relativePath === 'design.md',
+    );
+    expect(designArtifact).toBeDefined();
+    expect(designArtifact?.phaseId).toBe('plan-design');
+    expect(await ctx.artifacts.read(ctx.runUuid, 'design.md')).toBe(
+      '# Design\n\nSome design content.',
+    );
 
     // Verify lifecycle events
     expect(eventsOf(ctx, 'plan-design.started')).toHaveLength(1);
     expect(eventsOf(ctx, 'agent.invoking')).toHaveLength(1);
-    expect(eventsOf(ctx, 'artifact.created')).toHaveLength(1); // prompt.md
+    expect(eventsOf(ctx, 'artifact.created')).toHaveLength(2); // prompt.md + design.md
     expect(eventsOf(ctx, 'plan-design.completed')).toHaveLength(1);
+  });
+
+  it('fails with invalid_result when design_md is missing from result.json', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue.md',
+      contents: '# Test Issue\n\nBody text.\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        summary: 'design is ready',
+      }),
+    });
+
+    const handler = new PlanDesignHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('invalid_result');
+      expect(result.failure.message).toContain('design_md');
+    }
+    expect(eventsOf(ctx, 'plan-design.failed')).toHaveLength(1);
+  });
+
+  it('fails with invalid_result when result.json is malformed JSON', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue.md',
+      contents: '# Test Issue\n\nBody text.\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: '{ not valid json }',
+    });
+
+    const handler = new PlanDesignHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('invalid_result');
+    }
+    expect(eventsOf(ctx, 'plan-design.failed')).toHaveLength(1);
   });
 });
 
@@ -235,13 +297,8 @@ describe('PlanWriteHandler', () => {
       relativePath: 'result.json',
       contents: JSON.stringify({
         result: 'ready',
-        tasks: [{ title: 'task 1' }],
+        plan_md: '# Plan\n\nSome plan.',
       }),
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\nSome plan.',
     });
 
     const handler = new PlanWriteHandler();
@@ -250,13 +307,16 @@ describe('PlanWriteHandler', () => {
     expect(result.outcome).toBe('passed');
     expect(agent.invocations).toHaveLength(1);
     expect(agent.invocations[0]).toBeDefined();
-    expect(agent.invocations[0]!.expectedArtifacts).toContain('plan.md');
+    expect(agent.invocations[0]!.expectedArtifacts).toContain('result.json');
     expect(eventsOf(ctx, 'plan-write.started')).toHaveLength(1);
     expect(eventsOf(ctx, 'plan-write.completed')).toHaveLength(1);
 
-    const planArtifact = (await ctx.artifacts.list(ctx.runUuid)).find((a) => a.relativePath === 'plan.md');
+    const planArtifact = (await ctx.artifacts.list(ctx.runUuid)).find(
+      (a) => a.relativePath === 'plan.md',
+    );
     expect(planArtifact).toBeDefined();
     expect(planArtifact?.phaseId).toBe('plan-write');
+    expect(await ctx.artifacts.read(ctx.runUuid, 'plan.md')).toBe('# Plan\n\nSome plan.');
   });
 
   it('persists task-manifest.json and plan.md to artifact store on completion', async () => {
@@ -267,21 +327,20 @@ describe('PlanWriteHandler', () => {
       contents: '# Design\n\nContent.',
     });
 
-    const manifestContent = JSON.stringify({
+    const manifestObj = {
       version: 1,
       task_count: 1,
       tasks: [{ n: 1, title: 'Implement feature', expected_files: ['src/feature.ts'] }],
-    });
+    };
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
-      contents: manifestContent,
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Implement feature\nDescription\n',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Implement feature\nDescription\n',
+        task_manifest: manifestObj,
+      }),
     });
 
     const agent = ctx.agent as FakeAgentPort;
@@ -293,8 +352,12 @@ describe('PlanWriteHandler', () => {
     expect(result.outcome).toBe('passed');
 
     const artifacts = await ctx.artifacts.list(ctx.runUuid);
-    const manifestArtifact = artifacts.find((a) => a.relativePath === 'task-manifest.json' && a.phaseId === 'plan-write');
-    const planArtifact = artifacts.find((a) => a.relativePath === 'plan.md' && a.phaseId === 'plan-write');
+    const manifestArtifact = artifacts.find(
+      (a) => a.relativePath === 'task-manifest.json' && a.phaseId === 'plan-write',
+    );
+    const planArtifact = artifacts.find(
+      (a) => a.relativePath === 'plan.md' && a.phaseId === 'plan-write',
+    );
     expect(manifestArtifact).toBeDefined();
     expect(planArtifact).toBeDefined();
 
@@ -310,7 +373,7 @@ describe('PlanWriteHandler', () => {
     );
     expect(loadResult.status).toBe('found');
     if (loadResult.status === 'found') {
-      expect(loadResult.manifest).toEqual(JSON.parse(manifestContent));
+      expect(loadResult.manifest).toEqual(manifestObj);
     }
   });
 
@@ -327,8 +390,11 @@ describe('PlanWriteHandler', () => {
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\nSome plan.',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\nSome plan.',
+      }),
     });
 
     const handler = new PlanWriteHandler();
@@ -349,12 +415,6 @@ describe('PlanWriteHandler', () => {
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('opencode-frontier', successResult());
 
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Impl\nDescription\n',
-    });
-
     const manifest = {
       version: 1,
       task_count: 1,
@@ -362,8 +422,12 @@ describe('PlanWriteHandler', () => {
     };
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify(manifest),
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Impl\nDescription\n',
+        task_manifest: manifest,
+      }),
     });
 
     const handler = new PlanWriteHandler();
@@ -386,15 +450,12 @@ describe('PlanWriteHandler', () => {
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Impl\nDescription\n',
-    });
-
-    // Malformed manifest JSON
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
-      contents: '{ invalid: json }',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Impl\nDescription\n',
+        task_manifest: '{ invalid: json }',
+      }),
     });
 
     const handler = new PlanWriteHandler({ maxRepairAttempts: 0 });
@@ -420,13 +481,6 @@ describe('PlanWriteHandler', () => {
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('opencode-frontier', successResult());
 
-    // Prose lacks '## Task 1:' heading
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\nSome plan without task heading.',
-    });
-
     const manifest = {
       version: 1,
       task_count: 1,
@@ -434,8 +488,12 @@ describe('PlanWriteHandler', () => {
     };
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify(manifest),
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\nSome plan without task heading.',
+        task_manifest: manifest,
+      }),
     });
 
     const handler = new PlanWriteHandler({ maxRepairAttempts: 0 });
@@ -450,7 +508,7 @@ describe('PlanWriteHandler', () => {
     expect(eventsOf(ctx, 'plan-write.completed')).toHaveLength(0);
   });
 
-  it('unexpected manifest read error fails gracefully and does not retry', async () => {
+  it('unexpected result.json read error fails gracefully and does not retry', async () => {
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       phaseId: 'plan-design',
@@ -463,15 +521,22 @@ describe('PlanWriteHandler', () => {
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Impl\nDescription\n',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Impl\nDescription\n',
+      }),
     });
 
-    // Mock unexpected error during read
+    // Mock unexpected error during read (fails on the 2nd read in PlanWriteHandler.readArtifacts)
+    let readCount = 0;
     const originalRead = ctx.artifacts.read;
     ctx.artifacts.read = async (runUuid: string, relativePath: string) => {
-      if (relativePath === 'task-manifest.json') {
-        throw new Error('Permission denied');
+      if (relativePath === 'result.json') {
+        readCount++;
+        if (readCount > 1) {
+          throw new Error('Permission denied');
+        }
       }
       return originalRead.call(ctx.artifacts, runUuid, relativePath);
     };
@@ -481,7 +546,7 @@ describe('PlanWriteHandler', () => {
 
     expect(result.outcome).toBe('failed');
     if (result.outcome === 'failed') {
-      expect(result.failure.kind).toBe('unknown');
+      expect(result.failure.kind).toBe('invalid_result');
       expect(result.failure.canRetry).toBe(false);
       expect(result.failure.message).toContain('Permission denied');
     }
@@ -499,42 +564,38 @@ describe('PlanWriteHandler', () => {
 
     const agent = ctx.agent as FakeAgentPort;
 
-    // First invocation (returns malformed manifest)
+    // First invocation (returns malformed manifest in result.json)
     agent.enqueue('opencode-frontier', successResult());
-    // Second invocation (repair, returns valid manifest and plan)
-    agent.enqueue('opencode-frontier', successResult());
+    // Second invocation (repair, returns valid manifest and plan in result.json)
+    agent.enqueue('opencode-frontier', async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          result: 'ready',
+          plan_md: '# Plan\n\n## Task 1: Impl\nDescription\n',
+          task_manifest: {
+            version: 1,
+            task_count: 1,
+            tasks: [{ n: 1, title: 'Impl' }],
+          },
+        }),
+      });
+      return successResult();
+    });
 
     // Before first validation check
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Impl\nDescription\n',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
-      contents: '{ invalid: json }', // Causes validation failure
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Impl\nDescription\n',
+        task_manifest: '{ invalid: json }', // Causes validation failure
+      }),
     });
 
     const handler = new PlanWriteHandler({ maxRepairAttempts: 2 });
-
-    // Hook artifacts.read to return valid content on the second attempt
-    const originalRead = ctx.artifacts.read;
-    let readCount = 0;
-    ctx.artifacts.read = async (runUuid: string, relativePath: string) => {
-      if (relativePath === 'task-manifest.json') {
-        readCount++;
-        if (readCount === 2) {
-          return JSON.stringify({
-            version: 1,
-            task_count: 1,
-            tasks: [{ n: 1, title: 'Impl' }],
-          });
-        }
-      }
-      return originalRead.call(ctx.artifacts, runUuid, relativePath);
-    };
-
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('passed');
@@ -562,13 +623,12 @@ describe('PlanWriteHandler', () => {
     // Both times return invalid
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Impl\nDescription\n',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
-      contents: '{ invalid: json }',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Impl\nDescription\n',
+        task_manifest: '{ invalid: json }',
+      }),
     });
 
     const handler = new PlanWriteHandler({ maxRepairAttempts: 1 });
@@ -597,39 +657,36 @@ describe('PlanWriteHandler', () => {
     // First invocation (returns missing manifest)
     agent.enqueue('opencode-frontier', successResult());
     // Second invocation (repair loop)
-    agent.enqueue('opencode-frontier', successResult());
+    agent.enqueue('opencode-frontier', async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          result: 'ready',
+          plan_md: '# Plan\n\n## Task 1: Impl\nDescription\n',
+          task_manifest: {
+            version: 1,
+            task_count: 1,
+            tasks: [{ n: 1, title: 'Impl' }],
+          },
+        }),
+      });
+      return successResult();
+    });
 
     // Before first validation check
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 2: Impl\nDescription\n', // Fails validation (non-sequential)
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 2: Impl\nDescription\n', // Fails validation (non-sequential)
+      }),
     });
-    // Deliberately DO NOT write task-manifest.json
 
     const writeSpy = vi.spyOn(ctx.artifacts, 'write');
 
     const handler = new PlanWriteHandler({ maxRepairAttempts: 2 });
-
-    const originalRead = ctx.artifacts.read;
-    let readCount = 0;
-    ctx.artifacts.read = async (runUuid: string, relativePath: string) => {
-      if (relativePath === 'task-manifest.json') {
-        readCount++;
-        if (readCount === 2) {
-          return JSON.stringify({
-            version: 1,
-            task_count: 1,
-            tasks: [{ n: 1, title: 'Impl' }],
-          });
-        }
-      }
-      if (relativePath === 'plan.md' && readCount >= 1) {
-        return '# Plan\n\n## Task 1: Impl\nDescription\n';
-      }
-      return originalRead.call(ctx.artifacts, runUuid, relativePath);
-    };
-
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('passed');
@@ -659,13 +716,12 @@ describe('PlanWriteHandler', () => {
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Impl\nDescription\n',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify({ version: 1, task_count: 1, tasks: [{ n: 1, title: 'Impl' }] }),
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Impl\nDescription\n',
+        task_manifest: { version: 1, task_count: 1, tasks: [{ n: 1, title: 'Impl' }] },
+      }),
     });
 
     const handler = new PlanWriteHandler({ maxRepairAttempts: 2 });
@@ -688,26 +744,22 @@ describe('PlanWriteHandler', () => {
     const agent = ctx.agent as FakeAgentPort;
     // First invocation (original plan-write) produces a duplicate-title manifest.
     agent.enqueue('opencode-frontier', successResult());
-    // Second invocation (repair) overwrites plan.md/task-manifest.json with a valid pair.
-    // FakeAgentResponse supports a function-of-request variant (widened in Step 0 below
-    // to allow an async function) so the queued response can perform this side effect
-    // before the handler re-reads the artifacts.
+    // Second invocation (repair) overwrites result.json with a valid pair.
     agent.enqueue('opencode-frontier', async () => {
       await ctx.artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'plan.md',
-        contents: '# Plan\n\n## Task 1: Impl A\nDescription\n\n## Task 2: Impl B\nDescription\n',
-      });
-      await ctx.artifacts.write({
-        runId: ctx.runUuid,
-        relativePath: 'task-manifest.json',
+        relativePath: 'result.json',
         contents: JSON.stringify({
-          version: 1,
-          task_count: 2,
-          tasks: [
-            { n: 1, title: 'Impl A' },
-            { n: 2, title: 'Impl B' },
-          ],
+          result: 'ready',
+          plan_md: '# Plan\n\n## Task 1: Impl A\nDescription\n\n## Task 2: Impl B\nDescription\n',
+          task_manifest: {
+            version: 1,
+            task_count: 2,
+            tasks: [
+              { n: 1, title: 'Impl A' },
+              { n: 2, title: 'Impl B' },
+            ],
+          },
         }),
       });
       return successResult();
@@ -715,19 +767,18 @@ describe('PlanWriteHandler', () => {
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Impl A\nDescription\n\n## Task 2: Impl A\nDescription\n',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
+      relativePath: 'result.json',
       contents: JSON.stringify({
-        version: 1,
-        task_count: 2,
-        tasks: [
-          { n: 1, title: 'Impl A' },
-          { n: 2, title: 'Impl A' },
-        ],
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Impl A\nDescription\n\n## Task 2: Impl A\nDescription\n',
+        task_manifest: {
+          version: 1,
+          task_count: 2,
+          tasks: [
+            { n: 1, title: 'Impl A' },
+            { n: 2, title: 'Impl A' },
+          ],
+        },
       }),
     });
 
@@ -752,29 +803,26 @@ describe('PlanWriteHandler', () => {
     });
 
     const agent = ctx.agent as FakeAgentPort;
-    // 1 original + 2 repair invocations, all "succeed" at the agent level but never
-    // fix the duplicate title.
     agent.enqueue('opencode-frontier', successResult());
     agent.enqueue('opencode-frontier', successResult());
     agent.enqueue('opencode-frontier', successResult());
 
-    const duplicateManifest = JSON.stringify({
+    const duplicateManifest = {
       version: 1,
       task_count: 2,
       tasks: [
         { n: 1, title: 'Impl A' },
         { n: 2, title: 'Impl A' },
       ],
-    });
+    };
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Impl A\nDescription\n\n## Task 2: Impl A\nDescription\n',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
-      contents: duplicateManifest,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Impl A\nDescription\n\n## Task 2: Impl A\nDescription\n',
+        task_manifest: duplicateManifest,
+      }),
     });
 
     const handler = new PlanWriteHandler({ maxRepairAttempts: 2 });
@@ -806,19 +854,18 @@ describe('PlanWriteHandler', () => {
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Impl A\nDescription\n\n## Task 2: Impl A\nDescription\n',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
+      relativePath: 'result.json',
       contents: JSON.stringify({
-        version: 1,
-        task_count: 2,
-        tasks: [
-          { n: 1, title: 'Impl A' },
-          { n: 2, title: 'Impl A' },
-        ],
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Impl A\nDescription\n\n## Task 2: Impl A\nDescription\n',
+        task_manifest: {
+          version: 1,
+          task_count: 2,
+          tasks: [
+            { n: 1, title: 'Impl A' },
+            { n: 2, title: 'Impl A' },
+          ],
+        },
       }),
     });
 
@@ -850,19 +897,18 @@ describe('PlanWriteHandler', () => {
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Impl A\nDescription\n\n## Task 2: Impl A\nDescription\n',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'task-manifest.json',
+      relativePath: 'result.json',
       contents: JSON.stringify({
-        version: 1,
-        task_count: 2,
-        tasks: [
-          { n: 1, title: 'Impl A' },
-          { n: 2, title: 'Impl A' },
-        ],
+        result: 'ready',
+        plan_md: '# Plan\n\n## Task 1: Impl A\nDescription\n\n## Task 2: Impl A\nDescription\n',
+        task_manifest: {
+          version: 1,
+          task_count: 2,
+          tasks: [
+            { n: 1, title: 'Impl A' },
+            { n: 2, title: 'Impl A' },
+          ],
+        },
       }),
     });
 
@@ -878,6 +924,36 @@ describe('PlanWriteHandler', () => {
     expect(eventsOf(ctx, 'plan-write.repair.started')).toHaveLength(1);
     expect(eventsOf(ctx, 'plan-write.repair.succeeded')).toHaveLength(0);
     expect(eventsOf(ctx, 'plan-write.repair.failed')).toHaveLength(0);
+  });
+
+  it('fails with invalid_result when plan_md is missing from result.json', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan-design',
+      relativePath: 'design.md',
+      contents: '# Design\n\nContent.',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'ready',
+      }),
+    });
+
+    const handler = new PlanWriteHandler({ maxRepairAttempts: 0 });
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('invalid_result');
+      expect(result.failure.message).toContain('plan_md');
+    }
+    expect(eventsOf(ctx, 'plan-write.failed')).toHaveLength(1);
   });
 });
 
@@ -1107,54 +1183,16 @@ describe.each([
     });
 
     const agent = ctx.agent as FakeAgentPort;
-    // Agent succeeds but does NOT produce required artifact — contract violation
-    // (design.md for PlanDesignHandler, plan.md for PlanWriteHandler)
+    // Agent succeeds but does NOT produce required artifact (result.json)
     agent.enqueue('opencode-frontier', successResult());
 
-    // Write result.json but NOT the required artifact
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'result.json',
-      contents: JSON.stringify({ result: 'ready', summary: 'ok' }),
-    });
-
+    // Do NOT write result.json
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('blocked');
     if (result.outcome === 'blocked') {
       expect(result.failure.kind).toBe('agent_contract_violation');
     }
     expect(eventsOf(ctx, `${String(handler.phase)}.blocked`)).toHaveLength(1);
-  });
-
-  it('passes without result.json — plan-design/plan-write skip result extraction (legacy bash never writes it)', async () => {
-    setupCtx();
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: 'read_issue',
-      relativePath: 'issue.md',
-      contents: '# Test\n',
-    });
-
-    // Write both design.md and plan.md so either handler's contract passes
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'design.md',
-      contents: '# Design',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan',
-    });
-
-    const agent = ctx.agent as FakeAgentPort;
-    agent.enqueue('opencode-frontier', successResult());
-
-    // result.json is absent — handler must still pass (skipResultExtraction: true)
-    const result = await handler.run(ctx);
-    expect(result.outcome).toBe('passed');
-    expect(agent.invocations).toHaveLength(1);
-    expect(eventsOf(ctx, `${String(handler.phase)}.completed`)).toHaveLength(1);
   });
 
   it('regression: re-materializes missing worktree artifact and emits recovery event', async () => {
@@ -1166,13 +1204,17 @@ describe.each([
       contents: '# Test\n',
     });
 
-    const artifactName = handler.phase === 'plan-design' ? 'design.md' : 'plan.md';
+    const artifactName = 'result.json';
 
     // Seed the durable artifact
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       relativePath: artifactName,
-      contents: '# Content',
+      contents: JSON.stringify(
+        handler.phase === 'plan-design'
+          ? { result: 'ready', design_md: '# Design' }
+          : { result: 'ready', plan_md: '# Plan' },
+      ),
     });
 
     const agent = ctx.agent as FakeAgentPort;
@@ -1199,7 +1241,6 @@ describe.each([
     expect(writeSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         relativePath: artifactName,
-        contents: '# Content',
       }),
     );
   });

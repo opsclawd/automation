@@ -73,6 +73,26 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
         { attempt, validationError },
       );
 
+      // Ensure the current draft plan and manifest are persisted to artifact store for repair prompt interpolation
+      try {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: 'plan-write',
+          relativePath: 'plan.md',
+          contents: planMd,
+        });
+        if (manifestJson !== undefined) {
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            phaseId: 'plan-write',
+            relativePath: 'task-manifest.json',
+            contents: manifestJson,
+          });
+        }
+      } catch {
+        // Best-effort write
+      }
+
       let wrappedCtxForRepair = wrappedCtx;
       if (manifestJson === undefined) {
         const placeholderManifest = JSON.stringify({ version: 1, task_count: 0, tasks: [] });
@@ -82,7 +102,10 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
             try {
               return await ctx.artifacts.read(runId, relativePath);
             } catch (e) {
-              if (e instanceof ArtifactNotFoundError || (e instanceof Error && e.name === 'ArtifactNotFoundError')) {
+              if (
+                e instanceof ArtifactNotFoundError ||
+                (e instanceof Error && e.name === 'ArtifactNotFoundError')
+              ) {
                 return placeholderManifest;
               }
               throw e;
@@ -212,7 +235,9 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
           relativePath: 'task-manifest.json',
           contents: manifestJson,
         });
-        emit('artifact.created', 'info', 'wrote task-manifest.json', { path: 'task-manifest.json' });
+        emit('artifact.created', 'info', 'wrote task-manifest.json', {
+          path: 'task-manifest.json',
+        });
       } catch (e) {
         const message = `Failed to write task-manifest.json artifact: ${e instanceof Error ? e.message : String(e)}`;
         emit('plan-write.failed', 'error', message);
@@ -245,11 +270,11 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
     ctx: PhaseHandlerContext,
     emit: EventEmitter,
   ): Promise<ReadArtifactsResult> {
-    let planMd: string;
+    let rawResult: string;
     try {
-      planMd = await ctx.artifacts.read(ctx.runUuid, 'plan.md');
+      rawResult = await ctx.artifacts.read(ctx.runUuid, 'result.json');
     } catch (e) {
-      const message = `Failed to read plan.md: ${e instanceof Error ? e.message : String(e)}`;
+      const message = `Failed to read result.json: ${e instanceof Error ? e.message : String(e)}`;
       emit('plan-write.failed', 'error', message);
       return {
         readFailure: {
@@ -260,7 +285,7 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
             kind: 'invalid_result',
             message,
             canRetry: false,
-            suggestedAction: 'Ensure the agent generated a plan.',
+            suggestedAction: 'Ensure the agent generated a result.json.',
             artifacts: [],
             detectedAt: ctx.now(),
           },
@@ -268,30 +293,60 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
       };
     }
 
-    let manifestJson: string | undefined;
+    let parsed: { plan_md?: unknown; task_manifest?: unknown; [key: string]: unknown };
     try {
-      manifestJson = await ctx.artifacts.read(ctx.runUuid, 'task-manifest.json');
+      parsed = JSON.parse(rawResult);
     } catch (e) {
-      if (e instanceof ArtifactNotFoundError) {
-        manifestJson = undefined;
-      } else {
-        const message = `Failed to read task-manifest.json: ${e instanceof Error ? e.message : String(e)}`;
-        emit('plan-write.failed', 'error', message);
-        return {
-          readFailure: {
-            outcome: 'failed',
-            failure: {
-              runUuid: ctx.runUuid,
-              phase: this.phase,
-              kind: 'unknown',
-              message,
-              canRetry: false,
-              suggestedAction: 'Check artifact store permissions or integrity and retry.',
-              artifacts: [],
-              detectedAt: ctx.now(),
-            },
+      const message = `Failed to parse result.json: ${e instanceof Error ? e.message : String(e)}`;
+      emit('plan-write.failed', 'error', message);
+      return {
+        readFailure: {
+          outcome: 'failed',
+          failure: {
+            runUuid: ctx.runUuid,
+            phase: this.phase,
+            kind: 'invalid_result',
+            message,
+            canRetry: false,
+            suggestedAction: 'Ensure the agent produced valid JSON in result.json.',
+            artifacts: [],
+            detectedAt: ctx.now(),
           },
-        };
+        },
+      };
+    }
+
+    if (typeof parsed.plan_md !== 'string' || parsed.plan_md.trim().length === 0) {
+      const message = 'result.json is missing required non-empty plan_md field';
+      emit('plan-write.failed', 'error', message);
+      return {
+        readFailure: {
+          outcome: 'failed',
+          failure: {
+            runUuid: ctx.runUuid,
+            phase: this.phase,
+            kind: 'invalid_result',
+            message,
+            canRetry: false,
+            suggestedAction:
+              'Ensure result.json includes plan_md with the markdown implementation plan.',
+            artifacts: [],
+            detectedAt: ctx.now(),
+          },
+        },
+      };
+    }
+
+    const planMd = parsed.plan_md;
+
+    let manifestJson: string | undefined;
+    if (parsed.task_manifest !== undefined && parsed.task_manifest !== null) {
+      if (typeof parsed.task_manifest === 'string') {
+        manifestJson = parsed.task_manifest;
+      } else if (typeof parsed.task_manifest === 'object') {
+        manifestJson = JSON.stringify(parsed.task_manifest, null, 2);
+      } else {
+        manifestJson = String(parsed.task_manifest);
       }
     }
 
