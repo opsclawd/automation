@@ -1,5 +1,4 @@
-You are performing a comprehensive, independent whole-change review for a pull request / issue implementation before PR creation and CI.
-Your review is the authoritative cognitive merge-readiness gate.
+You are performing an independent final review of the completed implementation.
 
 ## CONTEXT
 
@@ -32,41 +31,43 @@ Complete branch diff against base:
 
 ## TASK
 
-Perform a thorough, fresh review of the complete changes against the issue truth, design, plan, and repository architecture constraints.
+Perform an independent final review of the completed implementation to determine whether it is safe to merge.
 
-Review simultaneously for:
-1. **Spec Compliance & Acceptance Criteria**: Does the implementation completely satisfy all requirements and acceptance criteria in `issue.md`?
-2. **Anchored-Design Drift**: Did the implementation or plan drift from the issue's anchored design or `design.md`?
-3. **Correctness & Regressions**: Are there logic bugs, broken edge cases, unhandled errors, or regressions against existing behavior?
-4. **Architecture Boundaries & Layer Rules**: Are repository layer boundaries respected (dependencies flow inward only; `packages/application` never imports `@ai-sdlc/infrastructure`; ports & composition root patterns followed)?
-5. **Unintended Scope**: Are there extraneous file modifications, scope creep, or edits to files outside what is legitimately required to satisfy the issue?
-6. **Test Adequacy**: Are new features and bug fixes accompanied by thorough, deterministic tests? Are error paths tested?
-7. **Error & Recovery Behavior**: Are error conditions handled gracefully?
-8. **Security, Data Integrity, & Performance**: Are there security vulnerabilities, data loss risks, memory/process leaks, or unneeded overhead?
+Use the issue, comments, design, plan, branch diff, and validation evidence provided above as your primary review inputs.
 
-## EVALUATION INSTRUCTIONS
+Also read:
+- `AGENTS.md`
+- `CONTEXT.md`
+- relevant ADRs and repository documentation
+- the affected implementation and tests
 
-1. **Acceptance Criteria Verification**:
-   - Enumerate EVERY acceptance criterion from `issue.md`.
-   - Provide a result: `"PASS"` or `"FAIL"` for each criterion, along with concise evidence.
-   - If any required acceptance criterion is missing, broken, or unverified, mark it `"FAIL"`.
+Review the change as a whole. Look for material problems including:
+- missing or incorrect issue requirements
+- deviations from Anchored Design
+- correctness defects or regressions
+- architectural violations
+- unjustified or unrelated changes
+- inadequate tests
+- important error-handling, security, data-integrity, concurrency, or performance problems where relevant
 
-2. **Finding Severity & Classification**:
-   - `"critical"`: Security vulnerabilities, data corruption/loss, production crashes, severe architectural violations. (BLOCKING)
-   - `"high"`: Functional defects, broken acceptance criteria, regressions, broken error handling, layer boundary violations. (BLOCKING)
-   - `"medium"`: Suboptimal design patterns, missing test cases for edge cases, maintenance hazards. (BLOCKING if material impact)
-   - `"low"`: Minor improvements, non-blocking suggestions, style/documentation notes. (NON-BLOCKING)
+Do not manufacture findings merely to have findings. Do not block on stylistic preferences unless they create a material correctness or maintainability problem.
 
-3. **Style Preference Rule**:
-   - Do NOT treat purely stylistic preferences as merge blockers without material correctness, maintainability, or architectural impact.
+Explicitly verify every Acceptance Criterion from the issue as PASS or FAIL with supporting evidence.
 
-4. **Verdict**:
-   - `"APPROVE"`: When ALL acceptance criteria `"PASS"` and there are NO blocking findings (no critical/high severity defects).
-   - `"REQUEST_CHANGES"`: When any acceptance criterion is `"FAIL"` or there are blocking findings that must be corrected.
+For each blocking finding, provide:
+- severity
+- file/location
+- concrete evidence
+- why it matters
+- the smallest appropriate correction
+
+Finish with:
+- `APPROVE` if no merge-blocking defects remain
+- `REQUEST_CHANGES` if correction is required
 
 ## OUTPUT FORMAT
 
-Write your evaluation to `./result.json` using the following schema:
+Write your review to `./result.json`:
 
 ```json
 {
@@ -75,26 +76,26 @@ Write your evaluation to `./result.json` using the following schema:
     {
       "criterion": "Acceptance criterion text from issue.md",
       "result": "PASS" | "FAIL",
-      "evidence": "Brief evidence or reference"
+      "evidence": "Supporting evidence"
     }
   ],
   "findings": [
     {
       "severity": "critical" | "high" | "medium" | "low",
-      "files": ["packages/application/src/example.ts"],
-      "evidence": "Exact code / diff snippet observed",
-      "rationale": "Why this is a problem",
-      "minimal_correction": "Specific minimal fix required",
+      "files": ["path/to/file.ts"],
+      "evidence": "Concrete evidence or code snippet",
+      "rationale": "Why this matters",
+      "minimal_correction": "Smallest appropriate correction",
       "blocking": true
     }
   ],
-  "summary": "High-level summary of review verdict and findings."
+  "summary": "Summary of review verdict and findings."
 }
 ```
 
 ## CRITICAL RULES
 
-- You are READ-ONLY. Do NOT edit source files. Do NOT create scratch files in the worktree.
-- Do NOT switch git branches.
-- Do NOT ask questions.
+- This is a read-only review. Do not modify the implementation or create scratch files in the worktree.
+- Do not switch git branches.
+- Do not ask questions.
 - Write `./result.json` before stopping.
