@@ -556,8 +556,8 @@ exit 0
     writeFileSync(
       fakeScript,
       `#!/usr/bin/env bash
-mkdir -p "${cwd}/packages"
-printf "## Misplaced design" > "${cwd}/packages/design.md"
+mkdir -p "${scratchDir}"
+printf "## Misplaced design" > "${scratchDir}/design.md"
 printf "## Stray other" > "${scratchDir}/other.md"
 echo "fake agy success"
 exit 0

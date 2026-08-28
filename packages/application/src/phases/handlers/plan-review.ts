@@ -27,6 +27,11 @@ export class PlanReviewHandler implements PhaseHandler {
       return { outcome: 'passed' };
     }
 
+    if (ctx.executionPolicy === 'standard') {
+      emit('plan-review.skipped', 'info', 'plan-review skipped under standard execution policy');
+      return { outcome: 'passed' };
+    }
+
     // Validate plan.md exists before invoking the loop.
     try {
       await ctx.artifacts.read(ctx.runUuid, 'plan.md');
@@ -40,12 +45,17 @@ export class PlanReviewHandler implements PhaseHandler {
 
     let result: PlanReviewLoopResult;
     try {
+      const isStrict = ctx.executionPolicy === 'strict';
+      const maxIterations = isStrict ? 1 : this.opts.maxIterations;
+      const options = isStrict ? { bonusIteration: false, deltaScopedReReview: false } : undefined;
+
       result = await this.opts.loop.execute({
         runId: RunId(ctx.runUuid),
         phaseId: this.phase,
         repoId: ctx.repoFullName,
         cwd: ctx.cwd,
-        maxIterations: this.opts.maxIterations,
+        maxIterations,
+        ...(options ? { options } : {}),
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

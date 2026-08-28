@@ -32,6 +32,25 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
   override async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
 
+    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    if (isLeanPolicy) {
+      try {
+        const planMd = await ctx.artifacts.read(ctx.runUuid, 'plan.md');
+        const manifestJson = await ctx.artifacts.read(ctx.runUuid, 'task-manifest.json');
+        if (planMd.trim() && manifestJson.trim()) {
+          emit('plan-write.started', 'info', 'starting plan-write');
+          emit(
+            'plan-write.completed',
+            'info',
+            'plan-write completed (reusing unified planner artifacts)',
+          );
+          return { outcome: 'passed' };
+        }
+      } catch {
+        // Artifacts not present, proceed
+      }
+    }
+
     const completedRef: { event?: { runUuid: string; event: OrchestratorEvent } } = {};
     const interceptedEvents: EventBusPort = {
       subscribe: (runUuid, listener) => ctx.events.subscribe(runUuid, listener),
@@ -82,7 +101,10 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
             try {
               return await ctx.artifacts.read(runId, relativePath);
             } catch (e) {
-              if (e instanceof ArtifactNotFoundError || (e instanceof Error && e.name === 'ArtifactNotFoundError')) {
+              if (
+                e instanceof ArtifactNotFoundError ||
+                (e instanceof Error && e.name === 'ArtifactNotFoundError')
+              ) {
                 return placeholderManifest;
               }
               throw e;
@@ -212,7 +234,9 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
           relativePath: 'task-manifest.json',
           contents: manifestJson,
         });
-        emit('artifact.created', 'info', 'wrote task-manifest.json', { path: 'task-manifest.json' });
+        emit('artifact.created', 'info', 'wrote task-manifest.json', {
+          path: 'task-manifest.json',
+        });
       } catch (e) {
         const message = `Failed to write task-manifest.json artifact: ${e instanceof Error ? e.message : String(e)}`;
         emit('plan-write.failed', 'error', message);
