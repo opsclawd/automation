@@ -18,8 +18,17 @@ export { postPrReviewResultSchema } from './schemas/post-pr-review.js';
 export type { PostPrReviewResult } from './schemas/post-pr-review.js';
 export { postPrReviewCommentSchema } from './schemas/post-pr-review.js';
 export type { PostPrReviewComment } from './schemas/post-pr-review.js';
-export { specReviewResultSchema, specReviewFindingSchema } from './schemas/spec-review.js';
-export type { SpecReviewResult } from './schemas/spec-review.js';
+export {
+  specReviewResultSchema,
+  specReviewFindingSchema,
+  specReviewRequirementSchema,
+  specReviewDriftItemSchema,
+} from './schemas/spec-review.js';
+export type {
+  SpecReviewResult,
+  SpecReviewRequirement,
+  SpecReviewDriftItem,
+} from './schemas/spec-review.js';
 export { wholePrReviewResultSchema } from './schemas/whole-pr-review.js';
 export type { WholePrReviewResult } from './schemas/whole-pr-review.js';
 export { compoundResultSchema } from './schemas/compound.js';

@@ -38,7 +38,7 @@ export interface StepContext {
 export interface ReviewStepResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
-  verdict?: 'pass' | 'fail';
+  verdict?: 'pass' | 'partial' | 'fail' | 'fabricated';
   overridden?: boolean;
   offendingFindings?: Array<{ severity: string; summary: string; files?: string[] }>;
   excerpt?: string;
@@ -202,7 +202,7 @@ export type ReviewLoopHistoryAudience = 'reviewer' | 'fixer';
 export interface ReviewLoopHistoryEntry {
   iteration: number;
   review: {
-    verdict?: 'pass' | 'fail';
+    verdict?: 'pass' | 'partial' | 'fail' | 'fabricated';
     invocationId?: string;
     offendingFindings?: Array<{ severity: string; summary: string; files?: string[] }>;
     excerpt?: string;

@@ -1063,6 +1063,7 @@ export interface BuildSpecReviewPromptOptions {
   typecheckSection: string;
   implReport?: string;
   declaredFiles?: string[];
+  issueBody?: string;
   scope: {
     mode: 'initial_full' | 'intermediate_delta' | 'final_full';
     dimensions?: Array<'spec' | 'quality'>;
@@ -1100,7 +1101,7 @@ function appendTaskFileScope(sections: string[], declaredFiles: string[] | undef
 }
 
 export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): string {
-  const { ctx, typecheckSection, implReport = '', scope, declaredFiles } = options;
+  const { ctx, typecheckSection, implReport = '', scope, declaredFiles, issueBody } = options;
   const { mode, baseIdentity, snapshotIdentity, unresolvedFindings, dispositions } = scope;
   const reportExcerpt = implReport.split('\n').slice(0, 50).join('\n');
 
@@ -1187,6 +1188,36 @@ export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): st
 
   appendTaskFileScope(sections, declaredFiles);
 
+  if (issueBody) {
+    sections.push(
+      '## ISSUE BODY',
+      '',
+      'The following is the full issue body for this implementation task. Use it as the',
+      'source of truth for what the implementation is required to achieve.',
+      '',
+      '```',
+      issueBody,
+      '```',
+      '',
+    );
+
+    sections.push(
+      '## ANCHORED DESIGN CHECKLIST',
+      '',
+      'If the issue body contains an "Anchored Design" or "Acceptance Criteria" section:',
+      '',
+      '1. Enumerate each anchored-design requirement and acceptance criterion as a',
+      '   numbered item (e.g., AC1, AD1). Assign stable IDs.',
+      '2. For each item, verify the implementation matches. Mark PASS, PARTIAL, or FAIL',
+      '   with `file:line` evidence.',
+      '3. If the implementation uses a different symbol name, dep shape, or file layout',
+      '   than what the issue prescribes, record it as a `drift_item`.',
+      '4. A drift_item with `deviation_annotated: false` is a FAIL regardless of whether',
+      '   the alternative appears to work — unannotated deviations are process violations.',
+      '',
+    );
+  }
+
   sections.push(
     '## CONTEXT',
     '',
@@ -1196,27 +1227,79 @@ export function buildSpecReviewPrompt(options: BuildSpecReviewPromptOptions): st
     '',
     typecheckSection,
     '',
-    '## OUTPUT',
-    `Write ${ctx.cwd}/result.json with this shape (no extra keys, no comments):`,
-    '',
-    '  {',
-    '    "result": "pass" | "fail",',
-    '    "findings": [',
-    '      {',
-    '        "severity": "P0" | "P1" | "P2" | "P3",',
-    '        "summary": "<one-sentence statement of the defect>",',
-    '        "file": "<optional repo-relative path>",',
-    '        "suggested_fix": "<optional concrete fix>"',
-    '      }',
-    '    ]',
-    '  }',
-    '',
-    'Rules:',
-    '- "findings" MUST be present and an array (use `[]` on pass).',
-    '- When result is "fail", findings MUST contain at least one entry with severity P0..P3.',
-    "- Every finding's `summary` is required and MUST be non-empty.",
-    '- `file` and `suggested_fix` are STRONGLY RECOMMENDED for actionable findings; they may be omitted when the defect spans multiple files or is a plan/letter deviation.',
-    '- Do NOT omit `findings` on "fail" — the orchestrator\'s fixer and arbiter cannot act on a fail verdict without findings.',
+  );
+
+  if (issueBody) {
+    sections.push(
+      '## OUTPUT SCHEMA (anchored-design mode)',
+      '',
+      `Write ${ctx.cwd}/result.json with this shape (no extra keys, no comments):`,
+      '',
+      '  {',
+      '    "verdict": "pass" | "partial" | "fail",',
+      '    "requirements": [',
+      '      {',
+      '        "id": "<e.g. AC1, AD1>",',
+      '        "category": "<e.g. anchored-design | acceptance-criteria>",',
+      '        "requirement": "<the specific requirement text>",',
+      '        "status": "pass | partial | fail",',
+      '        "evidence": "<file:line or empty>",',
+      '        "notes": "<optional>"',
+      '      }',
+      '    ],',
+      '    "drift_items": [',
+      '      {',
+      '        "spec_symbol": "<symbol name from issue>",',
+      '        "actual_symbol": "<symbol name in implementation>",',
+      '        "deviation_annotated": true | false,',
+      '        "files": ["<repo-relative path>"]',
+      '      }',
+      '    ],',
+      '    "findings": [',
+      '      {',
+      '        "severity": "P0" | "P1" | "P2" | "P3",',
+      '        "summary": "<one-sentence statement of the defect>",',
+      '        "file": "<optional repo-relative path>",',
+      '        "suggested_fix": "<optional concrete fix>"',
+      '      }',
+      '    ]',
+      '  }',
+      '',
+      'Rules:',
+      '- `verdict` is derived from `requirements`: fail if any requirement is fail; partial if any is partial and none fail; pass only if all are pass.',
+      '- `requirements` MUST be present and non-empty when the issue body contains anchored-design text.',
+      '- An empty `findings: []` combined with `drift_items` where all `deviation_annotated` are `false` is a FAIL — unannotated drift is a process violation.',
+      '- A `drift_item` with `deviation_annotated: false` is a FAIL on `verdict`, regardless of whether the implementation appears to work.',
+      '- Do NOT fall back to the legacy `result` field — use `verdict`.',
+      '',
+    );
+  } else {
+    sections.push(
+      '## OUTPUT',
+      `Write ${ctx.cwd}/result.json with this shape (no extra keys, no comments):`,
+      '',
+      '  {',
+      '    "result": "pass" | "fail",',
+      '    "findings": [',
+      '      {',
+      '        "severity": "P0" | "P1" | "P2" | "P3",',
+      '        "summary": "<one-sentence statement of the defect>",',
+      '        "file": "<optional repo-relative path>",',
+      '        "suggested_fix": "<optional concrete fix>"',
+      '      }',
+      '    ]',
+      '  }',
+      '',
+      'Rules:',
+      '- "findings" MUST be present and an array (use `[]` on pass).',
+      '- When result is "fail", findings MUST contain at least one entry with severity P0..P3.',
+      "- Every finding's `summary` is required and MUST be non-empty.",
+      '- `file` and `suggested_fix` are STRONGLY RECOMMENDED for actionable findings; they may be omitted when the defect spans multiple files or is a plan/letter deviation.',
+      '- Do NOT omit `findings` on "fail" — the orchestrator\'s fixer and arbiter cannot act on a fail verdict without findings.',
+    );
+  }
+
+  sections.push(
     'Do NOT write to a relative path — use the full absolute path above.',
     'You MUST use your file-write tool to create result.json on disk. Printing the',
     'JSON in your chat response instead of writing the file is a contract violation —',
@@ -4364,6 +4447,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         } catch (err) {
           if (!(err instanceof ArtifactNotFoundError)) throw err;
         }
+        let issueBody = '';
+        try {
+          issueBody = await artifacts.read(String(ctx.runId), 'issue.md');
+        } catch (err) {
+          if (!(err instanceof ArtifactNotFoundError)) throw err;
+        }
         const declaredFiles = declaredFilesForStep(ctx.manifest, ctx.stepIndex);
         const additionalFiles = opts?.additionalEditableFiles ?? [];
         const mergedDeclaredFiles =
@@ -4375,6 +4464,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           typecheckSection,
           implReport,
           declaredFiles: mergedDeclaredFiles,
+          issueBody,
           scope,
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
@@ -4618,7 +4708,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         return {
           invocationId,
           agentOutcome: 'success' as const,
-          verdict: verdict.verdict,
+          verdict: verdict.verdict === 'partial' ? 'fail' : verdict.verdict,
           ...(verdict.ok && verdict.offendingFindings
             ? { findings: verdict.offendingFindings }
             : {}),
@@ -5891,8 +5981,14 @@ export function composeRoot(opts: ComposeOptions): Container {
                 `plan-review-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
               );
               const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
-              const { planExcerpt, findingsExcerpt, fixExcerpt, manifestExcerpt, designExcerpt } =
-                await readPlanReviewExcerpts(artifacts, String(ctx.runId));
+              const {
+                planExcerpt,
+                findingsExcerpt,
+                fixExcerpt,
+                manifestExcerpt,
+                designExcerpt,
+                issueExcerpt,
+              } = await readPlanReviewExcerpts(artifacts, String(ctx.runId));
               const withGroundingSources = (result: ArbiterResult): PlanReviewArbiterResult =>
                 ({
                   ...result,
@@ -5906,6 +6002,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                   fixExcerpt,
                   manifestExcerpt,
                   designExcerpt,
+                  issueExcerpt,
                   fixRebuttal: fixResult.rebuttal ?? '',
                 },
               );
@@ -6000,7 +6097,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               `plan-review-final-review-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
             );
             const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
-            const { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt } =
+            const { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt, issueExcerpt } =
               await readPlanReviewFinalExcerpts(artifacts, String(ctx.runId));
             const withGroundingSources = (result: ArbiterResult): PlanReviewArbiterResult =>
               ({
@@ -6009,7 +6106,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               }) as PlanReviewArbiterResult;
             const arbiterPrompt = buildPlanReviewFinalReviewArbiterPrompt(
               { cwd: ctx.cwd, runId: String(ctx.runId) },
-              { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt },
+              { planExcerpt, findingsExcerpt, manifestExcerpt, designExcerpt, issueExcerpt },
             );
             writeFileSync(promptPath, arbiterPrompt, 'utf-8');
 

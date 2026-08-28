@@ -102,6 +102,7 @@ describe('readPlanReviewExcerpts', () => {
       'fixExcerpt',
       'manifestExcerpt',
       'designExcerpt',
+      'issueExcerpt',
     ]);
   });
 
@@ -113,6 +114,7 @@ describe('readPlanReviewExcerpts', () => {
     expect(excerpts.fixExcerpt).toBe('');
     expect(excerpts.manifestExcerpt).toBe('');
     expect(excerpts.designExcerpt).toBe('');
+    expect(excerpts.issueExcerpt).toBe('');
   });
 });
 
@@ -279,6 +281,7 @@ describe('readPlanReviewFinalExcerpts', () => {
       'findingsExcerpt',
       'manifestExcerpt',
       'designExcerpt',
+      'issueExcerpt',
     ]);
   });
 
@@ -289,6 +292,7 @@ describe('readPlanReviewFinalExcerpts', () => {
     expect(excerpts.findingsExcerpt).toBe('');
     expect(excerpts.manifestExcerpt).toBe('');
     expect(excerpts.designExcerpt).toBe('');
+    expect(excerpts.issueExcerpt).toBe('');
   });
 });
 

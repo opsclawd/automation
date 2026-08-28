@@ -68,7 +68,7 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
   'spec-review': {
     schema: specReviewResultSchema,
     schemaContractText:
-      '{\n  "result": "pass" | "fail",\n  "findings": Array<{\n    "severity": "P0" | "P1" | "P2" | "P3",\n    "summary": string,\n    "file"?: string,\n    "suggested_fix"?: string\n  }>\n}',
+      '{\n  "verdict": "pass" | "partial" | "fail",\n  "requirements": Array<{\n    "id": string,\n    "category": string,\n    "requirement": string,\n    "status": "pass" | "partial" | "fail",\n    "evidence"?: string,\n    "notes"?: string\n  }>,\n  "drift_items": Array<{\n    "spec_symbol": string,\n    "actual_symbol": string,\n    "deviation_annotated": boolean,\n    "files"?: string[]\n  }>,\n  "findings": Array<{\n    "severity": "P0" | "P1" | "P2" | "P3",\n    "summary": string,\n    "file"?: string,\n    "suggested_fix"?: string\n  }>\n}\n// OR (legacy backward-compatible format):\n{\n  "result": "pass" | "fail",\n  "findings": Array<{\n    "severity": "P0" | "P1" | "P2" | "P3",\n    "summary": string,\n    "file"?: string,\n    "suggested_fix"?: string\n  }>\n}',
   },
   'whole-pr-review': {
     schema: wholePrReviewResultSchema,

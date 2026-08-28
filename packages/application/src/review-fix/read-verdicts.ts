@@ -71,21 +71,23 @@ export interface ReadReviewVerdictOptions {
   transcriptEvidence?: string;
 }
 
+export type SpecReviewVerdict = 'pass' | 'partial' | 'fail';
+
 export function readReviewVerdict(
   invocation: AgentInvocation,
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
   opts: ReadReviewVerdictOptions & { allowFabricated: true },
-): Promise<VerdictOutcome<'pass' | 'fail' | 'fabricated'>>;
+): Promise<VerdictOutcome<'pass' | 'partial' | 'fail' | 'fabricated'>>;
 export function readReviewVerdict(
   invocation: AgentInvocation,
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
   opts?: ReadReviewVerdictOptions & { allowFabricated?: false },
-): Promise<VerdictOutcome<'pass' | 'fail'>>;
+): Promise<VerdictOutcome<'pass' | 'partial' | 'fail'>>;
 export async function readReviewVerdict(
   invocation: AgentInvocation,
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
   opts?: ReadReviewVerdictOptions & { allowFabricated?: boolean },
-): Promise<VerdictOutcome<'pass' | 'fail' | 'fabricated'>> {
+): Promise<VerdictOutcome<'pass' | 'partial' | 'fail' | 'fabricated'>> {
   const r = await extractResult({
     invocation,
     ports,
@@ -100,35 +102,59 @@ export async function readReviewVerdict(
       violationCode: r.violationCode,
     };
   }
-  const result = r.result as Omit<WholePrReviewResult, 'result'> & {
-    result: 'pass' | 'fail' | 'fabricated';
+  const raw = r.result as {
+    verdict?: 'pass' | 'partial' | 'fail';
+    result?: 'pass' | 'fail' | 'fabricated';
+    findings?: Array<{
+      severity: string;
+      summary: string;
+      file?: string;
+      suggested_fix?: string;
+      files?: string[];
+    }>;
+    requirements?: Array<{
+      id: string;
+      status: string;
+      requirement: string;
+      evidence?: string;
+      notes?: string;
+    }>;
+    drift_items?: Array<{
+      spec_symbol: string;
+      actual_symbol: string;
+      deviation_annotated: boolean;
+      files?: string[];
+    }>;
   };
 
-  if (result.result === 'fabricated') {
+  if (raw.result === 'fabricated') {
     if (opts?.allowFabricated) {
       return {
         ok: true,
         verdict: 'fabricated',
-        ...(result.findings && result.findings.length > 0
-          ? { offendingFindings: result.findings }
-          : {}),
+        ...(raw.findings && raw.findings.length > 0 ? { offendingFindings: raw.findings } : {}),
       };
     }
     return {
       ok: true,
       verdict: 'fail',
       offendingFindings:
-        result.findings && result.findings.length > 0
-          ? result.findings
+        raw.findings && raw.findings.length > 0
+          ? raw.findings
           : [{ severity: 'critical', summary: 'Fabricated evidence detected' }],
     };
   }
 
-  if (opts?.blockOnSeverity && result.findings.length > 0) {
-    const { blocked, offendingFindings } = severityGate(result.findings, opts.blockOnSeverity);
+  if (opts?.blockOnSeverity && raw.findings && raw.findings.length > 0) {
+    const normalizedFindings: WholePrReviewResult['findings'] = raw.findings.map((f) => ({
+      severity: f.severity,
+      summary: f.summary,
+      files: f.files ?? (f.file ? [f.file] : []),
+    }));
+    const { blocked, offendingFindings } = severityGate(normalizedFindings, opts.blockOnSeverity);
 
     if (blocked) {
-      if (result.result === 'pass') {
+      if (raw.verdict === 'pass' || (!raw.verdict && raw.result === 'pass')) {
         return {
           ok: true,
           verdict: 'fail',
@@ -139,9 +165,9 @@ export async function readReviewVerdict(
       return { ok: true, verdict: 'fail', offendingFindings };
     }
 
-    const allBelow = allKnownSeveritiesBelowThreshold(result.findings, opts.blockOnSeverity);
+    const allBelow = allKnownSeveritiesBelowThreshold(normalizedFindings, opts.blockOnSeverity);
 
-    if (allBelow && result.result === 'fail') {
+    if (allBelow && (raw.verdict === 'fail' || raw.result === 'fail')) {
       return {
         ok: true,
         verdict: 'pass',
@@ -151,16 +177,51 @@ export async function readReviewVerdict(
     }
   }
 
-  // Any fail verdict must carry its findings so downstream consumers
-  // (evidence check, rebuttal convergence, unfounded-pingpong detection)
-  // can inspect them — not just the severity-gate override paths above.
-  // See also: implRunFix in apps/api/src/compose.ts and arbiter-prompt.ts,
-  // which consume the same findings via phase-segregated archives.
-  if (result.result === 'fail' && result.findings.length > 0) {
-    return { ok: true, verdict: 'fail', offendingFindings: result.findings };
+  if (raw.verdict === 'fail' || raw.verdict === 'partial') {
+    const offendingFindings = raw.findings ?? [];
+    if (raw.drift_items && raw.drift_items.some((d) => !d.deviation_annotated)) {
+      const unannotatedDrift = raw.drift_items.filter((d) => !d.deviation_annotated);
+      const driftFindings = unannotatedDrift.map(
+        (d) =>
+          ({
+            severity: 'P0',
+            summary: `Unannotated drift: spec prescribes \`${d.spec_symbol}\` but implementation uses \`${d.actual_symbol}\` with no deviation annotation in design phase`,
+            file: d.files?.[0],
+          }) as const,
+      );
+      return {
+        ok: true,
+        verdict: 'fail' as const,
+        offendingFindings: [...offendingFindings, ...driftFindings],
+      };
+    }
+    if (offendingFindings.length > 0) {
+      return { ok: true, verdict: raw.verdict as 'pass' | 'fail', offendingFindings };
+    }
+    if (raw.verdict === 'fail') {
+      return { ok: true, verdict: 'fail' as const, offendingFindings };
+    }
+    return { ok: true, verdict: 'partial' as const, offendingFindings };
   }
 
-  return { ok: true, verdict: result.result };
+  if (raw.result === 'fail' && raw.findings && raw.findings.length > 0) {
+    return { ok: true, verdict: 'fail', offendingFindings: raw.findings };
+  }
+
+  if (raw.drift_items && raw.drift_items.some((d) => !d.deviation_annotated)) {
+    const unannotatedDrift = raw.drift_items.filter((d) => !d.deviation_annotated);
+    const driftFindings = unannotatedDrift.map(
+      (d) =>
+        ({
+          severity: 'P0',
+          summary: `Unannotated drift: spec prescribes \`${d.spec_symbol}\` but implementation uses \`${d.actual_symbol}\` with no deviation annotation in design phase`,
+          file: d.files?.[0],
+        }) as const,
+    );
+    return { ok: true, verdict: 'fail' as const, offendingFindings: driftFindings };
+  }
+
+  return { ok: true, verdict: raw.verdict ?? raw.result ?? 'pass' };
 }
 
 export async function readFixVerdict(
