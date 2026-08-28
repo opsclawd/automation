@@ -18,9 +18,6 @@ Design document:
 Implementation plan:
 {{artifact:plan.md}}
 
-Task manifest:
-{{artifact:task-manifest.json}}
-
 Review findings to fix:
 ```
 {{var:review_findings}}

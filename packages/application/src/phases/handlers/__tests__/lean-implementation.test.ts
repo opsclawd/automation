@@ -142,9 +142,7 @@ Add login route and handler.`;
     steps = new FakeStepRepository();
     runStepMock = vi.fn();
 
-    mockLoadPromptTemplate.mockReturnValue(
-      '# Implement Prompt\n\n{{artifact:plan.md}}\n{{artifact:task-manifest.json}}',
-    );
+    mockLoadPromptTemplate.mockReturnValue('# Implement Prompt\n\n{{artifact:plan.md}}');
     mockRenderPrompt.mockResolvedValue('# Rendered Implement Prompt');
 
     await ctx.artifacts.write({
@@ -152,13 +150,6 @@ Add login route and handler.`;
       phaseId: 'plan-write',
       relativePath: 'plan.md',
       contents: validPlanMd,
-    });
-
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: 'plan-write',
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify(validManifest),
     });
   });
 
@@ -215,12 +206,6 @@ Add login route and handler.`;
       phaseId: 'plan-write',
       relativePath: 'plan.md',
       contents: validPlanMd,
-    });
-    await strictCtx.artifacts.write({
-      runId: strictCtx.runUuid,
-      phaseId: 'plan-write',
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify(validManifest),
     });
     await strictCtx.artifacts.write({
       runId: strictCtx.runUuid,
@@ -281,48 +266,16 @@ Add login route and handler.`;
     expect(skippedEvents.length).toBe(1);
   });
 
-  it('fails deterministically when modified reference files violate boundary contracts', async () => {
-    const git = ctx.git as FakeGitPort;
-    const preSha = '0'.repeat(40);
-    const postSha = '1'.repeat(40);
-    git.changedFilesResults.set(`${preSha}|${postSha}`, ['src/auth/service.ts', 'src/config.ts']);
-
-    const agent = ctx.agent as FakeAgentPort;
-    agent.enqueue('opencode-frontier', () => {
-      git.headByCwd.set(ctx.cwd, postSha);
-      return successResult();
-    });
-
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: 'implement',
-      relativePath: 'implementation-log.md',
-      contents: 'Status: DONE\n',
-    });
-
-    const handler = new ImplementHandler({
-      steps,
-      runStep: runStepMock,
-    });
-
-    const result = await handler.run(ctx);
-
-    expect(result.outcome).toBe('needs_human_review');
-    expect(result.failure?.kind).toBe('needs_human_review');
-    expect(result.failure?.message).toContain('modified reference_files');
-    expect(result.failure?.message).toContain('src/config.ts');
-
-    const persistedSteps = steps.listForRun(ctx.runUuid as RunId);
-    expect(persistedSteps[0]?.status).toBe('needs_human_review');
-  });
-
-  it('fails deterministically when undeclared files are committed', async () => {
+  it('allows newly discovered helpers, callers, tests, and fixtures without manifest scope rejection', async () => {
     const git = ctx.git as FakeGitPort;
     const preSha = '0'.repeat(40);
     const postSha = '1'.repeat(40);
     git.changedFilesResults.set(`${preSha}|${postSha}`, [
       'src/auth/service.ts',
-      'src/unrelated.ts',
+      'src/auth/helpers/token.ts',
+      'src/routes/caller.ts',
+      'test/fixtures/auth-data.json',
+      'test/regression/new-coverage.test.ts',
     ]);
 
     const agent = ctx.agent as FakeAgentPort;
@@ -335,7 +288,7 @@ Add login route and handler.`;
       runId: ctx.runUuid,
       phaseId: 'implement',
       relativePath: 'implementation-log.md',
-      contents: 'Status: DONE\n',
+      contents: 'Status: DONE\nImplemented auth with newly discovered helpers and tests.\n',
     });
 
     const handler = new ImplementHandler({
@@ -345,12 +298,9 @@ Add login route and handler.`;
 
     const result = await handler.run(ctx);
 
-    expect(result.outcome).toBe('failed');
-    expect(result.failure?.kind).toBe('invalid_result');
-    expect(result.failure?.message).toContain('committed undeclared files: src/unrelated.ts');
-
+    expect(result.outcome).toBe('passed');
     const persistedSteps = steps.listForRun(ctx.runUuid as RunId);
-    expect(persistedSteps[0]?.status).toBe('failed');
+    expect(persistedSteps[0]?.status).toBe('success');
   });
 
   it('inbound worktree cleanliness gate aborts implementation before agent invocation', async () => {
@@ -384,6 +334,12 @@ Add login route and handler.`;
       phaseId: 'plan-write',
       relativePath: 'plan.md',
       contents: validPlanMd,
+    });
+    await legacyCtx.artifacts.write({
+      runId: legacyCtx.runUuid,
+      phaseId: 'plan-write',
+      relativePath: 'task-manifest.json',
+      contents: JSON.stringify(validManifest),
     });
 
     const git = legacyCtx.git as FakeGitPort;
@@ -468,32 +424,5 @@ Add login route and handler.`;
     expect(result.outcome).toBe('failed');
     expect(result.failure?.kind).toBe('setup_failed');
     expect(setupMock).toHaveBeenCalled();
-  });
-
-  it('blocks implementation when lintTaskSize detects oversized tasks in lean mode', async () => {
-    const lintTaskSizeMock = vi.fn().mockResolvedValue({
-      ok: false,
-      oversized: [
-        {
-          taskNum: 1,
-          taskTitle: 'Setup auth service',
-          file: 'src/auth/service.test.ts',
-          lineCount: 1500,
-          testCaseCount: 60,
-        },
-      ],
-    });
-
-    const handler = new ImplementHandler({
-      steps,
-      runStep: runStepMock,
-      lintTaskSize: lintTaskSizeMock,
-    });
-
-    const result = await handler.run(ctx);
-
-    expect(result.outcome).toBe('failed');
-    expect(result.failure?.kind).toBe('invalid_result');
-    expect(result.failure?.message).toContain('task size linting blocked');
   });
 });

@@ -25,8 +25,7 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
     try {
       const design = await ctx.artifacts.read(ctx.runUuid, 'design.md');
       const plan = await ctx.artifacts.read(ctx.runUuid, 'plan.md');
-      const manifest = await ctx.artifacts.read(ctx.runUuid, 'task-manifest.json');
-      if (design.trim() && plan.trim() && manifest.trim()) {
+      if (design.trim() && plan.trim()) {
         emit(
           'plan-design.completed',
           'info',
@@ -114,8 +113,7 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
         kind: 'invalid_result',
         message: 'Unified planner did not produce result.json artifact',
         canRetry: false,
-        suggestedAction:
-          'Ensure planner returns structured JSON with design_md, plan_md, and task_manifest.',
+        suggestedAction: 'Ensure planner returns structured JSON with design_md and plan_md.',
         artifacts: [],
         detectedAt: ctx.now(),
       };
@@ -150,7 +148,7 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
         kind: 'invalid_result',
         message: `Result schema validation failed: ${parseResult.error.message}`,
         canRetry: false,
-        suggestedAction: 'Ensure planner returns design_md, plan_md, and a valid task_manifest.',
+        suggestedAction: 'Ensure planner returns design_md and plan_md.',
         artifacts: [],
         detectedAt: ctx.now(),
       };
@@ -158,12 +156,10 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
       return { outcome: 'failed', failure };
     }
 
-    const { design_md, plan_md, task_manifest } = parseResult.data;
+    const { design_md, plan_md } = parseResult.data;
 
-    // 6. Deterministic validation on plan and manifest
-    const manifestJson =
-      typeof task_manifest === 'string' ? task_manifest : JSON.stringify(task_manifest, null, 2);
-    const validation = validatePlanTaskList(plan_md, manifestJson, ctx, 'plan-design');
+    // 6. Deterministic validation on plan
+    const validation = validatePlanTaskList(plan_md, undefined, ctx, 'plan-design');
     if (!validation.success) {
       const failure: Failure = {
         runUuid: ctx.runUuid,
@@ -171,7 +167,7 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
         kind: 'invalid_result',
         message: `Deterministic plan check failed: ${validation.error}`,
         canRetry: false,
-        suggestedAction: 'Ensure plan tasks and manifest match and follow structural requirements.',
+        suggestedAction: 'Ensure plan tasks follow structural requirements.',
         artifacts: [],
         detectedAt: ctx.now(),
       };
@@ -195,16 +191,6 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
       contents: plan_md,
     });
     emit('artifact.created', 'info', 'artifact created: plan.md', { relativePath: 'plan.md' });
-
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: 'plan-design',
-      relativePath: 'task-manifest.json',
-      contents: manifestJson,
-    });
-    emit('artifact.created', 'info', 'artifact created: task-manifest.json', {
-      relativePath: 'task-manifest.json',
-    });
 
     emit('plan-design.completed', 'info', 'plan-design completed');
     return { outcome: 'passed' };

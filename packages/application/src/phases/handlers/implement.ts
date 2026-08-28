@@ -26,8 +26,6 @@ import {
   hasDeclaredSurface,
   resolveEffectiveTaskScope,
   classifyTaskChanges,
-  checkTaskBoundaries,
-  getManifestBoundaries,
 } from '../../task-file-boundaries.js';
 import type {
   EffectiveTaskScope,
@@ -490,6 +488,11 @@ export class ImplementHandler implements PhaseHandler {
     const planMd = await this.readPlan(ctx, emit);
     if (typeof planMd !== 'string') return planMd;
 
+    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    if (isLeanPolicy) {
+      return this.runLean(ctx, emit, planMd);
+    }
+
     let manifestJson: string | undefined;
     try {
       manifestJson = await ctx.artifacts.read(ctx.runUuid, 'task-manifest.json');
@@ -546,11 +549,6 @@ export class ImplementHandler implements PhaseHandler {
         })),
       };
       manifest = synthManifest;
-    }
-
-    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
-    if (isLeanPolicy) {
-      return this.runLean(ctx, emit, planMd, manifest, manifestPresent);
     }
 
     const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);
@@ -1525,9 +1523,7 @@ export class ImplementHandler implements PhaseHandler {
   private async runLean(
     ctx: PhaseHandlerContext,
     emit: EventEmitter,
-    planMd: string,
-    manifest: TaskManifest,
-    manifestPresent: boolean,
+    _planMd: string,
   ): Promise<PhaseResult> {
     // 1. Resume / idempotency check
     const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);
@@ -1563,46 +1559,7 @@ export class ImplementHandler implements PhaseHandler {
       }
     }
 
-    // 2. Lint task size (if configured)
-    if (this.opts.lintTaskSize && manifestPresent) {
-      let lintResult: LintTaskSizeResult;
-      try {
-        lintResult = await this.opts.lintTaskSize(ctx.cwd, manifest);
-        if (!lintResult) {
-          lintResult = { ok: true, oversized: [] };
-        }
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        const isPathTraversal = message.includes('Path traversal detected');
-        const failureKind: FailureKind = isPathTraversal ? 'invalid_result' : 'unknown';
-        return this.fail(ctx, emit, failureKind, `lintTaskSize crashed: ${message}`);
-      }
-      for (const task of lintResult.oversized) {
-        emit(
-          'task_size.oversized',
-          'warn',
-          `task ${task.taskNum} targets oversized test file: ${task.file}`,
-          {
-            taskNum: task.taskNum,
-            taskTitle: task.taskTitle,
-            file: task.file,
-            lineCount: task.lineCount,
-            testCaseCount: task.testCaseCount,
-          },
-        );
-      }
-      if (!lintResult.ok) {
-        return this.fail(
-          ctx,
-          emit,
-          'invalid_result',
-          `task size linting blocked: ${lintResult.oversized.map((t) => `task ${t.taskNum} (${t.file})`).join(', ')} exceed thresholds`,
-          'Split tasks targeting oversized test files in plan.md.',
-        );
-      }
-    }
-
-    // 3. Worktree setup
+    // 2. Worktree setup
     if (this.opts.setup) {
       try {
         const result = await this.opts.setup(ctx.cwd);
@@ -1615,7 +1572,7 @@ export class ImplementHandler implements PhaseHandler {
       }
     }
 
-    // 4. Capture baseline pre-implementation commit SHA
+    // 3. Capture baseline pre-implementation commit SHA
     let preStepHead: string;
     try {
       if (!ctx.git?.headCommitSha) {
@@ -1627,7 +1584,7 @@ export class ImplementHandler implements PhaseHandler {
       return this.fail(ctx, emit, 'unknown', `failed baseline commit query: ${message}`);
     }
 
-    // 5. Initialize step in step repository
+    // 4. Initialize step in step repository
     const startedAt = ctx.now();
     const existingStep = this.opts.steps.findByIndex(ctx.runUuid as RunId, this.phase, 1);
     const step: Step = {
@@ -1648,7 +1605,7 @@ export class ImplementHandler implements PhaseHandler {
       policy: ctx.executionPolicy,
     });
 
-    // 6. Resolve profile
+    // 5. Resolve profile
     if (!ctx.resolveProfile) {
       const failure: Failure = {
         runUuid: ctx.runUuid,
@@ -1684,7 +1641,7 @@ export class ImplementHandler implements PhaseHandler {
       return { outcome: 'failed', failure };
     }
 
-    // 7. Load prompt template
+    // 6. Load prompt template
     let template: string | undefined;
     if (ctx.promptsRoot) {
       try {
@@ -1702,7 +1659,7 @@ export class ImplementHandler implements PhaseHandler {
       }
     }
 
-    // 8. Invoke agent single-shot
+    // 7. Invoke agent single-shot
     const runResult = await runSingleShotAgentPhase(ctx, {
       phase: this.phase,
       profile,
@@ -1719,94 +1676,7 @@ export class ImplementHandler implements PhaseHandler {
       return runResult;
     }
 
-    // 9. Post-implementation deterministic evaluation
-    let postStepHead: string | undefined;
-    let committedFiles: string[] = [];
-    try {
-      if (!ctx.git?.headCommitSha || typeof ctx.git?.changedFiles !== 'function') {
-        throw new Error('ctx.git.changedFiles is not available');
-      }
-      postStepHead = await ctx.git.headCommitSha(ctx.cwd);
-      committedFiles = await ctx.git.changedFiles(ctx.cwd, preStepHead, postStepHead);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-      emit('step.failed', 'error', `commit coverage query failed: ${message}`, {
-        index: 1,
-        total: 1,
-      });
-      return this.fail(ctx, emit, 'unknown', `commit coverage query failed: ${message}`);
-    }
-
-    // Remediate scratch files
-    try {
-      const status = await ctx.git.status(ctx.cwd);
-      const boundaries = getManifestBoundaries(manifest);
-      const exemptSet = normalizedPathSet(this.opts.exemptUndeclaredFiles);
-      await remediateScratchFiles({
-        cwd: ctx.cwd,
-        runUuid: ctx.runUuid,
-        status,
-        writableFiles: boundaries.writableSet,
-        referenceFiles: boundaries.referenceSet,
-        exemptFiles: exemptSet,
-        artifacts: ctx.artifacts,
-        deleteWorktreeFile: this.opts.deleteWorktreeFile ?? ctx.deleteWorktreeFile,
-        emit,
-        phase: 'implement',
-        stepIndex: 1,
-        totalSteps: 1,
-        stepTitle: 'Implement issue',
-      });
-    } catch {
-      // Best-effort
-    }
-
-    // Check boundaries across all manifest tasks
-    const classification = checkTaskBoundaries(
-      committedFiles,
-      manifest,
-      this.opts.exemptUndeclaredFiles,
-    );
-
-    if (classification.modifiedReferenceFiles.length > 0) {
-      const failureMessage = `implement modified reference_files: ${classification.modifiedReferenceFiles.join(', ')}. This is a manifest fault: expected_files must include these files.`;
-      this.opts.steps.upsert({ ...step, status: 'needs_human_review', completedAt: ctx.now() });
-      emit(
-        'step.needs_human_review',
-        'warn',
-        `implement needs human review: modified reference files (${classification.modifiedReferenceFiles.join(', ')})`,
-        {
-          index: 1,
-          total: 1,
-          modifiedReferenceFiles: classification.modifiedReferenceFiles,
-        },
-      );
-      const suggestedAction = `Update task-manifest.json to move ${classification.modifiedReferenceFiles.join(', ')} to expected_files, then resume the run.`;
-      return this.needsHumanReview(
-        ctx,
-        emit,
-        'needs_human_review',
-        failureMessage,
-        suggestedAction,
-        ['task-manifest.json'],
-      );
-    }
-
-    if (classification.undeclaredFiles.length > 0) {
-      const failureMessage = `implement committed undeclared files: ${classification.undeclaredFiles.join(', ')}`;
-      this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
-      emit('step.failed', 'error', failureMessage, { index: 1, total: 1 });
-      return this.fail(
-        ctx,
-        emit,
-        'invalid_result',
-        failureMessage,
-        'Ensure the implementation only modifies files declared in task-manifest.json.',
-      );
-    }
-
-    // Phase-boundary worktree cleanliness reconciliation
+    // 8. Phase-boundary worktree cleanliness reconciliation
     const reconciliation = await this.reconcilePhaseBoundary(ctx, emit);
     if (reconciliation !== undefined) {
       this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });

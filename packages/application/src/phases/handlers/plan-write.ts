@@ -36,8 +36,7 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
     if (isLeanPolicy) {
       try {
         const planMd = await ctx.artifacts.read(ctx.runUuid, 'plan.md');
-        const manifestJson = await ctx.artifacts.read(ctx.runUuid, 'task-manifest.json');
-        if (planMd.trim() && manifestJson.trim()) {
+        if (planMd.trim()) {
           emit('plan-write.started', 'info', 'starting plan-write');
           emit(
             'plan-write.completed',

@@ -18,19 +18,13 @@ Design document:
 Implementation plan:
 {{artifact:plan.md}}
 
-Task manifest:
-{{artifact:task-manifest.json}}
-
 ## TASK
 
-Execute the implementation plan and all tasks described in `plan.md` and `task-manifest.json` end-to-end.
+Execute the implementation plan described in `plan.md` end-to-end to satisfy the issue requirements.
 
-1. Review the issue requirements, design document, implementation plan, and task manifest.
-2. Implement all tasks in the worktree. Write source code and tests adhering to repository standards, type safety, and architectural boundaries.
-3. Respect file boundaries:
-   - Only modify files declared in `expected_files`, `may_extend`, or `permitted_areas`.
-   - Do NOT modify `reference_files` or `non_goals`.
-   - Do NOT touch protected configuration files (such as `.gitignore`, `.ai-orchestrator.json`, or `.github/*`) unless explicitly declared in expected_files.
+1. Review the issue requirements, design document, and implementation plan.
+2. Implement the required changes in the worktree. You may modify any files legitimately required to satisfy the issue while adhering to repository standards, type safety, and architectural boundaries.
+3. Do NOT touch protected configuration files (such as `.gitignore`, `.ai-orchestrator.json`, or `.github/*`) unless explicitly required by the issue.
 4. Stage new and modified implementation files explicitly and commit them cleanly:
    ```bash
    git add <files>

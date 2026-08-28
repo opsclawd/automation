@@ -1564,4 +1564,134 @@ describe('RunExecutor durable resume', () => {
     expect(result.run.status).toBe('passed');
     expect(implementSpy).toHaveBeenCalled();
   });
+
+  it('preserve_working_tree succeeds for lean executionPolicy without requiring task-manifest.json', async () => {
+    const run = makeRun({
+      executionPolicy: 'standard',
+      completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review'],
+    });
+
+    const stepRepo = new FakeStepRepository();
+    stepRepo.upsert({
+      id: 'step-1',
+      runId: run.uuid,
+      phaseId: 'implement',
+      index: 1,
+      title: 'Implement issue',
+      status: 'failed',
+      initialPreStepHead: 'baseline-sha-1111',
+      revertCounts: {},
+    });
+
+    const artifacts = new FakeArtifactStore();
+    await writeCompletedPhaseArtifacts(artifacts, run.uuid);
+    // Notice: NO task-manifest.json artifact written!
+
+    const git = new FakeGitPort();
+    git.statusByCwd.set('/tmp/worktree', ' M src/helper.ts\n M src/caller.ts\n');
+
+    const lifecycle = new FakeWorktreeLifecycle();
+    const eventRepo = new FakeEventRepository();
+    let capturedApprovedPaths: string[] | undefined;
+
+    const registry = new PhaseHandlerRegistry();
+    registerPassThroughHandlers(registry, vi.fn());
+    registry.register({
+      phase: makePhaseName('implement'),
+      run: async (ctx) => {
+        capturedApprovedPaths = ctx.approvedInboundPaths;
+        return { outcome: 'passed' };
+      },
+    });
+
+    const deps = makeDeps({
+      registry,
+      stepRepository: stepRepo,
+      eventRepository: eventRepo,
+      worktreeLifecycle: lifecycle,
+      contextFactory: (_r) =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          cwd: '/tmp/worktree',
+          artifacts,
+          git,
+          events: { publish: vi.fn(), subscribe: vi.fn().mockReturnValue(() => {}) },
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const executor = new RunExecutor(deps);
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+      resumeDisposition: 'preserve_working_tree',
+    });
+
+    expect(result.run.status).toBe('passed');
+    expect(lifecycle.executeCalls).toHaveLength(0); // Git never mutated
+    expect(capturedApprovedPaths).toEqual(['src/caller.ts', 'src/helper.ts']);
+  });
+
+  it('preserve_working_tree rejects protected files under lean executionPolicy', async () => {
+    const run = makeRun({
+      executionPolicy: 'standard',
+      completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review'],
+    });
+
+    const stepRepo = new FakeStepRepository();
+    stepRepo.upsert({
+      id: 'step-1',
+      runId: run.uuid,
+      phaseId: 'implement',
+      index: 1,
+      title: 'Implement issue',
+      status: 'failed',
+      initialPreStepHead: 'baseline-sha-1111',
+      revertCounts: {},
+    });
+
+    const artifacts = new FakeArtifactStore();
+    await writeCompletedPhaseArtifacts(artifacts, run.uuid);
+
+    const git = new FakeGitPort();
+    git.statusByCwd.set('/tmp/worktree', ' M .gitignore\n M src/helper.ts\n');
+
+    const lifecycle = new FakeWorktreeLifecycle();
+    const eventRepo = new FakeEventRepository();
+    const implementSpy = vi.fn();
+
+    const registry = new PhaseHandlerRegistry();
+    registerPassThroughHandlers(registry, implementSpy);
+
+    const deps = makeDeps({
+      registry,
+      stepRepository: stepRepo,
+      eventRepository: eventRepo,
+      worktreeLifecycle: lifecycle,
+      contextFactory: (_r) =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          cwd: '/tmp/worktree',
+          artifacts,
+          git,
+          events: { publish: vi.fn(), subscribe: vi.fn().mockReturnValue(() => {}) },
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const executor = new RunExecutor(deps);
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+      resumeDisposition: 'preserve_working_tree',
+    });
+
+    expect(result.run.status).toBe('needs_human_review');
+    expect(lifecycle.executeCalls).toHaveLength(0);
+    expect(implementSpy).not.toHaveBeenCalled();
+  });
 });
