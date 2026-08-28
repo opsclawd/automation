@@ -7,7 +7,11 @@ import { tmpdir } from 'node:os';
 import { FakeArtifactStore } from '../../test-doubles/fake-artifact-store.js';
 import { FakeAgentPort } from '../../test-doubles/fake-agent-port.js';
 import { FakeStructuredResultRepair } from '../../test-doubles/fake-structured-result-repair.js';
-import { readReviewVerdict, readFixVerdict } from '../read-verdicts.js';
+import {
+  readReviewVerdict,
+  readFixVerdict,
+  readWholeChangeReviewVerdict,
+} from '../read-verdicts.js';
 import { CONTRACT_VIOLATION_CODES } from '../../ports/contract-violation-codes.js';
 
 function invocation(phase: string, resultJsonPath?: string): AgentInvocation {
@@ -703,5 +707,148 @@ describe('readReviewVerdict severity gate', () => {
       overridden: true,
       offendingFindings: [{ severity: 'P2', summary: 'blocking defect', files: [] }],
     });
+  });
+});
+
+describe('readWholeChangeReviewVerdict', () => {
+  it('returns APPROVE for clean passing review with valid acceptance criteria', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        acceptance_criteria: [{ criterion: 'Criterion 1', result: 'PASS', evidence: 'Verified' }],
+        findings: [],
+        summary: 'All good',
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readWholeChangeReviewVerdict(
+      invocation('whole-change-review', 'result.json'),
+      { artifacts, agent },
+      { issueBodyPresent: true },
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('APPROVE');
+      expect(v.acceptanceCriteria).toHaveLength(1);
+      expect(v.findings).toEqual([]);
+    }
+  });
+
+  it('forces REQUEST_CHANGES on empty acceptance criteria when issueBodyPresent is true', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        acceptance_criteria: [],
+        findings: [],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readWholeChangeReviewVerdict(
+      invocation('whole-change-review', 'result.json'),
+      { artifacts, agent },
+      { issueBodyPresent: true },
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('REQUEST_CHANGES');
+      expect(v.overridden).toBe(true);
+      expect(v.findings.length).toBeGreaterThan(0);
+      expect(v.findings[0]?.severity).toBe('critical');
+    }
+  });
+
+  it('forces REQUEST_CHANGES when any acceptance criterion is FAIL even if verdict is APPROVE', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        acceptance_criteria: [
+          { criterion: 'Criterion 1', result: 'PASS' },
+          { criterion: 'Criterion 2', result: 'FAIL', evidence: 'Failed' },
+        ],
+        findings: [],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readWholeChangeReviewVerdict(invocation('whole-change-review', 'result.json'), {
+      artifacts,
+      agent,
+    });
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('REQUEST_CHANGES');
+      expect(v.overridden).toBe(true);
+    }
+  });
+
+  it('forces REQUEST_CHANGES when critical or high severity findings exist', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        acceptance_criteria: [{ criterion: 'Criterion 1', result: 'PASS' }],
+        findings: [
+          {
+            severity: 'high',
+            files: ['src/index.ts'],
+            evidence: 'Unchecked error',
+            rationale: 'Can throw uncaught exception',
+            minimal_correction: 'Add try/catch',
+          },
+        ],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readWholeChangeReviewVerdict(invocation('whole-change-review', 'result.json'), {
+      artifacts,
+      agent,
+    });
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('REQUEST_CHANGES');
+      expect(v.overridden).toBe(true);
+    }
+  });
+
+  it('permits APPROVE when all acceptance criteria pass and findings are only low severity (non-blocking)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        acceptance_criteria: [{ criterion: 'Criterion 1', result: 'PASS' }],
+        findings: [
+          {
+            severity: 'low',
+            files: ['src/index.ts'],
+            evidence: 'Minor comment typo',
+            rationale: 'Doc improvement',
+            minimal_correction: 'Fix typo',
+            blocking: false,
+          },
+        ],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readWholeChangeReviewVerdict(invocation('whole-change-review', 'result.json'), {
+      artifacts,
+      agent,
+    });
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('APPROVE');
+      expect(v.overridden).toBeUndefined();
+    }
   });
 });

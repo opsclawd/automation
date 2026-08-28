@@ -6756,6 +6756,14 @@ export function composeRoot(opts: ComposeOptions): Container {
                 : {}),
             };
           },
+          revalidate: {
+            runValidation,
+            commands: config.validation.commands,
+            timeoutSeconds: config.validation.timeout,
+            logDir: join(runsDir, 'review-fix-revalidate'),
+          },
+          validationPort: validationAdapter,
+          runWorkspaceTypecheck,
         }),
       );
 

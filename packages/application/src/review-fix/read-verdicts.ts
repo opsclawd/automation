@@ -2,6 +2,11 @@ import type { AgentInvocation } from '@ai-sdlc/domain';
 import { extractResult, type ExtractResultOutcome } from '../results/extract-result.js';
 import type { ArtifactStore, StructuredResultRepairPort } from '../ports.js';
 import type { WholePrReviewResult } from '../results/schemas/whole-pr-review.js';
+import type {
+  WholeChangeReviewResult,
+  WholeChangeReviewFinding,
+  AcceptanceCriterionCheck,
+} from '../results/schemas/whole-change-review.js';
 import type { FixReviewResult } from '../results/schemas/fix-review.js';
 
 const SEVERITY_RANK: Record<string, number> = {
@@ -209,5 +214,136 @@ export async function readFixVerdict(
       ? { outOfScopeReasons: fixResult.out_of_scope_reasons }
       : {}),
     ...(fixResult.result === 'done_no_fixes_needed' ? { rebuttal: fixResult.rebuttal } : {}),
+  };
+}
+
+export interface ReadWholeChangeReviewVerdictOptions {
+  cwd?: string;
+  transcriptEvidence?: string;
+  issueBodyPresent?: boolean;
+}
+
+export type WholeChangeVerdictOutcome =
+  | {
+      ok: true;
+      verdict: 'APPROVE' | 'REQUEST_CHANGES';
+      acceptanceCriteria: AcceptanceCriterionCheck[];
+      findings: WholeChangeReviewFinding[];
+      summary?: string;
+      overridden?: boolean;
+      overrideReason?: string;
+    }
+  | {
+      ok: false;
+      detail: string;
+      classification: ExtractResultFailure['classification'];
+      violationCode: ExtractResultFailure['violationCode'];
+    };
+
+export async function readWholeChangeReviewVerdict(
+  invocation: AgentInvocation,
+  ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
+  opts?: ReadWholeChangeReviewVerdictOptions,
+): Promise<WholeChangeVerdictOutcome> {
+  const r = await extractResult({
+    invocation,
+    ports,
+    cwd: opts?.cwd,
+    transcriptEvidence: opts?.transcriptEvidence,
+  });
+  if (!r.ok) {
+    return {
+      ok: false,
+      detail: r.detail,
+      classification: r.classification,
+      violationCode: r.violationCode,
+    };
+  }
+
+  const raw = r.result as WholeChangeReviewResult;
+  const normalizedVerdict =
+    raw.verdict?.toUpperCase() === 'APPROVE' ? 'APPROVE' : 'REQUEST_CHANGES';
+  const acceptanceCriteria = raw.acceptance_criteria ?? [];
+  const findings = raw.findings ?? [];
+  const summary = raw.summary;
+
+  // Anti-trap 1: Empty acceptance criteria protection when issue.md is present
+  if (opts?.issueBodyPresent && acceptanceCriteria.length === 0) {
+    return {
+      ok: true,
+      verdict: 'REQUEST_CHANGES',
+      overridden: true,
+      overrideReason:
+        'Empty acceptance criteria verification — whole-change review requires explicit evaluation of acceptance criteria',
+      acceptanceCriteria,
+      findings: [
+        {
+          severity: 'critical',
+          files: [],
+          evidence: 'No acceptance criteria evaluated in result.json',
+          rationale: 'Reviewer failed to evaluate acceptance criteria from issue.md',
+          minimal_correction:
+            'Enumerate each acceptance criterion from issue.md and evaluate PASS/FAIL',
+          blocking: true,
+        },
+        ...findings,
+      ],
+      ...(summary !== undefined ? { summary } : {}),
+    };
+  }
+
+  // Anti-trap 2: Any failing acceptance criteria MUST force REQUEST_CHANGES
+  const failingCriteria = acceptanceCriteria.filter((c) => c.result?.toUpperCase() === 'FAIL');
+  if (failingCriteria.length > 0 && normalizedVerdict === 'APPROVE') {
+    return {
+      ok: true,
+      verdict: 'REQUEST_CHANGES',
+      overridden: true,
+      overrideReason: `Acceptance criteria failed: ${failingCriteria.map((c) => c.criterion).join(', ')}`,
+      acceptanceCriteria,
+      findings,
+      ...(summary !== undefined ? { summary } : {}),
+    };
+  }
+
+  // Anti-trap 3: Severity gating — critical/high findings force REQUEST_CHANGES
+  const blockingFindings = findings.filter(
+    (f) =>
+      f.blocking === true ||
+      f.severity?.toLowerCase() === 'critical' ||
+      f.severity?.toLowerCase() === 'high' ||
+      f.severity?.toUpperCase() === 'P0' ||
+      f.severity?.toUpperCase() === 'P1',
+  );
+
+  if (blockingFindings.length > 0 && normalizedVerdict === 'APPROVE') {
+    return {
+      ok: true,
+      verdict: 'REQUEST_CHANGES',
+      overridden: true,
+      overrideReason: `Blocking findings present (${blockingFindings.length} critical/high findings)`,
+      acceptanceCriteria,
+      findings,
+      ...(summary !== undefined ? { summary } : {}),
+    };
+  }
+
+  // If there are failing criteria or blocking findings, verdict is REQUEST_CHANGES
+  if (failingCriteria.length > 0 || blockingFindings.length > 0) {
+    return {
+      ok: true,
+      verdict: 'REQUEST_CHANGES',
+      acceptanceCriteria,
+      findings,
+      ...(summary !== undefined ? { summary } : {}),
+    };
+  }
+
+  return {
+    ok: true,
+    verdict: normalizedVerdict,
+    acceptanceCriteria,
+    findings,
+    ...(summary !== undefined ? { summary } : {}),
   };
 }
