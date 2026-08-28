@@ -4661,7 +4661,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         return {
           invocationId,
           agentOutcome: 'success' as const,
-          verdict: verdict.verdict,
+          verdict: verdict.verdict === 'partial' ? 'fail' : verdict.verdict,
           ...(verdict.ok && verdict.offendingFindings
             ? { findings: verdict.offendingFindings }
             : {}),
