@@ -34,6 +34,11 @@ export type {
   WholeChangeReviewFinding,
   AcceptanceCriterionCheck,
 } from './schemas/whole-change-review.js';
+export {
+  narrowVerificationResultSchema,
+  findingEvaluationSchema,
+} from './schemas/narrow-verification.js';
+export type { NarrowVerificationResult, FindingEvaluation } from './schemas/narrow-verification.js';
 export { compoundResultSchema } from './schemas/compound.js';
 export type { CompoundResult } from './schemas/compound.js';
 export { fixValidateResultSchema } from './schemas/fix-validate.js';

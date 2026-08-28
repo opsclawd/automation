@@ -7,6 +7,10 @@ import type {
   WholeChangeReviewFinding,
   AcceptanceCriterionCheck,
 } from '../results/schemas/whole-change-review.js';
+import type {
+  NarrowVerificationResult,
+  FindingEvaluation,
+} from '../results/schemas/narrow-verification.js';
 import type { FixReviewResult } from '../results/schemas/fix-review.js';
 
 const SEVERITY_RANK: Record<string, number> = {
@@ -344,6 +348,115 @@ export async function readWholeChangeReviewVerdict(
     verdict: normalizedVerdict,
     acceptanceCriteria,
     findings,
+    ...(summary !== undefined ? { summary } : {}),
+  };
+}
+
+export interface ReadNarrowVerificationVerdictOptions {
+  cwd?: string;
+  transcriptEvidence?: string;
+  originalFindingsCount?: number;
+}
+
+export type NarrowVerificationVerdictOutcome =
+  | {
+      ok: true;
+      verdict: 'PASS' | 'FAIL';
+      evaluations: FindingEvaluation[];
+      regressions: string[];
+      summary?: string;
+      overridden?: boolean;
+      overrideReason?: string;
+    }
+  | {
+      ok: false;
+      detail: string;
+      classification: ExtractResultFailure['classification'];
+      violationCode: ExtractResultFailure['violationCode'];
+    };
+
+export async function readNarrowVerificationVerdict(
+  invocation: AgentInvocation,
+  ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
+  opts?: ReadNarrowVerificationVerdictOptions,
+): Promise<NarrowVerificationVerdictOutcome> {
+  const r = await extractResult({
+    invocation,
+    ports,
+    cwd: opts?.cwd,
+    transcriptEvidence: opts?.transcriptEvidence,
+  });
+  if (!r.ok) {
+    return {
+      ok: false,
+      detail: r.detail,
+      classification: r.classification,
+      violationCode: r.violationCode,
+    };
+  }
+
+  const raw = r.result as NarrowVerificationResult;
+  const normalizedVerdict = raw.verdict?.toUpperCase() === 'PASS' ? 'PASS' : 'FAIL';
+  const evaluations = raw.findings_evaluations ?? [];
+  const regressions = raw.obvious_regressions ?? [];
+  const summary = raw.summary;
+
+  // Anti-trap 1: If original findings existed, verifier cannot return empty evaluations
+  if ((opts?.originalFindingsCount ?? 0) > 0 && evaluations.length === 0) {
+    return {
+      ok: true,
+      verdict: 'FAIL',
+      overridden: true,
+      overrideReason:
+        'Empty findings evaluations — verifier must evaluate all original blocking findings',
+      evaluations,
+      regressions,
+      ...(summary !== undefined ? { summary } : {}),
+    };
+  }
+
+  // Anti-trap 2: Any unresolved finding forces FAIL
+  const unresolved = evaluations.filter((e) => e.resolved !== true);
+  if (unresolved.length > 0 && normalizedVerdict === 'PASS') {
+    return {
+      ok: true,
+      verdict: 'FAIL',
+      overridden: true,
+      overrideReason: `Unresolved blocking findings: ${unresolved.map((u) => u.finding).join(', ')}`,
+      evaluations,
+      regressions,
+      ...(summary !== undefined ? { summary } : {}),
+    };
+  }
+
+  // Anti-trap 3: Any obvious regressions force FAIL
+  if (regressions.length > 0 && normalizedVerdict === 'PASS') {
+    return {
+      ok: true,
+      verdict: 'FAIL',
+      overridden: true,
+      overrideReason: `Obvious regressions detected: ${regressions.join('; ')}`,
+      evaluations,
+      regressions,
+      ...(summary !== undefined ? { summary } : {}),
+    };
+  }
+
+  if (unresolved.length > 0 || regressions.length > 0) {
+    return {
+      ok: true,
+      verdict: 'FAIL',
+      evaluations,
+      regressions,
+      ...(summary !== undefined ? { summary } : {}),
+    };
+  }
+
+  return {
+    ok: true,
+    verdict: normalizedVerdict,
+    evaluations,
+    regressions,
     ...(summary !== undefined ? { summary } : {}),
   };
 }

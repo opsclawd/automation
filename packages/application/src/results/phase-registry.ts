@@ -7,6 +7,7 @@ import { postPrReviewResultSchema } from './schemas/post-pr-review.js';
 import { specReviewResultSchema } from './schemas/spec-review.js';
 import { wholePrReviewResultSchema } from './schemas/whole-pr-review.js';
 import { wholeChangeReviewResultSchema } from './schemas/whole-change-review.js';
+import { narrowVerificationResultSchema } from './schemas/narrow-verification.js';
 import { compoundResultSchema } from './schemas/compound.js';
 import { arbiterResultSchema } from './schemas/arbiter.js';
 import { fixValidateResultSchema } from './schemas/fix-validate.js';
@@ -80,6 +81,11 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
     schema: wholeChangeReviewResultSchema,
     schemaContractText:
       '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "acceptance_criteria": Array<{\n    "criterion": string,\n    "result": "PASS" | "FAIL",\n    "evidence"?: string\n  }>,\n  "findings"?: Array<{\n    "severity": "critical" | "high" | "medium" | "low",\n    "files"?: string[],\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string\n  }>,\n  "summary"?: string\n}',
+  },
+  'narrow-verification': {
+    schema: narrowVerificationResultSchema,
+    schemaContractText:
+      '{\n  "verdict": "PASS" | "FAIL",\n  "findings_evaluations": Array<{\n    "finding": string,\n    "resolved": boolean,\n    "evidence": string,\n    "rationale"?: string\n  }>,\n  "obvious_regressions": string[],\n  "summary"?: string\n}',
   },
   compound: {
     schema: compoundResultSchema,

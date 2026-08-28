@@ -11,6 +11,7 @@ import {
   readReviewVerdict,
   readFixVerdict,
   readWholeChangeReviewVerdict,
+  readNarrowVerificationVerdict,
 } from '../read-verdicts.js';
 import { CONTRACT_VIOLATION_CODES } from '../../ports/contract-violation-codes.js';
 
@@ -850,5 +851,142 @@ describe('readWholeChangeReviewVerdict', () => {
       expect(v.verdict).toBe('APPROVE');
       expect(v.overridden).toBeUndefined();
     }
+  });
+});
+
+describe('readNarrowVerificationVerdict', () => {
+  it('parses valid PASS when all evaluations are resolved and no regressions exist', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'PASS',
+        findings_evaluations: [
+          {
+            finding: 'Null check missing',
+            resolved: true,
+            evidence: 'Added optional chaining in handler.ts:12',
+          },
+        ],
+        obvious_regressions: [],
+        summary: 'All findings verified resolved',
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readNarrowVerificationVerdict(
+      invocation('narrow-verification', 'result.json'),
+      { artifacts, agent },
+      { originalFindingsCount: 1 },
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('PASS');
+      expect(v.overridden).toBeUndefined();
+      expect(v.evaluations).toHaveLength(1);
+      expect(v.evaluations[0]?.resolved).toBe(true);
+    }
+  });
+
+  it('forces FAIL when any finding evaluation is unresolved even if verdict is PASS', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'PASS',
+        findings_evaluations: [
+          {
+            finding: 'Null check missing',
+            resolved: false,
+            evidence: 'Code still has undefined property access',
+          },
+        ],
+        obvious_regressions: [],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readNarrowVerificationVerdict(
+      invocation('narrow-verification', 'result.json'),
+      { artifacts, agent },
+      { originalFindingsCount: 1 },
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('FAIL');
+      expect(v.overridden).toBe(true);
+      expect(v.overrideReason).toContain('Unresolved blocking findings');
+    }
+  });
+
+  it('forces FAIL when obvious regressions exist even if verdict is PASS', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'PASS',
+        findings_evaluations: [
+          {
+            finding: 'Null check missing',
+            resolved: true,
+            evidence: 'Added null check',
+          },
+        ],
+        obvious_regressions: ['Syntax error in handler.ts:15'],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readNarrowVerificationVerdict(
+      invocation('narrow-verification', 'result.json'),
+      { artifacts, agent },
+      { originalFindingsCount: 1 },
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('FAIL');
+      expect(v.overridden).toBe(true);
+      expect(v.overrideReason).toContain('Obvious regressions detected');
+    }
+  });
+
+  it('forces FAIL when original findings existed but evaluations array is empty', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'PASS',
+        findings_evaluations: [],
+        obvious_regressions: [],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readNarrowVerificationVerdict(
+      invocation('narrow-verification', 'result.json'),
+      { artifacts, agent },
+      { originalFindingsCount: 2 },
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('FAIL');
+      expect(v.overridden).toBe(true);
+      expect(v.overrideReason).toContain('Empty findings evaluations');
+    }
+  });
+
+  it('returns ok:false on malformed json result', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: 'bad json',
+    });
+    const agent = new FakeAgentPort();
+    const v = await readNarrowVerificationVerdict(
+      invocation('narrow-verification', 'result.json'),
+      { artifacts, agent },
+    );
+    expect(v.ok).toBe(false);
   });
 });
