@@ -83,7 +83,6 @@ export class CreatePrHandler implements PhaseHandler {
       try {
         await ctx.git.add(ctx.cwd, dirtyPaths);
         await ctx.git.commit(ctx.cwd, `feat: implement issue #${ctx.issueNumber}`, dirtyPaths);
-        await recordValidationHeadSha(ctx, this.phase);
         dirtyPaths = [];
       } catch (e) {
         const msg = `failed to stage and commit changes: ${(e as Error).message}`;

@@ -121,8 +121,9 @@ export class CompoundHandler extends SingleShotAgentHandler {
       };
     }
 
+    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
     const changedFilesBeforeRemediation = [...new Set([...committedFiles, ...uncommittedFiles])];
-    if (changedFilesBeforeRemediation.length > 0) {
+    if (!isLeanPolicy && changedFilesBeforeRemediation.length > 0) {
       const manifestResult = await loadManifest(
         { runId: ctx.runUuid },
         { cwd: ctx.cwd, runId: ctx.runUuid },
