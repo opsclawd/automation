@@ -166,4 +166,32 @@ describe('Execution Policy API and Composition Wiring', () => {
     const ctx = c.buildRunContext!(run);
     expect(ctx.executionPolicy).toBe('strict');
   });
+
+  it('registers ReviewFixHandler supporting lean policy in composeRoot', () => {
+    const dir = createTempDir();
+    writeFileSync(
+      path.join(dir, '.ai-orchestrator.json'),
+      JSON.stringify({
+        executionPolicy: 'standard',
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+
+    const c = composeRoot({
+      repoRoot: dir,
+      scriptPath: '/dev/null',
+      repoFullName: 'owner/repo',
+      runStartupSweeps: false,
+    });
+
+    const handler = c.phaseRegistry.get('review-fix');
+    expect(handler).toBeDefined();
+    expect(handler?.phase).toBe('review-fix');
+  });
 });

@@ -24,6 +24,16 @@ export { specReviewResultSchema, specReviewFindingSchema } from './schemas/spec-
 export type { SpecReviewResult } from './schemas/spec-review.js';
 export { wholePrReviewResultSchema } from './schemas/whole-pr-review.js';
 export type { WholePrReviewResult } from './schemas/whole-pr-review.js';
+export {
+  wholeChangeReviewResultSchema,
+  wholeChangeReviewFindingSchema,
+  acceptanceCriterionCheckSchema,
+} from './schemas/whole-change-review.js';
+export type {
+  WholeChangeReviewResult,
+  WholeChangeReviewFinding,
+  AcceptanceCriterionCheck,
+} from './schemas/whole-change-review.js';
 export { compoundResultSchema } from './schemas/compound.js';
 export type { CompoundResult } from './schemas/compound.js';
 export { fixValidateResultSchema } from './schemas/fix-validate.js';
