@@ -9,12 +9,6 @@ const SEVERITY_RANK: Record<string, number> = {
   high: 1,
   medium: 2,
   low: 3,
-  // The spec/quality review prompts instruct reviewers to emit P0-P3
-  // severities (see buildSpecReviewPrompt/buildQualityReviewPrompt in
-  // apps/api/src/compose.ts), while blockOnSeverity config speaks
-  // critical/high/medium/low. Without these aliases the gate can neither
-  // block nor override P-labeled findings, so the reviewer's raw verdict
-  // always rules and the severity dial is inert.
   p0: 0,
   p1: 1,
   p2: 2,
@@ -72,23 +66,21 @@ export interface ReadReviewVerdictOptions {
   issueBodyPresent?: boolean;
 }
 
-export type SpecReviewVerdict = 'pass' | 'partial' | 'fail';
-
 export function readReviewVerdict(
   invocation: AgentInvocation,
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
   opts: ReadReviewVerdictOptions & { allowFabricated: true },
-): Promise<VerdictOutcome<'pass' | 'partial' | 'fail' | 'fabricated'>>;
+): Promise<VerdictOutcome<'pass' | 'fail' | 'fabricated'>>;
 export function readReviewVerdict(
   invocation: AgentInvocation,
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
   opts?: ReadReviewVerdictOptions & { allowFabricated?: false },
-): Promise<VerdictOutcome<'pass' | 'partial' | 'fail'>>;
+): Promise<VerdictOutcome<'pass' | 'fail'>>;
 export async function readReviewVerdict(
   invocation: AgentInvocation,
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
   opts?: ReadReviewVerdictOptions & { allowFabricated?: boolean },
-): Promise<VerdictOutcome<'pass' | 'partial' | 'fail' | 'fabricated'>> {
+): Promise<VerdictOutcome<'pass' | 'fail' | 'fabricated'>> {
   const r = await extractResult({
     invocation,
     ports,
@@ -104,26 +96,12 @@ export async function readReviewVerdict(
     };
   }
   const raw = r.result as {
-    verdict?: 'pass' | 'partial' | 'fail';
     result?: 'pass' | 'fail' | 'fabricated';
     findings?: Array<{
       severity: string;
       summary: string;
       file?: string;
       suggested_fix?: string;
-      files?: string[];
-    }>;
-    requirements?: Array<{
-      id: string;
-      status: string;
-      requirement: string;
-      evidence?: string;
-      notes?: string;
-    }>;
-    drift_items?: Array<{
-      spec_symbol: string;
-      actual_symbol: string;
-      deviation_annotated: boolean;
       files?: string[];
     }>;
   };
@@ -148,7 +126,7 @@ export async function readReviewVerdict(
 
   if (
     opts?.issueBodyPresent &&
-    (raw.verdict === 'pass' || raw.result === 'pass') &&
+    raw.result === 'pass' &&
     (!raw.findings || raw.findings.length === 0)
   ) {
     return {
@@ -173,7 +151,7 @@ export async function readReviewVerdict(
     const { blocked, offendingFindings } = severityGate(normalizedFindings, opts.blockOnSeverity);
 
     if (blocked) {
-      if (raw.verdict === 'pass' || (!raw.verdict && raw.result === 'pass')) {
+      if (raw.result === 'pass') {
         return {
           ok: true,
           verdict: 'fail',
@@ -186,7 +164,7 @@ export async function readReviewVerdict(
 
     const allBelow = allKnownSeveritiesBelowThreshold(normalizedFindings, opts.blockOnSeverity);
 
-    if (allBelow && (raw.verdict === 'fail' || raw.result === 'fail')) {
+    if (allBelow && raw.result === 'fail') {
       return {
         ok: true,
         verdict: 'pass',
@@ -196,51 +174,11 @@ export async function readReviewVerdict(
     }
   }
 
-  if (raw.verdict === 'fail' || raw.verdict === 'partial') {
-    const offendingFindings = raw.findings ?? [];
-    if (raw.drift_items && raw.drift_items.some((d) => !d.deviation_annotated)) {
-      const unannotatedDrift = raw.drift_items.filter((d) => !d.deviation_annotated);
-      const driftFindings = unannotatedDrift.map(
-        (d) =>
-          ({
-            severity: 'P0',
-            summary: `Unannotated drift: spec prescribes \`${d.spec_symbol}\` but implementation uses \`${d.actual_symbol}\` with no deviation annotation in design phase`,
-            file: d.files?.[0],
-          }) as const,
-      );
-      return {
-        ok: true,
-        verdict: 'fail' as const,
-        offendingFindings: [...offendingFindings, ...driftFindings],
-      };
-    }
-    if (offendingFindings.length > 0) {
-      return { ok: true, verdict: raw.verdict as 'pass' | 'partial' | 'fail', offendingFindings };
-    }
-    if (raw.verdict === 'fail') {
-      return { ok: true, verdict: 'fail' as const, offendingFindings };
-    }
-    return { ok: true, verdict: 'partial' as const, offendingFindings };
-  }
-
   if (raw.result === 'fail' && raw.findings && raw.findings.length > 0) {
     return { ok: true, verdict: 'fail', offendingFindings: raw.findings };
   }
 
-  if (raw.drift_items && raw.drift_items.some((d) => !d.deviation_annotated)) {
-    const unannotatedDrift = raw.drift_items.filter((d) => !d.deviation_annotated);
-    const driftFindings = unannotatedDrift.map(
-      (d) =>
-        ({
-          severity: 'P0',
-          summary: `Unannotated drift: spec prescribes \`${d.spec_symbol}\` but implementation uses \`${d.actual_symbol}\` with no deviation annotation in design phase`,
-          file: d.files?.[0],
-        }) as const,
-    );
-    return { ok: true, verdict: 'fail' as const, offendingFindings: driftFindings };
-  }
-
-  return { ok: true, verdict: raw.verdict ?? raw.result ?? 'pass' };
+  return { ok: true, verdict: raw.result ?? 'pass' };
 }
 
 export async function readFixVerdict(
@@ -270,8 +208,6 @@ export async function readFixVerdict(
     ...(fixResult.out_of_scope_reasons && Object.keys(fixResult.out_of_scope_reasons).length > 0
       ? { outOfScopeReasons: fixResult.out_of_scope_reasons }
       : {}),
-    // The schema requires a non-empty rebuttal for done_no_fixes_needed;
-    // carry it so the loop can append it to code-review.md when accepted.
     ...(fixResult.result === 'done_no_fixes_needed' ? { rebuttal: fixResult.rebuttal } : {}),
   };
 }

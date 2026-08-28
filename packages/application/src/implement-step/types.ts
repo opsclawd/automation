@@ -89,7 +89,7 @@ export interface ReviewScopeOptions {
 export interface SpecReviewResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
-  verdict?: 'pass' | 'partial' | 'fail';
+  verdict?: 'pass' | 'fail';
   findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
   snapshot?: ReviewSnapshot;
   mode?: ReviewMode;
@@ -131,7 +131,7 @@ export interface FixResult {
 export interface ImplementStepHistoryEntry {
   iteration: number;
   specReview: {
-    verdict?: 'pass' | 'partial' | 'fail';
+    verdict?: 'pass' | 'fail';
     invocationId?: string;
     findings?: Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>;
     classification?: string;
