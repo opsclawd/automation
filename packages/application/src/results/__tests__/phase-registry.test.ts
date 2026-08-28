@@ -14,7 +14,7 @@ describe('normalizePhaseId', () => {
 });
 
 describe('PHASE_RESULT_REGISTRY', () => {
-  it('contains all expected phases', () => {
+  it('contains all 13 expected phases', () => {
     const expected = [
       'implement',
       'quality-review',
@@ -26,8 +26,6 @@ describe('PHASE_RESULT_REGISTRY', () => {
       'compound',
       'fix-validate',
       'arbiter',
-      'plan-design',
-      'plan-write',
       'plan-review-arbiter',
       'implement-final-review-arbiter',
       'plan-fix',
@@ -46,8 +44,6 @@ describe('PHASE_RESULT_REGISTRY', () => {
     'compound',
     'fix-validate',
     'arbiter',
-    'plan-design',
-    'plan-write',
     'plan-review-arbiter',
     'implement-final-review-arbiter',
     'plan-fix',
@@ -74,6 +70,11 @@ describe('PHASE_RESULT_REGISTRY', () => {
 describe('PHASE_NAME_MIGRATION_MAP', () => {
   it('maps review-fix to null (no result.json produced)', () => {
     expect(PHASE_NAME_MIGRATION_MAP['review-fix']).toBeNull();
+  });
+
+  it('maps plan-design and plan-write to null (handled directly by their phase handlers)', () => {
+    expect(PHASE_NAME_MIGRATION_MAP['plan-design']).toBeNull();
+    expect(PHASE_NAME_MIGRATION_MAP['plan-write']).toBeNull();
   });
 
   it('does not alias review-fix to fix-review', () => {

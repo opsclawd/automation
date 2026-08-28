@@ -46,7 +46,7 @@ The plan MUST include:
 
 ## TASK MANIFEST SCHEMA
 
-Write `task-manifest.json` as a JSON file with this exact structure:
+The `task_manifest` field of `result.json` must be a JSON object with this exact structure:
 
 ```json
 {
@@ -115,17 +115,17 @@ Scope Rules & Planning Guidance:
 - Co-locate additive feature tests: For purely additive feature work with no pre-existing bug to reproduce, co-locate test files with the implementing task rather than creating standalone failing test tasks. (Preserve test-first commit order for bug and regression reproductions).
 - No raw directory sweeps: Auto-commit stages only specific classifier-approved paths, never raw directory expansions.
 
-The manifest is the machine-readable source of truth for task boundaries. `plan.md` remains the human-readable document with full prose.
+The `task_manifest` value is the machine-readable source of truth for task boundaries. The `plan_md` value contains the complete human-readable document with full prose.
 
 ## PLAN RISK CLASSIFICATION
 
-After writing `plan.md`, check whether your plan contains any of these patterns:
+After drafting the implementation plan, check whether your plan contains any of these patterns:
 
 - A retry loop or recovery path
 - A state machine with explicit transitions
 - An irreversible side effect (e.g., posting to an external API, writing to a database)
 
-If ANY of these patterns exist, add this HTML comment to the VERY FIRST LINE of `plan.md`:
+If ANY of these patterns exist, prepend this HTML comment to the VERY FIRST LINE of the `plan_md` string:
 
 ```
 <!-- plan-review-required -->
@@ -159,4 +159,4 @@ Write a single file named `result.json` at the working-directory root with this 
 - Do NOT edit any source files (`*.ts`, `*.js`, `*.sh`, `*.py`, etc.). Your ONLY output is `result.json`.
 - When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code. Real task headings start at column 0; anything indented is treated as an example. Violating this rule causes task extraction to misread the plan.
 - Do NOT create standalone "run validation suite" or "make CI green" tasks.
-- Task numbers in `plan.md` headings MUST be plain integers (e.g., `## Task 4`) matching `tasks[].n` in the manifest. Letter suffixes (`## Task 4a`) are forbidden and will cause validation to fail.
+- Task numbers in the `plan_md` headings MUST be plain integers (e.g., `## Task 4`) matching `tasks[].n` in the manifest. Letter suffixes (`## Task 4a`) are forbidden and will cause validation to fail.

@@ -4,12 +4,12 @@ You are repairing a previously-written implementation plan that failed structura
 
 {{var:WORKSPACE_CONSTRAINTS}}
 
-Your previous attempt at `plan.md` / `task-manifest.json` failed structural validation with this
+Your previous attempt at the implementation plan / task manifest failed structural validation with this
 specific error:
 
 {{var:validation_error}}
 
-The existing files are provided below for reference — read them carefully before making changes.
+The existing draft artifacts are provided below for reference — read them carefully before making changes.
 
 Design doc: {{artifact:design.md}}
 Issue file: {{artifact:issue.md}}
@@ -19,17 +19,17 @@ Current task manifest: {{artifact:task-manifest.json}}
 ## TASK
 
 Make the **minimal fix** required to resolve the reported error above, while preserving everything
-else in `plan.md` and `task-manifest.json` that is already correct. Do not regenerate the plan from
+else in the plan prose and task manifest that is already correct. Do not regenerate the plan from
 scratch. For example:
 
 - If the error names a duplicate task title, rename the second (or later) occurrence to
-  disambiguate it — keep both tasks, just give them distinct titles in both `plan.md` and
-  `task-manifest.json`.
-- If the error says manifest tasks are missing from the `plan.md` prose (or prose tasks are missing
-  from the manifest), add the missing `## Task N: Title` heading(s) to `plan.md`, or add the missing
-  entry to `task-manifest.json#tasks`, so both files describe the exact same set of tasks.
+  disambiguate it — keep both tasks, just give them distinct titles in both the `plan_md` prose and
+  `task_manifest`.
+- If the error says manifest tasks are missing from the `plan_md` prose (or prose tasks are missing
+  from the manifest), add the missing `## Task N: Title` heading(s) to `plan_md`, or add the missing
+  entry to `task_manifest.tasks`, so both describe the exact same set of tasks.
 - If the error is about non-sequential task numbers, renumber tasks to be contiguous, plain integers
-  starting at 1, updating every reference to the renumbered task(s) in both files.
+  starting at 1, updating every reference to the renumbered task(s) in both prose and manifest.
 - If the error mentions an unbalanced code fence, find and close (or remove) the stray fence.
 - If the error reports non-canonical scope paths (e.g., backslashes, leading `./`, duplicate slashes, trailing slashes, or `.`/`..` segments), canonicalize them into trimmed repository-relative paths without altering their intent.
 - If the error reports overlapping or contradictory scope declarations:
@@ -42,12 +42,12 @@ scratch. For example:
 
 - Every task MUST be an H2 heading starting at column 0, e.g. `## Task 1: Title` (never H3 `###` or
   deeper).
-- Task numbers are always plain integers matching `tasks[].n` in `task-manifest.json` — NEVER use
+- Task numbers are always plain integers matching `tasks[].n` in `task_manifest` — NEVER use
   letter suffixes like `## Task 4a` or `## Task 4b`. If a fix requires splitting a task, assign each
   part its own sequential integer instead.
-- Task numbers must be contiguous starting at 1 with no gaps or duplicates, in both `plan.md` and
-  `task-manifest.json`.
-- `task-manifest.json` must remain valid per its schema: `version: 2`, `task_count` equal to
+- Task numbers must be contiguous starting at 1 with no gaps or duplicates, in both `plan_md` and
+  `task_manifest`.
+- `task_manifest` must remain valid per its schema: `version: 2`, `task_count` equal to
   `tasks.length`, each task with a numeric `n` and non-empty string `title`. Preserve any existing
   `permitted_areas`, `may_extend`, `non_goals`, `reference_files`, `signature_changes`, `task_type`, and `paired_with_task` fields — do not remove valid declarations or convert them to V1 format.
 - Scope preservation and narrowing: Preserve valid scope declarations. Fix collisions with the narrowest permission instead of widening obligations or repository scope. Never declare or widen permissions to the repository root `""` or `.`.

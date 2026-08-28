@@ -1,9 +1,5 @@
 export { PHASE_RESULT_REGISTRY, PHASE_NAME_MIGRATION_MAP } from './phase-registry.js';
 export type { PhaseResultMeta } from './phase-registry.js';
-export { planDesignResultSchema } from './schemas/plan-design.js';
-export type { PlanDesignResult } from './schemas/plan-design.js';
-export { planWriteResultSchema } from './schemas/plan-write.js';
-export type { PlanWriteResult } from './schemas/plan-write.js';
 export { implementResultSchema } from './schemas/implement.js';
 export type { ImplementResult } from './schemas/implement.js';
 export { qualityReviewResultSchema, qualityReviewFindingSchema } from './schemas/quality-review.js';
