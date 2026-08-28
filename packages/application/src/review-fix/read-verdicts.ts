@@ -196,7 +196,7 @@ export async function readReviewVerdict(
       };
     }
     if (offendingFindings.length > 0) {
-      return { ok: true, verdict: raw.verdict as 'pass' | 'fail', offendingFindings };
+      return { ok: true, verdict: raw.verdict as 'pass' | 'partial' | 'fail', offendingFindings };
     }
     if (raw.verdict === 'fail') {
       return { ok: true, verdict: 'fail' as const, offendingFindings };
