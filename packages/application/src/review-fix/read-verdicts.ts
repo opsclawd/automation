@@ -69,6 +69,7 @@ export interface ReadReviewVerdictOptions {
   blockOnSeverity?: string;
   cwd?: string;
   transcriptEvidence?: string;
+  issueBodyPresent?: boolean;
 }
 
 export type SpecReviewVerdict = 'pass' | 'partial' | 'fail';
@@ -142,6 +143,24 @@ export async function readReviewVerdict(
         raw.findings && raw.findings.length > 0
           ? raw.findings
           : [{ severity: 'critical', summary: 'Fabricated evidence detected' }],
+    };
+  }
+
+  if (
+    opts?.issueBodyPresent &&
+    (raw.verdict === 'pass' || raw.result === 'pass') &&
+    (!raw.findings || raw.findings.length === 0)
+  ) {
+    return {
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [
+        {
+          severity: 'critical',
+          summary:
+            'Empty-pass verdict when issue.md is present — anchored-design review requires explicit findings citing issue.md:N',
+        },
+      ],
     };
   }
 
