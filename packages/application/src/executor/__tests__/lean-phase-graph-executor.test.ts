@@ -447,6 +447,86 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     expect(handlers['follow-up-review']?.runCalls).toHaveLength(1);
   });
 
+  it('records fix-validate as skipped when validation passes without repair (#1109 resume regression)', async () => {
+    const { run, runRepo, executor } = setupExecutor('standard');
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('passed');
+    // fix-validate was never invoked (validate passed outright)...
+    const persisted = runRepo.findByUuid(run.uuid);
+    // ...but must still be recorded as skipped, or a later resume's generic
+    // phaseGraph.getFirstIncompletePhase() scan will wrongly treat it as the
+    // next phase to run.
+    expect(persisted?.skippedPhases).toContain('fix-validate');
+  });
+
+  it('resumes past a dirty worktree without re-blocking on fix-validate once it is recorded skipped', async () => {
+    const { run, runRepo, handlers, artifacts, executor, git } = setupExecutor('standard');
+
+    const fakeCtx = {
+      runUuid: run.uuid,
+      artifacts,
+      git,
+      cwd: '/tmp/worktree',
+    } as unknown as PhaseHandlerContext;
+    await recordValidationEvidence(fakeCtx, 'validate');
+
+    // Mirrors a real stuck run: validate passed twice (once after implement,
+    // once after fix-review) without ever needing fix-validate, and the loop
+    // is mid-convergence with real uncommitted implementation changes.
+    run.completedPhases = [
+      'read_issue',
+      'plan-design',
+      'implement',
+      'validate',
+      'initial-review',
+      'fix-review',
+      'validate',
+    ];
+    run.skippedPhases = ['fix-validate'];
+    runRepo.update(run.uuid, {
+      completedPhases: run.completedPhases,
+      skippedPhases: run.skippedPhases,
+    });
+
+    await artifacts.write({
+      runId: run.uuid,
+      relativePath: 'review-convergence.json',
+      contents: JSON.stringify({
+        iteration: 1,
+        subStep: 'follow-up-review',
+        verdict: 'REQUEST_CHANGES',
+      }),
+    });
+
+    handlers['follow-up-review']!.handlerFn = async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'follow-up-review.json',
+        contents: JSON.stringify({ verdict: 'APPROVE', evaluations: [], new_findings: [] }),
+      });
+      return { outcome: 'passed' };
+    };
+
+    git.statusByCwd.set('/tmp/worktree', ' M src/real-fix.ts\n');
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: ['review-convergence.json'],
+      resumeDisposition: 'preserve_working_tree',
+    });
+
+    expect(result.run.status).toBe('passed');
+    expect(handlers['fix-validate']?.runCalls).toHaveLength(0);
+    expect(handlers['follow-up-review']?.runCalls).toHaveLength(1);
+  });
+
   it('honors configured reviewConvergenceMaxIterations override', async () => {
     const { run, handlers, artifacts, executor } = setupExecutor('standard');
 
