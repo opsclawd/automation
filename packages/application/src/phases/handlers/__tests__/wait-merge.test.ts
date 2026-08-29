@@ -160,7 +160,12 @@ describe('WaitMergeHandler', () => {
       });
     });
 
-    const handler = new WaitMergeHandler({ maxPolls: 5, pollIntervalMs: 1000, sleep });
+    const handler = new WaitMergeHandler({
+      maxPolls: 5,
+      pollIntervalMs: 1000,
+      initialDelayMs: 0,
+      sleep,
+    });
     const ctx = createMockContext(artifacts, github);
 
     const result = await handler.run(ctx);
@@ -190,7 +195,12 @@ describe('WaitMergeHandler', () => {
     });
 
     const sleep = vi.fn().mockResolvedValue(undefined);
-    const handler = new WaitMergeHandler({ maxPolls: 3, pollIntervalMs: 1000, sleep });
+    const handler = new WaitMergeHandler({
+      maxPolls: 3,
+      pollIntervalMs: 1000,
+      initialDelayMs: 0,
+      sleep,
+    });
     const ctx = createMockContext(artifacts, github);
 
     const result = await handler.run(ctx);
@@ -198,5 +208,67 @@ describe('WaitMergeHandler', () => {
     expect(result.outcome).toBe('resting');
     // Sleeps between polls, not after the final one.
     expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('sleeps the longer initial delay before the first check, then the shorter interval afterward', async () => {
+    const artifacts = new FakeArtifactStore();
+    const github = new FakeGitHubPort();
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('create-pr'),
+      relativePath: 'pr-url.txt',
+      contents: 'https://github.com/owner/repo/pull/42',
+    });
+
+    github.mergeReadiness.set('owner/repo/42', {
+      prNumber: 42,
+      state: 'open',
+      isMerged: false,
+      ciStatus: 'pending',
+      mergeStateStatus: 'unknown',
+    });
+
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const handler = new WaitMergeHandler({
+      maxPolls: 3,
+      pollIntervalMs: 120_000,
+      initialDelayMs: 600_000,
+      sleep,
+    });
+    const ctx = createMockContext(artifacts, github);
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('resting');
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([600_000, 120_000, 120_000]);
+  });
+
+  it('defaults the initial delay to the poll interval when not set explicitly', async () => {
+    const artifacts = new FakeArtifactStore();
+    const github = new FakeGitHubPort();
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('create-pr'),
+      relativePath: 'pr-url.txt',
+      contents: 'https://github.com/owner/repo/pull/42',
+    });
+
+    github.mergeReadiness.set('owner/repo/42', {
+      prNumber: 42,
+      state: 'open',
+      isMerged: false,
+      ciStatus: 'pending',
+      mergeStateStatus: 'unknown',
+    });
+
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const handler = new WaitMergeHandler({ maxPolls: 2, pollIntervalMs: 5000, sleep });
+    const ctx = createMockContext(artifacts, github);
+
+    await handler.run(ctx);
+
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([5000, 5000]);
   });
 });

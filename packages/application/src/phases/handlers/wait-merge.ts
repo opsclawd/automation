@@ -6,8 +6,14 @@ import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 export interface WaitMergeHandlerOpts {
   /** Number of readiness checks to run in-process before parking as resting. Defaults to 1 (single check, no polling). */
   maxPolls?: number;
-  /** Milliseconds to sleep between checks when maxPolls > 1. */
+  /** Milliseconds to sleep between checks after the first. */
   pollIntervalMs?: number;
+  /**
+   * Milliseconds to sleep before the very first check. CI typically takes
+   * several minutes to even start reporting, so an immediate first check is
+   * usually wasted; defaults to pollIntervalMs (no distinct initial delay).
+   */
+  initialDelayMs?: number;
   /** Injectable for tests; defaults to a real timer-based sleep. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -19,11 +25,13 @@ export class WaitMergeHandler implements PhaseHandler {
   readonly phase = PhaseName('wait-merge');
   private readonly maxPolls: number;
   private readonly pollIntervalMs: number;
+  private readonly initialDelayMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(opts: WaitMergeHandlerOpts = {}) {
     this.maxPolls = opts.maxPolls ?? 1;
     this.pollIntervalMs = opts.pollIntervalMs ?? 60_000;
+    this.initialDelayMs = opts.initialDelayMs ?? this.pollIntervalMs;
     this.sleep = opts.sleep ?? defaultSleep;
   }
 
@@ -54,7 +62,13 @@ export class WaitMergeHandler implements PhaseHandler {
     // 2. Bounded in-process poll loop: check readiness, and if still pending,
     // sleep and re-check rather than parking on the very first pending
     // result. Mirrors legacy post-pr-review's bounded poller, minus the
-    // comment-tracking machinery this phase doesn't need.
+    // comment-tracking machinery this phase doesn't need. The first check is
+    // delayed by initialDelayMs (CI typically takes several minutes to even
+    // start reporting), then subsequent checks use the shorter pollIntervalMs.
+    if (this.maxPolls > 1 && this.initialDelayMs > 0) {
+      await this.sleep(this.initialDelayMs);
+    }
+
     for (let pollNumber = 1; pollNumber <= this.maxPolls; pollNumber++) {
       try {
         const readiness = await ctx.github.getPrMergeReadiness(ctx.repoFullName, prNumber);
