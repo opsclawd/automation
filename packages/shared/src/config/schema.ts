@@ -197,11 +197,12 @@ const phasesSchema = z.object({
     .optional(),
   // Lean wait-merge phase's bounded in-process poll loop for CI/merge
   // readiness. Defaults: wait 10 minutes before the first check (CI
-  // typically takes 6-8 minutes to report), then re-check every 2 minutes,
-  // up to 30 checks, before parking the phase as resting.
+  // typically takes 6-8 minutes to report), then re-check every 2 minutes
+  // for up to 5 more checks (6 checks total, ~20 minutes after the initial
+  // delay) before parking the phase as resting.
   waitMerge: z
     .object({
-      maxPolls: z.number().int().positive().default(30),
+      maxPolls: z.number().int().positive().default(6),
       pollIntervalSeconds: z.number().int().positive().default(120),
       initialDelaySeconds: z.number().int().nonnegative().default(600),
     })

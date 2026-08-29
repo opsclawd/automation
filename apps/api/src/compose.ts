@@ -6809,7 +6809,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       phaseRegistry.register(
         new WaitMergeHandler({
-          maxPolls: config.phases.waitMerge?.maxPolls ?? 30,
+          maxPolls: config.phases.waitMerge?.maxPolls ?? 6,
           pollIntervalMs: (config.phases.waitMerge?.pollIntervalSeconds ?? 120) * 1000,
           initialDelayMs: (config.phases.waitMerge?.initialDelaySeconds ?? 600) * 1000,
         }),
