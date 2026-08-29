@@ -107,9 +107,13 @@ class FakeWorktreeLifecycle implements WorktreeLifecyclePort {
 const PHASES_AFTER_IMPLEMENT = [
   'validate',
   'fix-validate',
+  'initial-review',
+  'fix-review',
+  'follow-up-review',
   'review-fix',
   'compound',
   'create-pr',
+  'wait-merge',
   'post-pr-review',
 ] as const;
 
@@ -123,6 +127,8 @@ function makeRun(overrides?: Partial<Run>): Run {
       repoId: RepositoryId('acme/widgets'),
       issueNumber: 42,
       startedAt: FIXED_NOW,
+      attempt: 1,
+      ...overrides,
     }),
     ...overrides,
   };
@@ -133,6 +139,27 @@ function makePassingHandler(phase: string, runSpy?: ReturnType<typeof vi.fn>): P
     phase: makePhaseName(phase),
     run: async (ctx: PhaseHandlerContext): Promise<PhaseResult> => {
       runSpy?.(ctx);
+      if (phase === 'initial-review') {
+        try {
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            relativePath: 'whole-change-review.json',
+            contents: JSON.stringify({ verdict: 'APPROVE', acceptance_criteria: [], findings: [] }),
+          });
+        } catch {
+          // ignore in double if artifacts store is mocked without write
+        }
+      } else if (phase === 'follow-up-review') {
+        try {
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            relativePath: 'follow-up-review.json',
+            contents: JSON.stringify({ verdict: 'APPROVE', evaluations: [], new_findings: [] }),
+          });
+        } catch {
+          // ignore
+        }
+      }
       return { outcome: 'passed' };
     },
   };

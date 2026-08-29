@@ -8,6 +8,7 @@ import type {
   PullRequestReview,
   GitHubReviewComment,
   CreatePullRequestInput,
+  PrMergeReadiness,
 } from '@ai-sdlc/application/ports';
 import { GitHubFailedError } from './errors.js';
 
@@ -98,7 +99,10 @@ export class GhCliAdapter implements GitHubPort {
     return { number: j.number, title: j.title, body: j.body, labels: j.labels.map((l) => l.name) };
   }
 
-  async listIssueComments(repoFullName: string, issueNumber: number): Promise<GitHubIssueComment[]> {
+  async listIssueComments(
+    repoFullName: string,
+    issueNumber: number,
+  ): Promise<GitHubIssueComment[]> {
     const out = await this.run([
       'api',
       '--paginate',
@@ -108,7 +112,11 @@ export class GhCliAdapter implements GitHubPort {
     return this.parseIssueComments(out, repoFullName, issueNumber);
   }
 
-  private parseIssueComments(raw: string, repoFullName: string, issueNumber: number): GitHubIssueComment[] {
+  private parseIssueComments(
+    raw: string,
+    repoFullName: string,
+    issueNumber: number,
+  ): GitHubIssueComment[] {
     const trimmed = raw.trim();
     if (!trimmed) return [];
     const command = `gh api --paginate --slurp repos/${repoFullName}/issues/${issueNumber}/comments`;
@@ -152,6 +160,93 @@ export class GhCliAdapter implements GitHubPort {
       url: j.url,
       state: normalised as PullRequest['state'],
       headRefName: j.headRefName,
+    };
+  }
+
+  async getPrMergeReadiness(repoFullName: string, prNumber: number): Promise<PrMergeReadiness> {
+    const out = await this.run([
+      'pr',
+      'view',
+      String(prNumber),
+      '--repo',
+      repoFullName,
+      '--json',
+      'number,state,statusCheckRollup,mergeStateStatus,autoMergeRequest',
+    ]);
+    const command = `gh pr view ${prNumber} --repo ${repoFullName}`;
+    const j = this.safeJsonParse<{
+      number: number;
+      state: string;
+      statusCheckRollup?: Array<{
+        state?: string;
+        status?: string;
+        conclusion?: string;
+        name?: string;
+      }>;
+      mergeStateStatus?: string;
+      autoMergeRequest?: { enabledAt?: string } | null;
+    }>(out, command);
+
+    const normalisedState = j.state.toLowerCase() as 'open' | 'closed' | 'merged';
+    const isMerged = normalisedState === 'merged';
+
+    let ciStatus: 'passed' | 'failed' | 'pending' = 'passed';
+    let failedDetail: string | undefined;
+
+    if (j.statusCheckRollup && j.statusCheckRollup.length > 0) {
+      const failedChecks: string[] = [];
+      let hasPending = false;
+      for (const check of j.statusCheckRollup) {
+        const conclusion = (check.conclusion || check.state || check.status || '').toUpperCase();
+        if (
+          conclusion === 'FAILURE' ||
+          conclusion === 'TIMED_OUT' ||
+          conclusion === 'ACTION_REQUIRED' ||
+          conclusion === 'CANCELLED' ||
+          conclusion === 'ERROR'
+        ) {
+          failedChecks.push(check.name || 'check');
+        } else if (
+          conclusion === 'PENDING' ||
+          conclusion === 'IN_PROGRESS' ||
+          conclusion === 'QUEUED' ||
+          conclusion === 'WAITING' ||
+          conclusion === 'EXPECTED'
+        ) {
+          hasPending = true;
+        }
+      }
+
+      if (failedChecks.length > 0) {
+        ciStatus = 'failed';
+        failedDetail = `Failed checks: ${failedChecks.join(', ')}`;
+      } else if (hasPending) {
+        ciStatus = 'pending';
+      }
+    }
+
+    const rawMergeState = j.mergeStateStatus?.toLowerCase();
+    const VALID_MERGE_STATES = new Set([
+      'clean',
+      'blocked',
+      'dirty',
+      'behind',
+      'unstable',
+      'unknown',
+    ]);
+    const mergeState: PrMergeReadiness['mergeStateStatus'] =
+      rawMergeState && VALID_MERGE_STATES.has(rawMergeState)
+        ? (rawMergeState as 'clean' | 'blocked' | 'dirty' | 'behind' | 'unstable' | 'unknown')
+        : 'unknown';
+
+    return {
+      prNumber: j.number,
+      state: normalisedState,
+      isMerged,
+      ciStatus,
+      mergeStateStatus: mergeState,
+      autoMergeEnabled: Boolean(j.autoMergeRequest),
+      ...(failedDetail !== undefined ? { details: failedDetail } : {}),
     };
   }
 

@@ -1,4 +1,9 @@
-import { type PhaseName, PhaseName as makePhaseName, type AgentContract } from '@ai-sdlc/domain';
+import {
+  type PhaseName,
+  PhaseName as makePhaseName,
+  type AgentContract,
+  type ExecutionPolicy,
+} from '@ai-sdlc/domain';
 
 export interface PhaseDefinition {
   name: PhaseName;
@@ -48,6 +53,26 @@ export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
   makePhaseName('create-pr'),
   makePhaseName('post-pr-review'),
 ];
+
+export const LEAN_PHASE_ORDER: readonly PhaseName[] = [
+  makePhaseName('read_issue'),
+  makePhaseName('plan-design'),
+  makePhaseName('implement'),
+  makePhaseName('validate'),
+  makePhaseName('fix-validate'),
+  makePhaseName('initial-review'),
+  makePhaseName('fix-review'),
+  makePhaseName('follow-up-review'),
+  makePhaseName('create-pr'),
+  makePhaseName('wait-merge'),
+];
+
+export function resolvePhaseOrder(policy?: ExecutionPolicy): readonly PhaseName[] {
+  if (policy === 'standard' || policy === 'strict') {
+    return LEAN_PHASE_ORDER;
+  }
+  return CANONICAL_PHASE_ORDER;
+}
 
 const _phaseDefinitions = {
   read_issue: {
@@ -109,6 +134,36 @@ const _phaseDefinitions = {
     retrySafety: 'unsafe',
     skippable: false,
   },
+  'initial-review': {
+    name: makePhaseName('initial-review'),
+    inputs: {
+      required: ['issue.md'],
+      optional: ['issue-comments.md', 'design.md', 'plan.md', 'validation.result'],
+    },
+    outputs: ['code-review.md', 'whole-change-review.json', 'finding-ledger.json'],
+    retrySafety: 'safe',
+    skippable: false,
+  },
+  'fix-review': {
+    name: makePhaseName('fix-review'),
+    inputs: {
+      required: ['code-review.md'],
+      optional: ['whole-change-review.json', 'finding-ledger.json'],
+    },
+    outputs: [],
+    retrySafety: 'unsafe',
+    skippable: false,
+  },
+  'follow-up-review': {
+    name: makePhaseName('follow-up-review'),
+    inputs: {
+      required: ['issue.md'],
+      optional: ['design.md', 'plan.md', 'validation.result', 'finding-ledger.json'],
+    },
+    outputs: ['code-review.md', 'follow-up-review.json', 'finding-ledger.json'],
+    retrySafety: 'safe',
+    skippable: false,
+  },
   compound: {
     name: makePhaseName('compound'),
     inputs: { required: ['plan.md', 'design.md'], optional: [] },
@@ -122,6 +177,13 @@ const _phaseDefinitions = {
     inputs: { required: ['plan.md'], optional: ['compound.md'] },
     outputs: ['pr-summary.md', 'pr-url.txt'],
     retrySafety: 'unsafe',
+    skippable: false,
+  },
+  'wait-merge': {
+    name: makePhaseName('wait-merge'),
+    inputs: { required: ['pr-url.txt'], optional: [] },
+    outputs: [],
+    retrySafety: 'safe',
     skippable: false,
   },
   'post-pr-review': {
@@ -148,9 +210,11 @@ export function clonePhaseDefinitions(): Record<PhaseName, PhaseDefinition> {
 export function orderedPhases(
   skip: PhaseName[],
   definitions?: Record<PhaseName, PhaseDefinition>,
+  policy?: ExecutionPolicy,
 ): PhaseDefinition[] {
   const defs = definitions ?? PHASE_DEFINITIONS;
   const skipSet = new Set(skip as string[]);
+  const phaseOrder = resolvePhaseOrder(policy);
 
   for (const s of skipSet) {
     const def = defs[s as PhaseName];
@@ -159,7 +223,7 @@ export function orderedPhases(
   }
 
   if (definitions) {
-    const missing = CANONICAL_PHASE_ORDER.filter((n) => !skipSet.has(n as string) && !defs[n]);
+    const missing = phaseOrder.filter((n) => !skipSet.has(n as string) && !defs[n]);
     if (missing.length > 0) {
       throw new InvalidSkipListError(
         `custom definitions missing required phase(s): ${missing.join(', ')}`,
@@ -167,7 +231,7 @@ export function orderedPhases(
     }
   }
 
-  const kept = CANONICAL_PHASE_ORDER.filter((n) => !skipSet.has(n as string)).map((n) => defs[n]!);
+  const kept = phaseOrder.filter((n) => !skipSet.has(n as string)).map((n) => defs[n]!);
 
   const producedByKept = new Set<string>();
   for (const def of kept) {
@@ -179,6 +243,9 @@ export function orderedPhases(
       }
     }
     for (const out of def.outputs) producedByKept.add(out);
+    if ((policy === 'standard' || policy === 'strict') && def.name === 'plan-design') {
+      producedByKept.add('plan.md');
+    }
   }
 
   return kept;

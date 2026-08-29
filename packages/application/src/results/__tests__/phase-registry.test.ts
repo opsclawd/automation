@@ -19,6 +19,8 @@ describe('PHASE_RESULT_REGISTRY', () => {
       'implement',
       'quality-review',
       'fix-review',
+      'initial-review',
+      'follow-up-review',
       'create-pr',
       'post-pr-review',
       'spec-review',
