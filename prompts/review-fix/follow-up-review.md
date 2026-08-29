@@ -46,7 +46,9 @@ Perform a focused follow-up review grounded in the issue, acceptance criteria, d
 Your responsibilities:
 1. **Evaluate Prior Findings**:
    - For every unresolved finding in the accumulated finding ledger, evaluate whether it is now `resolved: true` or `resolved: false`.
-   - Provide concrete evidence for your evaluation.
+   - Do not evaluate resolution solely from the fix diff or from new/changed tests near the finding's originally cited files. A fix diff shows what changed; it does not show what the finding actually required to be true. Independently trace the finding's full causal chain — from the root symptom described in its `rationale` through to the actual runtime behavior it concerns — even when that chain passes through files the fix diff did not touch.
+   - A finding is not resolved merely because validation now accepts the input, a type now allows the field, or a new test asserts an intermediate value (e.g. a value is recorded in an output object). Confirm the underlying guarantee stated in the finding's rationale actually holds at the point where it matters (e.g. if the finding is about a value being *used*, not just accepted or recorded, verify the code path that consumes it was actually changed).
+   - Cite the exact file/line(s) that establish the full chain is closed — not just the file/line(s) the fix diff touched — as your evidence.
 2. **Detect Material Regressions or Exposed Gaps**:
    - Verify that the fix did not introduce material regressions or expose new gaps violating the issue's requirements or Acceptance Criteria.
    - Do not manufacture findings or raise unrelated stylistic preferences.
