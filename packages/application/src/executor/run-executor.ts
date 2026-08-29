@@ -144,6 +144,27 @@ export class RunExecutor {
         const ctxForResume = this.deps.contextFactory(run);
 
         const isImplementPhase = firstIncompletePhase === 'implement';
+        // Lean's review-convergence loop (validate -> fix-validate ->
+        // initial-review -> fix-review -> follow-up-review -> create-pr)
+        // legitimately runs with an uncommitted worktree: fix-review leaves
+        // real diffs in place for validate/follow-up-review to inspect
+        // against the run's fixed startCommitSha, and nothing commits until
+        // create-pr. Unlike `implement`, these phases have no per-step
+        // baseline to reset to, and the diff they operate on stays valid
+        // regardless of dirty state — so the strict "any dirty path fails
+        // resume" guard below (designed around ambient residue between
+        // otherwise-clean phase boundaries) does not apply to them.
+        const leanReviewLoopTolerantPhases: readonly string[] = [
+          'validate',
+          'fix-validate',
+          'initial-review',
+          'fix-review',
+          'follow-up-review',
+          'create-pr',
+        ];
+        const isLeanReviewLoopTolerantPhase =
+          (currentRun.executionPolicy === 'standard' || currentRun.executionPolicy === 'strict') &&
+          leanReviewLoopTolerantPhases.includes(firstIncompletePhase as string);
         let resumableStep: Step | undefined;
         if (this.deps.stepRepository) {
           const runSteps = this.deps.stepRepository.listForRun(run.uuid as RunId);
@@ -631,6 +652,38 @@ export class RunExecutor {
             now(),
             deferredMetadata,
           );
+        } else if (isLeanReviewLoopTolerantPhase) {
+          // Dirty worktree is expected here — defer entirely to the phase's
+          // own handling (fix-validate repairs in place, follow-up-review
+          // diffs against startCommitSha, create-pr stages/commits itself).
+          const deferredMessage = `resuming lean phase '${firstIncompletePhase}' with a dirty worktree; deferring worktree state to the phase's own handling`;
+          const deferredMetadata = { resumeDisposition: input.resumeDisposition };
+          try {
+            this.deps.eventRepository?.insert({
+              runUuid: currentRun.uuid,
+              phase: firstIncompletePhase as string,
+              level: 'info',
+              type: 'run.resume_disposition_deferred',
+              message: deferredMessage,
+              metadata: deferredMetadata,
+              timestamp: now(),
+            });
+          } catch (err) {
+            this.deps.logger?.debug(
+              'failed to insert resume_disposition_deferred audit event',
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+          this.emit(
+            run.displayId,
+            run.uuid,
+            firstIncompletePhase as string,
+            'info',
+            'run.resume_disposition_deferred',
+            deferredMessage,
+            now(),
+            deferredMetadata,
+          );
         } else {
           // No implementation worktree state to recover (non-implement phase)
           let dirtyPaths: string[] = [];
@@ -851,6 +904,48 @@ export class RunExecutor {
     return this.passRun(state.currentRun, now, phases);
   }
 
+  // Records a phase that the lean review-convergence loop's own control flow
+  // bypassed (as opposed to executing it and letting it no-op) — e.g.
+  // fix-validate when validate passes outright. Without this, resume's
+  // generic phaseGraph.getFirstIncompletePhase() scan sees the phase absent
+  // from both completedPhases and skippedPhases and wrongly treats it as the
+  // next phase to run, even though the live loop would never revisit it.
+  private recordConditionallySkippedPhase(
+    phaseName: PhaseName,
+    run: Run,
+    state: ExecutionState,
+  ): void {
+    if (state.currentRun.skippedPhases.includes(phaseName as string)) return;
+
+    state.currentRun = {
+      ...state.currentRun,
+      skippedPhases: [...state.currentRun.skippedPhases, phaseName as string],
+    };
+    const phase: Phase = {
+      id: this.phaseId(run.uuid, phaseName),
+      runUuid: run.uuid,
+      name: phaseName as string,
+      status: 'skipped',
+      attempt: 1,
+      startedAt: state.now(),
+      completedAt: state.now(),
+    };
+    this.deps.phaseRepository.insert(phase);
+    this.deps.runRepository.update(run.uuid, {
+      skippedPhases: state.currentRun.skippedPhases,
+    });
+    state.phases.push({ phase: phaseName, status: 'skipped' });
+    this.emit(
+      run.displayId,
+      run.uuid,
+      phaseName as string,
+      'info',
+      'phase.skipped',
+      `phase '${String(phaseName)}' skipped (validation passed without repair)`,
+      state.now(),
+    );
+  }
+
   private async executeLean(
     input: ExecuteRunInput,
     state: ExecutionState,
@@ -944,6 +1039,8 @@ export class RunExecutor {
           now(),
           phases,
         );
+      } else {
+        this.recordConditionallySkippedPhase(PhaseName('fix-validate'), run, state);
       }
     }
 
@@ -1092,6 +1189,8 @@ export class RunExecutor {
                 now(),
                 phases,
               );
+            } else {
+              this.recordConditionallySkippedPhase(PhaseName('fix-validate'), run, state);
             }
 
             convergenceState = {
