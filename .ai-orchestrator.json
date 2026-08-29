@@ -18,6 +18,9 @@
   },
   "phases": {
     "skip": [],
+    "reviewConvergence": {
+      "maxIterations": 4
+    },
     "reviewFix": {
       "maxIterations": 10,
       "maxConsecutiveFixFailures": 3,
@@ -174,6 +177,8 @@
         "fallbackProfile": "codex-reviewer",
         "fallbackTriggers": ["timeout", "quota_exceeded", "runtime_error"]
       },
+      "initial-review": { "role": "pr-reviewer" },
+      "follow-up-review": { "role": "critic" },
       "fix-review": { "role": "fixer" },
       "whole-pr-fix-review": { "role": "fixer" },
       "fix-validate": { "role": "fixer" },

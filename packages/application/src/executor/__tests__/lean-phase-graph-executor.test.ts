@@ -290,6 +290,11 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
         relativePath: 'follow-up-review.json',
         contents: JSON.stringify({ verdict: 'APPROVE', evaluations: [], new_findings: [] }),
       });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'finding-ledger.json',
+        contents: JSON.stringify({ version: 1, iterationCount: 1, entries: [] }),
+      });
       return { outcome: 'passed' };
     };
 
@@ -468,6 +473,176 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
       presentArtifacts: [],
     });
 
+    expect(result.run.status).toBe('needs_human_review');
+    expect(handlers['create-pr']?.runCalls).toHaveLength(0);
+  });
+
+  it('converges across multiple review/fix iterations before approval', async () => {
+    const { run, handlers, artifacts, executor } = setupExecutor('standard');
+
+    // Initial review requests changes
+    handlers['initial-review']!.handlerFn = async (ctx) => {
+      const ledger = createFindingLedger([
+        {
+          severity: 'high',
+          files: ['src/app.ts'],
+          evidence: 'bug 1',
+          rationale: 'risk 1',
+          minimal_correction: 'fix 1',
+        },
+        {
+          severity: 'high',
+          files: ['src/db.ts'],
+          evidence: 'bug 2',
+          rationale: 'risk 2',
+          minimal_correction: 'fix 2',
+        },
+      ]);
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'finding-ledger.json',
+        contents: JSON.stringify(ledger),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'whole-change-review.json',
+        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', findings: ledger.entries }),
+      });
+      return { outcome: 'passed' };
+    };
+
+    handlers['fix-review']!.handlerFn = async () => ({ outcome: 'passed' });
+
+    let followUpCount = 0;
+    handlers['follow-up-review']!.handlerFn = async (ctx) => {
+      followUpCount++;
+      if (followUpCount === 1) {
+        // Iteration 1: Still requests changes
+        await artifacts.write({
+          runId: ctx.runUuid,
+          relativePath: 'follow-up-review.json',
+          contents: JSON.stringify({
+            verdict: 'REQUEST_CHANGES',
+            evaluations: [{ finding_id: 'AC-1', resolved: true, evidence: 'fixed' }],
+            new_findings: [],
+          }),
+        });
+        return { outcome: 'passed' };
+      }
+      // Iteration 2: Approves
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'follow-up-review.json',
+        contents: JSON.stringify({ verdict: 'APPROVE', evaluations: [], new_findings: [] }),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'finding-ledger.json',
+        contents: JSON.stringify({ version: 1, iterationCount: 2, entries: [] }),
+      });
+      return { outcome: 'passed' };
+    };
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('passed');
+    expect(handlers['initial-review']?.runCalls).toHaveLength(1);
+    expect(handlers['fix-review']?.runCalls).toHaveLength(2);
+    expect(handlers['follow-up-review']?.runCalls).toHaveLength(2);
+    expect(handlers['create-pr']?.runCalls).toHaveLength(1);
+  });
+
+  it('stops and escalates to needs_human_review immediately when fixer reports cannot_fix', async () => {
+    const { run, handlers, artifacts, executor } = setupExecutor('standard');
+
+    handlers['initial-review']!.handlerFn = async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'whole-change-review.json',
+        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', findings: [{ severity: 'high' }] }),
+      });
+      return { outcome: 'passed' };
+    };
+
+    handlers['fix-review']!.handlerFn = async () => {
+      return {
+        outcome: 'needs_human_review',
+        failure: {
+          runUuid: run.uuid,
+          phase: 'fix-review',
+          kind: 'needs_human_review',
+          message: 'targeted fixer reported it cannot fix the review findings',
+          canRetry: true,
+          suggestedAction: 'Intervene manually',
+          artifacts: [],
+          detectedAt: new Date(),
+        },
+      };
+    };
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('needs_human_review');
+    expect(handlers['fix-review']?.runCalls).toHaveLength(1);
+    expect(handlers['follow-up-review']?.runCalls).toHaveLength(0); // Did not proceed to follow-up review!
+  });
+
+  it('does not create PR and continues convergence when follow-up review artifact says APPROVE but ledger has unresolved findings', async () => {
+    const { run, handlers, artifacts, executor } = setupExecutor('standard');
+
+    // Initial review requests changes
+    handlers['initial-review']!.handlerFn = async (ctx) => {
+      const ledger = createFindingLedger([
+        {
+          severity: 'high',
+          files: ['src/app.ts'],
+          evidence: 'unresolved bug',
+          rationale: 'risk',
+          minimal_correction: 'fix',
+        },
+      ]);
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'finding-ledger.json',
+        contents: JSON.stringify(ledger),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'whole-change-review.json',
+        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', findings: ledger.entries }),
+      });
+      return { outcome: 'passed' };
+    };
+
+    handlers['fix-review']!.handlerFn = async () => ({ outcome: 'passed' });
+
+    // Follow-up handler simulates a defect where follow-up-review.json says APPROVE, but finding-ledger.json still has unresolved findings
+    handlers['follow-up-review']!.handlerFn = async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'follow-up-review.json',
+        contents: JSON.stringify({ verdict: 'APPROVE', evaluations: [], new_findings: [] }),
+      });
+      // finding-ledger.json is NOT resolved
+      return { outcome: 'passed' };
+    };
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+      reviewConvergenceMaxIterations: 1,
+    });
+
+    // Because the ledger was unresolved, RunExecutor overrides APPROVE to REQUEST_CHANGES and hits maxIterations (1) -> needs_human_review
     expect(result.run.status).toBe('needs_human_review');
     expect(handlers['create-pr']?.runCalls).toHaveLength(0);
   });

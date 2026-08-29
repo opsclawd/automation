@@ -18,6 +18,11 @@ const validationSchema = z.object({
 
 const phasesSchema = z.object({
   skip: z.array(z.string()).default([]),
+  reviewConvergence: z
+    .object({
+      maxIterations: z.number().int().positive().default(4),
+    })
+    .optional(),
   reviewFix: z.object({
     maxIterations: z.number().int().positive(),
     blockOnSeverity: z

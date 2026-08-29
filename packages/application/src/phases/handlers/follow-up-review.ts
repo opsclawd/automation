@@ -61,7 +61,14 @@ export class FollowUpReviewHandler implements PhaseHandler {
     try {
       if (ctx.git?.diff) {
         completeDiff = await ctx.git.diff(ctx.cwd, ctx.startCommitSha ?? baseBranch);
-        fixDiff = completeDiff;
+        const priorHeadSha = await ctx.artifacts
+          .read(ctx.runUuid, 'review-head-sha.txt')
+          .catch(() => undefined);
+        if (priorHeadSha?.trim()) {
+          fixDiff = await ctx.git.diff(ctx.cwd, priorHeadSha.trim());
+        } else {
+          fixDiff = completeDiff;
+        }
       }
     } catch {
       completeDiff = '';
@@ -81,11 +88,18 @@ export class FollowUpReviewHandler implements PhaseHandler {
     if (!ctx.resolveProfile) {
       return this.fail(ctx, emit, 'command_failed', 'resolveProfile not available on context');
     }
+    const resolve = (p: string) => {
+      try {
+        return ctx.resolveProfile?.(p);
+      } catch {
+        return undefined;
+      }
+    };
     const profile =
-      ctx.resolveProfile('follow-up-review') ??
-      ctx.resolveProfile('initial-review') ??
-      ctx.resolveProfile('whole-pr-review') ??
-      ctx.resolveProfile('implement') ??
+      resolve('follow-up-review') ??
+      resolve('initial-review') ??
+      resolve('whole-pr-review') ??
+      resolve('implement') ??
       AgentProfileName(this.opts.profileName ?? 'opencode-frontier');
 
     // 6. Load prompt template
@@ -155,6 +169,15 @@ export class FollowUpReviewHandler implements PhaseHandler {
       currentIteration,
     );
 
+    const hasUnresolved = hasUnresolvedBlockingFindings(updatedLedger);
+    const effectiveVerdict =
+      parsedResult.verdict.toUpperCase() === 'APPROVE' && !hasUnresolved
+        ? 'APPROVE'
+        : 'REQUEST_CHANGES';
+
+    // Update parsedResult so persisted artifact reflects the effective verdict
+    parsedResult.verdict = effectiveVerdict;
+
     // Persist updated artifacts
     const formattedReviewMd = this.formatFollowUpMarkdown(parsedResult, updatedLedger);
     try {
@@ -176,6 +199,16 @@ export class FollowUpReviewHandler implements PhaseHandler {
         relativePath: 'finding-ledger.json',
         contents: JSON.stringify(updatedLedger, null, 2),
       });
+
+      const currentHeadSha = await ctx.git?.headCommitSha(ctx.cwd).catch(() => undefined);
+      if (currentHeadSha?.trim()) {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: this.phase,
+          relativePath: 'review-head-sha.txt',
+          contents: currentHeadSha.trim(),
+        });
+      }
     } catch (writeErr) {
       return this.fail(
         ctx,
@@ -185,12 +218,6 @@ export class FollowUpReviewHandler implements PhaseHandler {
         'Ensure artifact storage directory is writable.',
       );
     }
-
-    const hasUnresolved = hasUnresolvedBlockingFindings(updatedLedger);
-    const effectiveVerdict =
-      parsedResult.verdict.toUpperCase() === 'APPROVE' && !hasUnresolved
-        ? 'APPROVE'
-        : 'REQUEST_CHANGES';
 
     if (effectiveVerdict === 'APPROVE') {
       emit('follow_up_review.completed', 'info', 'follow-up review approved', {
