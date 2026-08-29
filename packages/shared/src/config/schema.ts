@@ -195,6 +195,15 @@ const phasesSchema = z.object({
       firstReviewGraceWindowSeconds: z.number().int().positive().optional(),
     })
     .optional(),
+  // Lean wait-merge phase's bounded in-process poll loop for CI/merge
+  // readiness. When absent, defaults to maxPolls=30 / pollIntervalSeconds=60
+  // (~30 minutes) before parking the phase as resting.
+  waitMerge: z
+    .object({
+      maxPolls: z.number().int().positive().default(30),
+      pollIntervalSeconds: z.number().int().positive().default(60),
+    })
+    .optional(),
 });
 
 const timeoutsSchema = z.object({

@@ -6807,7 +6807,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         }),
       );
 
-      phaseRegistry.register(new WaitMergeHandler({}));
+      phaseRegistry.register(
+        new WaitMergeHandler({
+          maxPolls: config.phases.waitMerge?.maxPolls ?? 30,
+          pollIntervalMs: (config.phases.waitMerge?.pollIntervalSeconds ?? 60) * 1000,
+        }),
+      );
 
       phaseRegistry.register(
         new PostPrReviewHandler({

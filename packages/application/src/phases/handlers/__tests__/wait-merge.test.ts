@@ -130,4 +130,73 @@ describe('WaitMergeHandler', () => {
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('resting');
   });
+
+  it('polls in-process and passes once the PR merges partway through the window', async () => {
+    const artifacts = new FakeArtifactStore();
+    const github = new FakeGitHubPort();
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('create-pr'),
+      relativePath: 'pr-url.txt',
+      contents: 'https://github.com/owner/repo/pull/42',
+    });
+
+    github.mergeReadiness.set('owner/repo/42', {
+      prNumber: 42,
+      state: 'open',
+      isMerged: false,
+      ciStatus: 'pending',
+      mergeStateStatus: 'unknown',
+    });
+
+    const sleep = vi.fn().mockImplementation(async () => {
+      github.mergeReadiness.set('owner/repo/42', {
+        prNumber: 42,
+        state: 'merged',
+        isMerged: true,
+        ciStatus: 'passed',
+        mergeStateStatus: 'clean',
+      });
+    });
+
+    const handler = new WaitMergeHandler({ maxPolls: 5, pollIntervalMs: 1000, sleep });
+    const ctx = createMockContext(artifacts, github);
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(1000);
+  });
+
+  it('rests only after exhausting the full poll window with no resolution', async () => {
+    const artifacts = new FakeArtifactStore();
+    const github = new FakeGitHubPort();
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('create-pr'),
+      relativePath: 'pr-url.txt',
+      contents: 'https://github.com/owner/repo/pull/42',
+    });
+
+    github.mergeReadiness.set('owner/repo/42', {
+      prNumber: 42,
+      state: 'open',
+      isMerged: false,
+      ciStatus: 'pending',
+      mergeStateStatus: 'unknown',
+    });
+
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const handler = new WaitMergeHandler({ maxPolls: 3, pollIntervalMs: 1000, sleep });
+    const ctx = createMockContext(artifacts, github);
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('resting');
+    // Sleeps between polls, not after the final one.
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
 });
