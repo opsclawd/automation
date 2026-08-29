@@ -88,11 +88,18 @@ export class InitialReviewHandler implements PhaseHandler {
     if (!ctx.resolveProfile) {
       return this.fail(ctx, emit, 'command_failed', 'resolveProfile not available on context');
     }
+    const resolve = (p: string) => {
+      try {
+        return ctx.resolveProfile?.(p);
+      } catch {
+        return undefined;
+      }
+    };
     const profile =
-      ctx.resolveProfile('initial-review') ??
-      ctx.resolveProfile('whole-change-review') ??
-      ctx.resolveProfile('whole-pr-review') ??
-      ctx.resolveProfile('implement') ??
+      resolve('initial-review') ??
+      resolve('whole-change-review') ??
+      resolve('whole-pr-review') ??
+      resolve('implement') ??
       AgentProfileName(this.opts.profileName ?? 'opencode-frontier');
 
     // 6. Load prompt template
@@ -212,6 +219,16 @@ export class InitialReviewHandler implements PhaseHandler {
         relativePath: 'finding-ledger.json',
         contents: JSON.stringify(findingLedger, null, 2),
       });
+
+      const reviewedHeadSha = await ctx.git?.headCommitSha(ctx.cwd).catch(() => undefined);
+      if (reviewedHeadSha?.trim()) {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: this.phase,
+          relativePath: 'review-head-sha.txt',
+          contents: reviewedHeadSha.trim(),
+        });
+      }
     } catch (writeErr) {
       return this.fail(
         ctx,

@@ -278,5 +278,86 @@ describe('FollowUpReviewHandler', () => {
         }),
       }),
     );
+
+    // follow-up-review.json must persist the effective verdict (REQUEST_CHANGES), not raw APPROVE
+    const followUpRaw = await artifacts.read('run-1', 'follow-up-review.json');
+    const parsedFollowUp = JSON.parse(followUpRaw);
+    expect(parsedFollowUp.verdict).toBe('REQUEST_CHANGES');
+  });
+
+  it('computes fix_diff against prior reviewed commit SHA when review-head-sha.txt is present', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('read_issue'),
+      relativePath: 'issue.md',
+      contents: '# Issue 1106',
+    });
+
+    const initialLedger = createFindingLedger([
+      {
+        severity: 'high',
+        files: ['src/app.ts'],
+        evidence: 'NPE',
+        rationale: 'risk',
+        minimal_correction: 'fix',
+      },
+    ]);
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('initial-review'),
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(initialLedger),
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('initial-review'),
+      relativePath: 'review-head-sha.txt',
+      contents: '1111111111111111111111111111111111111111',
+    });
+
+    const diffSpy = vi.spyOn(git, 'diff');
+
+    agent.enqueue('follow-up-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        evaluations: [
+          {
+            finding_id: initialLedger.entries[0]!.id,
+            resolved: true,
+            evidence: 'fixed',
+          },
+        ],
+        new_findings: [],
+        summary: 'All fixed',
+      }),
+    });
+
+    const handler = new FollowUpReviewHandler();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await handler.run(ctx);
+
+    // Verify git.diff was called with the prior review HEAD SHA
+    expect(diffSpy).toHaveBeenCalledWith('/test/repo', '1111111111111111111111111111111111111111');
   });
 });

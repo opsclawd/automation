@@ -1111,6 +1111,20 @@ export class RunExecutor {
               }
             }
 
+            // Defense-in-depth: If followUpVerdict was APPROVE, verify finding-ledger has no unresolved findings
+            if (followUpVerdict === 'APPROVE') {
+              try {
+                const ledgerRaw = await ctx.artifacts.read(run.uuid, 'finding-ledger.json');
+                const ledger = JSON.parse(ledgerRaw) as { entries?: Array<{ status?: string }> };
+                const hasUnresolved = ledger.entries?.some((e) => e.status === 'unresolved');
+                if (hasUnresolved) {
+                  followUpVerdict = 'REQUEST_CHANGES';
+                }
+              } catch {
+                // If finding-ledger is missing or unreadable, we already handled or will handle
+              }
+            }
+
             if (followUpVerdict === 'APPROVE') {
               convergenceState = {
                 iteration: convergenceState.iteration,

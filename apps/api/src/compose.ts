@@ -6881,7 +6881,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         worktreeLifecycle: worktreeLifecycleAdapter,
         eventRepository,
         stepRepository,
-        reviewConvergenceMaxIterations: config.phases.reviewFix?.maxIterations ?? 4,
+        reviewConvergenceMaxIterations: config.phases.reviewConvergence?.maxIterations ?? 4,
       });
     }
   } catch (err) {

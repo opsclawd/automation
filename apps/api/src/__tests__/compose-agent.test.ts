@@ -97,6 +97,37 @@ describe('resolveProfileForPhase', () => {
     expect(profile).toBe(AgentProfileName('pi-local'));
   });
 
+  it('resolves distinct initial-review and follow-up-review profiles', () => {
+    const config = {
+      ...baseConfig,
+      profiles: {
+        ...baseConfig.profiles,
+        'gemini-strong': {
+          runtime: 'opencode' as const,
+          provider: 'anthropic',
+          model: 'claude-opus-4-20250514',
+          timeoutMinutes: 30,
+        },
+        'flash-cheap': {
+          runtime: 'opencode' as const,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-20250514',
+          timeoutMinutes: 15,
+        },
+      },
+      phaseProfiles: {
+        'initial-review': { profile: 'gemini-strong' },
+        'follow-up-review': { profile: 'flash-cheap' },
+      },
+    };
+    expect(resolveProfileForPhase(config, 'initial-review')).toBe(
+      AgentProfileName('gemini-strong'),
+    );
+    expect(resolveProfileForPhase(config, 'follow-up-review')).toBe(
+      AgentProfileName('flash-cheap'),
+    );
+  });
+
   it('throws ConfigError when whole-pr-fix-review has no fallback', () => {
     expect(() => resolveProfileForPhase(baseConfig, 'whole-pr-fix-review')).toThrow(ConfigError);
   });
