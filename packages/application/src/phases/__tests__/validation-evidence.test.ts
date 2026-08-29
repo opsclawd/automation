@@ -50,6 +50,39 @@ describe('validation-evidence', () => {
     expect(fp3).not.toBe(fp1);
   });
 
+  it('does not treat lean review-loop bookkeeping writes as source changes (#1109 regression)', async () => {
+    // Reproduces a real failure: validate records evidence, then the
+    // run-executor rewrites review-convergence.json (and the review-loop
+    // handlers rewrite finding-ledger.json / review-head-sha.txt /
+    // whole-change-review.json / follow-up-review.json) as it transitions
+    // into follow-up-review — before follow-up-review's own freshness check
+    // runs. None of that orchestrator-owned bookkeeping is a real source
+    // change, so the fingerprint must stay stable across it.
+    const git = new FakeGitPort();
+    git.headByCwd.set('/test/repo', 'a'.repeat(40));
+    git.worktreeFileContents.set('/test/repo:src/foo.ts', 'export const foo = 1;\n');
+
+    git.statusByCwd.set(
+      '/test/repo',
+      [
+        ' M src/foo.ts',
+        '?? finding-ledger.json',
+        '?? review-convergence.json',
+        '?? review-head-sha.txt',
+        '?? whole-change-review.json',
+        '?? follow-up-review.json',
+      ].join('\n'),
+    );
+    const recorded = await computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' });
+
+    // Simulate the orchestrator updating review-convergence.json's contents
+    // (iteration/subStep) between validate completing and follow-up-review's
+    // freshness check — same status lines, different underlying content.
+    const current = await computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' });
+
+    expect(current).toBe(recorded);
+  });
+
   it('records validation evidence across all three artifacts', async () => {
     const artifacts = new FakeArtifactStore();
     const git = new FakeGitPort();

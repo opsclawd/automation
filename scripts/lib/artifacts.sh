@@ -46,6 +46,11 @@ fix-validate-done.marker
 plan-review-passed.marker
 pr-summary.md
 pr-url.txt
+finding-ledger.json
+review-convergence.json
+review-head-sha.txt
+whole-change-review.json
+follow-up-review.json
 implementation-log-task-*.md
 issue.md
 issue-comments.md
