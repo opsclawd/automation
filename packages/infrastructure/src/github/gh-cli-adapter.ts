@@ -9,6 +9,8 @@ import type {
   GitHubReviewComment,
   CreatePullRequestInput,
   PrMergeReadiness,
+  MergeMethod,
+  RequestAutoMergeResult,
 } from '@ai-sdlc/application/ports';
 import { GitHubFailedError } from './errors.js';
 
@@ -335,6 +337,30 @@ export class GhCliAdapter implements GitHubPort {
       );
     }
     return { number: Number(numMatch[1]), url, state: 'open' };
+  }
+
+  async requestAutoMerge(
+    repoFullName: string,
+    prNumber: number,
+    mergeMethod: MergeMethod,
+  ): Promise<RequestAutoMergeResult> {
+    const methodFlag =
+      mergeMethod === 'squash' ? '--squash' : mergeMethod === 'rebase' ? '--rebase' : '--merge';
+    try {
+      await this.run([
+        'pr',
+        'merge',
+        String(prNumber),
+        '--repo',
+        repoFullName,
+        '--auto',
+        methodFlag,
+      ]);
+      return { requested: true };
+    } catch (err) {
+      const reason = err instanceof GitHubFailedError ? err.stderr : String(err);
+      return { requested: false, reason };
+    }
   }
 
   async replyToReviewComment(
