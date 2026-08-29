@@ -30,6 +30,8 @@ describe('validation-evidence', () => {
   it('computes consistent fingerprints for same source state regardless of orchestrator artifacts', async () => {
     const git = new FakeGitPort();
     git.headByCwd.set('/test/repo', 'a'.repeat(40));
+    git.worktreeFileContents.set('/test/repo:src/foo.ts', 'export const foo = 1;\n');
+    git.worktreeFileContents.set('/test/repo:src/bar.ts', 'export const bar = 2;\n');
 
     git.statusByCwd.set('/test/repo', ' M src/foo.ts\n?? validation.result\n');
     const fp1 = await computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' });
@@ -111,6 +113,7 @@ describe('validation-evidence', () => {
 
     // Mutate source state
     git.statusByCwd.set('/test/repo', ' M src/mutated.ts\n');
+    git.worktreeFileContents.set('/test/repo:src/mutated.ts', 'export const mutated = true;\n');
 
     const freshness = await verifyValidationFreshness(ctx);
     expect(freshness.fresh).toBe(false);
@@ -239,5 +242,50 @@ describe('validation-evidence', () => {
     const mutatedFreshness = await verifyValidationFreshness(ctx);
     expect(mutatedFreshness.fresh).toBe(false);
     expect(mutatedFreshness.reason).toContain('stale');
+  });
+
+  it('fails closed when an uncommitted non-deletion source file cannot be read', async () => {
+    const git = new FakeGitPort();
+    git.headByCwd.set('/test/repo', 'a'.repeat(40));
+    git.statusByCwd.set('/test/repo', ' M src/unreadable.ts\n');
+    git.defaultWorktreeFileContent = undefined;
+
+    const artifacts = new FakeArtifactStore();
+    const ctx = {
+      runUuid: 'run-1',
+      cwd: '/test/repo',
+      artifacts,
+      git,
+      events: { publish: vi.fn() },
+      now: () => new Date(),
+    } as unknown as PhaseHandlerContext;
+
+    // Direct fingerprint computation must throw rather than returning a stable UNREADABLE sentinel
+    await expect(computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' })).rejects.toThrow(
+      /Failed to read worktree file content for uncommitted path 'src\/unreadable.ts'/,
+    );
+
+    // Freshness check must fail with an explicit inspection failure reason
+    const freshness = await verifyValidationFreshness(ctx);
+    expect(freshness.fresh).toBe(false);
+    expect(freshness.reason).toContain('Validation result artifact');
+
+    // Even if validation.result and a previous fingerprint are present in artifacts:
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: 'validate',
+      relativePath: VALIDATION_RESULT_ARTIFACT,
+      contents: 'passed\n',
+    });
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: 'validate',
+      relativePath: VALIDATION_FINGERPRINT_ARTIFACT,
+      contents: 'some-fingerprint\n',
+    });
+
+    const freshnessWithArtifacts = await verifyValidationFreshness(ctx);
+    expect(freshnessWithArtifacts.fresh).toBe(false);
+    expect(freshnessWithArtifacts.reason).toContain('Failed to inspect worktree state');
   });
 });

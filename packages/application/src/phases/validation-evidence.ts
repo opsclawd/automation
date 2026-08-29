@@ -54,21 +54,28 @@ export async function computeWorktreeSourceFingerprint(ctx: {
     const isDeletion = statusCode.includes('D');
 
     for (const relPath of nonArtifactPaths) {
-      let contentHash = 'MISSING';
+      let content: string | undefined;
       try {
-        const content = await ctx.git.worktreeFileContent(ctx.cwd, relPath);
-        if (content !== undefined) {
-          contentHash = createHash('sha256').update(content).digest('hex');
-        } else if (isDeletion) {
-          contentHash = 'DELETED';
-        } else {
-          // File is supposed to exist but content could not be read; record UNREADABLE
-          contentHash = 'UNREADABLE';
+        content = await ctx.git.worktreeFileContent(ctx.cwd, relPath);
+      } catch (err) {
+        if (!isDeletion) {
+          throw new Error(
+            `Failed to read worktree file content for uncommitted path '${relPath}': ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
-      } catch {
-        contentHash = isDeletion ? 'DELETED' : 'UNREADABLE';
       }
-      sourceEntries.push(`${statusCode}:${relPath}:${contentHash}`);
+
+      if (content !== undefined) {
+        const contentHash = createHash('sha256').update(content).digest('hex');
+        sourceEntries.push(`${statusCode}:${relPath}:${contentHash}`);
+      } else if (isDeletion) {
+        sourceEntries.push(`${statusCode}:${relPath}:DELETED`);
+      } else {
+        // Non-deletion path where content could not be read; fail closed
+        throw new Error(
+          `Failed to read worktree file content for uncommitted path '${relPath}' (status: '${statusCode}')`,
+        );
+      }
     }
   }
 

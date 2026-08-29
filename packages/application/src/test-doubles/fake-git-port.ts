@@ -31,6 +31,9 @@ export class FakeGitPort implements GitPort {
   fileContentCalls: Array<{ cwd: string; ref: string; path: string }> = [];
   worktreeFileContents = new Map<string, string>();
   worktreeFileContentCalls: Array<{ cwd: string; path: string }> = [];
+  defaultWorktreeFileContent: ((path: string) => string | undefined) | string | undefined = (
+    path: string,
+  ) => `fake worktree content for ${path}`;
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);
@@ -194,6 +197,12 @@ export class FakeGitPort implements GitPort {
     if (this.worktreeFileContents.has(fullKey)) {
       return this.worktreeFileContents.get(fullKey);
     }
-    return this.worktreeFileContents.get(path);
+    if (this.worktreeFileContents.has(path)) {
+      return this.worktreeFileContents.get(path);
+    }
+    if (typeof this.defaultWorktreeFileContent === 'function') {
+      return this.defaultWorktreeFileContent(path);
+    }
+    return this.defaultWorktreeFileContent;
   }
 }

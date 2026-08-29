@@ -172,6 +172,7 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
       '/tmp/worktree',
       ' M src/index.ts\n?? validation.result\n?? review-fix-plan.json\n?? pr-summary.md\n',
     );
+    git.worktreeFileContents.set('/tmp/worktree:src/index.ts', 'export const index = 1;\n');
 
     const fp1 = await computeWorktreeSourceFingerprint({ git, cwd: '/tmp/worktree' });
 
@@ -188,6 +189,7 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
       '/tmp/worktree',
       ' M src/index.ts\n M src/feature.ts\n?? validation.result\n',
     );
+    git.worktreeFileContents.set('/tmp/worktree:src/feature.ts', 'export const feature = 1;\n');
     const fp3 = await computeWorktreeSourceFingerprint({ git, cwd: '/tmp/worktree' });
     expect(fp3).not.toBe(fp1);
   });
