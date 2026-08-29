@@ -4,19 +4,42 @@ import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 
 export interface WaitMergeHandlerOpts {
+  /** Number of readiness checks to run in-process before parking as resting. Defaults to 1 (single check, no polling). */
+  maxPolls?: number;
+  /** Milliseconds to sleep between checks after the first. */
   pollIntervalMs?: number;
-  timeoutMs?: number;
+  /**
+   * Milliseconds to sleep before the very first check. CI typically takes
+   * several minutes to even start reporting, so an immediate first check is
+   * usually wasted; defaults to pollIntervalMs (no distinct initial delay).
+   */
+  initialDelayMs?: number;
+  /** Injectable for tests; defaults to a real timer-based sleep. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 export class WaitMergeHandler implements PhaseHandler {
   readonly phase = PhaseName('wait-merge');
+  private readonly maxPolls: number;
+  private readonly pollIntervalMs: number;
+  private readonly initialDelayMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
 
-  constructor(private readonly opts: WaitMergeHandlerOpts = {}) {}
+  constructor(opts: WaitMergeHandlerOpts = {}) {
+    this.maxPolls = opts.maxPolls ?? 1;
+    this.pollIntervalMs = opts.pollIntervalMs ?? 60_000;
+    this.initialDelayMs = opts.initialDelayMs ?? this.pollIntervalMs;
+    this.sleep = opts.sleep ?? defaultSleep;
+  }
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
     emit('wait_merge.started', 'info', 'waiting for PR merge and CI completion', {
       policy: ctx.executionPolicy,
+      maxPolls: this.maxPolls,
     });
 
     // 1. Read pr-url.txt
@@ -36,73 +59,96 @@ export class WaitMergeHandler implements PhaseHandler {
       return this.fail(ctx, emit, 'github_failed', `invalid pr-url.txt format: '${prUrl}'`);
     }
 
-    // 2. Query GitHub PR and CI merge readiness status
-    try {
-      const readiness = await ctx.github.getPrMergeReadiness(ctx.repoFullName, prNumber);
-
-      if (readiness.isMerged || readiness.state === 'merged') {
-        emit('wait_merge.completed', 'info', `PR #${prNumber} is merged`, {
-          prNumber,
-          prUrl,
-          state: 'merged',
-        });
-        return { outcome: 'passed' };
-      }
-
-      if (readiness.state === 'closed') {
-        const message = `PR #${prNumber} was closed without being merged`;
-        emit('wait_merge.failed', 'error', message, { prNumber, prUrl, state: 'closed' });
-        return {
-          outcome: 'failed',
-          failure: {
-            runUuid: ctx.runUuid,
-            phase: this.phase,
-            kind: 'github_failed',
-            message,
-            canRetry: false,
-            suggestedAction: 'Re-open or recreate the pull request.',
-            artifacts: ['pr-url.txt'],
-            detectedAt: ctx.now(),
-          },
-        };
-      }
-
-      if (readiness.ciStatus === 'failed' || readiness.mergeStateStatus === 'dirty') {
-        const message = `PR #${prNumber} CI checks or merge requirements failed: ${readiness.details ?? 'check status failed'}`;
-        emit('wait_merge.ci_failed', 'error', message, {
-          prNumber,
-          prUrl,
-          ciStatus: readiness.ciStatus,
-          mergeStateStatus: readiness.mergeStateStatus,
-        });
-        return {
-          outcome: 'failed',
-          failure: {
-            runUuid: ctx.runUuid,
-            phase: this.phase,
-            kind: 'command_failed',
-            message,
-            canRetry: false,
-            suggestedAction: 'Check GitHub Actions / CI logs and fix failing checks.',
-            artifacts: ['pr-url.txt'],
-            detectedAt: ctx.now(),
-          },
-        };
-      }
-
-      // If PR is open and CI is pending or awaiting merge
-      emit('wait_merge.waiting', 'info', `PR #${prNumber} is open; awaiting CI checks and merge`, {
-        prNumber,
-        prUrl,
-        state: 'open',
-        ciStatus: readiness.ciStatus,
-        mergeStateStatus: readiness.mergeStateStatus,
-      });
-      return { outcome: 'resting' };
-    } catch (err) {
-      const message = `Failed to query PR #${prNumber} merge readiness: ${err instanceof Error ? err.message : String(err)}`;
-      return this.fail(ctx, emit, 'github_failed', message);
+    // 2. Bounded in-process poll loop: check readiness, and if still pending,
+    // sleep and re-check rather than parking on the very first pending
+    // result. Mirrors legacy post-pr-review's bounded poller, minus the
+    // comment-tracking machinery this phase doesn't need. The first check is
+    // delayed by initialDelayMs (CI typically takes several minutes to even
+    // start reporting), then subsequent checks use the shorter pollIntervalMs.
+    if (this.maxPolls > 1 && this.initialDelayMs > 0) {
+      await this.sleep(this.initialDelayMs);
     }
+
+    for (let pollNumber = 1; pollNumber <= this.maxPolls; pollNumber++) {
+      try {
+        const readiness = await ctx.github.getPrMergeReadiness(ctx.repoFullName, prNumber);
+
+        if (readiness.isMerged || readiness.state === 'merged') {
+          emit('wait_merge.completed', 'info', `PR #${prNumber} is merged`, {
+            prNumber,
+            prUrl,
+            state: 'merged',
+            pollNumber,
+          });
+          return { outcome: 'passed' };
+        }
+
+        if (readiness.state === 'closed') {
+          const message = `PR #${prNumber} was closed without being merged`;
+          emit('wait_merge.failed', 'error', message, { prNumber, prUrl, state: 'closed' });
+          return {
+            outcome: 'failed',
+            failure: {
+              runUuid: ctx.runUuid,
+              phase: this.phase,
+              kind: 'github_failed',
+              message,
+              canRetry: false,
+              suggestedAction: 'Re-open or recreate the pull request.',
+              artifacts: ['pr-url.txt'],
+              detectedAt: ctx.now(),
+            },
+          };
+        }
+
+        if (readiness.ciStatus === 'failed' || readiness.mergeStateStatus === 'dirty') {
+          const message = `PR #${prNumber} CI checks or merge requirements failed: ${readiness.details ?? 'check status failed'}`;
+          emit('wait_merge.ci_failed', 'error', message, {
+            prNumber,
+            prUrl,
+            ciStatus: readiness.ciStatus,
+            mergeStateStatus: readiness.mergeStateStatus,
+          });
+          return {
+            outcome: 'failed',
+            failure: {
+              runUuid: ctx.runUuid,
+              phase: this.phase,
+              kind: 'command_failed',
+              message,
+              canRetry: false,
+              suggestedAction: 'Check GitHub Actions / CI logs and fix failing checks.',
+              artifacts: ['pr-url.txt'],
+              detectedAt: ctx.now(),
+            },
+          };
+        }
+
+        // PR open, CI pending or awaiting merge.
+        emit(
+          'wait_merge.waiting',
+          'info',
+          `PR #${prNumber} is open; awaiting CI checks and merge`,
+          {
+            prNumber,
+            prUrl,
+            state: 'open',
+            ciStatus: readiness.ciStatus,
+            mergeStateStatus: readiness.mergeStateStatus,
+            pollNumber,
+          },
+        );
+      } catch (err) {
+        const message = `Failed to query PR #${prNumber} merge readiness: ${err instanceof Error ? err.message : String(err)}`;
+        return this.fail(ctx, emit, 'github_failed', message);
+      }
+
+      if (pollNumber < this.maxPolls) {
+        await this.sleep(this.pollIntervalMs);
+      }
+    }
+
+    return { outcome: 'resting' };
   }
 
   private parsePrNumber(prUrl: string): number | undefined {
