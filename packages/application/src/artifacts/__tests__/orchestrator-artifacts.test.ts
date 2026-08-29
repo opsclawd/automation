@@ -43,6 +43,11 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
       'plan-review-passed.marker',
       'pr-summary.md',
       'pr-url.txt',
+      'finding-ledger.json',
+      'review-convergence.json',
+      'review-head-sha.txt',
+      'whole-change-review.json',
+      'follow-up-review.json',
     ];
     expect(ORCHESTRATOR_ARTIFACT_PATHS).toEqual(expected);
     expect(Object.isFrozen(ORCHESTRATOR_ARTIFACT_PATHS)).toBe(true);
