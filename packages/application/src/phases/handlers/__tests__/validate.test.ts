@@ -431,7 +431,7 @@ describe('ValidateHandler', () => {
       ]);
     });
 
-    it('does not write failure.json on validation pass and writes validation.headsha', async () => {
+    it('does not write failure.json on validation pass and writes validation evidence', async () => {
       const { runValidation } = deps('passed');
       const { ctx, artifacts } = makeCtx();
       ctx.git.headByCwd.set('/tmp/wt', 'head-sha-123');
@@ -444,9 +444,9 @@ describe('ValidateHandler', () => {
       }).run(ctx);
 
       const list = await artifacts.list('550e8400-e29b-41d4-a716-446655440000');
-      expect(list).toHaveLength(2);
+      expect(list).toHaveLength(3);
       const paths = list.map((a) => a.relativePath).sort();
-      expect(paths).toEqual(['validation.headsha', 'validation.result']);
+      expect(paths).toEqual(['validation.fingerprint', 'validation.headsha', 'validation.result']);
       const contents = await artifacts.read(
         '550e8400-e29b-41d4-a716-446655440000',
         'validation.result',
@@ -457,6 +457,11 @@ describe('ValidateHandler', () => {
         'validation.headsha',
       );
       expect(headsha.trim()).toBe('head-sha-123');
+      const fingerprint = await artifacts.read(
+        '550e8400-e29b-41d4-a716-446655440000',
+        'validation.fingerprint',
+      );
+      expect(fingerprint.trim().length).toBe(64);
     });
 
     it('overwrites validation.headsha on subsequent successful validations', async () => {

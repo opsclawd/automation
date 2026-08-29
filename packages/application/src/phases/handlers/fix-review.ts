@@ -4,6 +4,7 @@ import { createEventEmitter } from '../handler.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import { formatLedgerForFixPrompt, type FindingLedger } from '../../review-fix/finding-ledger.js';
+import { invalidateValidationEvidence } from '../validation-evidence.js';
 
 export interface FixReviewHandlerOpts {
   profileName?: string;
@@ -101,6 +102,8 @@ export class FixReviewHandler implements PhaseHandler {
     } catch {
       // Best-effort check
     }
+
+    await invalidateValidationEvidence(ctx, this.phase);
 
     emit('fix_review.completed', 'info', 'targeted review-fix pass completed', {
       policy: ctx.executionPolicy,

@@ -1,5 +1,6 @@
 export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'validation.headsha',
+  'validation.fingerprint',
   'review-fix-plan.json',
   'review-task-manifest.json',
   'review-triage.md',

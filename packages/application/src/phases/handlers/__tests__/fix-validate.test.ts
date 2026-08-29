@@ -1,8 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { FixValidateHandler } from '../fix-validate.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
+
+const { mockLoadPromptTemplate, mockRenderPrompt } = vi.hoisted(() => ({
+  mockLoadPromptTemplate: vi.fn(() => '# Template\n'),
+  mockRenderPrompt: vi.fn(async () => '# Prompt\n'),
+}));
+
+vi.mock('../../../prompts/load-prompt-template.js', () => ({
+  loadPromptTemplate: mockLoadPromptTemplate,
+}));
+
+vi.mock('../../../prompts/render-prompt.js', () => ({
+  renderPrompt: mockRenderPrompt,
+}));
 
 const RUN_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -196,5 +209,64 @@ describe('fix-validate records the validated commit', () => {
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('failed');
     await expect(artifacts.read(RUN_UUID, 'validation.headsha')).rejects.toThrow();
+  });
+
+  it('invalidates prior validation evidence in lean mode before repair agent runs', async () => {
+    const { ctx, artifacts } = makeCtx({ withFailureJson: true });
+    ctx.executionPolicy = 'standard';
+
+    // Prior validation passed artifact exists
+    await artifacts.write({
+      runId: RUN_UUID,
+      phaseId: 'validate',
+      relativePath: 'validation.result',
+      contents: 'passed\n',
+    });
+    await artifacts.write({
+      runId: RUN_UUID,
+      phaseId: 'validate',
+      relativePath: 'validation.fingerprint',
+      contents: 'prior-fingerprint-123\n',
+    });
+
+    const { FakeGitPort } = await import('../../../test-doubles/fake-git-port.js');
+    const fakeGit = new FakeGitPort();
+    fakeGit.currentBranchByCwd.set('/tmp/wt', 'ai/issue-7');
+    fakeGit.headByCwd.set('/tmp/wt', '0'.repeat(40));
+    (ctx as { git: unknown }).git = fakeGit;
+
+    ctx.promptsRoot = '/tmp';
+    ctx.startCommitSha = '0'.repeat(40);
+    ctx.expectedBranch = 'ai/issue-7';
+
+    const fakeAgent = {
+      invoke: async () => ({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 500,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'result.json',
+        contractViolations: [],
+        outcome: 'success' as const,
+      }),
+    };
+    (ctx as { agent: unknown }).agent = fakeAgent;
+    (ctx as { resolveProfile: unknown }).resolveProfile = () => 'opencode-frontier';
+    (ctx as { idFactory: unknown }).idFactory = () => 'inv-1';
+
+    const handler = new FixValidateHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+
+    // Validation evidence must be invalidated
+    const valResult = await artifacts.read(RUN_UUID, 'validation.result');
+    expect(valResult.trim()).toBe('invalidated');
+
+    const fingerprint = await artifacts.read(RUN_UUID, 'validation.fingerprint');
+    expect(fingerprint.trim()).toBe('');
   });
 });

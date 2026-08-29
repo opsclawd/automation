@@ -942,3 +942,48 @@ describe('changedFiles()', () => {
     expect(files).toEqual([]);
   });
 });
+
+describe('worktreeFileContent()', () => {
+  it('reads uncommitted file content from worktree', async () => {
+    const repo = await makeTempRepo();
+    await mkdir(join(repo, 'src'), { recursive: true });
+    await writeFile(join(repo, 'src', 'demo.ts'), 'export const val = 42;\n');
+
+    const content = await adapter.worktreeFileContent!(repo, 'src/demo.ts');
+    expect(content).toBe('export const val = 42;\n');
+  });
+
+  it('reads uncommitted file content from worktree with spaces in path', async () => {
+    const repo = await makeTempRepo();
+    await mkdir(join(repo, 'src with spaces'), { recursive: true });
+    await writeFile(
+      join(repo, 'src with spaces', 'file name with spaces.ts'),
+      'export const spaced = true;\n',
+    );
+
+    const content = await adapter.worktreeFileContent!(
+      repo,
+      'src with spaces/file name with spaces.ts',
+    );
+    expect(content).toBe('export const spaced = true;\n');
+  });
+
+  it('reads uncommitted file content from worktree with leading and trailing spaces in filename', async () => {
+    const repo = await makeTempRepo();
+    await mkdir(join(repo, 'src'), { recursive: true });
+    await writeFile(join(repo, 'src', ' leading space.ts'), 'export const leading = true;\n');
+    await writeFile(join(repo, 'src', 'trailing space.ts '), 'export const trailing = true;\n');
+
+    const contentLeading = await adapter.worktreeFileContent!(repo, 'src/ leading space.ts');
+    expect(contentLeading).toBe('export const leading = true;\n');
+
+    const contentTrailing = await adapter.worktreeFileContent!(repo, 'src/trailing space.ts ');
+    expect(contentTrailing).toBe('export const trailing = true;\n');
+  });
+
+  it('returns undefined when file does not exist in worktree', async () => {
+    const repo = await makeTempRepo();
+    const content = await adapter.worktreeFileContent!(repo, 'src/nonexistent.ts');
+    expect(content).toBeUndefined();
+  });
+});

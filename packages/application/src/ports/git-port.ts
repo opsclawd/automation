@@ -64,6 +64,7 @@ export interface GitPort {
   createdFiles(cwd: string, base: string, head?: string): Promise<string[]>;
   renamedFiles?(cwd: string, base: string, head?: string): Promise<GitRenamePair[]>;
   fileContent(cwd: string, ref: string, path: string): Promise<string>;
+  worktreeFileContent(cwd: string, path: string): Promise<string | undefined>;
 }
 
 export interface GitRenamePair {
