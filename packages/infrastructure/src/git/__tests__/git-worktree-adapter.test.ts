@@ -968,6 +968,19 @@ describe('worktreeFileContent()', () => {
     expect(content).toBe('export const spaced = true;\n');
   });
 
+  it('reads uncommitted file content from worktree with leading and trailing spaces in filename', async () => {
+    const repo = await makeTempRepo();
+    await mkdir(join(repo, 'src'), { recursive: true });
+    await writeFile(join(repo, 'src', ' leading space.ts'), 'export const leading = true;\n');
+    await writeFile(join(repo, 'src', 'trailing space.ts '), 'export const trailing = true;\n');
+
+    const contentLeading = await adapter.worktreeFileContent!(repo, 'src/ leading space.ts');
+    expect(contentLeading).toBe('export const leading = true;\n');
+
+    const contentTrailing = await adapter.worktreeFileContent!(repo, 'src/trailing space.ts ');
+    expect(contentTrailing).toBe('export const trailing = true;\n');
+  });
+
   it('returns undefined when file does not exist in worktree', async () => {
     const repo = await makeTempRepo();
     const content = await adapter.worktreeFileContent!(repo, 'src/nonexistent.ts');

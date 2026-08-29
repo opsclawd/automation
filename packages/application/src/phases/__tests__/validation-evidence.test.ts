@@ -205,4 +205,39 @@ describe('validation-evidence', () => {
     expect(mutatedFreshness.fresh).toBe(false);
     expect(mutatedFreshness.reason).toContain('stale');
   });
+
+  it('preserves leading and trailing whitespace in quoted paths and detects in-place content modifications', async () => {
+    const git = new FakeGitPort();
+    git.headByCwd.set('/test/repo', 'a'.repeat(40));
+    // Git status returns quoted paths for files with leading or trailing spaces
+    git.statusByCwd.set('/test/repo', ' M "src/ leading space.ts"\n M "src/trailing space.ts "\n');
+    git.worktreeFileContents.set('/test/repo:src/ leading space.ts', 'const a = 1;\n');
+    git.worktreeFileContents.set('/test/repo:src/trailing space.ts ', 'const b = 1;\n');
+
+    const artifacts = new FakeArtifactStore();
+    const ctx = {
+      runUuid: 'run-1',
+      cwd: '/test/repo',
+      artifacts,
+      git,
+      events: { publish: vi.fn() },
+      now: () => new Date(),
+    } as unknown as PhaseHandlerContext;
+
+    await recordValidationEvidence(ctx, 'validate');
+    const fp1 = await artifacts.read('run-1', VALIDATION_FINGERPRINT_ARTIFACT);
+
+    const initialFreshness = await verifyValidationFreshness(ctx);
+    expect(initialFreshness.fresh).toBe(true);
+
+    // In-place edit to file with trailing space in name
+    git.worktreeFileContents.set('/test/repo:src/trailing space.ts ', 'const b = 2; // modified\n');
+
+    const fp2 = await computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' });
+    expect(fp2).not.toBe(fp1.trim());
+
+    const mutatedFreshness = await verifyValidationFreshness(ctx);
+    expect(mutatedFreshness.fresh).toBe(false);
+    expect(mutatedFreshness.reason).toContain('stale');
+  });
 });

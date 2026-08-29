@@ -46,7 +46,7 @@ export async function computeWorktreeSourceFingerprint(ctx: {
     const trimmed = line.replace(/\r$/, '');
     if (!trimmed || trimmed.length < 3) continue;
     const rawPaths = parseGitStatusLine(trimmed);
-    const unquotedPaths = rawPaths.map((p) => unquoteGitPath(p).trim()).filter(Boolean);
+    const unquotedPaths = rawPaths.map((p) => unquoteGitPath(p)).filter((p) => p.length > 0);
     const nonArtifactPaths = unquotedPaths.filter((p) => !isOrchestratorArtifactPattern(p));
     if (nonArtifactPaths.length === 0) continue;
 
