@@ -13,6 +13,7 @@ import {
 } from '../../test-doubles/index.js';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../../phases/handler.js';
 import { createFindingLedger } from '../../review-fix/finding-ledger.js';
+import { recordValidationEvidence } from '../../phases/validation-evidence.js';
 
 class MockPhaseHandler implements PhaseHandler {
   public runCalls: PhaseHandlerContext[] = [];
@@ -81,11 +82,7 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
       return { outcome: 'passed' };
     });
     registerHandler('validate', async (ctx) => {
-      await artifacts.write({
-        runId: ctx.runUuid,
-        relativePath: 'validation.result',
-        contents: 'passed',
-      });
+      await recordValidationEvidence(ctx, 'validate');
       return { outcome: 'passed' };
     });
     registerHandler('fix-validate');
@@ -156,7 +153,9 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
         }) as unknown as PhaseHandlerContext,
     });
 
-    return { run, runRepo, phaseRepo, artifacts, handlers, executor };
+    git.headByCwd.set('/tmp/worktree', '0'.repeat(40));
+
+    return { run, runRepo, phaseRepo, artifacts, handlers, executor, git, agent };
   };
 
   it('fresh standard run executes only lean lifecycle phases', async () => {
@@ -313,7 +312,15 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
   });
 
   it('resumes correctly from each lean phase boundary', async () => {
-    const { run, runRepo, handlers, executor } = setupExecutor('standard');
+    const { run, runRepo, handlers, executor, git, artifacts } = setupExecutor('standard');
+
+    const fakeCtx = {
+      runUuid: run.uuid,
+      artifacts,
+      git,
+      cwd: '/tmp/worktree',
+    } as unknown as PhaseHandlerContext;
+    await recordValidationEvidence(fakeCtx, 'validate');
 
     // Simulate run that already completed read_issue, plan-design, implement, validate
     run.completedPhases = ['read_issue', 'plan-design', 'implement', 'validate'];
@@ -345,7 +352,15 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
   });
 
   it('resumes review cycle after fix-review without repeating fix-review mutation', async () => {
-    const { run, runRepo, handlers, artifacts, executor } = setupExecutor('standard');
+    const { run, runRepo, handlers, artifacts, executor, git } = setupExecutor('standard');
+
+    const fakeCtx = {
+      runUuid: run.uuid,
+      artifacts,
+      git,
+      cwd: '/tmp/worktree',
+    } as unknown as PhaseHandlerContext;
+    await recordValidationEvidence(fakeCtx, 'validate');
 
     run.completedPhases = ['read_issue', 'plan-design', 'implement', 'validate', 'initial-review'];
     runRepo.update(run.uuid, { completedPhases: run.completedPhases });
@@ -387,7 +402,15 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
   });
 
   it('resumes review cycle at follow-up-review after validation completes', async () => {
-    const { run, runRepo, handlers, artifacts, executor } = setupExecutor('standard');
+    const { run, runRepo, handlers, artifacts, executor, git } = setupExecutor('standard');
+
+    const fakeCtx = {
+      runUuid: run.uuid,
+      artifacts,
+      git,
+      cwd: '/tmp/worktree',
+    } as unknown as PhaseHandlerContext;
+    await recordValidationEvidence(fakeCtx, 'validate');
 
     run.completedPhases = ['read_issue', 'plan-design', 'implement', 'validate', 'initial-review'];
     runRepo.update(run.uuid, { completedPhases: run.completedPhases });

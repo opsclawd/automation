@@ -25,6 +25,7 @@
 orchestrator_artifact_paths() {
   cat << 'EOF'
 validation.headsha
+validation.fingerprint
 review-fix-plan.json
 review-task-manifest.json
 review-triage.md

@@ -22,6 +22,7 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
     // Any change here must also be updated in scripts/lib/artifacts.sh.
     const expected = [
       'validation.headsha',
+      'validation.fingerprint',
       'review-fix-plan.json',
       'review-task-manifest.json',
       'review-triage.md',

@@ -4,6 +4,7 @@ import type { PhaseHandlerContext } from '../../handler.js';
 import { FakeArtifactStore, FakeAgentPort, FakeGitPort } from '../../../test-doubles/index.js';
 import { PhaseName } from '@ai-sdlc/domain';
 import { createFindingLedger } from '../../../review-fix/finding-ledger.js';
+import { recordValidationEvidence } from '../../validation-evidence.js';
 
 const { mockLoadPromptTemplate, mockRenderPrompt } = vi.hoisted(() => ({
   mockLoadPromptTemplate: vi.fn(() => '# Template\n'),
@@ -25,6 +26,7 @@ describe('FollowUpReviewHandler', () => {
     git: FakeGitPort,
   ): PhaseHandlerContext => {
     git.currentBranchByCwd.set('/test/repo', 'ai/issue-1106');
+    git.headByCwd.set('/test/repo', '0'.repeat(40));
     return {
       runUuid: 'run-1',
       issueNumber: 1106,
@@ -48,6 +50,9 @@ describe('FollowUpReviewHandler', () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();
     const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
 
     await artifacts.write({
       runId: 'run-1',
@@ -105,7 +110,6 @@ describe('FollowUpReviewHandler', () => {
     });
 
     const handler = new FollowUpReviewHandler();
-    const ctx = createMockContext(artifacts, agent, git);
 
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
@@ -120,6 +124,9 @@ describe('FollowUpReviewHandler', () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();
     const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
 
     await artifacts.write({
       runId: 'run-1',
@@ -186,7 +193,6 @@ describe('FollowUpReviewHandler', () => {
     });
 
     const handler = new FollowUpReviewHandler();
-    const ctx = createMockContext(artifacts, agent, git);
 
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
@@ -204,6 +210,9 @@ describe('FollowUpReviewHandler', () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();
     const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
 
     await artifacts.write({
       runId: 'run-1',
@@ -262,7 +271,6 @@ describe('FollowUpReviewHandler', () => {
     });
 
     const handler = new FollowUpReviewHandler();
-    const ctx = createMockContext(artifacts, agent, git);
 
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
@@ -289,6 +297,9 @@ describe('FollowUpReviewHandler', () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();
     const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
 
     await artifacts.write({
       runId: 'run-1',
@@ -353,11 +364,63 @@ describe('FollowUpReviewHandler', () => {
     });
 
     const handler = new FollowUpReviewHandler();
-    const ctx = createMockContext(artifacts, agent, git);
 
     await handler.run(ctx);
 
     // Verify git.diff was called with the prior review HEAD SHA
     expect(diffSpy).toHaveBeenCalledWith('/test/repo', '1111111111111111111111111111111111111111');
+  });
+
+  it('blocks follow-up review and does not invoke agent when validation.result is missing', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('read_issue'),
+      relativePath: 'issue.md',
+      contents: '# Issue 1106',
+    });
+
+    const handler = new FollowUpReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('validation_failed');
+      expect(result.failure.message).toContain('deterministic validation has not passed');
+    }
+    expect(agent.invocations).toHaveLength(0);
+  });
+
+  it('blocks follow-up review and does not invoke agent when validation evidence is stale after source mutation', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    // Subsequent uncommitted source mutation occurs
+    git.statusByCwd.set('/test/repo', ' M src/new-fix.ts\n');
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('read_issue'),
+      relativePath: 'issue.md',
+      contents: '# Issue 1106',
+    });
+
+    const handler = new FollowUpReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('validation_failed');
+      expect(result.failure.message).toContain('Validation evidence is stale');
+    }
+    expect(agent.invocations).toHaveLength(0);
   });
 });

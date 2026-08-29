@@ -17,6 +17,7 @@ import {
   type WholeChangeVerdictOutcome,
 } from '../../review-fix/read-verdicts.js';
 import { createFindingLedger } from '../../review-fix/finding-ledger.js';
+import { verifyValidationFreshness } from '../validation-evidence.js';
 
 export interface InitialReviewHandlerOpts {
   profileName?: string;
@@ -75,14 +76,19 @@ export class InitialReviewHandler implements PhaseHandler {
       completeDiff = '';
     }
 
-    // 4. Collect validation evidence
-    let validationEvidence = 'Validation Status: passed';
-    try {
-      const valResult = await ctx.artifacts.read(ctx.runUuid, 'validation.result');
-      validationEvidence = `Validation result: ${valResult.trim()}`;
-    } catch {
-      // Best-effort
+    // 4. Verify and collect deterministic validation evidence
+    const freshness = await verifyValidationFreshness(ctx);
+    if (!freshness.fresh) {
+      const message = `Initial review blocked: deterministic validation has not passed or is stale (${freshness.reason ?? 'unknown reason'})`;
+      return this.fail(
+        ctx,
+        emit,
+        'validation_failed',
+        message,
+        'Run deterministic validation before executing initial review.',
+      );
     }
+    const validationEvidence = `Validation result: passed (fingerprint: ${freshness.expectedFingerprint?.slice(0, 12) ?? 'verified'})`;
 
     // 5. Resolve reviewer profile
     if (!ctx.resolveProfile) {

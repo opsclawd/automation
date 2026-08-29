@@ -3,6 +3,7 @@ import { InitialReviewHandler } from '../initial-review.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import { FakeArtifactStore, FakeAgentPort, FakeGitPort } from '../../../test-doubles/index.js';
 import { PhaseName } from '@ai-sdlc/domain';
+import { recordValidationEvidence } from '../../validation-evidence.js';
 
 const { mockLoadPromptTemplate, mockRenderPrompt } = vi.hoisted(() => ({
   mockLoadPromptTemplate: vi.fn(() => '# Template\n'),
@@ -24,6 +25,7 @@ describe('InitialReviewHandler', () => {
     git: FakeGitPort,
   ): PhaseHandlerContext => {
     git.currentBranchByCwd.set('/test/repo', 'ai/issue-1106');
+    git.headByCwd.set('/test/repo', '0'.repeat(40));
     return {
       runUuid: 'run-1',
       issueNumber: 1106,
@@ -43,10 +45,13 @@ describe('InitialReviewHandler', () => {
     } as unknown as PhaseHandlerContext;
   };
 
-  it('runs whole-change review and produces APPROVE verdict', async () => {
+  it('runs whole-change review and produces APPROVE verdict when validation is fresh', async () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();
     const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
 
     await artifacts.write({
       runId: 'run-1',
@@ -80,7 +85,6 @@ describe('InitialReviewHandler', () => {
     });
 
     const handler = new InitialReviewHandler();
-    const ctx = createMockContext(artifacts, agent, git);
 
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
@@ -96,6 +100,9 @@ describe('InitialReviewHandler', () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();
     const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
 
     await artifacts.write({
       runId: 'run-1',
@@ -140,7 +147,6 @@ describe('InitialReviewHandler', () => {
     });
 
     const handler = new InitialReviewHandler();
-    const ctx = createMockContext(artifacts, agent, git);
 
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
@@ -150,5 +156,59 @@ describe('InitialReviewHandler', () => {
     expect(ledger.entries.length).toBe(2); // AC-1 failure + 1 finding
     expect(ledger.entries[0].status).toBe('unresolved');
     expect(ledger.entries[1].status).toBe('unresolved');
+  });
+
+  it('blocks initial review and does not invoke agent when validation.result is missing', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('read_issue'),
+      relativePath: 'issue.md',
+      contents: '# Issue 1106\nGoal: Build feature',
+    });
+
+    const handler = new InitialReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('validation_failed');
+      expect(result.failure.message).toContain('deterministic validation has not passed');
+    }
+    expect(agent.invocations).toHaveLength(0);
+  });
+
+  it('blocks initial review and does not invoke agent when validation evidence is stale after source mutation', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    // Initial validation ran on clean state
+    await recordValidationEvidence(ctx, 'validate');
+
+    // Subsequent uncommitted source mutation occurs
+    git.statusByCwd.set('/test/repo', ' M src/app.ts\n');
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('read_issue'),
+      relativePath: 'issue.md',
+      contents: '# Issue 1106\nGoal: Build feature',
+    });
+
+    const handler = new InitialReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('validation_failed');
+      expect(result.failure.message).toContain('Validation evidence is stale');
+    }
+    expect(agent.invocations).toHaveLength(0);
   });
 });

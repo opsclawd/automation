@@ -8,7 +8,7 @@ import {
   formatDirtyPaths,
 } from '../../artifacts/orchestrator-artifacts.js';
 import { normalizeTaskPath } from '../../task-file-boundaries.js';
-import { recordValidationHeadSha } from '../validation-headsha.js';
+import { recordValidationEvidence } from '../validation-evidence.js';
 
 export function formatValidationBlockedMessage(
   dirtyPaths: readonly string[],
@@ -171,14 +171,7 @@ export class ValidateHandler implements PhaseHandler {
     }
 
     if (passed) {
-      await recordValidationHeadSha(ctx, 'validate');
-
-      await ctx.artifacts.write({
-        runId: ctx.runUuid,
-        phaseId: 'validate',
-        relativePath: 'validation.result',
-        contents: 'passed\n',
-      });
+      await recordValidationEvidence(ctx, 'validate');
       emit('validate.completed', 'info', 'validation passed', {
         commands: validationRunLength,
       });

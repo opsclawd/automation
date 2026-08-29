@@ -19,3 +19,4 @@ export * from './handlers/create-pr.js';
 export * from './handlers/wait-merge.js';
 export * from './handlers/post-pr-review.js';
 export * from './handlers/plan-review.js';
+export * from './validation-evidence.js';

@@ -27,6 +27,8 @@ import {
   assertInputsAvailable,
   MissingRequiredInputError,
   resolvePhaseGraph,
+  verifyValidationFreshness,
+  invalidateValidationEvidence,
 } from '../phases/index.js';
 import type { RunRepositoryPort, FailureRepositoryPort, LoggerPort } from '../ports.js';
 import type { PhaseRepositoryPort } from '../ports/phase-repository-port.js';
@@ -893,8 +895,15 @@ export class RunExecutor {
     }
 
     // 4. validate (deterministic validation)
-    if (!state.completedSet.has('validate')) {
-      const step = await this.executeSinglePhase(PhaseName('validate'), run, state);
+    const leanCtx = this.buildContext(state.currentRun, state.approvedInboundPaths);
+    const initialValidationFreshness = await verifyValidationFreshness(leanCtx);
+    const shouldRunInitialValidation =
+      !state.completedSet.has('validate') || !initialValidationFreshness.fresh;
+
+    if (shouldRunInitialValidation) {
+      const step = await this.executeSinglePhase(PhaseName('validate'), run, state, {
+        forceRun: state.completedSet.has('validate'),
+      });
       if (step.status === 'terminal') return step.terminalResult!;
 
       if (step.status === 'deferred') {
@@ -927,6 +936,14 @@ export class RunExecutor {
             phases,
           );
         }
+      } else if (step.status !== 'passed') {
+        return this.escalateToHumanReview(
+          state.currentRun,
+          PhaseName('validate'),
+          'deterministic validation failed',
+          now(),
+          phases,
+        );
       }
     }
 
@@ -1015,6 +1032,8 @@ export class RunExecutor {
             });
             if (fixStep.status === 'terminal') return fixStep.terminalResult!;
 
+            await invalidateValidationEvidence(ctx, fixReviewName);
+
             convergenceState = {
               iteration: convergenceState.iteration,
               subStep: 'validate',
@@ -1065,6 +1084,14 @@ export class RunExecutor {
                   phases,
                 );
               }
+            } else if (valStep.status !== 'passed') {
+              return this.escalateToHumanReview(
+                state.currentRun,
+                PhaseName('validate'),
+                'validation failed after review fix',
+                now(),
+                phases,
+              );
             }
 
             convergenceState = {
