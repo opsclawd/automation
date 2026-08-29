@@ -452,4 +452,141 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
     expect(result.run.status).toBe('needs_human_review');
     expect(handlers['follow-up-review']?.runCalls).toHaveLength(0); // Reviewer NEVER invoked!
   });
+
+  it('invalidates validation evidence during fix-validate and forces deterministic revalidation across resume boundary', async () => {
+    const { run, runRepo, handlers, artifacts, executor, git } = setupExecutor('standard');
+
+    // Simulate run that crashed immediately after fix-validate ran (before revalidation completed)
+    // Seed prior stale validation evidence that would exist before fix-validate mutation
+    await artifacts.write({
+      runId: run.uuid,
+      phaseId: 'validate',
+      relativePath: 'validation.result',
+      contents: 'passed\n',
+    });
+    await artifacts.write({
+      runId: run.uuid,
+      phaseId: 'validate',
+      relativePath: 'validation.fingerprint',
+      contents: 'stale-pre-fix-fingerprint\n',
+    });
+
+    // Run fix-validate phase
+    const fakeCtx = {
+      runUuid: run.uuid,
+      artifacts,
+      git,
+      cwd: '/tmp/worktree',
+      executionPolicy: 'standard',
+    } as unknown as PhaseHandlerContext;
+
+    // Running fix-validate invalidates the evidence
+    const { invalidateValidationEvidence } = await import('../../phases/validation-evidence.js');
+    await invalidateValidationEvidence(fakeCtx, 'fix-validate');
+
+    // Persist review convergence state indicating we are resuming
+    run.completedPhases = ['read_issue', 'plan-design', 'implement', 'validate'];
+    runRepo.update(run.uuid, { completedPhases: run.completedPhases });
+
+    // Validate handler records fresh evidence on revalidation
+    let revalidated = false;
+    handlers['validate']!.handlerFn = async (ctx) => {
+      revalidated = true;
+      await recordValidationEvidence(ctx, 'validate');
+      return { outcome: 'passed' };
+    };
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: ['issue.md', 'design.md', 'plan.md'],
+    });
+
+    expect(result.run.status).toBe('passed');
+    // Revalidation MUST have been forced because evidence was invalidated across the boundary
+    expect(revalidated).toBe(true);
+    expect(handlers['initial-review']?.runCalls).toHaveLength(1);
+  });
+
+  it('detects in-place source content modification of existing dirty file and forces revalidation before review', async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const testDir = await mkdtemp(join(tmpdir(), 'val-guarded-review-'));
+    try {
+      await mkdir(join(testDir, 'src'), { recursive: true });
+      const filePath = join(testDir, 'src', 'service.ts');
+
+      // Initial uncommitted source code
+      await writeFile(filePath, 'export const value = 1;\n', 'utf-8');
+
+      const { run, artifacts, executor, git } = setupExecutor('standard');
+
+      // Set worktree directory to actual testDir
+      git.statusByCwd.set(testDir, ' M src/service.ts\n');
+      git.headByCwd.set(testDir, 'a'.repeat(40));
+      git.currentBranchByCwd.set(testDir, 'ai/issue-1109');
+      git.worktreeFileContents.set(`${testDir}:src/service.ts`, 'export const value = 1;\n');
+
+      const ctxFactory = (r: Run) =>
+        ({
+          runId: r.uuid,
+          runUuid: r.uuid,
+          issueNumber: r.issueNumber,
+          repoFullName: 'owner/repo',
+          cwd: testDir,
+          executionPolicy: r.executionPolicy,
+          artifacts,
+          github: {},
+          git,
+          events: { publish: vi.fn() },
+          now: () => new Date(),
+          resolveProfile: () => 'opencode-frontier',
+        }) as unknown as PhaseHandlerContext;
+
+      (executor as unknown as { deps: { contextFactory: typeof ctxFactory } }).deps.contextFactory =
+        ctxFactory;
+
+      // Write issue.md required by initial-review handler
+      await artifacts.write({
+        runId: run.uuid,
+        phaseId: 'read_issue',
+        relativePath: 'issue.md',
+        contents: '# Issue 1109',
+      });
+
+      const reviewCtx = ctxFactory(run);
+
+      // Validate passes and records evidence against initial source content (version 1)
+      await recordValidationEvidence(reviewCtx, 'validate');
+      const initialFreshness = await (
+        await import('../../phases/validation-evidence.js')
+      ).verifyValidationFreshness(reviewCtx);
+      expect(initialFreshness.fresh).toBe(true);
+
+      // In-place mutation of the same dirty file (status line stays ' M src/service.ts')
+      // but content is changed to version 2
+      await writeFile(filePath, 'export const value = 2; // in-place code mutation\n', 'utf-8');
+      git.worktreeFileContents.set(
+        `${testDir}:src/service.ts`,
+        'export const value = 2; // in-place code mutation\n',
+      );
+
+      // Initial review handler checks freshness and will reject if stale
+      const initialReviewHandler = new (
+        await import('../../phases/handlers/initial-review.js')
+      ).InitialReviewHandler();
+
+      // Review handler directly fails if validation is not re-run
+      const reviewResult = await initialReviewHandler.run(reviewCtx);
+      expect(reviewResult.outcome).toBe('failed');
+      if (reviewResult.outcome === 'failed') {
+        expect(reviewResult.failure.kind).toBe('validation_failed');
+        expect(reviewResult.failure.message).toContain('Validation evidence is stale');
+      }
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
 });

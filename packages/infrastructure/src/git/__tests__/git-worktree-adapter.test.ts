@@ -942,3 +942,20 @@ describe('changedFiles()', () => {
     expect(files).toEqual([]);
   });
 });
+
+describe('worktreeFileContent()', () => {
+  it('reads uncommitted file content from worktree', async () => {
+    const repo = await makeTempRepo();
+    await mkdir(join(repo, 'src'), { recursive: true });
+    await writeFile(join(repo, 'src', 'demo.ts'), 'export const val = 42;\n');
+
+    const content = await adapter.worktreeFileContent!(repo, 'src/demo.ts');
+    expect(content).toBe('export const val = 42;\n');
+  });
+
+  it('returns undefined when file does not exist in worktree', async () => {
+    const repo = await makeTempRepo();
+    const content = await adapter.worktreeFileContent!(repo, 'src/nonexistent.ts');
+    expect(content).toBeUndefined();
+  });
+});

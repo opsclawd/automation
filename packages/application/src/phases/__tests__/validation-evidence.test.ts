@@ -116,4 +116,59 @@ describe('validation-evidence', () => {
     expect(freshness.fresh).toBe(false);
     expect(freshness.reason).toContain('stale');
   });
+
+  it('detects content changes in the same dirty tracked file and invalidates freshness', async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const testDir = await mkdtemp(join(tmpdir(), 'val-evidence-test-'));
+    try {
+      await mkdir(join(testDir, 'src'), { recursive: true });
+      const filePath = join(testDir, 'src', 'app.ts');
+
+      // Initial uncommitted source state
+      await writeFile(filePath, 'export const version = 1;\n', 'utf-8');
+
+      const git = new FakeGitPort();
+      git.headByCwd.set(testDir, 'a'.repeat(40));
+      git.statusByCwd.set(testDir, ' M src/app.ts\n');
+      git.worktreeFileContents.set(`${testDir}:src/app.ts`, 'export const version = 1;\n');
+
+      const artifacts = new FakeArtifactStore();
+      const ctx = {
+        runUuid: 'run-1',
+        cwd: testDir,
+        artifacts,
+        git,
+        events: { publish: vi.fn() },
+        now: () => new Date(),
+      } as unknown as PhaseHandlerContext;
+
+      await recordValidationEvidence(ctx, 'validate');
+      const fp1 = await artifacts.read('run-1', VALIDATION_FINGERPRINT_ARTIFACT);
+
+      // Verify evidence is currently fresh
+      const initialFreshness = await verifyValidationFreshness(ctx);
+      expect(initialFreshness.fresh).toBe(true);
+
+      // Mutate the content of the same dirty tracked file (git status line remains identical: ' M src/app.ts')
+      await writeFile(filePath, 'export const version = 2; // mutated code\n', 'utf-8');
+      git.worktreeFileContents.set(
+        `${testDir}:src/app.ts`,
+        'export const version = 2; // mutated code\n',
+      );
+
+      // Fingerprint must change due to content hash difference
+      const fp2 = await computeWorktreeSourceFingerprint({ git, cwd: testDir });
+      expect(fp2).not.toBe(fp1.trim());
+
+      // Freshness check must fail
+      const mutatedFreshness = await verifyValidationFreshness(ctx);
+      expect(mutatedFreshness.fresh).toBe(false);
+      expect(mutatedFreshness.reason).toContain('stale');
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
 });

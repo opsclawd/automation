@@ -15,9 +15,10 @@ export const VALIDATION_FINGERPRINT_ARTIFACT = 'validation.fingerprint';
  *
  * The source state fingerprint accounts for:
  * 1. HEAD commit SHA
- * 2. Uncommitted source changes (status lines for dirty/untracked files, ignoring orchestrator artifacts)
+ * 2. Uncommitted source changes (status code + relative path + SHA-256 content hash of the actual file on disk via GitPort, ignoring orchestrator artifacts)
  *
- * This ensures that even uncommitted changes in the lean pipeline (#1103) have a precise identity.
+ * This ensures that changing the content of an already-dirty source file or adding/modifying files
+ * immediately produces a new, distinct fingerprint.
  */
 export async function computeWorktreeSourceFingerprint(ctx: {
   git: GitPort;
@@ -37,21 +38,35 @@ export async function computeWorktreeSourceFingerprint(ctx: {
     rawStatus = '';
   }
 
-  const sourceLines: string[] = [];
+  const sourceEntries: string[] = [];
   const statusLines = rawStatus.split('\n').filter(Boolean);
 
   for (const line of statusLines) {
     const trimmed = line.replace(/\r$/, '');
     if (!trimmed || trimmed.length < 3) continue;
     const paths = parseGitStatusLine(trimmed);
-    const hasSourcePath = paths.some((p) => !isOrchestratorArtifactPattern(p));
-    if (hasSourcePath) {
-      sourceLines.push(trimmed);
+    const nonArtifactPaths = paths.filter((p) => !isOrchestratorArtifactPattern(p));
+    if (nonArtifactPaths.length === 0) continue;
+
+    const statusCode = trimmed.slice(0, 2);
+    for (const relPath of nonArtifactPaths) {
+      let contentHash = 'MISSING';
+      if (ctx.git.worktreeFileContent) {
+        try {
+          const content = await ctx.git.worktreeFileContent(ctx.cwd, relPath);
+          if (content !== undefined) {
+            contentHash = createHash('sha256').update(content).digest('hex');
+          }
+        } catch {
+          contentHash = 'MISSING';
+        }
+      }
+      sourceEntries.push(`${statusCode}:${relPath}:${contentHash}`);
     }
   }
 
-  sourceLines.sort();
-  const payload = `${headSha}\n${sourceLines.join('\n')}`;
+  sourceEntries.sort();
+  const payload = `${headSha}\n${sourceEntries.join('\n')}`;
   return createHash('sha256').update(payload).digest('hex');
 }
 

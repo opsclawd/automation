@@ -2,7 +2,7 @@ import { PhaseName, AgentProfileName, type Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
-import { recordValidationHeadSha } from '../validation-headsha.js';
+import { recordValidationHeadSha, invalidateValidationEvidence } from '../validation-evidence.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 
@@ -44,6 +44,9 @@ export class FixValidateHandler implements PhaseHandler {
     emit('fix_validate.started', 'info', 'fix-validate started (bounded 1-attempt repair)', {
       policy: ctx.executionPolicy,
     });
+
+    // Invalidate prior validation evidence before the repair Agent Invocation starts
+    await invalidateValidationEvidence(ctx, this.phase);
 
     const profile =
       ctx.resolveProfile?.('fix-validate') ??
