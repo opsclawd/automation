@@ -36,11 +36,11 @@ export class WaitMergeHandler implements PhaseHandler {
       return this.fail(ctx, emit, 'github_failed', `invalid pr-url.txt format: '${prUrl}'`);
     }
 
-    // 2. Query GitHub PR status
+    // 2. Query GitHub PR and CI merge readiness status
     try {
-      const prDetail = await ctx.github.getPr(ctx.repoFullName, prNumber);
+      const readiness = await ctx.github.getPrMergeReadiness(ctx.repoFullName, prNumber);
 
-      if (prDetail.state === 'merged') {
+      if (readiness.isMerged || readiness.state === 'merged') {
         emit('wait_merge.completed', 'info', `PR #${prNumber} is merged`, {
           prNumber,
           prUrl,
@@ -49,7 +49,7 @@ export class WaitMergeHandler implements PhaseHandler {
         return { outcome: 'passed' };
       }
 
-      if (prDetail.state === 'closed') {
+      if (readiness.state === 'closed') {
         const message = `PR #${prNumber} was closed without being merged`;
         emit('wait_merge.failed', 'error', message, { prNumber, prUrl, state: 'closed' });
         return {
@@ -67,15 +67,40 @@ export class WaitMergeHandler implements PhaseHandler {
         };
       }
 
-      // If PR is open, resting (or waiting for merge)
-      emit('wait_merge.waiting', 'info', `PR #${prNumber} is open; awaiting merge`, {
+      if (readiness.ciStatus === 'failed' || readiness.mergeStateStatus === 'dirty') {
+        const message = `PR #${prNumber} CI checks or merge requirements failed: ${readiness.details ?? 'check status failed'}`;
+        emit('wait_merge.ci_failed', 'error', message, {
+          prNumber,
+          prUrl,
+          ciStatus: readiness.ciStatus,
+          mergeStateStatus: readiness.mergeStateStatus,
+        });
+        return {
+          outcome: 'failed',
+          failure: {
+            runUuid: ctx.runUuid,
+            phase: this.phase,
+            kind: 'command_failed',
+            message,
+            canRetry: false,
+            suggestedAction: 'Check GitHub Actions / CI logs and fix failing checks.',
+            artifacts: ['pr-url.txt'],
+            detectedAt: ctx.now(),
+          },
+        };
+      }
+
+      // If PR is open and CI is pending or awaiting merge
+      emit('wait_merge.waiting', 'info', `PR #${prNumber} is open; awaiting CI checks and merge`, {
         prNumber,
         prUrl,
         state: 'open',
+        ciStatus: readiness.ciStatus,
+        mergeStateStatus: readiness.mergeStateStatus,
       });
       return { outcome: 'resting' };
     } catch (err) {
-      const message = `Failed to query PR #${prNumber} state: ${err instanceof Error ? err.message : String(err)}`;
+      const message = `Failed to query PR #${prNumber} merge readiness: ${err instanceof Error ? err.message : String(err)}`;
       return this.fail(ctx, emit, 'github_failed', message);
     }
   }

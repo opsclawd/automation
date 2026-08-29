@@ -30,6 +30,7 @@ export class FakeGitHubPort implements GitHubPort {
   createdPrs: PullRequest[] = [];
   createdPrInputs: CreatePullRequestInput[] = [];
   reviews = new Map<string, PullRequestReview[]>();
+  mergeReadiness = new Map<string, import('../ports/github-port.js').PrMergeReadiness>();
 
   async getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue> {
     const i = this.issues.get(`${repoFullName}/${issueNumber}`);
@@ -37,7 +38,10 @@ export class FakeGitHubPort implements GitHubPort {
     return i;
   }
 
-  async listIssueComments(repoFullName: string, issueNumber: number): Promise<GitHubIssueComment[]> {
+  async listIssueComments(
+    repoFullName: string,
+    issueNumber: number,
+  ): Promise<GitHubIssueComment[]> {
     return this.issueComments.get(`${repoFullName}/${issueNumber}`) ?? [];
   }
 
@@ -45,6 +49,27 @@ export class FakeGitHubPort implements GitHubPort {
     const pr = this.prs.get(`${repoFullName}/${prNumber}`);
     if (!pr) throw new Error(`no pr ${repoFullName}#${prNumber}`);
     return pr;
+  }
+
+  async getPrMergeReadiness(
+    repoFullName: string,
+    prNumber: number,
+  ): Promise<import('../ports/github-port.js').PrMergeReadiness> {
+    const key = `${repoFullName}/${prNumber}`;
+    const configured = this.mergeReadiness.get(key);
+    if (configured) return configured;
+
+    const pr = this.prs.get(key);
+    if (pr) {
+      return {
+        prNumber,
+        state: pr.state,
+        isMerged: pr.state === 'merged',
+        ciStatus: pr.state === 'merged' ? 'passed' : 'pending',
+        mergeStateStatus: pr.state === 'merged' ? 'clean' : 'unknown',
+      };
+    }
+    throw new Error(`no pr ${repoFullName}#${prNumber}`);
   }
 
   async createPullRequest(input: CreatePullRequestInput): Promise<PullRequest> {

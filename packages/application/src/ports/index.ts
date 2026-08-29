@@ -17,6 +17,7 @@ export type {
   PullRequestReview,
   GitHubReviewComment,
   CreatePullRequestInput,
+  PrMergeReadiness,
 } from './github-port.js';
 export type {
   GitPort,

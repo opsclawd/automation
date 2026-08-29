@@ -54,10 +54,21 @@ export interface PullRequestReview {
   user: string;
 }
 
+export interface PrMergeReadiness {
+  prNumber: number;
+  state: 'open' | 'closed' | 'merged';
+  isMerged: boolean;
+  ciStatus: 'passed' | 'failed' | 'pending';
+  mergeStateStatus?: 'clean' | 'blocked' | 'dirty' | 'behind' | 'unstable' | 'unknown' | undefined;
+  autoMergeEnabled?: boolean | undefined;
+  details?: string | undefined;
+}
+
 export interface GitHubPort {
   getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue>;
   listIssueComments(repoFullName: string, issueNumber: number): Promise<GitHubIssueComment[]>;
   getPr(repoFullName: string, prNumber: number): Promise<PullRequestDetail>;
+  getPrMergeReadiness(repoFullName: string, prNumber: number): Promise<PrMergeReadiness>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequest>;
   listReviewComments(repoFullName: string, prNumber: number): Promise<GitHubReviewComment[]>;
   listPrCommentsSince(

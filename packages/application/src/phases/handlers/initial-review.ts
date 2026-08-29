@@ -212,8 +212,14 @@ export class InitialReviewHandler implements PhaseHandler {
         relativePath: 'finding-ledger.json',
         contents: JSON.stringify(findingLedger, null, 2),
       });
-    } catch {
-      // Best-effort artifact write
+    } catch (writeErr) {
+      return this.fail(
+        ctx,
+        emit,
+        'command_failed',
+        `Failed to persist review artifacts: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`,
+        'Ensure artifact storage directory is writable.',
+      );
     }
 
     if (verdictOutcome.verdict === 'APPROVE') {

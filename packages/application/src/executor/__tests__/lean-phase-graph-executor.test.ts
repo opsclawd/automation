@@ -339,6 +339,139 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     expect(handlers['wait-merge']?.runCalls).toHaveLength(1);
   });
 
+  it('resumes review cycle after fix-review without repeating fix-review mutation', async () => {
+    const { run, runRepo, handlers, artifacts, executor } = setupExecutor('standard');
+
+    run.completedPhases = ['read_issue', 'plan-design', 'implement', 'validate', 'initial-review'];
+    runRepo.update(run.uuid, { completedPhases: run.completedPhases });
+
+    // Persist review convergence state indicating fix-review completed in iteration 1
+    await artifacts.write({
+      runId: run.uuid,
+      relativePath: 'review-convergence.json',
+      contents: JSON.stringify({
+        iteration: 1,
+        subStep: 'validate',
+        verdict: 'REQUEST_CHANGES',
+      }),
+    });
+
+    handlers['follow-up-review']!.handlerFn = async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'follow-up-review.json',
+        contents: JSON.stringify({ verdict: 'APPROVE', evaluations: [], new_findings: [] }),
+      });
+      return { outcome: 'passed' };
+    };
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: ['review-convergence.json'],
+    });
+
+    expect(result.run.status).toBe('passed');
+    // Did NOT rerun initial-review or fix-review!
+    expect(handlers['initial-review']?.runCalls).toHaveLength(0);
+    expect(handlers['fix-review']?.runCalls).toHaveLength(0);
+    // Proceeded to validate, follow-up-review, create-pr, wait-merge
+    expect(handlers['validate']?.runCalls).toHaveLength(1);
+    expect(handlers['follow-up-review']?.runCalls).toHaveLength(1);
+    expect(handlers['create-pr']?.runCalls).toHaveLength(1);
+  });
+
+  it('resumes review cycle at follow-up-review after validation completes', async () => {
+    const { run, runRepo, handlers, artifacts, executor } = setupExecutor('standard');
+
+    run.completedPhases = ['read_issue', 'plan-design', 'implement', 'validate', 'initial-review'];
+    runRepo.update(run.uuid, { completedPhases: run.completedPhases });
+
+    await artifacts.write({
+      runId: run.uuid,
+      relativePath: 'review-convergence.json',
+      contents: JSON.stringify({
+        iteration: 1,
+        subStep: 'follow-up-review',
+        verdict: 'REQUEST_CHANGES',
+      }),
+    });
+
+    handlers['follow-up-review']!.handlerFn = async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'follow-up-review.json',
+        contents: JSON.stringify({ verdict: 'APPROVE', evaluations: [], new_findings: [] }),
+      });
+      return { outcome: 'passed' };
+    };
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: ['review-convergence.json'],
+    });
+
+    expect(result.run.status).toBe('passed');
+    expect(handlers['initial-review']?.runCalls).toHaveLength(0);
+    expect(handlers['fix-review']?.runCalls).toHaveLength(0);
+    expect(handlers['validate']?.runCalls).toHaveLength(0);
+    expect(handlers['follow-up-review']?.runCalls).toHaveLength(1);
+  });
+
+  it('honors configured reviewConvergenceMaxIterations override', async () => {
+    const { run, handlers, artifacts, executor } = setupExecutor('standard');
+
+    handlers['initial-review']!.handlerFn = async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'whole-change-review.json',
+        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', findings: [{ severity: 'high' }] }),
+      });
+      return { outcome: 'passed' };
+    };
+
+    handlers['fix-review']!.handlerFn = async () => ({ outcome: 'passed' });
+
+    // Follow-up review always requests changes
+    handlers['follow-up-review']!.handlerFn = async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'follow-up-review.json',
+        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', evaluations: [], new_findings: [] }),
+      });
+      return { outcome: 'passed' };
+    };
+
+    // Override bound to 2 iterations
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+      reviewConvergenceMaxIterations: 2,
+    });
+
+    expect(result.run.status).toBe('needs_human_review');
+    expect(handlers['fix-review']?.runCalls).toHaveLength(2);
+    expect(handlers['follow-up-review']?.runCalls).toHaveLength(2);
+  });
+
+  it('escalates to human review and does not default to APPROVE when review artifacts are unreadable', async () => {
+    const { run, handlers, executor } = setupExecutor('standard');
+
+    // Handler returns passed but writes invalid/empty review artifacts
+    handlers['initial-review']!.handlerFn = async () => ({ outcome: 'passed' });
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('needs_human_review');
+    expect(handlers['create-pr']?.runCalls).toHaveLength(0);
+  });
+
   it('executes legacy canonical phases when executionPolicy is legacy', async () => {
     const { run, handlers, executor } = setupExecutor('legacy');
 

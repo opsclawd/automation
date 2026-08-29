@@ -66,6 +66,7 @@ export interface RunExecutorDeps {
   worktreeLifecycle?: WorktreeLifecyclePort;
   eventRepository?: EventRepositoryPort;
   stepRepository?: StepRepositoryPort;
+  reviewConvergenceMaxIterations?: number;
 }
 
 export interface ExecuteRunInput {
@@ -73,6 +74,7 @@ export interface ExecuteRunInput {
   skip: PhaseName[];
   presentArtifacts: string[];
   resumeDisposition?: ResumeDisposition;
+  reviewConvergenceMaxIterations?: number;
 }
 
 export interface PhaseRecord {
@@ -104,15 +106,6 @@ export class HandlerNotWiredError extends Error {
       `Handler for phase "${phase}" is not wired — register a real PhaseHandler implementation before invoking RunExecutor`,
     );
     this.name = 'HandlerNotWiredError';
-  }
-}
-
-function hasHandler(registry: PhaseHandlerRegistryPort, phase: PhaseName): boolean {
-  try {
-    registry.get(phase);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -941,131 +934,219 @@ export class RunExecutor {
     const prAlreadyCompleted =
       state.completedSet.has('create-pr') || state.completedSet.has('wait-merge');
     if (!prAlreadyCompleted) {
-      const reviewPhaseName = hasHandler(this.deps.registry, PhaseName('initial-review'))
-        ? PhaseName('initial-review')
-        : PhaseName('review-fix');
-
-      if (!state.completedSet.has(reviewPhaseName as string)) {
-        const step = await this.executeSinglePhase(reviewPhaseName, run, state);
-        if (step.status === 'terminal') return step.terminalResult!;
-      }
-
-      // Check review verdict
-      let verdict = 'APPROVE';
+      const initialReviewName = PhaseName('initial-review');
       const ctx = this.buildContext(state.currentRun, state.approvedInboundPaths);
-      try {
-        const wholeChangeResult = await ctx.artifacts.read(run.uuid, 'whole-change-review.json');
-        const parsed = JSON.parse(wholeChangeResult) as { verdict?: string };
-        verdict = (parsed.verdict ?? 'APPROVE').toUpperCase();
-      } catch {
-        try {
-          const ledgerRaw = await ctx.artifacts.read(run.uuid, 'finding-ledger.json');
-          const ledger = JSON.parse(ledgerRaw) as { entries?: Array<{ status?: string }> };
-          const hasUnresolved = ledger.entries?.some((e) => e.status === 'unresolved');
-          if (hasUnresolved) {
-            verdict = 'REQUEST_CHANGES';
-          }
-        } catch {
-          verdict = 'APPROVE';
-        }
+      const maxReviewFixIterations =
+        input.reviewConvergenceMaxIterations ?? this.deps.reviewConvergenceMaxIterations ?? 4;
+
+      interface LeanReviewConvergenceState {
+        iteration: number;
+        subStep: 'fix-review' | 'validate' | 'follow-up-review' | 'approved';
+        verdict: 'APPROVE' | 'REQUEST_CHANGES';
       }
 
-      if (verdict === 'REQUEST_CHANGES') {
-        // Review-Fix Convergence Loop
-        const maxReviewFixIterations = 4;
-        let iteration = 0;
+      let convergenceState: LeanReviewConvergenceState | undefined;
+      try {
+        const rawConv = await ctx.artifacts.read(run.uuid, 'review-convergence.json');
+        convergenceState = JSON.parse(rawConv) as LeanReviewConvergenceState;
+      } catch {
+        convergenceState = undefined;
+      }
 
-        while (iteration < maxReviewFixIterations) {
-          iteration++;
+      // If initial-review is not yet recorded as completed and no convergence state exists
+      if (!state.completedSet.has('initial-review') && !convergenceState) {
+        const step = await this.executeSinglePhase(initialReviewName, run, state);
+        if (step.status === 'terminal') return step.terminalResult!;
 
-          // A. fix-review
-          const fixReviewName = hasHandler(this.deps.registry, PhaseName('fix-review'))
-            ? PhaseName('fix-review')
-            : PhaseName('review-fix');
-          const fixStep = await this.executeSinglePhase(fixReviewName, run, state, {
-            forceRun: true,
-          });
-          if (fixStep.status === 'terminal') return fixStep.terminalResult!;
-
-          // B. deterministic validate after review fix
-          const valStep = await this.executeSinglePhase(PhaseName('validate'), run, state, {
-            forceRun: true,
-          });
-          if (valStep.status === 'terminal') return valStep.terminalResult!;
-          if (valStep.status === 'deferred') {
-            // Validation failed after fix -> bounded fix-validate attempt
-            const fixValStep = await this.executeSinglePhase(
-              PhaseName('fix-validate'),
-              run,
-              state,
-              {
-                forceRun: true,
-              },
-            );
-            if (fixValStep.status === 'terminal') return fixValStep.terminalResult!;
-            if (fixValStep.status !== 'passed') {
-              return this.escalateToHumanReview(
-                state.currentRun,
-                PhaseName('fix-validate'),
-                'validation repair failed after review fix',
-                now(),
-                phases,
-              );
-            }
-            const revalStep = await this.executeSinglePhase(PhaseName('validate'), run, state, {
-              forceRun: true,
-            });
-            if (revalStep.status === 'terminal') return revalStep.terminalResult!;
-            if (revalStep.status !== 'passed') {
-              return this.escalateToHumanReview(
-                state.currentRun,
-                PhaseName('validate'),
-                'revalidation failed after review fix repair',
-                now(),
-                phases,
-              );
-            }
-          }
-
-          // C. follow-up review
-          const followUpName = hasHandler(this.deps.registry, PhaseName('follow-up-review'))
-            ? PhaseName('follow-up-review')
-            : PhaseName('review-fix');
-          const follStep = await this.executeSinglePhase(followUpName, run, state, {
-            forceRun: true,
-          });
-          if (follStep.status === 'terminal') return follStep.terminalResult!;
-
-          let followUpVerdict = 'APPROVE';
+        let initialVerdict: 'APPROVE' | 'REQUEST_CHANGES' = 'REQUEST_CHANGES';
+        try {
+          const wholeChangeResult = await ctx.artifacts.read(run.uuid, 'whole-change-review.json');
+          const parsed = JSON.parse(wholeChangeResult) as { verdict?: string };
+          initialVerdict =
+            parsed.verdict?.toUpperCase() === 'APPROVE' ? 'APPROVE' : 'REQUEST_CHANGES';
+        } catch {
+          // If whole-change-review.json is missing or corrupted, check ledger
           try {
-            const followUpRaw = await ctx.artifacts.read(run.uuid, 'follow-up-review.json');
-            const parsed = JSON.parse(followUpRaw) as { verdict?: string };
-            followUpVerdict = (parsed.verdict ?? 'APPROVE').toUpperCase();
-          } catch {
-            try {
-              const ledgerRaw = await ctx.artifacts.read(run.uuid, 'finding-ledger.json');
-              const ledger = JSON.parse(ledgerRaw) as { entries?: Array<{ status?: string }> };
-              const hasUnresolved = ledger.entries?.some((e) => e.status === 'unresolved');
-              if (hasUnresolved) {
-                followUpVerdict = 'REQUEST_CHANGES';
-              }
-            } catch {
-              followUpVerdict = 'APPROVE';
-            }
-          }
-
-          if (followUpVerdict === 'APPROVE') {
-            break;
-          }
-
-          if (iteration >= maxReviewFixIterations) {
+            const ledgerRaw = await ctx.artifacts.read(run.uuid, 'finding-ledger.json');
+            const ledger = JSON.parse(ledgerRaw) as { entries?: Array<{ status?: string }> };
+            const hasUnresolved = ledger.entries?.some((e) => e.status === 'unresolved');
+            initialVerdict = hasUnresolved ? 'REQUEST_CHANGES' : 'APPROVE';
+          } catch (ledgerErr) {
             return this.escalateToHumanReview(
               state.currentRun,
-              followUpName,
-              `review-fix convergence loop exhausted after ${maxReviewFixIterations} iterations without approval`,
+              initialReviewName,
+              `Missing or unreadable review artifacts after initial-review: ${ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr)}`,
               now(),
               phases,
             );
+          }
+        }
+
+        if (initialVerdict === 'APPROVE') {
+          convergenceState = { iteration: 0, subStep: 'approved', verdict: 'APPROVE' };
+          await ctx.artifacts.write({
+            runId: run.uuid,
+            phaseId: initialReviewName,
+            relativePath: 'review-convergence.json',
+            contents: JSON.stringify(convergenceState, null, 2),
+          });
+        } else {
+          convergenceState = { iteration: 1, subStep: 'fix-review', verdict: 'REQUEST_CHANGES' };
+          await ctx.artifacts.write({
+            runId: run.uuid,
+            phaseId: initialReviewName,
+            relativePath: 'review-convergence.json',
+            contents: JSON.stringify(convergenceState, null, 2),
+          });
+        }
+      }
+
+      // Review-Fix Convergence Loop (persisted step-by-step for safe resume)
+      if (convergenceState && convergenceState.subStep !== 'approved') {
+        while (
+          convergenceState.subStep !== 'approved' &&
+          convergenceState.iteration <= maxReviewFixIterations
+        ) {
+          // Sub-step A: fix-review
+          if (convergenceState.subStep === 'fix-review') {
+            const fixReviewName = PhaseName('fix-review');
+            const fixStep = await this.executeSinglePhase(fixReviewName, run, state, {
+              forceRun: true,
+            });
+            if (fixStep.status === 'terminal') return fixStep.terminalResult!;
+
+            convergenceState = {
+              iteration: convergenceState.iteration,
+              subStep: 'validate',
+              verdict: 'REQUEST_CHANGES',
+            };
+            await ctx.artifacts.write({
+              runId: run.uuid,
+              phaseId: fixReviewName,
+              relativePath: 'review-convergence.json',
+              contents: JSON.stringify(convergenceState, null, 2),
+            });
+          }
+
+          // Sub-step B: deterministic validate after fix
+          if (convergenceState.subStep === 'validate') {
+            const valStep = await this.executeSinglePhase(PhaseName('validate'), run, state, {
+              forceRun: true,
+            });
+            if (valStep.status === 'terminal') return valStep.terminalResult!;
+            if (valStep.status === 'deferred') {
+              // Bounded 1-attempt repair via fix-validate
+              const fixValStep = await this.executeSinglePhase(
+                PhaseName('fix-validate'),
+                run,
+                state,
+                { forceRun: true },
+              );
+              if (fixValStep.status === 'terminal') return fixValStep.terminalResult!;
+              if (fixValStep.status !== 'passed') {
+                return this.escalateToHumanReview(
+                  state.currentRun,
+                  PhaseName('fix-validate'),
+                  'validation repair failed after review fix',
+                  now(),
+                  phases,
+                );
+              }
+              const revalStep = await this.executeSinglePhase(PhaseName('validate'), run, state, {
+                forceRun: true,
+              });
+              if (revalStep.status === 'terminal') return revalStep.terminalResult!;
+              if (revalStep.status !== 'passed') {
+                return this.escalateToHumanReview(
+                  state.currentRun,
+                  PhaseName('validate'),
+                  'revalidation failed after review fix repair',
+                  now(),
+                  phases,
+                );
+              }
+            }
+
+            convergenceState = {
+              iteration: convergenceState.iteration,
+              subStep: 'follow-up-review',
+              verdict: 'REQUEST_CHANGES',
+            };
+            await ctx.artifacts.write({
+              runId: run.uuid,
+              phaseId: PhaseName('validate'),
+              relativePath: 'review-convergence.json',
+              contents: JSON.stringify(convergenceState, null, 2),
+            });
+          }
+
+          // Sub-step C: follow-up-review
+          if (convergenceState.subStep === 'follow-up-review') {
+            const followUpName = PhaseName('follow-up-review');
+            const follStep = await this.executeSinglePhase(followUpName, run, state, {
+              forceRun: true,
+            });
+            if (follStep.status === 'terminal') return follStep.terminalResult!;
+
+            let followUpVerdict: 'APPROVE' | 'REQUEST_CHANGES' = 'REQUEST_CHANGES';
+            try {
+              const followUpRaw = await ctx.artifacts.read(run.uuid, 'follow-up-review.json');
+              const parsed = JSON.parse(followUpRaw) as { verdict?: string };
+              followUpVerdict =
+                parsed.verdict?.toUpperCase() === 'APPROVE' ? 'APPROVE' : 'REQUEST_CHANGES';
+            } catch {
+              try {
+                const ledgerRaw = await ctx.artifacts.read(run.uuid, 'finding-ledger.json');
+                const ledger = JSON.parse(ledgerRaw) as { entries?: Array<{ status?: string }> };
+                const hasUnresolved = ledger.entries?.some((e) => e.status === 'unresolved');
+                followUpVerdict = hasUnresolved ? 'REQUEST_CHANGES' : 'APPROVE';
+              } catch (ledgerErr) {
+                return this.escalateToHumanReview(
+                  state.currentRun,
+                  followUpName,
+                  `Missing or unreadable review artifacts after follow-up-review: ${ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr)}`,
+                  now(),
+                  phases,
+                );
+              }
+            }
+
+            if (followUpVerdict === 'APPROVE') {
+              convergenceState = {
+                iteration: convergenceState.iteration,
+                subStep: 'approved',
+                verdict: 'APPROVE',
+              };
+              await ctx.artifacts.write({
+                runId: run.uuid,
+                phaseId: followUpName,
+                relativePath: 'review-convergence.json',
+                contents: JSON.stringify(convergenceState, null, 2),
+              });
+              break;
+            }
+
+            if (convergenceState.iteration >= maxReviewFixIterations) {
+              return this.escalateToHumanReview(
+                state.currentRun,
+                followUpName,
+                `review-fix convergence loop exhausted after ${maxReviewFixIterations} iterations without approval`,
+                now(),
+                phases,
+              );
+            }
+
+            convergenceState = {
+              iteration: convergenceState.iteration + 1,
+              subStep: 'fix-review',
+              verdict: 'REQUEST_CHANGES',
+            };
+            await ctx.artifacts.write({
+              runId: run.uuid,
+              phaseId: followUpName,
+              relativePath: 'review-convergence.json',
+              contents: JSON.stringify(convergenceState, null, 2),
+            });
           }
         }
       }
@@ -1077,15 +1158,9 @@ export class RunExecutor {
       if (step.status === 'terminal') return step.terminalResult!;
     }
 
-    // 7. wait-merge (terminal CI / merge waiting)
-    const waitMergePhase = hasHandler(this.deps.registry, PhaseName('wait-merge'))
-      ? PhaseName('wait-merge')
-      : hasHandler(this.deps.registry, PhaseName('post-pr-review'))
-        ? PhaseName('post-pr-review')
-        : undefined;
-
-    if (waitMergePhase) {
-      const step = await this.executeSinglePhase(waitMergePhase, run, state);
+    // 7. wait-merge (terminal CI / merge waiting, strictly wait-merge)
+    if (!state.completedSet.has('wait-merge')) {
+      const step = await this.executeSinglePhase(PhaseName('wait-merge'), run, state);
       if (step.status === 'terminal') return step.terminalResult!;
     }
 

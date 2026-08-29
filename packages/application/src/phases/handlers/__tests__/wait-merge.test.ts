@@ -76,4 +76,58 @@ describe('WaitMergeHandler', () => {
     expect(result.outcome).toBe('failed');
     expect(result.failure?.message).toContain('closed without being merged');
   });
+
+  it('fails when CI checks fail', async () => {
+    const artifacts = new FakeArtifactStore();
+    const github = new FakeGitHubPort();
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('create-pr'),
+      relativePath: 'pr-url.txt',
+      contents: 'https://github.com/owner/repo/pull/42',
+    });
+
+    github.mergeReadiness.set('owner/repo/42', {
+      prNumber: 42,
+      state: 'open',
+      isMerged: false,
+      ciStatus: 'failed',
+      mergeStateStatus: 'blocked',
+      details: 'Failed checks: test (build)',
+    });
+
+    const handler = new WaitMergeHandler();
+    const ctx = createMockContext(artifacts, github);
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    expect(result.failure?.message).toContain('CI checks or merge requirements failed');
+  });
+
+  it('returns resting when PR is open and CI checks are pending', async () => {
+    const artifacts = new FakeArtifactStore();
+    const github = new FakeGitHubPort();
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('create-pr'),
+      relativePath: 'pr-url.txt',
+      contents: 'https://github.com/owner/repo/pull/42',
+    });
+
+    github.mergeReadiness.set('owner/repo/42', {
+      prNumber: 42,
+      state: 'open',
+      isMerged: false,
+      ciStatus: 'pending',
+      mergeStateStatus: 'unknown',
+    });
+
+    const handler = new WaitMergeHandler();
+    const ctx = createMockContext(artifacts, github);
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('resting');
+  });
 });
