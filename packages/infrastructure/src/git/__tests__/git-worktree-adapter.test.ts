@@ -953,6 +953,21 @@ describe('worktreeFileContent()', () => {
     expect(content).toBe('export const val = 42;\n');
   });
 
+  it('reads uncommitted file content from worktree with spaces in path', async () => {
+    const repo = await makeTempRepo();
+    await mkdir(join(repo, 'src with spaces'), { recursive: true });
+    await writeFile(
+      join(repo, 'src with spaces', 'file name with spaces.ts'),
+      'export const spaced = true;\n',
+    );
+
+    const content = await adapter.worktreeFileContent!(
+      repo,
+      'src with spaces/file name with spaces.ts',
+    );
+    expect(content).toBe('export const spaced = true;\n');
+  });
+
   it('returns undefined when file does not exist in worktree', async () => {
     const repo = await makeTempRepo();
     const content = await adapter.worktreeFileContent!(repo, 'src/nonexistent.ts');

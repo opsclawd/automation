@@ -171,4 +171,38 @@ describe('validation-evidence', () => {
       await rm(testDir, { recursive: true, force: true });
     }
   });
+
+  it('correctly unquotes Git status paths and detects content modifications in quoted files', async () => {
+    const git = new FakeGitPort();
+    git.headByCwd.set('/test/repo', 'a'.repeat(40));
+    // Git status returns quoted paths for files with spaces
+    git.statusByCwd.set('/test/repo', ' M "src/my special file.ts"\n');
+    git.worktreeFileContents.set('/test/repo:src/my special file.ts', 'const x = 1;\n');
+
+    const artifacts = new FakeArtifactStore();
+    const ctx = {
+      runUuid: 'run-1',
+      cwd: '/test/repo',
+      artifacts,
+      git,
+      events: { publish: vi.fn() },
+      now: () => new Date(),
+    } as unknown as PhaseHandlerContext;
+
+    await recordValidationEvidence(ctx, 'validate');
+    const fp1 = await artifacts.read('run-1', VALIDATION_FINGERPRINT_ARTIFACT);
+
+    const initialFreshness = await verifyValidationFreshness(ctx);
+    expect(initialFreshness.fresh).toBe(true);
+
+    // In-place edit to the quoted path source file (status line stays ' M "src/my special file.ts"')
+    git.worktreeFileContents.set('/test/repo:src/my special file.ts', 'const x = 2; // modified\n');
+
+    const fp2 = await computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' });
+    expect(fp2).not.toBe(fp1.trim());
+
+    const mutatedFreshness = await verifyValidationFreshness(ctx);
+    expect(mutatedFreshness.fresh).toBe(false);
+    expect(mutatedFreshness.reason).toContain('stale');
+  });
 });

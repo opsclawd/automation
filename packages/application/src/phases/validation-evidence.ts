@@ -3,6 +3,7 @@ import type { PhaseHandlerContext } from './handler.js';
 import type { GitPort } from '../ports/git-port.js';
 import {
   parseGitStatusLine,
+  unquoteGitPath,
   isOrchestratorArtifactPattern,
 } from '../artifacts/orchestrator-artifacts.js';
 
@@ -15,10 +16,10 @@ export const VALIDATION_FINGERPRINT_ARTIFACT = 'validation.fingerprint';
  *
  * The source state fingerprint accounts for:
  * 1. HEAD commit SHA
- * 2. Uncommitted source changes (status code + relative path + SHA-256 content hash of the actual file on disk via GitPort, ignoring orchestrator artifacts)
+ * 2. Uncommitted source changes (status code + unquoted normalized path + SHA-256 content hash of the actual file on disk via GitPort, ignoring orchestrator artifacts)
  *
- * This ensures that changing the content of an already-dirty source file or adding/modifying files
- * immediately produces a new, distinct fingerprint.
+ * This ensures that changing the content of an already-dirty source file (including quoted paths
+ * with spaces or special characters) or adding/modifying files immediately produces a new, distinct fingerprint.
  */
 export async function computeWorktreeSourceFingerprint(ctx: {
   git: GitPort;
@@ -44,22 +45,28 @@ export async function computeWorktreeSourceFingerprint(ctx: {
   for (const line of statusLines) {
     const trimmed = line.replace(/\r$/, '');
     if (!trimmed || trimmed.length < 3) continue;
-    const paths = parseGitStatusLine(trimmed);
-    const nonArtifactPaths = paths.filter((p) => !isOrchestratorArtifactPattern(p));
+    const rawPaths = parseGitStatusLine(trimmed);
+    const unquotedPaths = rawPaths.map((p) => unquoteGitPath(p).trim()).filter(Boolean);
+    const nonArtifactPaths = unquotedPaths.filter((p) => !isOrchestratorArtifactPattern(p));
     if (nonArtifactPaths.length === 0) continue;
 
     const statusCode = trimmed.slice(0, 2);
+    const isDeletion = statusCode.includes('D');
+
     for (const relPath of nonArtifactPaths) {
       let contentHash = 'MISSING';
-      if (ctx.git.worktreeFileContent) {
-        try {
-          const content = await ctx.git.worktreeFileContent(ctx.cwd, relPath);
-          if (content !== undefined) {
-            contentHash = createHash('sha256').update(content).digest('hex');
-          }
-        } catch {
-          contentHash = 'MISSING';
+      try {
+        const content = await ctx.git.worktreeFileContent(ctx.cwd, relPath);
+        if (content !== undefined) {
+          contentHash = createHash('sha256').update(content).digest('hex');
+        } else if (isDeletion) {
+          contentHash = 'DELETED';
+        } else {
+          // File is supposed to exist but content could not be read; record UNREADABLE
+          contentHash = 'UNREADABLE';
         }
+      } catch {
+        contentHash = isDeletion ? 'DELETED' : 'UNREADABLE';
       }
       sourceEntries.push(`${statusCode}:${relPath}:${contentHash}`);
     }
