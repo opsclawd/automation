@@ -18,6 +18,8 @@ export type {
   GitHubReviewComment,
   CreatePullRequestInput,
   PrMergeReadiness,
+  MergeMethod,
+  RequestAutoMergeResult,
 } from './github-port.js';
 export type {
   GitPort,

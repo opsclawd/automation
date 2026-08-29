@@ -64,12 +64,31 @@ export interface PrMergeReadiness {
   details?: string | undefined;
 }
 
+export type MergeMethod = 'squash' | 'merge' | 'rebase';
+
+/**
+ * Best-effort result of requesting GitHub auto-merge. `requested: false` is
+ * not an error — it means the repository has auto-merge disabled or the
+ * request otherwise couldn't be honored (e.g. branch protection). GitHub's
+ * configured merge requirements remain the authoritative gate either way;
+ * this never bypasses them.
+ */
+export interface RequestAutoMergeResult {
+  requested: boolean;
+  reason?: string | undefined;
+}
+
 export interface GitHubPort {
   getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue>;
   listIssueComments(repoFullName: string, issueNumber: number): Promise<GitHubIssueComment[]>;
   getPr(repoFullName: string, prNumber: number): Promise<PullRequestDetail>;
   getPrMergeReadiness(repoFullName: string, prNumber: number): Promise<PrMergeReadiness>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequest>;
+  requestAutoMerge(
+    repoFullName: string,
+    prNumber: number,
+    mergeMethod: MergeMethod,
+  ): Promise<RequestAutoMergeResult>;
   listReviewComments(repoFullName: string, prNumber: number): Promise<GitHubReviewComment[]>;
   listPrCommentsSince(
     repoFullName: string,

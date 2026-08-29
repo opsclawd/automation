@@ -1090,3 +1090,57 @@ describe('create-pr re-validates a stale or missing validation SHA', () => {
     expect(github.createdPrInputs).toHaveLength(0);
   });
 });
+
+describe('CreatePrHandler — GitHub auto-merge request', () => {
+  it('requests auto-merge with squash by default after opening the PR', async () => {
+    const { ctx, github } = await build();
+
+    const res = await HANDLER.run(ctx);
+
+    expect(res.outcome).toBe('passed');
+    expect(github.autoMergeRequests).toHaveLength(1);
+    expect(github.autoMergeRequests[0]).toMatchObject({
+      repoFullName: 'acme/widgets',
+      mergeMethod: 'squash',
+    });
+  });
+
+  it('honors a configured merge method', async () => {
+    const { ctx, github } = await build();
+    const handler = new CreatePrHandler({
+      headBranch: () => 'feat/issue-7',
+      autoMergeMethod: 'rebase',
+    });
+
+    await handler.run(ctx);
+
+    expect(github.autoMergeRequests[0]).toMatchObject({ mergeMethod: 'rebase' });
+  });
+
+  it('does not fail the phase when auto-merge is unavailable (e.g. disabled on the repo)', async () => {
+    const { ctx, github, events } = await build();
+    github.autoMergeResult = {
+      requested: false,
+      reason: 'Auto-merge is not enabled for this repository',
+    };
+
+    const res = await HANDLER.run(ctx);
+
+    expect(res.outcome).toBe('passed');
+    const warned = events.filter((e) => e.type === 'pr.auto_merge_not_requested');
+    expect(warned).toHaveLength(1);
+    expect(warned[0]!.message).toContain('Auto-merge is not enabled');
+  });
+
+  it('does not fail the phase when the auto-merge request itself throws', async () => {
+    const { ctx, github, events } = await build();
+    github.requestAutoMerge = () => Promise.reject(new Error('gh transient failure'));
+
+    const res = await HANDLER.run(ctx);
+
+    expect(res.outcome).toBe('passed');
+    const warned = events.filter((e) => e.type === 'pr.auto_merge_not_requested');
+    expect(warned).toHaveLength(1);
+    expect(warned[0]!.message).toContain('gh transient failure');
+  });
+});

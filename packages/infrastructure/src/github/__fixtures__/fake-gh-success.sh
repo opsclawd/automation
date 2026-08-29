@@ -23,6 +23,8 @@ case "$1 ${2:-}" in
     fi ;;
   "pr create")
     echo "https://github.com/o/r/pull/99" ;;
+  "pr merge")
+    echo '{"merged":false}' ;;
   "issue edit")
     : ;;  # label edit, no output
   *)

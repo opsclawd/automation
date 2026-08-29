@@ -154,6 +154,9 @@ export type {
   PullRequestDetail,
   GitHubReviewComment,
   CreatePullRequestInput,
+  PrMergeReadiness,
+  MergeMethod,
+  RequestAutoMergeResult,
 } from './ports/github-port.js';
 export type {
   GitPort,

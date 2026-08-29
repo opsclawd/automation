@@ -110,4 +110,28 @@ describe('GhCliAdapter writes', () => {
     expect(pr.number).toBe(99);
     expect(pr.state).toBe('open');
   });
+
+  it('requests auto-merge with the given method and reports the flag used', async () => {
+    const log = join(tmpdir(), `gh-log-${Date.now()}.txt`);
+    writeFileSync(log, '');
+    try {
+      const adapter = new GhCliAdapter({
+        ghPath: join(fixtures, 'fake-gh-success.sh'),
+        maxRetries: 0,
+        env: { FAKE_GH_LOG: log },
+      });
+      const result = await adapter.requestAutoMerge('o/r', 99, 'rebase');
+      expect(result).toEqual({ requested: true });
+      const calls = readFileSync(log, 'utf-8');
+      expect(calls).toContain('pr merge 99 --repo o/r --auto --rebase');
+    } finally {
+      rmSync(log, { force: true });
+    }
+  });
+
+  it('reports requested: false with a reason when auto-merge is unavailable', async () => {
+    const result = await bad.requestAutoMerge('o/r', 99, 'squash');
+    expect(result.requested).toBe(false);
+    expect(result.reason).toContain('Service Unavailable');
+  });
 });

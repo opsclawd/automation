@@ -11,6 +11,7 @@ import { isProtectedFilePath } from '../../scratch-file-remediation.js';
 import { recordValidationHeadSha } from '../validation-headsha.js';
 import { RunId } from '@ai-sdlc/domain';
 import type { RunValidation } from '../../run-validation.js';
+import type { MergeMethod } from '../../ports/github-port.js';
 
 export interface CreatePrHandlerOpts {
   headBranch: (ctx: PhaseHandlerContext) => string;
@@ -27,6 +28,13 @@ export interface CreatePrHandlerOpts {
     timeoutSeconds: number;
     logDir: string;
   };
+  /**
+   * Merge method requested via GitHub auto-merge after PR creation. Best-effort:
+   * requesting it does not bypass GitHub's configured branch protection, required
+   * checks, or required approvals — those remain the authoritative merge gate.
+   * Defaults to 'squash'.
+   */
+  autoMergeMethod?: MergeMethod;
 }
 
 export class CreatePrHandler implements PhaseHandler {
@@ -369,6 +377,7 @@ export class CreatePrHandler implements PhaseHandler {
       );
     }
 
+    let createdPrNumber: number | undefined;
     try {
       const pr = await ctx.github.createPullRequest({
         repoFullName: ctx.repoFullName,
@@ -378,6 +387,7 @@ export class CreatePrHandler implements PhaseHandler {
         body: summary,
       });
       prUrl = pr.url;
+      createdPrNumber = pr.number;
       emit('pr.created', 'info', `opened PR ${pr.number}`, { number: pr.number, url: pr.url });
     } catch (e) {
       const msg = `failed to create PR: ${(e as Error).message}`;
@@ -411,6 +421,41 @@ export class CreatePrHandler implements PhaseHandler {
         false,
         `PR created at ${prUrl} but pr-url.txt write failed. Verify PR and record URL manually, then resume.`,
         writtenArtifacts,
+      );
+    }
+
+    // Request GitHub auto-merge (best-effort, non-fatal). GitHub's configured
+    // branch protection, required checks, and required approvals remain the
+    // authoritative merge gate — this only asks GitHub to merge once those
+    // pass; it never bypasses them. If the repository has auto-merge disabled,
+    // this simply doesn't get requested and wait-merge falls back to polling
+    // for a manual merge, same as before this existed.
+    try {
+      if (createdPrNumber !== undefined) {
+        const autoMergeResult = await ctx.github.requestAutoMerge(
+          ctx.repoFullName,
+          createdPrNumber,
+          this.opts.autoMergeMethod ?? 'squash',
+        );
+        if (autoMergeResult.requested) {
+          emit('pr.auto_merge_requested', 'info', 'requested GitHub auto-merge', {
+            prUrl,
+          });
+        } else {
+          emit(
+            'pr.auto_merge_not_requested',
+            'warn',
+            `GitHub auto-merge unavailable: ${autoMergeResult.reason ?? 'unknown reason'}`,
+            { prUrl },
+          );
+        }
+      }
+    } catch (e) {
+      emit(
+        'pr.auto_merge_not_requested',
+        'warn',
+        `failed to request auto-merge: ${(e as Error).message}`,
+        { prUrl },
       );
     }
 

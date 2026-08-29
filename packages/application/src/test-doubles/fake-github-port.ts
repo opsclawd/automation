@@ -7,6 +7,8 @@ import type {
   PullRequestReview,
   GitHubReviewComment,
   CreatePullRequestInput,
+  MergeMethod,
+  RequestAutoMergeResult,
 } from '../ports/github-port.js';
 
 export class FakeGitHubPort implements GitHubPort {
@@ -31,6 +33,9 @@ export class FakeGitHubPort implements GitHubPort {
   createdPrInputs: CreatePullRequestInput[] = [];
   reviews = new Map<string, PullRequestReview[]>();
   mergeReadiness = new Map<string, import('../ports/github-port.js').PrMergeReadiness>();
+  autoMergeRequests: Array<{ repoFullName: string; prNumber: number; mergeMethod: MergeMethod }> =
+    [];
+  autoMergeResult: RequestAutoMergeResult = { requested: true };
 
   async getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue> {
     const i = this.issues.get(`${repoFullName}/${issueNumber}`);
@@ -81,6 +86,15 @@ export class FakeGitHubPort implements GitHubPort {
     };
     this.createdPrs.push(pr);
     return pr;
+  }
+
+  async requestAutoMerge(
+    repoFullName: string,
+    prNumber: number,
+    mergeMethod: MergeMethod,
+  ): Promise<RequestAutoMergeResult> {
+    this.autoMergeRequests.push({ repoFullName, prNumber, mergeMethod });
+    return this.autoMergeResult;
   }
 
   async listReviewComments(repoFullName: string, prNumber: number): Promise<GitHubReviewComment[]> {
