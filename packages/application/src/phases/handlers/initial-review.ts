@@ -18,6 +18,7 @@ import {
 } from '../../review-fix/read-verdicts.js';
 import { createFindingLedger } from '../../review-fix/finding-ledger.js';
 import { verifyValidationFreshness } from '../validation-evidence.js';
+import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 
 export interface InitialReviewHandlerOpts {
   profileName?: string;
@@ -38,7 +39,7 @@ export class InitialReviewHandler implements PhaseHandler {
     try {
       const wholeChangeResult = await ctx.artifacts.read(ctx.runUuid, 'whole-change-review.json');
       if (wholeChangeResult.trim().length > 0) {
-        const parsed = JSON.parse(wholeChangeResult) as { verdict?: string };
+        const parsed = parseAgentResultJson(wholeChangeResult) as { verdict?: string };
         if (parsed.verdict === 'APPROVE' || parsed.verdict === 'approve') {
           emit(
             'initial_review.completed',

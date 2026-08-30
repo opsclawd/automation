@@ -4,6 +4,7 @@ import type { ArtifactStore, StructuredResultRepairPort } from '../ports.js';
 import { ArtifactNotFoundError } from '../ports.js';
 import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
 import { hasEvidence } from './failure-classification.js';
+import { parseAgentResultJson } from './parse-agent-json.js';
 
 export type ExtractResultOutcome<T = unknown> =
   | { ok: true; result: T; repairInvocationId?: AgentInvocationId }
@@ -74,7 +75,7 @@ async function readAndValidate(
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = parseAgentResultJson(raw);
   } catch (e) {
     return {
       ok: false,

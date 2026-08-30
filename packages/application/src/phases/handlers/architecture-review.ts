@@ -10,6 +10,7 @@ import {
   type ArchitectureReviewResult,
 } from '../../results/schemas/architecture-review.js';
 import { plannerPackageSchema } from '../../results/schemas/planner-package.js';
+import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 import { validatePlanTaskList } from '../plan-tasks.js';
 
 export interface ArchitectureReviewHandlerOpts {
@@ -48,7 +49,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     try {
       const existingRaw = await ctx.artifacts.read(ctx.runUuid, 'architecture-review.json');
       if (existingRaw.trim().length > 0) {
-        const parsedObj = JSON.parse(existingRaw);
+        const parsedObj = parseAgentResultJson(existingRaw);
         const parseResult = architectureReviewResultSchema.safeParse(parsedObj);
         if (parseResult.success && isApprovedArchitectureReview(parseResult.data)) {
           emit(
@@ -119,7 +120,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     let reviewData: ArchitectureReviewResult;
     try {
       const rawJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-      const parsedObj = JSON.parse(rawJson);
+      const parsedObj = parseAgentResultJson(rawJson);
       const parseResult = architectureReviewResultSchema.safeParse(parsedObj);
       if (!parseResult.success) {
         return this.fail(
@@ -251,7 +252,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       let correctedPlanMd: string;
       try {
         const rawFixJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-        const parsedFixObj = JSON.parse(rawFixJson);
+        const parsedFixObj = parseAgentResultJson(rawFixJson);
         const fixParseResult = plannerPackageSchema.safeParse(parsedFixObj);
         if (!fixParseResult.success) {
           return this.needsHumanReview(
@@ -345,7 +346,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       let revalData: ArchitectureReviewResult;
       try {
         const rawRevalJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-        const parsedRevalObj = JSON.parse(rawRevalJson);
+        const parsedRevalObj = parseAgentResultJson(rawRevalJson);
         const parseResult = architectureReviewResultSchema.safeParse(parsedRevalObj);
         if (!parseResult.success) {
           return this.needsHumanReview(

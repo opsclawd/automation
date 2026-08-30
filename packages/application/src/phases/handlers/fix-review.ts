@@ -3,6 +3,7 @@ import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } fro
 import { createEventEmitter } from '../handler.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
+import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 import { formatLedgerForFixPrompt, type FindingLedger } from '../../review-fix/finding-ledger.js';
 import { invalidateValidationEvidence } from '../validation-evidence.js';
 
@@ -81,7 +82,7 @@ export class FixReviewHandler implements PhaseHandler {
     // 5. Check result.json for cannot_fix verdict
     try {
       const resultRaw = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-      const parsed = JSON.parse(resultRaw) as { result?: string };
+      const parsed = parseAgentResultJson(resultRaw) as { result?: string };
       if (parsed.result === 'cannot_fix') {
         const message = 'targeted fixer reported it cannot fix the review findings';
         emit('fix_review.failed', 'error', message);
