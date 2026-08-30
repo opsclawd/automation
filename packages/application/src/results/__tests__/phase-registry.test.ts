@@ -18,6 +18,7 @@ describe('PHASE_RESULT_REGISTRY', () => {
     const expected = [
       'implement',
       'architecture-review',
+      'plan-design',
       'quality-review',
       'fix-review',
       'initial-review',
@@ -41,6 +42,7 @@ describe('PHASE_RESULT_REGISTRY', () => {
   it.each([
     'implement',
     'architecture-review',
+    'plan-design',
     'quality-review',
     'fix-review',
     'create-pr',

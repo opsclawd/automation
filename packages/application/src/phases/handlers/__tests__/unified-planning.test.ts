@@ -243,7 +243,7 @@ describe('Unified Planning (Issue #1092)', () => {
     expect(result.outcome).toBe('failed');
     if (result.outcome === 'failed') {
       expect(result.failure.kind).toBe('invalid_result');
-      expect(result.failure.message).toContain('Result schema validation failed');
+      expect(result.failure.message).toContain('Result extraction failed');
     }
     expect(agent.invocations).toHaveLength(1);
   });

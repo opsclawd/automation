@@ -14,6 +14,7 @@ import { fixValidateResultSchema } from './schemas/fix-validate.js';
 import { planFixResultSchema } from './schemas/plan-fix.js';
 import { followUpReviewResultSchema } from './schemas/follow-up-review.js';
 import { architectureReviewResultSchema } from './schemas/architecture-review.js';
+import { plannerPackageSchema } from './schemas/planner-package.js';
 
 export interface PhaseResultMeta {
   schema: ZodTypeAny;
@@ -28,17 +29,17 @@ export function normalizePhaseId(phaseId: string): string {
 // Phases with no result entry (null) do not produce result.json artifacts.
 // TODO: converge PHASE_RESULT_REGISTRY into CANONICAL_PHASE_ORDER so there's one source of truth.
 export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
-  'plan-design': null,
-  'architecture-review': null,
+  'plan-design': 'plan-design',
+  'architecture-review': 'architecture-review',
   'plan-write': null,
   'plan-review': null,
   implement: 'implement',
   compound: 'compound',
   'create-pr': 'create-pr',
   'review-fix': null,
-  'initial-review': null,
-  'fix-review': null,
-  'follow-up-review': null,
+  'initial-review': 'initial-review',
+  'fix-review': 'fix-review',
+  'follow-up-review': 'follow-up-review',
   'wait-merge': null,
   read_issue: null,
   validate: null,
@@ -136,5 +137,10 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
     schema: architectureReviewResultSchema,
     schemaContractText:
       '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "requirements_checks": Array<{\n    "requirement": string,\n    "result": "PASS" | "FAIL",\n    "evidence"?: string\n  }>,\n  "findings"?: Array<{\n    "category"?: "requirements_reconciliation" | "contract_conservation" | "invariant_completeness" | "downstream_compatibility" | "other",\n    "severity": "critical" | "high" | "medium" | "low",\n    "target"?: string,\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string\n  }>,\n  "summary"?: string\n}',
+  },
+  'plan-design': {
+    schema: plannerPackageSchema,
+    schemaContractText:
+      '{\n  "design_md": string,\n  "plan_md": string,\n  "summary"?: string,\n  "result"?: "ready" | "blocked"\n}',
   },
 };

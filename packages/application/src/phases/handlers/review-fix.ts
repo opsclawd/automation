@@ -1,9 +1,7 @@
 import {
   PhaseName,
   RunId,
-  AgentInvocationId,
   AgentProfileName,
-  type AgentRuntimeKind,
   type Failure,
   type FailureKind,
 } from '@ai-sdlc/domain';
@@ -16,10 +14,12 @@ import type { RunValidation } from '../../run-validation.js';
 import { recordValidationHeadSha } from '../validation-headsha.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
-import { parseAgentResultJson } from '../../results/parse-agent-json.js';
+import { PHASE_RESULT_REGISTRY } from '../../results/phase-registry.js';
+import type { WholeChangeReviewResult } from '../../results/schemas/whole-change-review.js';
+import type { NarrowVerificationResult } from '../../results/schemas/narrow-verification.js';
 import {
-  readWholeChangeReviewVerdict,
-  readNarrowVerificationVerdict,
+  evaluateWholeChangeReviewVerdict,
+  evaluateNarrowVerificationVerdict,
   type WholeChangeVerdictOutcome,
   type NarrowVerificationVerdictOutcome,
 } from '../../review-fix/read-verdicts.js';
@@ -135,7 +135,7 @@ export class ReviewFixHandler implements PhaseHandler {
     try {
       const wholeChangeResult = await ctx.artifacts.read(ctx.runUuid, 'whole-change-review.json');
       if (wholeChangeResult.trim().length > 0) {
-        const parsed = parseAgentResultJson(wholeChangeResult) as { verdict?: string };
+        const parsed = JSON.parse(wholeChangeResult) as { verdict?: string };
         if (parsed.verdict === 'APPROVE' || parsed.verdict === 'approve') {
           emit(
             'review_fix.completed',
@@ -156,7 +156,7 @@ export class ReviewFixHandler implements PhaseHandler {
         'narrow-verification.json',
       );
       if (narrowVerificationResult.trim().length > 0) {
-        const parsed = parseAgentResultJson(narrowVerificationResult) as { verdict?: string };
+        const parsed = JSON.parse(narrowVerificationResult) as { verdict?: string };
         if (parsed.verdict === 'PASS' || parsed.verdict === 'pass') {
           emit(
             'review_fix.completed',
@@ -233,7 +233,7 @@ export class ReviewFixHandler implements PhaseHandler {
     }
 
     // 7. Invoke single-shot reviewer agent (read-only)
-    const runResult = await runSingleShotAgentPhase(ctx, {
+    const runResult = await runSingleShotAgentPhase<WholeChangeReviewResult>(ctx, {
       phase: this.phase,
       profile,
       step: 'whole-change-review',
@@ -245,7 +245,7 @@ export class ReviewFixHandler implements PhaseHandler {
         validation_evidence: validationEvidence,
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
-      skipResultExtraction: true,
+      resultMeta: PHASE_RESULT_REGISTRY['whole-change-review']!,
     });
 
     if (runResult.outcome !== 'passed') {
@@ -254,44 +254,9 @@ export class ReviewFixHandler implements PhaseHandler {
     }
 
     // 8. Extract and validate structured review verdict
-    const invocation = {
-      id: AgentInvocationId(ctx.idFactory?.() ?? `${ctx.runUuid}:whole-change-review`),
-      runId: RunId(ctx.runUuid),
-      phaseId: PhaseName('whole-change-review'),
-      profile,
-      runtime: 'opencode' as AgentRuntimeKind,
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-20250514',
-      promptPath: '',
-      promptChars: 0,
-      stdoutPath: '',
-      stderrPath: '',
-      startedAt: ctx.now(),
-      endedAt: ctx.now(),
-      startCommitSha: ctx.startCommitSha ?? '',
-      exitCode: 0,
-      durationMs: 0,
-      timeoutMs: 0,
-      outcome: 'success' as const,
-      contractViolations: [],
-      resultJsonPath: 'result.json',
-    };
-
-    const verdictOutcome = await readWholeChangeReviewVerdict(
-      invocation,
-      { artifacts: ctx.artifacts, agent: ctx.agent },
-      { cwd: ctx.cwd, issueBodyPresent: issueMd.trim().length > 0 },
-    );
-
-    if (!verdictOutcome.ok) {
-      return this.fail(
-        ctx,
-        emit,
-        'invalid_result',
-        `Failed to parse whole-change review result: ${verdictOutcome.detail}`,
-        'Ensure the reviewer returns result.json matching wholeChangeReviewResultSchema.',
-      );
-    }
+    const verdictOutcome = evaluateWholeChangeReviewVerdict(runResult.result!, {
+      issueBodyPresent: issueMd.trim().length > 0,
+    });
 
     // Persist review artifacts (code-review.md and whole-change-review.json)
     const formattedReviewMd = this.formatReviewMarkdown(verdictOutcome);
@@ -528,7 +493,7 @@ export class ReviewFixHandler implements PhaseHandler {
       }
     }
 
-    const verifyRunResult = await runSingleShotAgentPhase(ctx, {
+    const verifyRunResult = await runSingleShotAgentPhase<NarrowVerificationResult>(ctx, {
       phase: this.phase,
       profile: verifyProfile,
       step: 'narrow-verification',
@@ -541,7 +506,7 @@ export class ReviewFixHandler implements PhaseHandler {
         fix_diff: fixDiff || '(no diff)',
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
-      skipResultExtraction: true,
+      resultMeta: PHASE_RESULT_REGISTRY['narrow-verification']!,
     });
 
     if (verifyRunResult.outcome !== 'passed') {
@@ -552,54 +517,13 @@ export class ReviewFixHandler implements PhaseHandler {
       return verifyRunResult;
     }
 
-    const verifyInvocation = {
-      id: AgentInvocationId(ctx.idFactory?.() ?? `${ctx.runUuid}:narrow-verification`),
-      runId: RunId(ctx.runUuid),
-      phaseId: PhaseName('narrow-verification'),
-      profile: verifyProfile,
-      runtime: 'opencode' as AgentRuntimeKind,
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-20250514',
-      promptPath: '',
-      promptChars: 0,
-      stdoutPath: '',
-      stderrPath: '',
-      startedAt: ctx.now(),
-      endedAt: ctx.now(),
-      startCommitSha: headBeforeFix ?? ctx.startCommitSha ?? '',
-      exitCode: 0,
-      durationMs: 0,
-      timeoutMs: 0,
-      outcome: 'success' as const,
-      contractViolations: [],
-      resultJsonPath: 'result.json',
-    };
-
     const originalFindingsCount =
       reviewOutcome.findings.length +
       reviewOutcome.acceptanceCriteria.filter((c) => c.result?.toUpperCase() === 'FAIL').length;
 
-    const verifyOutcome = await readNarrowVerificationVerdict(
-      verifyInvocation,
-      { artifacts: ctx.artifacts, agent: ctx.agent },
-      { cwd: ctx.cwd, originalFindingsCount },
-    );
-
-    if (!verifyOutcome.ok) {
-      emit(
-        'review_fix.verification_failed',
-        'error',
-        `Failed to parse narrow verification result: ${verifyOutcome.detail}`,
-        { policy: ctx.executionPolicy },
-      );
-      return this.fail(
-        ctx,
-        emit,
-        'invalid_result',
-        `Failed to parse narrow verification result: ${verifyOutcome.detail}`,
-        'Ensure the verifier returns result.json matching narrowVerificationResultSchema.',
-      );
-    }
+    const verifyOutcome = evaluateNarrowVerificationVerdict(verifyRunResult.result!, {
+      originalFindingsCount,
+    });
 
     // Persist verification artifacts
     const formattedVerificationMd = this.formatVerificationMarkdown(verifyOutcome);

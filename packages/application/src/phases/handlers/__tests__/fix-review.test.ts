@@ -71,6 +71,12 @@ describe('FixReviewHandler', () => {
       contents: JSON.stringify(ledger),
     });
 
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
     agent.enqueue('fix-review', () => ({
       runtime: 'opencode',
       provider: 'anthropic',
@@ -92,5 +98,106 @@ describe('FixReviewHandler', () => {
     // Validation evidence must be invalidated
     const valResultAfter = await artifacts.read('run-1', 'validation.result');
     expect(valResultAfter.trim()).toBe('invalidated');
+  });
+
+  it('returns needs_human_review when fixer reports cannot_fix', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    const ledger = createFindingLedger([
+      {
+        severity: 'high',
+        files: ['src/index.ts'],
+        evidence: 'Fatal bug',
+        rationale: 'Crash risk',
+        minimal_correction: 'Refactor',
+      },
+    ]);
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(ledger),
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'cannot_fix' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain('targeted fixer reported it cannot fix');
+    }
+  });
+
+  it('tolerates control characters in result.json via centralized ingestion', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    const ledger = createFindingLedger([
+      {
+        severity: 'high',
+        files: ['src/index.ts'],
+        evidence: 'Fatal bug',
+        rationale: 'Crash risk',
+        minimal_correction: 'Refactor',
+      },
+    ]);
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(ledger),
+    });
+
+    // Contains raw newline inside rebuttal string literal (defect from #1127)
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: '{\n  "result": "done_no_fixes_needed",\n  "rebuttal": "Fixed already.\nLine 2"\n}',
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
   });
 });

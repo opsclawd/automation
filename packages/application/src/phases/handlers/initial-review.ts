@@ -1,24 +1,16 @@
-import {
-  PhaseName,
-  RunId,
-  AgentInvocationId,
-  AgentProfileName,
-  type AgentRuntimeKind,
-  type Failure,
-  type FailureKind,
-} from '@ai-sdlc/domain';
+import { PhaseName, AgentProfileName, type Failure, type FailureKind } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import {
-  readWholeChangeReviewVerdict,
-  type WholeChangeVerdictOutcome,
+  evaluateWholeChangeReviewVerdict,
+  type EvaluatedWholeChangeVerdict,
 } from '../../review-fix/read-verdicts.js';
+import type { WholeChangeReviewResult } from '../../results/schemas/whole-change-review.js';
 import { createFindingLedger } from '../../review-fix/finding-ledger.js';
 import { verifyValidationFreshness } from '../validation-evidence.js';
-import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 
 export interface InitialReviewHandlerOpts {
   profileName?: string;
@@ -39,7 +31,7 @@ export class InitialReviewHandler implements PhaseHandler {
     try {
       const wholeChangeResult = await ctx.artifacts.read(ctx.runUuid, 'whole-change-review.json');
       if (wholeChangeResult.trim().length > 0) {
-        const parsed = parseAgentResultJson(wholeChangeResult) as { verdict?: string };
+        const parsed = JSON.parse(wholeChangeResult) as { verdict?: string };
         if (parsed.verdict === 'APPROVE' || parsed.verdict === 'approve') {
           emit(
             'initial_review.completed',
@@ -128,7 +120,7 @@ export class InitialReviewHandler implements PhaseHandler {
     }
 
     // 7. Invoke single-shot reviewer agent (read-only)
-    const runResult = await runSingleShotAgentPhase(ctx, {
+    const runResult = await runSingleShotAgentPhase<WholeChangeReviewResult>(ctx, {
       phase: this.phase,
       profile,
       step: 'initial-review',
@@ -140,7 +132,6 @@ export class InitialReviewHandler implements PhaseHandler {
         validation_evidence: validationEvidence,
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
-      skipResultExtraction: true,
     });
 
     if (runResult.outcome !== 'passed') {
@@ -149,44 +140,9 @@ export class InitialReviewHandler implements PhaseHandler {
     }
 
     // 8. Extract and validate structured review verdict
-    const invocation = {
-      id: AgentInvocationId(ctx.idFactory?.() ?? `${ctx.runUuid}:initial-review`),
-      runId: RunId(ctx.runUuid),
-      phaseId: this.phase,
-      profile,
-      runtime: 'opencode' as AgentRuntimeKind,
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-20250514',
-      promptPath: '',
-      promptChars: 0,
-      stdoutPath: '',
-      stderrPath: '',
-      startedAt: ctx.now(),
-      endedAt: ctx.now(),
-      startCommitSha: ctx.startCommitSha ?? '',
-      exitCode: 0,
-      durationMs: 0,
-      timeoutMs: 0,
-      outcome: 'success' as const,
-      contractViolations: [],
-      resultJsonPath: 'result.json',
-    };
-
-    const verdictOutcome = await readWholeChangeReviewVerdict(
-      invocation,
-      { artifacts: ctx.artifacts, agent: ctx.agent },
-      { cwd: ctx.cwd, issueBodyPresent: issueMd.trim().length > 0 },
-    );
-
-    if (!verdictOutcome.ok) {
-      return this.fail(
-        ctx,
-        emit,
-        'invalid_result',
-        `Failed to parse initial review result: ${verdictOutcome.detail}`,
-        'Ensure the reviewer returns result.json matching wholeChangeReviewResultSchema.',
-      );
-    }
+    const verdictOutcome = evaluateWholeChangeReviewVerdict(runResult.result!, {
+      issueBodyPresent: issueMd.trim().length > 0,
+    });
 
     // Initialize finding ledger
     const findingLedger = createFindingLedger(
@@ -265,7 +221,7 @@ export class InitialReviewHandler implements PhaseHandler {
     return { outcome: 'passed' };
   }
 
-  private formatReviewMarkdown(outcome: Extract<WholeChangeVerdictOutcome, { ok: true }>): string {
+  private formatReviewMarkdown(outcome: EvaluatedWholeChangeVerdict): string {
     const lines: string[] = [
       '# Initial Review',
       '',

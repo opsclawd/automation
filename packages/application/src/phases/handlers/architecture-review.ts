@@ -9,8 +9,10 @@ import {
   isApprovedArchitectureReview,
   type ArchitectureReviewResult,
 } from '../../results/schemas/architecture-review.js';
-import { plannerPackageSchema } from '../../results/schemas/planner-package.js';
-import { parseAgentResultJson } from '../../results/parse-agent-json.js';
+import {
+  plannerPackageSchema,
+  type PlannerPackage,
+} from '../../results/schemas/planner-package.js';
 import { validatePlanTaskList } from '../plan-tasks.js';
 
 export interface ArchitectureReviewHandlerOpts {
@@ -49,7 +51,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     try {
       const existingRaw = await ctx.artifacts.read(ctx.runUuid, 'architecture-review.json');
       if (existingRaw.trim().length > 0) {
-        const parsedObj = parseAgentResultJson(existingRaw);
+        const parsedObj = JSON.parse(existingRaw);
         const parseResult = architectureReviewResultSchema.safeParse(parsedObj);
         if (parseResult.success && isApprovedArchitectureReview(parseResult.data)) {
           emit(
@@ -98,7 +100,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     }
 
     // 5. Reviewer Invocation (Pass 1)
-    const reviewResult = await runSingleShotAgentPhase(ctx, {
+    const reviewResult = await runSingleShotAgentPhase<ArchitectureReviewResult>(ctx, {
       phase: this.phase,
       profile: reviewerProfile,
       step: 'architecture-review',
@@ -108,7 +110,6 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         cwd: ctx.cwd,
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
-      skipResultExtraction: true,
     });
 
     if (reviewResult.outcome !== 'passed') {
@@ -116,30 +117,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       return reviewResult;
     }
 
-    // 6. Extract and validate structured review verdict
-    let reviewData: ArchitectureReviewResult;
-    try {
-      const rawJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-      const parsedObj = parseAgentResultJson(rawJson);
-      const parseResult = architectureReviewResultSchema.safeParse(parsedObj);
-      if (!parseResult.success) {
-        return this.fail(
-          ctx,
-          emit,
-          'invalid_result',
-          `Architecture review result schema validation failed: ${parseResult.error.message}`,
-        );
-      }
-      reviewData = parseResult.data;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      return this.fail(
-        ctx,
-        emit,
-        'invalid_result',
-        `Failed to read or parse architecture review result: ${message}`,
-      );
-    }
+    const reviewData: ArchitectureReviewResult = reviewResult.result!;
 
     const isApproved = isApprovedArchitectureReview(reviewData);
     const blockingFindings = this.getBlockingFindings(reviewData);
@@ -219,7 +197,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         }
       }
 
-      const fixResult = await runSingleShotAgentPhase(ctx, {
+      const fixResult = await runSingleShotAgentPhase<PlannerPackage>(ctx, {
         phase: this.phase,
         profile: plannerProfile,
         step: 'architecture-fix',
@@ -230,7 +208,11 @@ export class ArchitectureReviewHandler implements PhaseHandler {
           review_findings: formattedFindings,
         },
         agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
-        skipResultExtraction: true,
+        resultMeta: {
+          schema: plannerPackageSchema,
+          schemaContractText:
+            '{\n  "design_md": string,\n  "plan_md": string,\n  "summary"?: string,\n  "result"?: "ready" | "blocked"\n}',
+        },
       });
 
       if (fixResult.outcome !== 'passed') {
@@ -247,32 +229,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         );
       }
 
-      // Parse and validate corrected planner package
-      let correctedDesignMd: string;
-      let correctedPlanMd: string;
-      try {
-        const rawFixJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-        const parsedFixObj = parseAgentResultJson(rawFixJson);
-        const fixParseResult = plannerPackageSchema.safeParse(parsedFixObj);
-        if (!fixParseResult.success) {
-          return this.needsHumanReview(
-            ctx,
-            emit,
-            `Corrected planner package schema validation failed on attempt ${correction}/${this.maxCorrections}: ${fixParseResult.error.message}`,
-            ['architecture-review.json', 'result.json'],
-          );
-        }
-        correctedDesignMd = fixParseResult.data.design_md;
-        correctedPlanMd = fixParseResult.data.plan_md;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        return this.needsHumanReview(
-          ctx,
-          emit,
-          `Failed to parse corrected planner package from architecture-fix (attempt ${correction}/${this.maxCorrections}): ${message}`,
-          ['architecture-review.json'],
-        );
-      }
+      const { design_md: correctedDesignMd, plan_md: correctedPlanMd } = fixResult.result!;
 
       // Deterministic validation on corrected plan
       const planValidation = validatePlanTaskList(
@@ -321,7 +278,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         },
       );
 
-      const revalResult = await runSingleShotAgentPhase(ctx, {
+      const revalResult = await runSingleShotAgentPhase<ArchitectureReviewResult>(ctx, {
         phase: this.phase,
         profile: reviewerProfile,
         step: 'architecture-verify',
@@ -331,7 +288,6 @@ export class ArchitectureReviewHandler implements PhaseHandler {
           cwd: ctx.cwd,
         },
         agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
-        skipResultExtraction: true,
       });
 
       if (revalResult.outcome !== 'passed') {
@@ -343,29 +299,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         );
       }
 
-      let revalData: ArchitectureReviewResult;
-      try {
-        const rawRevalJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-        const parsedRevalObj = parseAgentResultJson(rawRevalJson);
-        const parseResult = architectureReviewResultSchema.safeParse(parsedRevalObj);
-        if (!parseResult.success) {
-          return this.needsHumanReview(
-            ctx,
-            emit,
-            `Architecture re-verification result schema validation failed on attempt ${correction}/${this.maxCorrections}: ${parseResult.error.message}`,
-            ['architecture-review.json'],
-          );
-        }
-        revalData = parseResult.data;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        return this.needsHumanReview(
-          ctx,
-          emit,
-          `Failed to parse architecture re-verification result (attempt ${correction}/${this.maxCorrections}): ${message}`,
-          ['architecture-review.json'],
-        );
-      }
+      const revalData: ArchitectureReviewResult = revalResult.result!;
 
       await this.persistReviewArtifacts(ctx, emit, revalData);
 

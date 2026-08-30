@@ -30,15 +30,16 @@ export interface ExtractResultInput {
   rerunContext?: { cwd: string; [key: string]: unknown } | undefined;
   repairExpectedHead?: string | undefined;
   transcriptEvidence?: string | undefined;
+  resultMeta?: PhaseResultMeta | undefined;
 }
 
-async function readAndValidate(
+async function readAndValidate<T = unknown>(
   runId: string,
   resultJsonPath: string | undefined,
   meta: PhaseResultMeta,
   ports: { artifacts: ArtifactStore },
 ): Promise<
-  | { ok: true; result: unknown }
+  | { ok: true; result: T }
   | {
       ok: false;
       reason: 'missing' | 'invalid';
@@ -95,20 +96,28 @@ async function readAndValidate(
     };
   }
 
-  return { ok: true, result: result.data };
+  return { ok: true, result: result.data as T };
 }
 
-export async function extractResult(input: ExtractResultInput): Promise<ExtractResultOutcome> {
-  const { invocation, ports } = input;
+export async function extractResult<T = unknown>(
+  input: ExtractResultInput,
+): Promise<ExtractResultOutcome<T>> {
+  const { invocation, ports, resultMeta } = input;
   const rawPhase = invocation.phaseId as string;
   const phase = normalizePhaseId(rawPhase);
-  if (!Object.hasOwn(PHASE_RESULT_REGISTRY, phase)) {
-    throw new Error(`no result schema registered for phase '${invocation.phaseId}'`);
+
+  let meta: PhaseResultMeta;
+  if (resultMeta) {
+    meta = resultMeta;
+  } else {
+    if (!Object.hasOwn(PHASE_RESULT_REGISTRY, phase)) {
+      throw new Error(`no result schema registered for phase '${invocation.phaseId}'`);
+    }
+    meta = PHASE_RESULT_REGISTRY[phase]!;
   }
-  const meta = PHASE_RESULT_REGISTRY[phase]!;
 
   const runId = invocation.runId as unknown as string;
-  const initial = await readAndValidate(runId, invocation.resultJsonPath, meta, ports);
+  const initial = await readAndValidate<T>(runId, invocation.resultJsonPath, meta, ports);
   if (initial.ok) {
     return initial;
   }
@@ -152,7 +161,7 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
   });
 
   if (repairResult.outcome === 'repaired') {
-    const repaired = await readAndValidate(runId, invocation.resultJsonPath, meta, ports);
+    const repaired = await readAndValidate<T>(runId, invocation.resultJsonPath, meta, ports);
     if (repaired.ok) {
       return {
         ok: true,
