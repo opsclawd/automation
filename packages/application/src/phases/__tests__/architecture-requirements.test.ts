@@ -220,7 +220,35 @@ Direct consumer: #51
     expect(ledger.items.some((it) => it.id.startsWith('CONSUMER-51-'))).toBe(true);
   });
 
-  it('handles consumer issue fetch failure gracefully (fail-soft)', async () => {
+  it('excludes incidental issue mentions without dependency semantics', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/99', {
+      number: 99,
+      title: 'Unrelated issue',
+      body: 'Random issue text mentioning #1129 in a footnote without dependency',
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 1129
+See discussion in #99 for background context.
+## Acceptance criteria
+- [ ] My AC
+`;
+
+    const ledger = await buildArchitectureRequirementsLedger({
+      issueNumber: 1129,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    // #99 has no dependency semantics on #1129 -> excluded from direct consumers
+    expect(ledger.items.some((it) => it.id.startsWith('CONSUMER-99-'))).toBe(false);
+    expect(ledger.items.some((it) => it.id === 'AC-1')).toBe(true);
+  });
+
+  it('fails closed when candidate consumer issue fetch or search fails', async () => {
     const github = new FakeGitHubPort(); // issue 999 not in map -> will throw
 
     const issueMd = `
@@ -231,15 +259,14 @@ Direct consumer: #999
 - [ ] Local requirement
 `;
 
-    const ledger = await buildArchitectureRequirementsLedger({
-      issueNumber: 1129,
-      repoFullName: 'test-org/test-repo',
-      issueMd,
-      github,
-    });
-
-    // Should not throw, should contain local requirement
-    expect(ledger.items.some((it) => it.title === 'Local requirement')).toBe(true);
+    await expect(
+      buildArchitectureRequirementsLedger({
+        issueNumber: 1129,
+        repoFullName: 'test-org/test-repo',
+        issueMd,
+        github,
+      }),
+    ).rejects.toThrow('Failed to fetch candidate consumer issue #999');
   });
 
   it('generates fallback item when issue markdown is minimal', async () => {

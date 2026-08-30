@@ -325,6 +325,91 @@ describe('isApprovedArchitectureReview', () => {
     expect(isApprovedArchitectureReview(data, ledger)).toBe(false);
   });
 
+  it('rejects approval when witness scenarios cover only a subset of consumer requirements', () => {
+    const ledger = {
+      version: 1 as const,
+      issueNumber: 1129,
+      items: [
+        {
+          id: 'CONSUMER-A-AC-1',
+          category: 'consumer_requirement' as const,
+          title: 'Soundbed 12s -> 30s partial loop representability',
+          source: 'issue #128',
+        },
+        {
+          id: 'CONSUMER-B-AC-1',
+          category: 'consumer_requirement' as const,
+          title: 'Subtitle style reconstruction',
+          source: 'issue #129',
+        },
+      ],
+    };
+
+    // Case 1: Witness covers only Consumer B, Consumer A is uncovered -> reject approval
+    const partialCoverageData = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        {
+          requirement_id: 'CONSUMER-A-AC-1',
+          requirement: 'Soundbed 12s -> 30s partial loop representability',
+          result: 'PASS' as const,
+          evidence: 'Checked',
+        },
+        {
+          requirement_id: 'CONSUMER-B-AC-1',
+          requirement: 'Subtitle style reconstruction',
+          result: 'PASS' as const,
+          evidence: 'Checked',
+        },
+      ],
+      witness_scenarios: [
+        {
+          requirement_ids: ['CONSUMER-B-AC-1'],
+          scenario: 'Subtitle style cue font reconstruction',
+          result: 'PASS' as const,
+          evidence: 'Cues match target style',
+        },
+      ],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(partialCoverageData, ledger)).toBe(false);
+
+    // Case 2: Witness scenarios cover both Consumer A and Consumer B -> approve
+    const fullCoverageData = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        {
+          requirement_id: 'CONSUMER-A-AC-1',
+          requirement: 'Soundbed 12s -> 30s partial loop representability',
+          result: 'PASS' as const,
+          evidence: 'Checked',
+        },
+        {
+          requirement_id: 'CONSUMER-B-AC-1',
+          requirement: 'Subtitle style reconstruction',
+          result: 'PASS' as const,
+          evidence: 'Checked',
+        },
+      ],
+      witness_scenarios: [
+        {
+          requirement_ids: ['CONSUMER-A-AC-1'],
+          scenario: 'Soundbed 12s -> 30s partial loop timeline execution',
+          result: 'PASS' as const,
+          evidence: '12 + 12 + 6 seconds segments rendered losslessly',
+        },
+        {
+          requirement_ids: ['CONSUMER-B-AC-1'],
+          scenario: 'Subtitle style cue font reconstruction',
+          result: 'PASS' as const,
+          evidence: 'Cues match target style',
+        },
+      ],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(fullCoverageData, ledger)).toBe(true);
+  });
+
   it('rejects approval when reviewer claims profile identity as proof of measured provenance (anti-trap)', () => {
     const ledger = {
       version: 1 as const,

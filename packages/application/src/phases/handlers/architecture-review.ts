@@ -484,14 +484,42 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     const failed: WitnessScenario[] = [];
     const witnesses = result.witness_scenarios ?? [];
 
-    const hasConsumerReqs = ledger?.items.some((it) => it.category === 'consumer_requirement');
-    if (hasConsumerReqs && witnesses.length === 0) {
-      failed.push({
-        scenario: 'Consumer Contract Representability Verification',
-        result: 'FAIL',
-        evidence:
-          'Direct consumer requirements exist in ledger but no witness scenarios were provided to prove contract representability',
-      });
+    const consumerItems =
+      ledger?.items.filter((it) => it.category === 'consumer_requirement') ?? [];
+    if (consumerItems.length > 0) {
+      if (witnesses.length === 0) {
+        failed.push({
+          scenario: 'Consumer Contract Representability Verification',
+          result: 'FAIL',
+          evidence:
+            'Direct consumer requirements exist in ledger but no witness scenarios were provided to prove contract representability',
+        });
+      } else {
+        const coveredRequirementIds = new Set<string>();
+        for (const w of witnesses) {
+          if (w.result?.toUpperCase() === 'PASS') {
+            if (w.requirement_ids) {
+              for (const id of w.requirement_ids) {
+                coveredRequirementIds.add(id.toUpperCase().trim());
+              }
+            }
+            if (w.requirement_id) {
+              coveredRequirementIds.add(w.requirement_id.toUpperCase().trim());
+            }
+          }
+        }
+        for (const consumerItem of consumerItems) {
+          const itemId = consumerItem.id.toUpperCase().trim();
+          if (!coveredRequirementIds.has(itemId)) {
+            failed.push({
+              requirement_ids: [consumerItem.id],
+              scenario: `Witness proof for ${consumerItem.id}: ${consumerItem.title}`,
+              result: 'FAIL',
+              evidence: `Consumer requirement ${consumerItem.id} was not covered by any passing witness scenario`,
+            });
+          }
+        }
+      }
     }
 
     for (const w of witnesses) {
@@ -499,6 +527,8 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         failed.push(w);
       } else if (hasProvenanceConflationEvidence(w.scenario, w.evidence)) {
         failed.push({
+          requirement_ids: w.requirement_ids,
+          requirement_id: w.requirement_id,
           scenario: w.scenario,
           result: 'FAIL',
           evidence: `Provenance layer conflation: profile identity cannot stand in for measured execution metadata (${w.evidence})`,

@@ -31,6 +31,8 @@ export const requirementsCheckSchema = z.object({
 });
 
 export const witnessScenarioSchema = z.object({
+  requirement_ids: z.array(z.string()).optional(),
+  requirement_id: z.string().optional(),
   scenario: z.string().min(1),
   result: z.enum(['PASS', 'FAIL', 'pass', 'fail']),
   evidence: z.string().min(1),
@@ -136,13 +138,34 @@ export function isApprovedArchitectureReview(
       return false;
     }
 
-    // Mandatory witness scenarios for consumer requirements
-    const hasConsumerRequirements = ledger.items.some(
-      (it) => it.category === 'consumer_requirement',
-    );
-    if (hasConsumerRequirements) {
+    // Mandatory and specific witness scenarios for consumer requirements
+    const consumerItems = ledger.items.filter((it) => it.category === 'consumer_requirement');
+    if (consumerItems.length > 0) {
       if (!review.witness_scenarios || review.witness_scenarios.length === 0) {
         return false;
+      }
+
+      // Collect all requirement IDs covered by passing witness scenarios
+      const coveredRequirementIds = new Set<string>();
+      for (const w of review.witness_scenarios) {
+        if (w.result?.toUpperCase() === 'PASS') {
+          if (w.requirement_ids) {
+            for (const id of w.requirement_ids) {
+              coveredRequirementIds.add(id.toUpperCase().trim());
+            }
+          }
+          if (w.requirement_id) {
+            coveredRequirementIds.add(w.requirement_id.toUpperCase().trim());
+          }
+        }
+      }
+
+      // Every consumer requirement item in the ledger must be covered by a passing witness scenario
+      for (const consumerItem of consumerItems) {
+        const itemId = consumerItem.id.toUpperCase().trim();
+        if (!coveredRequirementIds.has(itemId)) {
+          return false;
+        }
       }
     }
   }

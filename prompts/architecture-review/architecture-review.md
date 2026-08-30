@@ -89,10 +89,11 @@ For contract, schema, API, configuration, persistence, or foundation work:
 - Explicitly check every requirement and acceptance criterion from the issue and requirements ledger in `requirements_checks`.
 - For PASS/APPROVE on contract-sensitive requirements, evidence MUST identify not only field/file presence but why the representation is sufficient for the required consumer behavior. A statement like "field exists on schema" is INSUFFICIENT for a conditional or semantic requirement.
 - An `APPROVE` verdict strictly requires that:
-  1. `requirements_checks` is non-empty and EVERY item from `architecture-requirements.json` is dispositioned as `PASS`.
-  2. All `witness_scenarios` evaluate to `PASS`.
-  3. There are 0 blocking or high-severity findings (`critical`, `high`, `P0`, `P1`, or `blocking: true`).
-  If ANY requirement fails, any ledger item is omitted, any witness scenario fails, or any blocking finding exists, you MUST use `REQUEST_CHANGES`.
+  1. `requirements_checks` is non-empty and EVERY item from `architecture-requirements.json` is dispositioned as `PASS` with its exact `requirement_id`.
+  2. Every consumer requirement item (`CONSUMER-...`) in the ledger is covered by at least one passing scenario in `witness_scenarios` with `requirement_ids: ["CONSUMER-..."]`.
+  3. All `witness_scenarios` evaluate to `PASS` with non-empty evidence.
+  4. There are 0 blocking or high-severity findings (`critical`, `high`, `P0`, `P1`, or `blocking: true`).
+  If ANY requirement fails, any ledger item is omitted, any consumer requirement lacks witness coverage, any witness scenario fails, or any blocking finding exists, you MUST use `REQUEST_CHANGES`.
 
 - For every blocking gap, provide:
   - `category`: `requirements_reconciliation` | `contract_conservation` | `invariant_completeness` | `downstream_compatibility` | `representational_completeness` | `provenance_layering` | `conditional_invariants` | `witness_scenarios` | `other`
@@ -120,6 +121,7 @@ Write your structured review to `./result.json`:
   ],
   "witness_scenarios": [
     {
+      "requirement_ids": ["CONSUMER-128-AC-1"],
       "scenario": "Description of consumer scenario (e.g. 12s source soundbed looped to 30s timeline)",
       "result": "PASS" | "FAIL",
       "evidence": "How the proposed contract represents this scenario losslessly",

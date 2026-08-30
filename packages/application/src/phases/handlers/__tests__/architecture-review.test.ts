@@ -747,6 +747,100 @@ describe('ArchitectureReviewHandler', () => {
     expect(eventsOf(ctx, 'architecture_review.exhausted')).toHaveLength(1);
   });
 
+  it('rejects approval when direct consumer requirements lack specific witness scenario coverage', async () => {
+    const handler = new ArchitectureReviewHandler({ maxCorrections: 0 });
+    const ctx = createTestContext();
+
+    const github = ctx.github as FakeGitHubPort;
+    github.issues.set('test-org/test-repo/128', {
+      number: 128,
+      title: 'Soundbed Looping Consumer',
+      body: 'Depends on #1129\n## Acceptance criteria\n- [ ] Soundbed 12s to 30s looping',
+      labels: [],
+    });
+    github.issues.set('test-org/test-repo/129', {
+      number: 129,
+      title: 'Subtitle Styles Consumer',
+      body: 'Depends on #1129\n## Acceptance criteria\n- [ ] Subtitle style cues reconstruction',
+      labels: [],
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents:
+        '# Issue 1129\nDirect consumer: #128\nDirect consumer: #129\n## Acceptance criteria\n- [ ] Base provider interface\n',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design\nBase interface.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents:
+        '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: setup\n- Invariants: none\n- Verification: `pnpm test`\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    const reviewerProfile = 'profile-for-architecture-review';
+
+    agent.enqueue(reviewerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          requirements_checks: [
+            { requirement_id: 'AC-1', requirement: 'Base provider interface', result: 'PASS' },
+            {
+              requirement_id: 'CONSUMER-128-AC-1',
+              requirement: 'Soundbed 12s to 30s looping',
+              result: 'PASS',
+            },
+            {
+              requirement_id: 'CONSUMER-129-AC-1',
+              requirement: 'Subtitle style cues reconstruction',
+              result: 'PASS',
+            },
+          ],
+          // Only covers 129, 128 is omitted from witness scenarios!
+          witness_scenarios: [
+            {
+              requirement_ids: ['CONSUMER-129-AC-1'],
+              scenario: 'Subtitle cues font reconstruction',
+              result: 'PASS',
+              evidence: 'Cues match target font style',
+            },
+          ],
+          findings: [],
+        }),
+      });
+      return {
+        id: 'inv-1' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(reviewerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('needs_human_review');
+    expect(eventsOf(ctx, 'architecture_review.exhausted')).toHaveLength(1);
+  });
+
   it('escalates to needs_human_review when re-verification fails (maxCorrections: 1)', async () => {
     const handler = new ArchitectureReviewHandler({ maxCorrections: 1 });
     const ctx = createTestContext();
