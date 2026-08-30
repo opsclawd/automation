@@ -145,7 +145,36 @@ function findCandidateIssueNumbers(text: string, currentIssue: number): number[]
       }
     }
   }
-  return Array.from(candidates).slice(0, 20);
+  return Array.from(candidates);
+}
+
+/**
+ * Extract issue numbers following specific directional prefix phrases.
+ * Supports comma-separated lists, 'and' conjunctions, and bulleted references.
+ * Example: "Depends on #101, #102, and #103" -> Set(101, 102, 103)
+ */
+export function extractReferencedNumbersForPhrases(
+  text: string,
+  prefixPhrases: string[],
+): Set<number> {
+  const result = new Set<number>();
+
+  for (const phrase of prefixPhrases) {
+    const escapedPhrase = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${escapedPhrase}\\b[:\\s]*([#0-9,\\s\\band]+)`, 'gi');
+    for (const match of text.matchAll(regex)) {
+      const rest = match[1] || '';
+      const numMatches = rest.matchAll(/#(\d+)\b/g);
+      for (const nm of numMatches) {
+        const n = parseInt(nm[1]!, 10);
+        if (!isNaN(n)) {
+          result.add(n);
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 export function isDirectConsumerRelationship(
@@ -155,30 +184,48 @@ export function isDirectConsumerRelationship(
   currentIssue: number,
   currentIssueText: string,
 ): boolean {
-  // 1. Candidate issue declares dependency on current issue
   const candidateText = `${candidateTitle}\n${candidateBody}`;
-  const candidateDepRegex = new RegExp(
-    `(?:depends on|depended on by|requires|required by|direct consumer|downstream|unblocks|blocked by|parent issue|following)\\s*[:#\\s]*#?${currentIssue}\\b`,
-    'i',
+
+  // 1. Candidate explicitly declares that it depends on / requires / is blocked by current issue
+  // (Candidate is downstream of current)
+  const candidateDownstreamPhrases = [
+    'depends on',
+    'depended on',
+    'requires',
+    'blocked by',
+    'following',
+    'direct consumer of',
+    'downstream of',
+    'child of',
+  ];
+  const candidateDeps = extractReferencedNumbersForPhrases(
+    candidateText,
+    candidateDownstreamPhrases,
   );
-  if (candidateDepRegex.test(candidateText)) {
+  if (candidateDeps.has(currentIssue)) {
     return true;
   }
 
-  // 2. Current issue explicitly declares candidate issue as direct consumer / dependent
-  const currentDepRegex = new RegExp(
-    `(?:direct consumer|consumer|depended on by|required by|downstream|unblocks|depends on)\\s*[:#\\s]*#?${candidateNumber}\\b`,
-    'i',
+  // 2. Current issue explicitly declares that it is required by / unblocks / has candidate as direct consumer
+  // (Current is upstream of candidate)
+  const currentDownstreamPhrases = [
+    'required by',
+    'depended on by',
+    'unblocks',
+    'blocks',
+    'direct consumer',
+    'direct consumers',
+    'consumer',
+    'consumers',
+    'downstream',
+    'parent of',
+  ];
+  const currentConsumers = extractReferencedNumbersForPhrases(
+    currentIssueText,
+    currentDownstreamPhrases,
   );
-  if (currentDepRegex.test(currentIssueText)) {
-    // Make sure it's not marked as upstream/historical in current issue
-    const historicalRegex = new RegExp(
-      `(?:fixes|closed by|closes|resolves|resolved by|supercedes|precursor|prior art)\\s*[:#\\s]*#?${candidateNumber}\\b`,
-      'i',
-    );
-    if (!historicalRegex.test(currentIssueText)) {
-      return true;
-    }
+  if (currentConsumers.has(candidateNumber)) {
+    return true;
   }
 
   return false;
@@ -319,18 +366,45 @@ export async function buildArchitectureRequirementsLedger(
       }
     }
 
-    // Stage 2: Validate each candidate's relationship before adding as direct consumer
+    // Stage 2: Validate each candidate's relationship until we collect up to 10 validated direct consumers
     const validatedConsumers: Array<{ number: number; title: string; body: string }> = [];
-    for (const candNum of Array.from(candidateNumbers).slice(0, 10)) {
-      let candidateIssue: { number: number; title: string; body: string };
+    const currentDownstreamPhrases = [
+      'required by',
+      'depended on by',
+      'unblocks',
+      'blocks',
+      'direct consumer',
+      'direct consumers',
+      'consumer',
+      'consumers',
+      'downstream',
+      'parent of',
+    ];
+    const declaredConsumers = extractReferencedNumbersForPhrases(
+      currentIssueFullText,
+      currentDownstreamPhrases,
+    );
+
+    for (const candNum of candidateNumbers) {
+      if (validatedConsumers.length >= 10) {
+        break;
+      }
+
+      let candidateIssue: { number: number; title: string; body: string } | undefined;
       try {
         candidateIssue = await opts.github.getIssue(opts.repoFullName, candNum);
       } catch (err) {
-        throw new Error(
-          `Failed to fetch candidate consumer issue #${candNum}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
+        // If this candidate was explicitly declared as a direct consumer in the current issue text,
+        // failing to fetch it is a hard error (fail-closed).
+        if (declaredConsumers.has(candNum)) {
+          throw new Error(
+            `Failed to fetch declared direct consumer issue #${candNum}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        // For incidental token matches or PR references (e.g. "PR #126"), not finding an issue is expected/skipped
+        continue;
       }
 
       if (

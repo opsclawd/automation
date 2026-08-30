@@ -248,6 +248,148 @@ See discussion in #99 for background context.
     expect(ledger.items.some((it) => it.id === 'AC-1')).toBe(true);
   });
 
+  it('rejects reversed dependency direction in both current and candidate issues', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/100', {
+      number: 100,
+      title: 'Prerequisite Issue',
+      body: '## Goal\nProvide underlying primitives',
+      labels: [],
+    });
+    github.issues.set('test-org/test-repo/200', {
+      number: 200,
+      title: 'Precursor Issue',
+      body: 'Unblocks #1129\nRequired by #1129\n## Acceptance criteria\n- [ ] Prerequisite setup',
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 1129
+Depends on #100
+Requires #100
+
+## Acceptance criteria
+- [ ] Implement feature
+`;
+
+    const ledger = await buildArchitectureRequirementsLedger({
+      issueNumber: 1129,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    // #100 (upstream of 1129) and #200 (upstream of 1129) must NOT be direct consumers
+    expect(ledger.items.some((it) => it.id.startsWith('CONSUMER-100-'))).toBe(false);
+    expect(ledger.items.some((it) => it.id.startsWith('CONSUMER-200-'))).toBe(false);
+    expect(ledger.items.some((it) => it.id === 'AC-1')).toBe(true);
+  });
+
+  it('extracts direct consumers from comma-separated and conjunction lists', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/128', {
+      number: 128,
+      title: 'Soundbed Consumer',
+      body: '## Acceptance criteria\n- [ ] Soundbed 12s loop',
+      labels: [],
+    });
+    github.issues.set('test-org/test-repo/129', {
+      number: 129,
+      title: 'Subtitle Consumer',
+      body: '## Acceptance criteria\n- [ ] Subtitle styles',
+      labels: [],
+    });
+    github.issues.set('test-org/test-repo/130', {
+      number: 130,
+      title: 'Downstream Multi-Dep Consumer',
+      body: 'Depends on #101, #1129, and #103\n## Acceptance criteria\n- [ ] Audio stream probe metadata',
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 1129
+Direct consumers: #128, #129
+
+## Acceptance criteria
+- [ ] Core pipeline
+`;
+
+    const ledger = await buildArchitectureRequirementsLedger({
+      issueNumber: 1129,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    expect(ledger.items.some((it) => it.id === 'CONSUMER-128-AC-1')).toBe(true);
+    expect(ledger.items.some((it) => it.id === 'CONSUMER-129-AC-1')).toBe(true);
+    expect(ledger.items.some((it) => it.id === 'CONSUMER-130-AC-1')).toBe(true);
+  });
+
+  it('gracefully ignores incidental PR references (e.g. PR #126)', async () => {
+    const github = new FakeGitHubPort(); // #126 is not in issues map
+
+    const issueMd = `
+# Issue 1129
+See prior discussion in PR #126 and commit notes.
+
+## Acceptance criteria
+- [ ] Core pipeline
+`;
+
+    const ledger = await buildArchitectureRequirementsLedger({
+      issueNumber: 1129,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    // Incidental PR #126 reference should not throw or become a consumer requirement
+    expect(ledger.items.some((it) => it.id.startsWith('CONSUMER-126-'))).toBe(false);
+    expect(ledger.items.some((it) => it.id === 'AC-1')).toBe(true);
+  });
+
+  it('discovers real downstream dependent when preceded by > 10 incidental candidate references', async () => {
+    const github = new FakeGitHubPort();
+
+    // 12 incidental issues
+    for (let i = 1; i <= 12; i++) {
+      github.issues.set(`test-org/test-repo/${i}`, {
+        number: i,
+        title: `Incidental issue ${i}`,
+        body: `Contextual notes without dependency`,
+        labels: [],
+      });
+    }
+
+    // 1 real dependent issue at #13
+    github.issues.set('test-org/test-repo/13', {
+      number: 13,
+      title: 'Real Downstream Consumer',
+      body: 'Depends on #1129\n## Acceptance criteria\n- [ ] Downstream timeline export',
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 1129
+Incidental references: #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12.
+Also note dependency in #13.
+
+## Acceptance criteria
+- [ ] Core timeline
+`;
+
+    const ledger = await buildArchitectureRequirementsLedger({
+      issueNumber: 1129,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    // Real dependent #13 must not be starved by the 12 preceding incidental candidates
+    expect(ledger.items.some((it) => it.id === 'CONSUMER-13-AC-1')).toBe(true);
+  });
+
   it('fails closed when candidate consumer issue fetch or search fails', async () => {
     const github = new FakeGitHubPort(); // issue 999 not in map -> will throw
 
@@ -266,7 +408,7 @@ Direct consumer: #999
         issueMd,
         github,
       }),
-    ).rejects.toThrow('Failed to fetch candidate consumer issue #999');
+    ).rejects.toThrow('Failed to fetch declared direct consumer issue #999');
   });
 
   it('generates fallback item when issue markdown is minimal', async () => {
