@@ -797,6 +797,90 @@ describe('AgentRuntimeRouter', () => {
     expect(row?.metadata?.usageSourcePaths).toEqual(['/tmp/stdout.log.events.jsonl']);
   });
 
+  it('includes cached token count in the agent.usage message when present', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      publish: (_runId, event) => {
+        events.push(event);
+      },
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 600,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usage: {
+            inputTokens: 22,
+            outputTokens: 14765,
+            cachedTokens: 622933,
+          },
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-cached-tokens',
+    });
+
+    await router.invoke(req());
+
+    const usageEvents = events.filter((e) => e.type === 'agent.usage');
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0].message).toBe(
+      `${req().phaseId}: 22 in (+622933 cached) / 14765 out tokens`,
+    );
+  });
+
+  it('omits the cached suffix when cachedTokens is zero or absent', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      publish: (_runId, event) => {
+        events.push(event);
+      },
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 600,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: [],
+          outcome: 'success',
+          usage: {
+            inputTokens: 120,
+            outputTokens: 45,
+            cachedTokens: 0,
+          },
+        }),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-no-cache',
+    });
+
+    await router.invoke(req());
+
+    const usageEvents = events.filter((e) => e.type === 'agent.usage');
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0].message).toBe(`${req().phaseId}: 120 in / 45 out tokens`);
+  });
+
   it('keeps measured zero classified as measured', async () => {
     const events: OrchestratorEvent[] = [];
     const eventBus = {

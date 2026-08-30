@@ -507,11 +507,15 @@ export class AgentRuntimeRouter implements AgentPort {
     if (result.usage) {
       try {
         if (this.opts.eventBus) {
+          const cachedSuffix =
+            result.usage.cachedTokens !== undefined && result.usage.cachedTokens > 0
+              ? ` (+${result.usage.cachedTokens} cached)`
+              : '';
           const event: OrchestratorEvent = {
             runId: request.runId,
             level: 'info',
             type: 'agent.usage',
-            message: `${request.phaseId}: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens`,
+            message: `${request.phaseId}: ${result.usage.inputTokens} in${cachedSuffix} / ${result.usage.outputTokens} out tokens`,
             timestamp: endedAt.toISOString(),
             metadata: {
               phase: request.phaseId,
