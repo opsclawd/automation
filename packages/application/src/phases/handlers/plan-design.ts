@@ -3,6 +3,7 @@ import type { PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.
 import { createEventEmitter } from '../handler.js';
 import { SingleShotAgentHandler } from './single-shot-agent-handler.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
+import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import { plannerPackageSchema } from '../../results/schemas/planner-package.js';
 import { validatePlanTaskList } from '../plan-tasks.js';
@@ -123,7 +124,7 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
 
     let parsedObj: unknown;
     try {
-      parsedObj = JSON.parse(rawJson);
+      parsedObj = parseAgentResultJson(rawJson);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const failure: Failure = {

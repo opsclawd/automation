@@ -16,6 +16,7 @@ import type { RunValidation } from '../../run-validation.js';
 import { recordValidationHeadSha } from '../validation-headsha.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
+import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 import {
   readWholeChangeReviewVerdict,
   readNarrowVerificationVerdict,
@@ -134,7 +135,7 @@ export class ReviewFixHandler implements PhaseHandler {
     try {
       const wholeChangeResult = await ctx.artifacts.read(ctx.runUuid, 'whole-change-review.json');
       if (wholeChangeResult.trim().length > 0) {
-        const parsed = JSON.parse(wholeChangeResult) as { verdict?: string };
+        const parsed = parseAgentResultJson(wholeChangeResult) as { verdict?: string };
         if (parsed.verdict === 'APPROVE' || parsed.verdict === 'approve') {
           emit(
             'review_fix.completed',
@@ -155,7 +156,7 @@ export class ReviewFixHandler implements PhaseHandler {
         'narrow-verification.json',
       );
       if (narrowVerificationResult.trim().length > 0) {
-        const parsed = JSON.parse(narrowVerificationResult) as { verdict?: string };
+        const parsed = parseAgentResultJson(narrowVerificationResult) as { verdict?: string };
         if (parsed.verdict === 'PASS' || parsed.verdict === 'pass') {
           emit(
             'review_fix.completed',

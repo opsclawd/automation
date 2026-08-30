@@ -3,6 +3,7 @@ import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } fro
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
+import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import {
   followUpReviewResultSchema,
@@ -147,7 +148,7 @@ export class FollowUpReviewHandler implements PhaseHandler {
     let parsedResult: FollowUpReviewResult;
     try {
       const resultRaw = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-      const parsed = JSON.parse(resultRaw);
+      const parsed = parseAgentResultJson(resultRaw);
       const val = followUpReviewResultSchema.safeParse(parsed);
       if (!val.success) {
         return this.fail(
