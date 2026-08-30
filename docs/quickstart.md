@@ -151,7 +151,7 @@ read_issue
 ```
 
 ### 2. `strict` (Lean + Pre-Implementation Architecture Assurance)
-Runs an independent `architecture-review` phase immediately after `plan-design` and before `implement`. Evaluates requirements reconciliation, contract conservation, invariant completeness, and bounded downstream consumer compatibility against a fixed budget:
+Runs an independent `architecture-review` phase immediately after `plan-design` and before `implement`. Evaluates requirements reconciliation, contract conservation, invariant completeness, and bounded downstream consumer compatibility against a configurable correction budget:
 
 ```text
 read_issue
@@ -166,6 +166,25 @@ read_issue
 → create-pr
 → wait-merge
 ```
+
+#### Architecture review configuration (`phases.architectureReview`)
+
+The iterative correction budget is configured via `phases.architectureReview.maxCorrections` in `.ai-orchestrator.json`:
+
+```json
+{
+  "phases": {
+    "architectureReview": {
+      "maxCorrections": 2
+    }
+  }
+}
+```
+
+- `0`: Review-only mode; evaluates artifacts without autonomous correction. Immediately escalates to `needs_human_review` if any blocking finding or failed requirement check exists.
+- `1`: One correction pass + one re-verification pass before escalation.
+- `2` (Default): Gives the planner up to two correction and re-verification attempts to resolve concrete review findings before escalating to `needs_human_review`.
+- Maximum value is bounded to `5` by configuration schema.
 
 ### 3. `legacy` (Canonical Phases)
 The original multi-stage planning and post-PR review topology:
