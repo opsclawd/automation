@@ -54,7 +54,7 @@ export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
   makePhaseName('post-pr-review'),
 ];
 
-export const LEAN_PHASE_ORDER: readonly PhaseName[] = [
+export const STANDARD_LEAN_PHASE_ORDER: readonly PhaseName[] = [
   makePhaseName('read_issue'),
   makePhaseName('plan-design'),
   makePhaseName('implement'),
@@ -67,9 +67,28 @@ export const LEAN_PHASE_ORDER: readonly PhaseName[] = [
   makePhaseName('wait-merge'),
 ];
 
+export const STRICT_LEAN_PHASE_ORDER: readonly PhaseName[] = [
+  makePhaseName('read_issue'),
+  makePhaseName('plan-design'),
+  makePhaseName('architecture-review'),
+  makePhaseName('implement'),
+  makePhaseName('validate'),
+  makePhaseName('fix-validate'),
+  makePhaseName('initial-review'),
+  makePhaseName('fix-review'),
+  makePhaseName('follow-up-review'),
+  makePhaseName('create-pr'),
+  makePhaseName('wait-merge'),
+];
+
+export const LEAN_PHASE_ORDER: readonly PhaseName[] = STANDARD_LEAN_PHASE_ORDER;
+
 export function resolvePhaseOrder(policy?: ExecutionPolicy): readonly PhaseName[] {
-  if (policy === 'standard' || policy === 'strict') {
-    return LEAN_PHASE_ORDER;
+  if (policy === 'strict') {
+    return STRICT_LEAN_PHASE_ORDER;
+  }
+  if (policy === 'standard') {
+    return STANDARD_LEAN_PHASE_ORDER;
   }
   return CANONICAL_PHASE_ORDER;
 }
@@ -87,6 +106,17 @@ const _phaseDefinitions = {
     inputs: { required: ['issue.md'], optional: ['issue-comments.md'] },
     outputs: ['design.md'],
     agentContract: { requiredArtifacts: ['design.md'], mustNotChangeBranch: true },
+    retrySafety: 'safe',
+    skippable: false,
+  },
+  'architecture-review': {
+    name: makePhaseName('architecture-review'),
+    inputs: {
+      required: ['issue.md', 'design.md', 'plan.md'],
+      optional: ['issue-comments.md'],
+    },
+    outputs: ['architecture-review.json'],
+    agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
     retrySafety: 'safe',
     skippable: false,
   },

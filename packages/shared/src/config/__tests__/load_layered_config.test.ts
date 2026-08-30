@@ -520,4 +520,42 @@ describe('loadLayeredConfig warnOnRetiredArbiterPhaseKey', () => {
       spy.mockRestore();
     }
   });
+
+  describe('phases.architectureReview configuration', () => {
+    it('defaults maxCorrections to 2 when omitted', () => {
+      const automationRoot = makeRepo({
+        '.ai-orchestrator.json': validConfig({}),
+      });
+
+      const result = loadLayeredConfig({ automationRoot });
+      expect(result.config.phases.architectureReview).toEqual({ maxCorrections: 2 });
+    });
+
+    it('accepts explicit maxCorrections within 0..5', () => {
+      const automationRoot = makeRepo({
+        '.ai-orchestrator.json': validConfig({
+          phases: {
+            ...BASE_CONFIG.phases,
+            architectureReview: { maxCorrections: 0 },
+          },
+        }),
+      });
+
+      const result = loadLayeredConfig({ automationRoot });
+      expect(result.config.phases.architectureReview).toEqual({ maxCorrections: 0 });
+    });
+
+    it('rejects maxCorrections outside 0..5', () => {
+      const automationRoot = makeRepo({
+        '.ai-orchestrator.json': validConfig({
+          phases: {
+            ...BASE_CONFIG.phases,
+            architectureReview: { maxCorrections: 6 },
+          },
+        }),
+      });
+
+      expect(() => loadLayeredConfig({ automationRoot })).toThrow();
+    });
+  });
 });

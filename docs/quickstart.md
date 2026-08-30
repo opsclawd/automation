@@ -119,6 +119,8 @@ When exactly one Repository is enabled, `--repository-id` may be omitted. With m
 Useful run options:
 
 ```text
+--execution-policy <policy> Execution policy: standard (fast lean path), strict (lean + architecture assurance), legacy
+--strict                   Convenience shortcut for --execution-policy strict
 --base-branch <branch>     Override the Repository default branch.
 --executor ts              TypeScript executor (default).
 --executor bash            Deprecated emergency fallback.
@@ -128,9 +130,64 @@ Useful run options:
 
 On successful enqueue/start, the command emits JSON containing the Run UUID, display ID, repository identity, exit code, and status. Keep the UUID for management commands.
 
-## Canonical phases
+## Execution policies & phase graphs
 
-The TypeScript executor advances through:
+The orchestrator supports three execution policies:
+
+### 1. `standard` (Fast Lean Path)
+The lean lifecycle pipeline executing single-shot planning without a separate architecture review pass:
+
+```text
+read_issue
+→ plan-design
+→ implement
+→ validate
+→ fix-validate
+→ initial-review
+→ fix-review
+→ follow-up-review
+→ create-pr
+→ wait-merge
+```
+
+### 2. `strict` (Lean + Pre-Implementation Architecture Assurance)
+Runs an independent `architecture-review` phase immediately after `plan-design` and before `implement`. Evaluates requirements reconciliation, contract conservation, invariant completeness, and bounded downstream consumer compatibility against a configurable correction budget:
+
+```text
+read_issue
+→ plan-design
+→ architecture-review
+→ implement
+→ validate
+→ fix-validate
+→ initial-review
+→ fix-review
+→ follow-up-review
+→ create-pr
+→ wait-merge
+```
+
+#### Architecture review configuration (`phases.architectureReview`)
+
+The iterative correction budget is configured via `phases.architectureReview.maxCorrections` in `.ai-orchestrator.json`:
+
+```json
+{
+  "phases": {
+    "architectureReview": {
+      "maxCorrections": 2
+    }
+  }
+}
+```
+
+- `0`: Review-only mode; evaluates artifacts without autonomous correction. Immediately escalates to `needs_human_review` if any blocking finding or failed requirement check exists.
+- `1`: One correction pass + one re-verification pass before escalation.
+- `2` (Default): Gives the planner up to two correction and re-verification attempts to resolve concrete review findings before escalating to `needs_human_review`.
+- Maximum value is bounded to `5` by configuration schema.
+
+### 3. `legacy` (Canonical Phases)
+The original multi-stage planning and post-PR review topology:
 
 ```text
 read_issue
@@ -146,7 +203,7 @@ read_issue
 → post-pr-review
 ```
 
-The top-level phases are durable orchestration state. Review, fix, arbitration, and terminal-repair invocations inside a phase may have more specific labels in logs and artifacts.
+The top-level phases are durable orchestration state. The chosen policy is persisted to `Run.executionPolicy` at creation and inherited automatically across `runs resume` without mutation.
 
 ## Run statuses
 

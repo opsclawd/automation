@@ -178,6 +178,13 @@ const phasesSchema = z.object({
       maxRepairAttempts: z.number().int().nonnegative().default(2),
     })
     .optional(),
+  // Architecture review phase (strict policy) iteration budget.
+  // maxCorrections: 0 = review-only; 1 = 1 correction + 1 verify; 2 = up to 2 corrections (default).
+  architectureReview: z
+    .object({
+      maxCorrections: z.number().int().min(0).max(5).default(2),
+    })
+    .default({ maxCorrections: 2 }),
   // Post-PR review poller (scripts/ai-pr-review-poll) settings. When absent, the
   // Bash launcher falls back to maxPolls=3 / pollIntervalSeconds=300.
   postPrReview: z

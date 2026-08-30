@@ -22,6 +22,7 @@ import {
   createWorker,
   generateJobOwnership,
   type ResumeDisposition,
+  type ExecutionPolicy,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import {
@@ -32,6 +33,7 @@ import {
   SweepOrphanedRuns,
   checkPid,
   type ArtifactGuardPort,
+  resolvePhaseOrder,
 } from '@ai-sdlc/application';
 import type { WorkerLoopDeps } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions, type Container, seedTestDatabase } from './compose.js';
@@ -293,6 +295,8 @@ export interface RunCliOptions {
   executor?: string;
   targetRepoRoot?: string;
   repositoryId?: string;
+  executionPolicy?: string;
+  strict?: boolean;
 }
 
 export function resolveCliRepoId(
@@ -585,6 +589,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       'Execution engine: ts (default, TypeScript RunExecutor) or bash (legacy, emergency use only)',
       'ts',
     )
+    .option('--execution-policy <policy>', 'Execution policy: standard | strict | legacy')
+    .option('--strict', 'Convenience shortcut for --execution-policy strict')
     .option(
       '--target-repo-root <path>',
       'Target repository root for worktrees and DB (default: orchestrator repo)',
@@ -617,6 +623,33 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           console.error(`Error: --executor must be "bash" or "ts", got "${opts.executor}"`);
           process.exit(EXIT_USER_ERROR);
         }
+
+        // --- execution policy validation ---
+        let resolvedExecutionPolicy: ExecutionPolicy | undefined;
+        if (opts.strict && opts.executionPolicy !== undefined) {
+          if (opts.executionPolicy !== 'strict') {
+            console.error(
+              `Error: conflicting options --strict and --execution-policy ${opts.executionPolicy}. ` +
+                `Use either --strict or --execution-policy <policy>.`,
+            );
+            process.exit(EXIT_USER_ERROR);
+            return;
+          }
+          resolvedExecutionPolicy = 'strict';
+        } else if (opts.strict) {
+          resolvedExecutionPolicy = 'strict';
+        } else if (opts.executionPolicy !== undefined) {
+          if (!['legacy', 'standard', 'strict'].includes(opts.executionPolicy)) {
+            console.error(
+              `Error: --execution-policy must be "legacy", "standard", or "strict", got "${opts.executionPolicy}"`,
+            );
+            process.exit(EXIT_USER_ERROR);
+            return;
+          }
+          resolvedExecutionPolicy = opts.executionPolicy as ExecutionPolicy;
+        }
+
+        const effectiveExecutionPolicy = resolvedExecutionPolicy ?? c.executionPolicy ?? 'legacy';
 
         // --- flag-combination validation ---
         if (opts.executor === 'ts' && (opts.model !== undefined || opts.agentCli !== undefined)) {
@@ -692,7 +725,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             repoId,
             issueNumber: opts.issue,
             startedAt,
-            executionPolicy: c.executionPolicy,
+            executionPolicy: effectiveExecutionPolicy,
             ...(effectiveBaseBranch ? { baseBranch: effectiveBaseBranch } : {}),
           });
 
@@ -702,6 +735,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               callerRepoId: callerRepoId as RepositoryId,
               strictMatch: false,
             });
+          }
+
+          const effectivePhases = resolvePhaseOrder(effectiveExecutionPolicy);
+          console.error(`Execution policy: ${effectiveExecutionPolicy.toUpperCase()}`);
+          console.error('Phase graph:');
+          for (const p of effectivePhases) {
+            console.error(`  ${p}`);
           }
 
           const jobId = JobId(randomUUID());
@@ -1041,7 +1081,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const out = await c.startIssueRun.execute({
               issueNumber: opts.issue,
               repoId,
-              executionPolicy: c.executionPolicy,
+              executionPolicy: effectiveExecutionPolicy,
             });
             // Use process.stdout.write with a callback (not console.log) because
             // process.exit() does not wait for stdout to flush.
@@ -1780,6 +1820,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 console.error('Error: could not determine repository name.');
                 process.exit(EXIT_USER_ERROR);
               }
+              const runPolicy = (reconciledRun.executionPolicy ?? 'legacy').toUpperCase();
+              const resumePhase =
+                plan.targetPhase ?? opts.fromPhase ?? reconciledRun.currentPhase ?? 'auto';
+              const effectivePhases = resolvePhaseOrder(reconciledRun.executionPolicy);
+              console.error(`Execution policy: ${runPolicy}`);
+              console.error(`Resuming from phase: ${resumePhase}`);
+              console.error('Phase graph:');
+              for (const p of effectivePhases) {
+                console.error(`  ${p}`);
+              }
+
               const workerId = WorkerId(`cli-${process.pid}`);
 
               const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;

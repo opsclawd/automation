@@ -75,6 +75,7 @@ import {
   RunValidation,
   ReadIssueHandler,
   PlanDesignHandler,
+  ArchitectureReviewHandler,
   PlanWriteHandler,
   ImplementHandler,
   ValidateHandler,
@@ -6260,6 +6261,15 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       // Wire remaining phase handlers that require agent dependencies
       phaseRegistry.register(new PlanDesignHandler());
+      phaseRegistry.register(
+        new ArchitectureReviewHandler({
+          profileName:
+            config.agent.phaseProfiles?.['architecture-review']?.profile ??
+            config.agent.phaseProfiles?.['plan-design']?.profile ??
+            'opencode-frontier',
+          maxCorrections: config.phases.architectureReview?.maxCorrections ?? 2,
+        }),
+      );
       phaseRegistry.register(
         new PlanWriteHandler({
           maxRepairAttempts: config.phases.planWrite?.maxRepairAttempts ?? 2,
