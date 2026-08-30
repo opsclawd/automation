@@ -1,24 +1,63 @@
-import type { ZodTypeAny } from 'zod';
-import { implementResultSchema } from './schemas/implement.js';
-import { qualityReviewResultSchema } from './schemas/quality-review.js';
-import { fixReviewResultSchema } from './schemas/fix-review.js';
-import { createPrResultSchema } from './schemas/create-pr.js';
-import { postPrReviewResultSchema } from './schemas/post-pr-review.js';
-import { specReviewResultSchema } from './schemas/spec-review.js';
-import { wholePrReviewResultSchema } from './schemas/whole-pr-review.js';
-import { wholeChangeReviewResultSchema } from './schemas/whole-change-review.js';
-import { narrowVerificationResultSchema } from './schemas/narrow-verification.js';
-import { compoundResultSchema } from './schemas/compound.js';
-import { arbiterResultSchema } from './schemas/arbiter.js';
-import { fixValidateResultSchema } from './schemas/fix-validate.js';
-import { planFixResultSchema } from './schemas/plan-fix.js';
-import { followUpReviewResultSchema } from './schemas/follow-up-review.js';
-import { architectureReviewResultSchema } from './schemas/architecture-review.js';
+import type { ZodType } from 'zod';
+import { implementResultSchema, type ImplementResult } from './schemas/implement.js';
+import { qualityReviewResultSchema, type QualityReviewResult } from './schemas/quality-review.js';
+import { fixReviewResultSchema, type FixReviewResult } from './schemas/fix-review.js';
+import { createPrResultSchema, type CreatePrResult } from './schemas/create-pr.js';
+import { postPrReviewResultSchema, type PostPrReviewResult } from './schemas/post-pr-review.js';
+import { specReviewResultSchema, type SpecReviewResult } from './schemas/spec-review.js';
+import { wholePrReviewResultSchema, type WholePrReviewResult } from './schemas/whole-pr-review.js';
+import {
+  wholeChangeReviewResultSchema,
+  type WholeChangeReviewResult,
+} from './schemas/whole-change-review.js';
+import {
+  narrowVerificationResultSchema,
+  type NarrowVerificationResult,
+} from './schemas/narrow-verification.js';
+import { compoundResultSchema, type CompoundResult } from './schemas/compound.js';
+import { arbiterResultSchema, type ArbiterResult } from './schemas/arbiter.js';
+import { fixValidateResultSchema, type FixValidateResult } from './schemas/fix-validate.js';
+import { planFixResultSchema, type PlanFixResult } from './schemas/plan-fix.js';
+import {
+  followUpReviewResultSchema,
+  type FollowUpReviewResult,
+} from './schemas/follow-up-review.js';
+import {
+  architectureReviewResultSchema,
+  type ArchitectureReviewResult,
+} from './schemas/architecture-review.js';
+import { plannerPackageSchema, type PlannerPackage } from './schemas/planner-package.js';
 
-export interface PhaseResultMeta {
-  schema: ZodTypeAny;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface PhaseResultMeta<T = any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  schema: ZodType<T, any, any>;
   schemaContractText: string;
 }
+
+export interface PhaseResultRegistryMap {
+  implement: ImplementResult;
+  'quality-review': QualityReviewResult;
+  'fix-review': FixReviewResult;
+  'create-pr': CreatePrResult;
+  'post-pr-review': PostPrReviewResult;
+  'spec-review': SpecReviewResult;
+  'whole-pr-review': WholePrReviewResult;
+  'whole-change-review': WholeChangeReviewResult;
+  'initial-review': WholeChangeReviewResult;
+  'follow-up-review': FollowUpReviewResult;
+  'narrow-verification': NarrowVerificationResult;
+  compound: CompoundResult;
+  'fix-validate': FixValidateResult;
+  arbiter: ArbiterResult;
+  'plan-review-arbiter': ArbiterResult;
+  'implement-final-review-arbiter': ArbiterResult;
+  'plan-fix': PlanFixResult;
+  'architecture-review': ArchitectureReviewResult;
+  'plan-design': PlannerPackage;
+}
+
+export type RegisteredPhase = keyof PhaseResultRegistryMap;
 
 export function normalizePhaseId(phaseId: string): string {
   return phaseId.replace(/-\d+$/, '');
@@ -28,17 +67,17 @@ export function normalizePhaseId(phaseId: string): string {
 // Phases with no result entry (null) do not produce result.json artifacts.
 // TODO: converge PHASE_RESULT_REGISTRY into CANONICAL_PHASE_ORDER so there's one source of truth.
 export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
-  'plan-design': null,
-  'architecture-review': null,
+  'plan-design': 'plan-design',
+  'architecture-review': 'architecture-review',
   'plan-write': null,
   'plan-review': null,
   implement: 'implement',
   compound: 'compound',
   'create-pr': 'create-pr',
   'review-fix': null,
-  'initial-review': null,
-  'fix-review': null,
-  'follow-up-review': null,
+  'initial-review': 'initial-review',
+  'fix-review': 'fix-review',
+  'follow-up-review': 'follow-up-review',
   'wait-merge': null,
   read_issue: null,
   validate: null,
@@ -46,7 +85,9 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   'post-pr-review': null,
 };
 
-export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
+export const PHASE_RESULT_REGISTRY: {
+  [K in RegisteredPhase]: PhaseResultMeta<PhaseResultRegistryMap[K]>;
+} = {
   implement: {
     schema: implementResultSchema,
     schemaContractText:
@@ -137,4 +178,23 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
     schemaContractText:
       '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "requirements_checks": Array<{\n    "requirement": string,\n    "result": "PASS" | "FAIL",\n    "evidence"?: string\n  }>,\n  "findings"?: Array<{\n    "category"?: "requirements_reconciliation" | "contract_conservation" | "invariant_completeness" | "downstream_compatibility" | "other",\n    "severity": "critical" | "high" | "medium" | "low",\n    "target"?: string,\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string\n  }>,\n  "summary"?: string\n}',
   },
+  'plan-design': {
+    schema: plannerPackageSchema,
+    schemaContractText:
+      '{\n  "design_md": string,\n  "plan_md": string,\n  "summary"?: string,\n  "result"?: "ready" | "blocked"\n}',
+  },
 };
+
+export function getRegisteredPhaseResultMeta<K extends RegisteredPhase>(
+  phase: K,
+): PhaseResultMeta<PhaseResultRegistryMap[K]> {
+  return PHASE_RESULT_REGISTRY[phase];
+}
+
+export function getPhaseResultMeta(phase: string): PhaseResultMeta<unknown> | undefined {
+  const norm = normalizePhaseId(phase);
+  if (Object.hasOwn(PHASE_RESULT_REGISTRY, norm)) {
+    return PHASE_RESULT_REGISTRY[norm as RegisteredPhase];
+  }
+  return undefined;
+}

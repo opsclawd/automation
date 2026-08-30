@@ -12,7 +12,6 @@ import { recordValidationHeadSha } from '../validation-headsha.js';
 import { RunId } from '@ai-sdlc/domain';
 import type { RunValidation } from '../../run-validation.js';
 import type { MergeMethod } from '../../ports/github-port.js';
-import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 
 export interface CreatePrHandlerOpts {
   headBranch: (ctx: PhaseHandlerContext) => string;
@@ -662,7 +661,7 @@ function _extractSummaryParagraph(implLog: string): string {
 /** Parse task titles from task-manifest.json and return as markdown bullet list. */
 function _extractTasksFromManifest(manifestJson: string): string {
   try {
-    const manifest = parseAgentResultJson(manifestJson) as { tasks?: Array<{ title?: string }> };
+    const manifest = JSON.parse(manifestJson) as { tasks?: Array<{ title?: string }> };
     const tasks = manifest.tasks ?? [];
     return tasks
       .map((t) => t.title?.trim())

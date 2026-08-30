@@ -114,6 +114,13 @@ describe('FollowUpReviewHandler', () => {
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
 
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const completedEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'follow_up_review.completed',
+    );
+    expect(completedEvents).toHaveLength(1);
+
     const updatedLedgerRaw = await artifacts.read('run-1', 'finding-ledger.json');
     const updatedLedger = JSON.parse(updatedLedgerRaw);
     expect(updatedLedger.entries[0].status).toBe('resolved');

@@ -3,7 +3,6 @@ import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } fro
 import { createEventEmitter } from '../handler.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
-import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 import { formatLedgerForFixPrompt, type FindingLedger } from '../../review-fix/finding-ledger.js';
 import { invalidateValidationEvidence } from '../validation-evidence.js';
 
@@ -57,7 +56,7 @@ export class FixReviewHandler implements PhaseHandler {
 
     // 4. Run fixer agent invocation
     const fixRunResult = await runSingleShotAgentPhase(ctx, {
-      phase: this.phase,
+      phase: 'fix-review',
       profile: fixProfile,
       step: 'targeted-fix',
       ...(fixTemplate ? { template: fixTemplate } : {}),
@@ -71,7 +70,7 @@ export class FixReviewHandler implements PhaseHandler {
         mustNotChangeBranch: true,
         mustNotCreateCommit: true,
       },
-      skipResultExtraction: true,
+      skipCompletedEmit: true,
     });
 
     if (fixRunResult.outcome !== 'passed') {
@@ -79,29 +78,23 @@ export class FixReviewHandler implements PhaseHandler {
       return fixRunResult;
     }
 
-    // 5. Check result.json for cannot_fix verdict
-    try {
-      const resultRaw = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-      const parsed = parseAgentResultJson(resultRaw) as { result?: string };
-      if (parsed.result === 'cannot_fix') {
-        const message = 'targeted fixer reported it cannot fix the review findings';
-        emit('fix_review.failed', 'error', message);
-        return {
-          outcome: 'needs_human_review',
-          failure: {
-            runUuid: ctx.runUuid,
-            phase: this.phase,
-            kind: 'needs_human_review',
-            message,
-            canRetry: true,
-            suggestedAction: 'Review the findings and intervene manually.',
-            artifacts: ['code-review.md', 'finding-ledger.json'],
-            detectedAt: ctx.now(),
-          },
-        };
-      }
-    } catch {
-      // Best-effort check
+    // 5. Check result for cannot_fix verdict
+    if (fixRunResult.result.result === 'cannot_fix') {
+      const message = 'targeted fixer reported it cannot fix the review findings';
+      emit('fix_review.failed', 'error', message);
+      return {
+        outcome: 'needs_human_review',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'needs_human_review',
+          message,
+          canRetry: true,
+          suggestedAction: 'Review the findings and intervene manually.',
+          artifacts: ['code-review.md', 'finding-ledger.json'],
+          detectedAt: ctx.now(),
+        },
+      };
     }
 
     await invalidateValidationEvidence(ctx, this.phase);

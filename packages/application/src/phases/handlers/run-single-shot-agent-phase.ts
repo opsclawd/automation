@@ -1,12 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AgentContract, AgentProfileName, Failure, PhaseName } from '@ai-sdlc/domain';
+import {
+  PhaseName,
+  type AgentContract,
+  type AgentProfileName,
+  type Failure,
+} from '@ai-sdlc/domain';
 import type {
   AgentInvocationRequest,
   AgentInvocationResult,
 } from '../../ports/agent-invocation-types.js';
-import type { PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
+import type { PhaseHandlerContext, EventEmitter } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import { renderPrompt } from '../../prompts/render-prompt.js';
@@ -15,23 +20,65 @@ import { validateAgentContract } from '../../agent/validate-agent-contract.js';
 import { extractResult } from '../../results/extract-result.js';
 import { AgentInvocationId, type AgentInvocation } from '@ai-sdlc/domain';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
+import type {
+  PhaseResultMeta,
+  PhaseResultRegistryMap,
+  RegisteredPhase,
+} from '../../results/phase-registry.js';
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
 import type { StructuredResultRepairPort } from '../../ports.js';
 
-export interface SingleShotConfig {
-  phase: PhaseName;
+export interface SingleShotConfigBase {
   profile: AgentProfileName;
   step: string;
   /** Injected prompt template (tests). When provided, skips loadPromptTemplate. */
   template?: string;
   vars: Record<string, string>;
   agentContract: AgentContract;
+  cleanArtifacts?: boolean;
+  /** Skip emitting <phase>.completed when caller handles completion emission after deterministic post-processing. */
+  skipCompletedEmit?: boolean;
+}
+
+export interface SingleShotConfigSkipExtraction extends SingleShotConfigBase {
+  phase: PhaseName | string;
   /** Skip result extraction for phases where the agent drafts artifacts without
    *  producing a result.json (e.g. create-pr, where the result values like
    *  prNumber/prUrl are only known after the handler's deterministic steps). */
-  skipResultExtraction?: boolean;
-  cleanArtifacts?: boolean;
+  skipResultExtraction: true;
+  resultMeta?: never;
 }
+
+export interface SingleShotConfigWithExplicitMeta<T> extends SingleShotConfigBase {
+  phase: PhaseName | string;
+  skipResultExtraction?: false | undefined;
+  /** Explicit schema / meta override for result extraction. Result type is bound to meta schema. */
+  resultMeta: PhaseResultMeta<T>;
+}
+
+export interface SingleShotConfigFromRegistry<
+  P extends string = RegisteredPhase,
+> extends SingleShotConfigBase {
+  phase: P;
+  skipResultExtraction?: false | undefined;
+  resultMeta?: undefined;
+}
+
+export type SingleShotConfig =
+  | SingleShotConfigSkipExtraction
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | SingleShotConfigWithExplicitMeta<any>
+  | SingleShotConfigFromRegistry<string>;
+
+export type SingleShotAgentPhaseFailure = {
+  outcome: 'failed' | 'blocked' | 'needs_human_review';
+  failure: Failure;
+};
+
+export type SingleShotAgentPhaseResult<T = unknown> =
+  | { outcome: 'passed'; result: T }
+  | { outcome: 'passed'; result?: undefined }
+  | SingleShotAgentPhaseFailure;
 
 function assertField<T>(value: T | undefined, name: string): T {
   if (value === undefined) {
@@ -61,7 +108,7 @@ function buildAgentInvocation(
   return {
     id,
     runId: ctx.runUuid as AgentInvocation['runId'],
-    phaseId: config.phase,
+    phaseId: PhaseName(config.phase as string),
     profile: config.profile,
     runtime: result.runtime,
     provider: result.provider,
@@ -79,7 +126,7 @@ function buildAgentInvocation(
     timeoutMs: request.timeoutMs ?? 0,
     outcome: result.outcome,
     contractViolations: result.contractViolations,
-    ...(result.resultJsonPath ? { resultJsonPath: result.resultJsonPath } : {}),
+    resultJsonPath: result.resultJsonPath ?? 'result.json',
   };
 }
 
@@ -105,9 +152,25 @@ function buildFailure(
 
 export async function runSingleShotAgentPhase(
   ctx: PhaseHandlerContext,
+  config: SingleShotConfigSkipExtraction,
+): Promise<{ outcome: 'passed' } | SingleShotAgentPhaseFailure>;
+export async function runSingleShotAgentPhase<T>(
+  ctx: PhaseHandlerContext,
+  config: SingleShotConfigWithExplicitMeta<T>,
+): Promise<{ outcome: 'passed'; result: T } | SingleShotAgentPhaseFailure>;
+export async function runSingleShotAgentPhase<P extends RegisteredPhase>(
+  ctx: PhaseHandlerContext,
+  config: SingleShotConfigFromRegistry<P>,
+): Promise<{ outcome: 'passed'; result: PhaseResultRegistryMap[P] } | SingleShotAgentPhaseFailure>;
+export async function runSingleShotAgentPhase(
+  ctx: PhaseHandlerContext,
+  config: SingleShotConfigFromRegistry<PhaseName | string>,
+): Promise<{ outcome: 'passed'; result: unknown } | SingleShotAgentPhaseFailure>;
+export async function runSingleShotAgentPhase(
+  ctx: PhaseHandlerContext,
   config: SingleShotConfig,
-): Promise<PhaseResult> {
-  const emit: EventEmitter = createEventEmitter(ctx, config.phase);
+): Promise<SingleShotAgentPhaseResult<unknown>> {
+  const emit: EventEmitter = createEventEmitter(ctx, PhaseName(config.phase as string));
 
   // 1. Assert required optional context fields
   let promptsRoot: string | undefined;
@@ -349,15 +412,26 @@ export async function runSingleShotAgentPhase(
   // 10. Extract result
   //     Skipped for phases where the agent produces draft artifacts only,
   //     and the result values are determined by handler-level operations.
+  let extractedResult: unknown;
   if (!config.skipResultExtraction) {
-    const extracted = await extractResult({
-      invocation,
-      ports: {
-        artifacts: ctx.artifacts,
-        repair: (ctx as unknown as { repair?: StructuredResultRepairPort }).repair,
-      },
-      cwd: ctx.cwd,
-    });
+    const extracted = config.resultMeta
+      ? await extractResult({
+          invocation,
+          ports: {
+            artifacts: ctx.artifacts,
+            repair: (ctx as unknown as { repair?: StructuredResultRepairPort }).repair,
+          },
+          cwd: ctx.cwd,
+          resultMeta: config.resultMeta,
+        })
+      : await extractResult({
+          invocation,
+          ports: {
+            artifacts: ctx.artifacts,
+            repair: (ctx as unknown as { repair?: StructuredResultRepairPort }).repair,
+          },
+          cwd: ctx.cwd,
+        });
 
     if (!extracted.ok) {
       const failure = buildFailure(
@@ -371,14 +445,16 @@ export async function runSingleShotAgentPhase(
       emit(`${String(config.phase)}.failed`, 'error', failure.message);
       return { outcome: 'failed', failure };
     }
+
+    extractedResult = extracted.result;
   }
 
   // 11. Success
-  // When skipResultExtraction is set, the parent handler performs additional
-  // deterministic work (e.g. GitHub operations) before completion. Skip the
-  // phase.completed emit so the parent handler's own emit captures the true
-  // completion time including those side effects.
-  if (!config.skipResultExtraction) {
+  // When skipResultExtraction or skipCompletedEmit is set, the parent handler
+  // performs additional deterministic work (e.g. GitHub operations) before
+  // completion. Skip the phase.completed emit so the parent handler's own emit
+  // captures the true completion time including those side effects.
+  if (!config.skipResultExtraction && !config.skipCompletedEmit) {
     emit(`${String(config.phase)}.completed`, 'info', `${config.phase as string} completed`);
   }
 
@@ -409,5 +485,12 @@ export async function runSingleShotAgentPhase(
     }
   }
 
-  return { outcome: 'passed' };
+  if (config.skipResultExtraction) {
+    return { outcome: 'passed' };
+  }
+
+  return {
+    outcome: 'passed',
+    result: extractedResult!,
+  };
 }

@@ -1,5 +1,10 @@
-export { PHASE_RESULT_REGISTRY, PHASE_NAME_MIGRATION_MAP } from './phase-registry.js';
-export type { PhaseResultMeta } from './phase-registry.js';
+export {
+  PHASE_RESULT_REGISTRY,
+  PHASE_NAME_MIGRATION_MAP,
+  getPhaseResultMeta,
+  getRegisteredPhaseResultMeta,
+} from './phase-registry.js';
+export type { PhaseResultMeta, PhaseResultRegistryMap, RegisteredPhase } from './phase-registry.js';
 export { planDesignResultSchema } from './schemas/plan-design.js';
 export type { PlanDesignResult } from './schemas/plan-design.js';
 export { plannerPackageSchema } from './schemas/planner-package.js';
@@ -75,7 +80,12 @@ export type {
   TaskManifestEntry,
 } from './schemas/task-manifest.js';
 export { extractResult } from './extract-result.js';
-export type { ExtractResultOutcome, ExtractResultInput } from './extract-result.js';
+export type {
+  ExtractResultOutcome,
+  ExtractResultInput,
+  ExtractResultInputWithMeta,
+  ExtractResultInputFromRegistry,
+} from './extract-result.js';
 export { normalizePhaseId } from './phase-registry.js';
 export { classifyResultFailure } from './failure-classification.js';
 export type { ResultFailureClassification } from './failure-classification.js';

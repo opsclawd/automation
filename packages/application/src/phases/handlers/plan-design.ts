@@ -3,9 +3,7 @@ import type { PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.
 import { createEventEmitter } from '../handler.js';
 import { SingleShotAgentHandler } from './single-shot-agent-handler.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
-import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
-import { plannerPackageSchema } from '../../results/schemas/planner-package.js';
 import { validatePlanTaskList } from '../plan-tasks.js';
 
 export class PlanDesignHandler extends SingleShotAgentHandler {
@@ -90,74 +88,20 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
 
     // 4. Run single planner invocation without worktree delivery requirements
     const runResult = await runSingleShotAgentPhase(ctx, {
-      phase: this.phase,
+      phase: 'plan-design',
       profile,
       step: 'plan-unified',
       ...(template ? { template } : {}),
       vars: { issue_number: String(ctx.issueNumber), cwd: ctx.cwd },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
-      skipResultExtraction: true,
+      skipCompletedEmit: true,
     });
 
     if (runResult.outcome !== 'passed') {
       return runResult;
     }
 
-    // 5. Extract and parse structured result.json
-    let rawJson: string;
-    try {
-      rawJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-    } catch {
-      const failure: Failure = {
-        runUuid: ctx.runUuid,
-        phase: 'plan-design',
-        kind: 'invalid_result',
-        message: 'Unified planner did not produce result.json artifact',
-        canRetry: false,
-        suggestedAction: 'Ensure planner returns structured JSON with design_md and plan_md.',
-        artifacts: [],
-        detectedAt: ctx.now(),
-      };
-      emit('plan-design.failed', 'error', failure.message);
-      return { outcome: 'failed', failure };
-    }
-
-    let parsedObj: unknown;
-    try {
-      parsedObj = parseAgentResultJson(rawJson);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      const failure: Failure = {
-        runUuid: ctx.runUuid,
-        phase: 'plan-design',
-        kind: 'invalid_result',
-        message: `Failed to parse result.json: ${message}`,
-        canRetry: false,
-        suggestedAction: 'Ensure planner returns valid JSON.',
-        artifacts: [],
-        detectedAt: ctx.now(),
-      };
-      emit('plan-design.failed', 'error', failure.message);
-      return { outcome: 'failed', failure };
-    }
-
-    const parseResult = plannerPackageSchema.safeParse(parsedObj);
-    if (!parseResult.success) {
-      const failure: Failure = {
-        runUuid: ctx.runUuid,
-        phase: 'plan-design',
-        kind: 'invalid_result',
-        message: `Result schema validation failed: ${parseResult.error.message}`,
-        canRetry: false,
-        suggestedAction: 'Ensure planner returns design_md and plan_md.',
-        artifacts: [],
-        detectedAt: ctx.now(),
-      };
-      emit('plan-design.failed', 'error', failure.message);
-      return { outcome: 'failed', failure };
-    }
-
-    const { design_md, plan_md } = parseResult.data;
+    const { design_md, plan_md } = runResult.result;
 
     // 6. Deterministic validation on plan
     const validation = validatePlanTaskList(plan_md, undefined, ctx, 'plan-design');

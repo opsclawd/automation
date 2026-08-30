@@ -1,5 +1,11 @@
 import type { AgentInvocation, AgentInvocationId } from '@ai-sdlc/domain';
-import { PHASE_RESULT_REGISTRY, normalizePhaseId, type PhaseResultMeta } from './phase-registry.js';
+import {
+  getPhaseResultMeta,
+  normalizePhaseId,
+  type PhaseResultMeta,
+  type PhaseResultRegistryMap,
+  type RegisteredPhase,
+} from './phase-registry.js';
 import type { ArtifactStore, StructuredResultRepairPort } from '../ports.js';
 import { ArtifactNotFoundError } from '../ports.js';
 import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
@@ -19,7 +25,7 @@ export type ExtractResultOutcome<T = unknown> =
         | typeof CONTRACT_VIOLATION_CODES.ARTIFACT_READ_ERROR;
     };
 
-export interface ExtractResultInput {
+export interface ExtractResultInputWithMeta<T> {
   invocation: AgentInvocation;
   ports: {
     artifacts: ArtifactStore;
@@ -30,12 +36,31 @@ export interface ExtractResultInput {
   rerunContext?: { cwd: string; [key: string]: unknown } | undefined;
   repairExpectedHead?: string | undefined;
   transcriptEvidence?: string | undefined;
+  resultMeta: PhaseResultMeta<T>;
 }
+
+export interface ExtractResultInputFromRegistry<_P extends RegisteredPhase = RegisteredPhase> {
+  invocation: AgentInvocation;
+  ports: {
+    artifacts: ArtifactStore;
+    repair?: StructuredResultRepairPort | undefined;
+    agent?: unknown;
+  };
+  cwd?: string | undefined;
+  rerunContext?: { cwd: string; [key: string]: unknown } | undefined;
+  repairExpectedHead?: string | undefined;
+  transcriptEvidence?: string | undefined;
+  resultMeta?: undefined;
+}
+
+export type ExtractResultInput<T = unknown> =
+  | ExtractResultInputWithMeta<T>
+  | ExtractResultInputFromRegistry;
 
 async function readAndValidate(
   runId: string,
   resultJsonPath: string | undefined,
-  meta: PhaseResultMeta,
+  meta: PhaseResultMeta<unknown>,
   ports: { artifacts: ArtifactStore },
 ): Promise<
   | { ok: true; result: unknown }
@@ -98,19 +123,37 @@ async function readAndValidate(
   return { ok: true, result: result.data };
 }
 
-export async function extractResult(input: ExtractResultInput): Promise<ExtractResultOutcome> {
-  const { invocation, ports } = input;
+export async function extractResult<T>(
+  input: ExtractResultInputWithMeta<T>,
+): Promise<ExtractResultOutcome<T>>;
+export async function extractResult<P extends RegisteredPhase>(
+  input: ExtractResultInputFromRegistry<P>,
+): Promise<ExtractResultOutcome<PhaseResultRegistryMap[P]>>;
+export async function extractResult(
+  input: ExtractResultInputFromRegistry,
+): Promise<ExtractResultOutcome<unknown>>;
+export async function extractResult(
+  input: ExtractResultInput<unknown>,
+): Promise<ExtractResultOutcome<unknown>> {
+  const { invocation, ports, resultMeta } = input;
   const rawPhase = invocation.phaseId as string;
   const phase = normalizePhaseId(rawPhase);
-  if (!Object.hasOwn(PHASE_RESULT_REGISTRY, phase)) {
-    throw new Error(`no result schema registered for phase '${invocation.phaseId}'`);
+
+  let meta: PhaseResultMeta<unknown>;
+  if (resultMeta) {
+    meta = resultMeta;
+  } else {
+    const registryMeta = getPhaseResultMeta(phase);
+    if (!registryMeta) {
+      throw new Error(`no result schema registered for phase '${invocation.phaseId}'`);
+    }
+    meta = registryMeta;
   }
-  const meta = PHASE_RESULT_REGISTRY[phase]!;
 
   const runId = invocation.runId as unknown as string;
   const initial = await readAndValidate(runId, invocation.resultJsonPath, meta, ports);
   if (initial.ok) {
-    return initial;
+    return initial as ExtractResultOutcome<unknown>;
   }
 
   const hasEv = hasEvidence(invocation.stdoutPath);

@@ -3,12 +3,8 @@ import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } fro
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
-import { parseAgentResultJson } from '../../results/parse-agent-json.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
-import {
-  followUpReviewResultSchema,
-  type FollowUpReviewResult,
-} from '../../results/schemas/follow-up-review.js';
+import type { FollowUpReviewResult } from '../../results/schemas/follow-up-review.js';
 import {
   updateFindingLedger,
   formatLedgerForPrompt,
@@ -123,7 +119,7 @@ export class FollowUpReviewHandler implements PhaseHandler {
 
     // 7. Invoke single-shot follow-up reviewer agent (read-only)
     const runResult = await runSingleShotAgentPhase(ctx, {
-      phase: this.phase,
+      phase: 'follow-up-review',
       profile,
       step: 'follow-up-review',
       ...(template ? { template } : {}),
@@ -136,7 +132,7 @@ export class FollowUpReviewHandler implements PhaseHandler {
         fix_diff: fixDiff || '(no diff)',
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
-      skipResultExtraction: true,
+      skipCompletedEmit: true,
     });
 
     if (runResult.outcome !== 'passed') {
@@ -144,29 +140,7 @@ export class FollowUpReviewHandler implements PhaseHandler {
       return runResult;
     }
 
-    // 8. Extract and validate structured result.json
-    let parsedResult: FollowUpReviewResult;
-    try {
-      const resultRaw = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-      const parsed = parseAgentResultJson(resultRaw);
-      const val = followUpReviewResultSchema.safeParse(parsed);
-      if (!val.success) {
-        return this.fail(
-          ctx,
-          emit,
-          'invalid_result',
-          `Failed to validate follow-up review schema: ${val.error.message}`,
-        );
-      }
-      parsedResult = val.data;
-    } catch (err) {
-      return this.fail(
-        ctx,
-        emit,
-        'invalid_result',
-        `Failed to parse follow-up review result.json: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    const parsedResult: FollowUpReviewResult = { ...runResult.result };
 
     // 9. Update finding ledger
     const updatedLedger = updateFindingLedger(

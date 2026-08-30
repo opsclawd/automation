@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { taskManifestSchema, type TaskManifest } from './task-manifest.js';
+import { taskManifestSchema } from './task-manifest.js';
 
 export const plannerPackageSchema = z.object({
   design_md: z.string().trim().min(1, 'design_md must be a non-empty string'),
@@ -32,10 +32,4 @@ export const plannerPackageSchema = z.object({
   result: z.enum(['ready', 'blocked']).optional(),
 });
 
-export type PlannerPackage = {
-  design_md: string;
-  plan_md: string;
-  task_manifest?: TaskManifest;
-  summary?: string;
-  result?: 'ready' | 'blocked';
-};
+export type PlannerPackage = z.infer<typeof plannerPackageSchema>;

@@ -5,18 +5,18 @@
 // NOTE: Originally specified at apps/cli/src/diagnose-result.ts per the issue,
 // but apps/cli/ does not exist in this repo. Placed in apps/api/src/ instead.
 import { readFileSync } from 'node:fs';
-import { PHASE_RESULT_REGISTRY } from '@ai-sdlc/application';
+import { getPhaseResultMeta } from '@ai-sdlc/application';
 
 const [, , phase, filePath] = process.argv;
 if (!phase || !filePath) {
   console.error('usage: diagnose-result <phase> <path-to-result.json>');
   process.exit(2);
 }
-if (!Object.hasOwn(PHASE_RESULT_REGISTRY, phase)) {
+const meta = getPhaseResultMeta(phase);
+if (!meta) {
   console.error(`unknown phase: ${phase}`);
   process.exit(2);
 }
-const meta = PHASE_RESULT_REGISTRY[phase]!;
 const raw = readFileSync(filePath, 'utf-8');
 let parsed: unknown;
 try {

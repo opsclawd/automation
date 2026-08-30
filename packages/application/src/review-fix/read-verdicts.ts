@@ -1,5 +1,6 @@
 import type { AgentInvocation } from '@ai-sdlc/domain';
 import { extractResult, type ExtractResultOutcome } from '../results/extract-result.js';
+import { PHASE_RESULT_REGISTRY } from '../results/phase-registry.js';
 import type { ArtifactStore, StructuredResultRepairPort } from '../ports.js';
 import type { WholePrReviewResult } from '../results/schemas/whole-pr-review.js';
 import type {
@@ -244,27 +245,12 @@ export type WholeChangeVerdictOutcome =
       violationCode: ExtractResultFailure['violationCode'];
     };
 
-export async function readWholeChangeReviewVerdict(
-  invocation: AgentInvocation,
-  ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
-  opts?: ReadWholeChangeReviewVerdictOptions,
-): Promise<WholeChangeVerdictOutcome> {
-  const r = await extractResult({
-    invocation,
-    ports,
-    cwd: opts?.cwd,
-    transcriptEvidence: opts?.transcriptEvidence,
-  });
-  if (!r.ok) {
-    return {
-      ok: false,
-      detail: r.detail,
-      classification: r.classification,
-      violationCode: r.violationCode,
-    };
-  }
+export type EvaluatedWholeChangeVerdict = Extract<WholeChangeVerdictOutcome, { ok: true }>;
 
-  const raw = r.result as WholeChangeReviewResult;
+export function evaluateWholeChangeReviewVerdict(
+  raw: WholeChangeReviewResult,
+  opts?: { issueBodyPresent?: boolean },
+): EvaluatedWholeChangeVerdict {
   const normalizedVerdict =
     raw.verdict?.toUpperCase() === 'APPROVE' ? 'APPROVE' : 'REQUEST_CHANGES';
   const acceptanceCriteria = raw.acceptance_criteria ?? [];
@@ -352,6 +338,30 @@ export async function readWholeChangeReviewVerdict(
   };
 }
 
+export async function readWholeChangeReviewVerdict(
+  invocation: AgentInvocation,
+  ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
+  opts?: ReadWholeChangeReviewVerdictOptions,
+): Promise<WholeChangeVerdictOutcome> {
+  const r = await extractResult({
+    invocation,
+    ports,
+    cwd: opts?.cwd,
+    transcriptEvidence: opts?.transcriptEvidence,
+    resultMeta: PHASE_RESULT_REGISTRY['whole-change-review'],
+  });
+  if (!r.ok) {
+    return {
+      ok: false,
+      detail: r.detail,
+      classification: r.classification,
+      violationCode: r.violationCode,
+    };
+  }
+
+  return evaluateWholeChangeReviewVerdict(r.result, opts);
+}
+
 export interface ReadNarrowVerificationVerdictOptions {
   cwd?: string;
   transcriptEvidence?: string;
@@ -375,27 +385,15 @@ export type NarrowVerificationVerdictOutcome =
       violationCode: ExtractResultFailure['violationCode'];
     };
 
-export async function readNarrowVerificationVerdict(
-  invocation: AgentInvocation,
-  ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
-  opts?: ReadNarrowVerificationVerdictOptions,
-): Promise<NarrowVerificationVerdictOutcome> {
-  const r = await extractResult({
-    invocation,
-    ports,
-    cwd: opts?.cwd,
-    transcriptEvidence: opts?.transcriptEvidence,
-  });
-  if (!r.ok) {
-    return {
-      ok: false,
-      detail: r.detail,
-      classification: r.classification,
-      violationCode: r.violationCode,
-    };
-  }
+export type EvaluatedNarrowVerificationVerdict = Extract<
+  NarrowVerificationVerdictOutcome,
+  { ok: true }
+>;
 
-  const raw = r.result as NarrowVerificationResult;
+export function evaluateNarrowVerificationVerdict(
+  raw: NarrowVerificationResult,
+  opts?: { originalFindingsCount?: number },
+): EvaluatedNarrowVerificationVerdict {
   const normalizedVerdict = raw.verdict?.toUpperCase() === 'PASS' ? 'PASS' : 'FAIL';
   const evaluations = raw.findings_evaluations ?? [];
   const regressions = raw.obvious_regressions ?? [];
@@ -459,4 +457,28 @@ export async function readNarrowVerificationVerdict(
     regressions,
     ...(summary !== undefined ? { summary } : {}),
   };
+}
+
+export async function readNarrowVerificationVerdict(
+  invocation: AgentInvocation,
+  ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
+  opts?: ReadNarrowVerificationVerdictOptions,
+): Promise<NarrowVerificationVerdictOutcome> {
+  const r = await extractResult({
+    invocation,
+    ports,
+    cwd: opts?.cwd,
+    transcriptEvidence: opts?.transcriptEvidence,
+    resultMeta: PHASE_RESULT_REGISTRY['narrow-verification'],
+  });
+  if (!r.ok) {
+    return {
+      ok: false,
+      detail: r.detail,
+      classification: r.classification,
+      violationCode: r.violationCode,
+    };
+  }
+
+  return evaluateNarrowVerificationVerdict(r.result, opts);
 }
