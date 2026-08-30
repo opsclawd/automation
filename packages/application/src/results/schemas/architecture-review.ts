@@ -61,12 +61,40 @@ export type WitnessScenario = z.infer<typeof witnessScenarioSchema>;
 export type ArchitectureReviewResult = z.infer<typeof architectureReviewResultSchema>;
 
 /**
+ * Detects whether evidence exhibits provenance layer conflation by treating
+ * profile/configuration identity as proof of measured/executed stream metadata.
+ */
+export function hasProvenanceConflationEvidence(
+  requirementText: string,
+  evidenceText?: string,
+): boolean {
+  if (!evidenceText) return false;
+  const isProvenanceRequirement =
+    /provenance|measured|probe|stream\s+metadata|executed\s+and\s+measured|actual\s+output/i.test(
+      requirementText,
+    );
+  if (!isProvenanceRequirement) return false;
+
+  const conflatesProfileWithMeasured =
+    /(?:assembly\s*profile|profile\s*id|versioned\s*profile|profile\s+identif|profile\s+version|profile\s+name).*(?:identif|proves|guarantees|specifies|sufficient|measures|substitut|verif)/i.test(
+      evidenceText,
+    );
+  return conflatesProfileWithMeasured;
+}
+
+/**
  * Evaluates whether an architecture review result meets all criteria for approval:
  * 1. verdict is 'APPROVE' or 'PASS'
  * 2. requirements_checks is present, non-empty, and every check has result 'PASS'
- * 3. if a requirements ledger is provided, every ledger item must be dispositioned with 'PASS'
- * 4. if witness_scenarios are present, none have result 'FAIL'
- * 5. no blocking findings (blocking === true or severity in ['critical', 'high', 'P0', 'P1'])
+ * 3. if a requirements ledger is provided:
+ *    - every ledger ID must appear exactly once in requirements_checks
+ *    - no duplicate ledger IDs
+ *    - no omitted ledger IDs
+ *    - exact requirement_id matching (no fuzzy fallback)
+ * 4. if the ledger contains consumer requirements, witness_scenarios must be present, non-empty, and all PASS
+ * 5. if witness_scenarios are present, none have result 'FAIL' and all have non-empty evidence
+ * 6. no requirement check or witness scenario exhibits provenance layer conflation (e.g. profile ID as measured data)
+ * 7. no blocking findings (blocking === true or severity in ['critical', 'high', 'P0', 'P1'])
  */
 export function isApprovedArchitectureReview(
   review: ArchitectureReviewResult,
@@ -84,32 +112,62 @@ export function isApprovedArchitectureReview(
     return false;
   }
 
-  // If a ledger is provided, every item in the ledger must be dispositioned by a PASS check
+  // Exact 1-to-1 ledger disposition gate
   if (ledger && ledger.items.length > 0) {
     const checks = review.requirements_checks;
-    for (const item of ledger.items) {
-      const match = checks.find(
-        (c) =>
-          (c.requirement_id &&
-            c.requirement_id.toLowerCase().trim() === item.id.toLowerCase().trim()) ||
-          c.requirement.trim().toLowerCase() === item.title.trim().toLowerCase() ||
-          (item.description &&
-            c.requirement.trim().toLowerCase() === item.description.trim().toLowerCase()) ||
-          c.requirement.trim().toLowerCase().includes(item.id.toLowerCase().trim()),
-      );
-      if (!match || match.result?.toUpperCase() !== 'PASS') {
+    const seenLedgerIds = new Set<string>();
+
+    for (const check of checks) {
+      if (check.requirement_id) {
+        const normId = check.requirement_id.toUpperCase().trim();
+        const isLedgerItem = ledger.items.some((it) => it.id.toUpperCase().trim() === normId);
+        if (isLedgerItem) {
+          if (seenLedgerIds.has(normId)) {
+            // Duplicate ledger ID fails approval
+            return false;
+          }
+          seenLedgerIds.add(normId);
+        }
+      }
+    }
+
+    // Every ledger item ID must appear exactly once
+    if (seenLedgerIds.size !== ledger.items.length) {
+      return false;
+    }
+
+    // Mandatory witness scenarios for consumer requirements
+    const hasConsumerRequirements = ledger.items.some(
+      (it) => it.category === 'consumer_requirement',
+    );
+    if (hasConsumerRequirements) {
+      if (!review.witness_scenarios || review.witness_scenarios.length === 0) {
         return false;
       }
     }
   }
 
-  // If any witness scenario failed, review is not approved
+  // Validate witness scenarios if present
   if (review.witness_scenarios && review.witness_scenarios.length > 0) {
-    const hasFailedWitness = review.witness_scenarios.some(
-      (w) => w.result?.toUpperCase() === 'FAIL',
+    const allWitnessesPass = review.witness_scenarios.every(
+      (w) => w.result?.toUpperCase() === 'PASS' && w.evidence.trim().length > 0,
     );
-    if (hasFailedWitness) {
+    if (!allWitnessesPass) {
       return false;
+    }
+  }
+
+  // Provenance layer conflation anti-trap check
+  for (const check of review.requirements_checks) {
+    if (hasProvenanceConflationEvidence(check.requirement, check.evidence)) {
+      return false;
+    }
+  }
+  if (review.witness_scenarios) {
+    for (const witness of review.witness_scenarios) {
+      if (hasProvenanceConflationEvidence(witness.scenario, witness.evidence)) {
+        return false;
+      }
     }
   }
 

@@ -134,18 +134,45 @@ function extractBulletsOrParagraphs(lines: string[]): string[] {
   return items;
 }
 
-function findReferencedIssueNumbers(text: string, currentIssue: number): number[] {
-  const numbers = new Set<number>();
-  const matches = text.matchAll(/(?:#|issues\/)(\d+)/gi);
-  for (const m of matches) {
+function findDirectConsumerIssueNumbers(text: string, currentIssue: number): number[] {
+  const consumers = new Set<number>();
+  const upstreamOrHistorical = new Set<number>();
+
+  // Identify upstream/historical/closed references to exclude
+  const nonConsumerRegex =
+    /(?:fixes|closed by|closes|resolves|resolved by|supercedes|precursor|prior art|following)\s*[:#\s]+(\d+)/gi;
+  for (const m of text.matchAll(nonConsumerRegex)) {
+    if (m[1]) {
+      const num = parseInt(m[1], 10);
+      if (!isNaN(num)) upstreamOrHistorical.add(num);
+    }
+  }
+
+  // Identify explicit downstream consumer / dependency references
+  const consumerRegex =
+    /(?:depends on|depended on by|direct consumer|consumer|required by|downstream|unblocks)\s*[:#\s]+(\d+)/gi;
+  for (const m of text.matchAll(consumerRegex)) {
     if (m[1]) {
       const num = parseInt(m[1], 10);
       if (!isNaN(num) && num > 0 && num !== currentIssue) {
-        numbers.add(num);
+        consumers.add(num);
       }
     }
   }
-  return Array.from(numbers).slice(0, 10); // bound to at most 10 direct consumers
+
+  // Also look for general issue references if not marked as historical/non-consumer
+  const generalRegex = /(?:#|issues\/)(\d+)/gi;
+  for (const m of text.matchAll(generalRegex)) {
+    if (m[1]) {
+      const num = parseInt(m[1], 10);
+      if (!isNaN(num) && num > 0 && num !== currentIssue && !upstreamOrHistorical.has(num)) {
+        // If not explicitly upstream, consider as potential direct consumer
+        consumers.add(num);
+      }
+    }
+  }
+
+  return Array.from(consumers).slice(0, 10); // bound to at most 10 direct consumers
 }
 
 export async function buildArchitectureRequirementsLedger(
@@ -256,29 +283,92 @@ export async function buildArchitectureRequirementsLedger(
     }
   }
 
-  // 4. Bounded 1-level Direct Consumer Discovery
-  const referencedIssues = findReferencedIssueNumbers(
-    `${opts.issueMd}\n${opts.issueCommentsMd ?? ''}`,
-    opts.issueNumber,
+  // 4. Bounded Direct Consumer Discovery (Text References & Search)
+  const consumerNumbers = new Set<number>(
+    findDirectConsumerIssueNumbers(
+      `${opts.issueMd}\n${opts.issueCommentsMd ?? ''}`,
+      opts.issueNumber,
+    ),
   );
 
-  if (opts.github && opts.repoFullName && referencedIssues.length > 0) {
-    for (const refNum of referencedIssues) {
+  // If GitHub search is available, find dependents referencing the current issue
+  if (opts.github && opts.repoFullName) {
+    if (typeof opts.github.searchIssues === 'function') {
+      try {
+        const searchResults = await opts.github.searchIssues(
+          opts.repoFullName,
+          `#${opts.issueNumber}`,
+        );
+        for (const dep of searchResults) {
+          if (dep.number !== opts.issueNumber) {
+            consumerNumbers.add(dep.number);
+          }
+        }
+      } catch {
+        // Fail-soft on search error
+      }
+    }
+
+    // Fetch and extract complete requirements from discovered direct consumers
+    for (const refNum of Array.from(consumerNumbers).slice(0, 10)) {
       try {
         const directConsumer = await opts.github.getIssue(opts.repoFullName, refNum);
         if (directConsumer && directConsumer.body) {
+          let consumerItemCount = 0;
+
+          // a) Acceptance criteria from consumer
           const consumerAcs = extractAcceptanceCriteria(directConsumer.body);
-          if (consumerAcs.length > 0) {
-            for (let i = 0; i < consumerAcs.length; i++) {
-              addItem({
-                id: `CONSUMER-${refNum}-AC-${i + 1}`,
-                category: 'consumer_requirement',
-                title: consumerAcs[i]!,
-                source: `issue #${refNum}`,
-                description: `Direct consumer requirement from #${refNum} (${directConsumer.title})`,
-              });
+          for (let i = 0; i < consumerAcs.length; i++) {
+            addItem({
+              id: `CONSUMER-${refNum}-AC-${i + 1}`,
+              category: 'consumer_requirement',
+              title: consumerAcs[i]!,
+              source: `issue #${refNum}`,
+              description: `Direct consumer requirement from #${refNum} (${directConsumer.title})`,
+            });
+            consumerItemCount++;
+          }
+
+          // b) Goal / Anchored Design / Required changes from consumer
+          const consumerSections = extractSections(directConsumer.body);
+          let consumerGoalIdx = 1;
+          let consumerDesignIdx = 1;
+
+          for (const [cHeader, cSecLines] of consumerSections.entries()) {
+            if (cHeader === 'goal' || cHeader.startsWith('goal') || cHeader.includes('goals')) {
+              const bullets = extractBulletsOrParagraphs(cSecLines);
+              for (const bullet of bullets) {
+                addItem({
+                  id: `CONSUMER-${refNum}-GOAL-${consumerGoalIdx++}`,
+                  category: 'consumer_requirement',
+                  title: bullet,
+                  source: `issue #${refNum}`,
+                  description: `Direct consumer goal from #${refNum} (${directConsumer.title})`,
+                });
+                consumerItemCount++;
+              }
+            } else if (
+              cHeader.includes('anchored design') ||
+              cHeader.includes('required changes') ||
+              cHeader.includes('design') ||
+              cHeader.includes('architecture')
+            ) {
+              const bullets = extractBulletsOrParagraphs(cSecLines);
+              for (const bullet of bullets) {
+                addItem({
+                  id: `CONSUMER-${refNum}-DESIGN-${consumerDesignIdx++}`,
+                  category: 'consumer_requirement',
+                  title: bullet,
+                  source: `issue #${refNum}`,
+                  description: `Direct consumer design requirement from #${refNum} (${directConsumer.title})`,
+                });
+                consumerItemCount++;
+              }
             }
-          } else {
+          }
+
+          // c) Fallback if consumer body had no structured sections/ACs
+          if (consumerItemCount === 0) {
             addItem({
               id: `CONSUMER-${refNum}-REQ-1`,
               category: 'consumer_requirement',

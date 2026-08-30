@@ -7,6 +7,7 @@ import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import {
   architectureReviewResultSchema,
   isApprovedArchitectureReview,
+  hasProvenanceConflationEvidence,
   type ArchitectureReviewResult,
   type WitnessScenario,
 } from '../../results/schemas/architecture-review.js';
@@ -183,7 +184,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     const isApproved = isApprovedArchitectureReview(reviewData, ledger);
     const blockingFindings = this.getBlockingFindings(reviewData);
     const failedReqs = this.getFailedRequirementChecks(reviewData, ledger);
-    const failedWitnesses = this.getFailedWitnessScenarios(reviewData);
+    const failedWitnesses = this.getFailedWitnessScenarios(reviewData, ledger);
     const totalGapsCount = blockingFindings.length + failedReqs.length + failedWitnesses.length;
 
     if (isApproved && totalGapsCount === 0) {
@@ -379,7 +380,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       const isRevalApproved = isApprovedArchitectureReview(revalData, ledger);
       const revalBlockingFindings = this.getBlockingFindings(revalData);
       const revalFailedReqs = this.getFailedRequirementChecks(revalData, ledger);
-      const revalFailedWitnesses = this.getFailedWitnessScenarios(revalData);
+      const revalFailedWitnesses = this.getFailedWitnessScenarios(revalData, ledger);
       const revalGapsCount =
         revalBlockingFindings.length + revalFailedReqs.length + revalFailedWitnesses.length;
 
@@ -438,26 +439,35 @@ export class ArchitectureReviewHandler implements PhaseHandler {
           requirement: c.requirement,
           evidence: c.evidence,
         });
+      } else if (hasProvenanceConflationEvidence(c.requirement, c.evidence)) {
+        failed.push({
+          requirement_id: c.requirement_id,
+          requirement: c.requirement,
+          evidence: `Provenance layer conflation: profile identity cannot stand in for measured execution metadata (${c.evidence})`,
+        });
       }
     }
 
-    // Check for omitted ledger items
+    // Exact 1-to-1 ledger checking: check for omitted or duplicate ledger items
     if (ledger && ledger.items.length > 0) {
       for (const item of ledger.items) {
-        const match = checks.find(
+        const matches = checks.filter(
           (c) =>
-            (c.requirement_id &&
-              c.requirement_id.toLowerCase().trim() === item.id.toLowerCase().trim()) ||
-            c.requirement.trim().toLowerCase() === item.title.trim().toLowerCase() ||
-            (item.description &&
-              c.requirement.trim().toLowerCase() === item.description.trim().toLowerCase()) ||
-            c.requirement.trim().toLowerCase().includes(item.id.toLowerCase().trim()),
+            c.requirement_id &&
+            c.requirement_id.toUpperCase().trim() === item.id.toUpperCase().trim(),
         );
-        if (!match) {
+        if (matches.length === 0) {
           failed.push({
             requirement_id: item.id,
             requirement: item.title,
             evidence: `Requirement was omitted from review disposition (Source: ${item.source})`,
+            source: item.source,
+          });
+        } else if (matches.length > 1) {
+          failed.push({
+            requirement_id: item.id,
+            requirement: item.title,
+            evidence: `Requirement ID was duplicated ${matches.length} times in review disposition`,
             source: item.source,
           });
         }
@@ -467,8 +477,36 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     return failed;
   }
 
-  private getFailedWitnessScenarios(result: ArchitectureReviewResult): WitnessScenario[] {
-    return (result.witness_scenarios ?? []).filter((w) => w.result?.toUpperCase() === 'FAIL');
+  private getFailedWitnessScenarios(
+    result: ArchitectureReviewResult,
+    ledger?: ArchitectureRequirementsLedger,
+  ): WitnessScenario[] {
+    const failed: WitnessScenario[] = [];
+    const witnesses = result.witness_scenarios ?? [];
+
+    const hasConsumerReqs = ledger?.items.some((it) => it.category === 'consumer_requirement');
+    if (hasConsumerReqs && witnesses.length === 0) {
+      failed.push({
+        scenario: 'Consumer Contract Representability Verification',
+        result: 'FAIL',
+        evidence:
+          'Direct consumer requirements exist in ledger but no witness scenarios were provided to prove contract representability',
+      });
+    }
+
+    for (const w of witnesses) {
+      if (w.result?.toUpperCase() === 'FAIL') {
+        failed.push(w);
+      } else if (hasProvenanceConflationEvidence(w.scenario, w.evidence)) {
+        failed.push({
+          scenario: w.scenario,
+          result: 'FAIL',
+          evidence: `Provenance layer conflation: profile identity cannot stand in for measured execution metadata (${w.evidence})`,
+        });
+      }
+    }
+
+    return failed;
   }
 
   private getBlockingFindings(result: ArchitectureReviewResult) {

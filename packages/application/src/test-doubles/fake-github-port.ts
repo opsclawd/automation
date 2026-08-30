@@ -154,4 +154,21 @@ export class FakeGitHubPort implements GitHubPort {
   async listReviews(repoFullName: string, prNumber: number): Promise<PullRequestReview[]> {
     return this.reviews.get(`${repoFullName}/${prNumber}`) ?? [];
   }
+
+  async searchIssues(repoFullName: string, query: string): Promise<GitHubIssue[]> {
+    const results: GitHubIssue[] = [];
+    const prefix = `${repoFullName}/`;
+    for (const [key, issue] of this.issues.entries()) {
+      if (key.startsWith(prefix)) {
+        if (
+          query === '' ||
+          issue.title.toLowerCase().includes(query.toLowerCase()) ||
+          issue.body.toLowerCase().includes(query.toLowerCase())
+        ) {
+          results.push(issue);
+        }
+      }
+    }
+    return results;
+  }
 }

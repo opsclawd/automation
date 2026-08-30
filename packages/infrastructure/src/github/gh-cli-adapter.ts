@@ -472,4 +472,34 @@ export class GhCliAdapter implements GitHubPort {
     if (args.length <= 5) return;
     await this.run(args);
   }
+
+  async searchIssues(repoFullName: string, query: string): Promise<GitHubIssue[]> {
+    const out = await this.run([
+      'issue',
+      'list',
+      '--repo',
+      repoFullName,
+      '--search',
+      query,
+      '--json',
+      'number,title,body,labels',
+      '--limit',
+      '10',
+    ]);
+    const command = `gh issue list --repo ${repoFullName} --search "${query}"`;
+    const list = this.safeJsonParse<
+      Array<{
+        number: number;
+        title: string;
+        body: string;
+        labels: Array<{ name: string }>;
+      }>
+    >(out, command);
+    return list.map((j) => ({
+      number: j.number,
+      title: j.title,
+      body: j.body,
+      labels: (j.labels ?? []).map((l) => l.name),
+    }));
+  }
 }

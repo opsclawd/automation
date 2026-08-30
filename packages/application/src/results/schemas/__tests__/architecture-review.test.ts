@@ -255,6 +255,107 @@ describe('isApprovedArchitectureReview', () => {
       findings: [],
     };
     expect(isApprovedArchitectureReview(failedData, ledger)).toBe(false);
+
+    // 4. Duplicate ledger ID -> false
+    const duplicateData = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        {
+          requirement_id: 'REQ-1',
+          requirement: 'Representational completeness',
+          result: 'PASS' as const,
+        },
+        {
+          requirement_id: 'REQ-1',
+          requirement: 'Representational completeness duplicate',
+          result: 'PASS' as const,
+        },
+      ],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(duplicateData, ledger)).toBe(false);
+
+    // 5. Title-only match without requirement_id -> false (exact ID required)
+    const titleOnlyData = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        {
+          requirement: 'Representational completeness',
+          result: 'PASS' as const,
+        },
+        {
+          requirement_id: 'AC-1',
+          requirement: 'Every ledger item must be dispositioned',
+          result: 'PASS' as const,
+        },
+      ],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(titleOnlyData, ledger)).toBe(false);
+  });
+
+  it('rejects approval when consumer requirements exist in ledger but witness_scenarios is empty', () => {
+    const ledger = {
+      version: 1 as const,
+      issueNumber: 1129,
+      items: [
+        {
+          id: 'CONSUMER-128-AC-1',
+          category: 'consumer_requirement' as const,
+          title: 'Loop soundbed 12s to 30s',
+          source: 'issue #128',
+        },
+      ],
+    };
+
+    const data = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        {
+          requirement_id: 'CONSUMER-128-AC-1',
+          requirement: 'Loop soundbed 12s to 30s',
+          result: 'PASS' as const,
+          evidence: 'Supported by timeline model',
+        },
+      ],
+      witness_scenarios: [],
+      findings: [],
+    };
+
+    expect(isApprovedArchitectureReview(data, ledger)).toBe(false);
+  });
+
+  it('rejects approval when reviewer claims profile identity as proof of measured provenance (anti-trap)', () => {
+    const ledger = {
+      version: 1 as const,
+      issueNumber: 1129,
+      items: [
+        {
+          id: 'AC-1',
+          category: 'acceptance_criteria' as const,
+          title: 'Provide executed and measured provenance',
+          source: 'issue.md',
+        },
+      ],
+    };
+
+    // False-positive from #129: reviewer returns APPROVE with PASS and empty findings,
+    // but evidence asserts that profile identity identifies the contract
+    const conflatedData = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        {
+          requirement_id: 'AC-1',
+          requirement: 'Provide executed and measured provenance',
+          result: 'PASS' as const,
+          evidence: 'The versioned assembly profile identifies the encoding contract',
+        },
+      ],
+      witness_scenarios: [],
+      findings: [],
+    };
+
+    expect(isApprovedArchitectureReview(conflatedData, ledger)).toBe(false);
   });
 
   it('rejects approval when any witness scenario has FAIL result', () => {

@@ -466,7 +466,7 @@ describe('ArchitectureReviewHandler', () => {
     expect(result.outcome).toBe('needs_human_review');
   });
 
-  it('rejects approval when reviewer treats profile/configuration identity as proof of measured/executed provenance', async () => {
+  it('rejects approval when reviewer falsely returns APPROVE claiming profile identity proves measured provenance (#129 failure mode)', async () => {
     const handler = new ArchitectureReviewHandler({ maxCorrections: 0 });
     const ctx = createTestContext();
 
@@ -474,7 +474,7 @@ describe('ArchitectureReviewHandler', () => {
       runId: ctx.runUuid,
       relativePath: 'issue.md',
       contents:
-        '# Issue 1129\n## Acceptance criteria\n- [ ] Provenance layering must record probe metadata\n',
+        '# Issue 1129\n## Acceptance criteria\n- [ ] Provide executed and measured provenance\n',
     });
     await ctx.artifacts.write({
       runId: ctx.runUuid,
@@ -491,33 +491,93 @@ describe('ArchitectureReviewHandler', () => {
     const agent = ctx.agent as FakeAgentPort;
     const reviewerProfile = 'profile-for-architecture-review';
 
+    // Mock reviewer confidently returns APPROVE with the exact false reasoning from comfy #129
     agent.enqueue(reviewerProfile, async () => {
       await ctx.artifacts.write({
         runId: ctx.runUuid,
         relativePath: 'result.json',
         contents: JSON.stringify({
-          verdict: 'REQUEST_CHANGES',
+          verdict: 'APPROVE',
           requirements_checks: [
             {
               requirement_id: 'AC-1',
-              requirement: 'Provenance layering must record probe metadata',
-              result: 'FAIL',
-              evidence: 'Design assumes profileId proves measured audio sample rate and duration',
+              requirement: 'Provide executed and measured provenance',
+              result: 'PASS',
+              evidence: 'The versioned assembly profile identifies the encoding contract',
             },
           ],
-          findings: [
+          witness_scenarios: [],
+          findings: [],
+        }),
+      });
+      return {
+        id: 'inv-1' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(reviewerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('needs_human_review');
+    expect(eventsOf(ctx, 'architecture_review.exhausted')).toHaveLength(1);
+  });
+
+  it('rejects approval when duplicate ledger IDs appear in reviewer output', async () => {
+    const handler = new ArchitectureReviewHandler({ maxCorrections: 0 });
+    const ctx = createTestContext();
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents:
+        '# Issue 1129\n## Acceptance criteria\n- [ ] First requirement\n- [ ] Second requirement\n',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design\nContract design.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents:
+        '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: setup\n- Invariants: none\n- Verification: `pnpm test`\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    const reviewerProfile = 'profile-for-architecture-review';
+
+    agent.enqueue(reviewerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          requirements_checks: [
             {
-              category: 'provenance_layering',
-              severity: 'high',
-              target: 'design.md',
-              evidence:
-                'Layer conflation: profileId is requested/configured layer, not measured/verified stream probe data',
-              rationale:
-                'Executed audio streams may drift from profile default and require probe measurements',
-              minimal_correction: 'Add probeStreamMetadata to manifest audit record',
-              blocking: true,
+              requirement_id: 'AC-1',
+              requirement: 'First requirement',
+              result: 'PASS',
+            },
+            {
+              requirement_id: 'AC-1', // Duplicate AC-1 instead of AC-2
+              requirement: 'Second requirement with duplicate ID',
+              result: 'PASS',
             },
           ],
+          findings: [],
         }),
       });
       return {

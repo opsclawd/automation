@@ -137,12 +137,95 @@ Direct consumer: #128
     expect(consumerItems[1]!.id).toBe('CONSUMER-128-AC-2');
   });
 
+  it('discovers dependent consumer issues via github.searchIssues and extracts Goal and Design sections', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/130', {
+      number: 130,
+      title: 'Comfy Audio Quality Downstream Consumer',
+      body: `
+# Downstream Audio Consumer
+Depends on #1129
+
+## Goal
+Require measured output audio bitrate and sample rate provenance in exported metadata.
+
+## Required changes
+- Ensure timeline exporter probes executed streams for actual bitrate.
+- Persist measured stream probe outcome in job manifest.
+
+## Acceptance criteria
+- [ ] Measured audio stream sample rate recorded
+`,
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 1129
+## Goal
+Support base timeline assembly
+## Acceptance criteria
+- [ ] Base provider interface
+`;
+
+    const ledger = await buildArchitectureRequirementsLedger({
+      issueNumber: 1129,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    const consumerItems = ledger.items.filter((it) => it.category === 'consumer_requirement');
+    expect(consumerItems.length).toBeGreaterThanOrEqual(3);
+    expect(consumerItems.some((it) => it.id === 'CONSUMER-130-AC-1')).toBe(true);
+    expect(consumerItems.some((it) => it.id === 'CONSUMER-130-GOAL-1')).toBe(true);
+    expect(consumerItems.some((it) => it.id === 'CONSUMER-130-DESIGN-1')).toBe(true);
+    expect(consumerItems.find((it) => it.id === 'CONSUMER-130-GOAL-1')!.title).toContain(
+      'Require measured output audio bitrate',
+    );
+  });
+
+  it('distinguishes downstream consumers from upstream or historical references', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/50', {
+      number: 50,
+      title: 'Old historical issue',
+      body: '## Acceptance criteria\n- [ ] Historical thing',
+      labels: [],
+    });
+    github.issues.set('test-org/test-repo/51', {
+      number: 51,
+      title: 'Actual direct consumer',
+      body: '## Acceptance criteria\n- [ ] Consumer thing',
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 1129
+Fixes #50
+Closes #50
+Direct consumer: #51
+## Acceptance criteria
+- [ ] My AC
+`;
+
+    const ledger = await buildArchitectureRequirementsLedger({
+      issueNumber: 1129,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    // #50 should not be in ledger, #51 should be in ledger
+    expect(ledger.items.some((it) => it.id.startsWith('CONSUMER-50-'))).toBe(false);
+    expect(ledger.items.some((it) => it.id.startsWith('CONSUMER-51-'))).toBe(true);
+  });
+
   it('handles consumer issue fetch failure gracefully (fail-soft)', async () => {
     const github = new FakeGitHubPort(); // issue 999 not in map -> will throw
 
     const issueMd = `
 # Issue 1129
-References #999
+Direct consumer: #999
 
 ## Acceptance criteria
 - [ ] Local requirement
