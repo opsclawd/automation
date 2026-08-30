@@ -8,13 +8,26 @@ import {
   architectureReviewResultSchema,
   isApprovedArchitectureReview,
   type ArchitectureReviewResult,
+  type WitnessScenario,
 } from '../../results/schemas/architecture-review.js';
+import {
+  buildArchitectureRequirementsLedger,
+  formatRequirementsLedgerForPrompt,
+  type ArchitectureRequirementsLedger,
+} from '../architecture-requirements.js';
 import { plannerPackageSchema } from '../../results/schemas/planner-package.js';
 import { validatePlanTaskList } from '../plan-tasks.js';
 
 export interface ArchitectureReviewHandlerOpts {
   profileName?: string;
   maxCorrections?: number;
+}
+
+export interface FailedRequirementCheck {
+  requirement: string;
+  requirement_id?: string | undefined;
+  evidence?: string | undefined;
+  source?: string | undefined;
 }
 
 export class ArchitectureReviewHandler implements PhaseHandler {
@@ -50,14 +63,26 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       if (existingRaw.trim().length > 0) {
         const parsedObj = JSON.parse(existingRaw);
         const parseResult = architectureReviewResultSchema.safeParse(parsedObj);
-        if (parseResult.success && isApprovedArchitectureReview(parseResult.data)) {
-          emit(
-            'architecture_review.completed',
-            'info',
-            'architecture review already approved (reusing existing review)',
-            { policy: ctx.executionPolicy },
-          );
-          return { outcome: 'passed' };
+        if (parseResult.success) {
+          let existingLedger: ArchitectureRequirementsLedger | undefined;
+          try {
+            const ledgerRaw = await ctx.artifacts.read(
+              ctx.runUuid,
+              'architecture-requirements.json',
+            );
+            existingLedger = JSON.parse(ledgerRaw) as ArchitectureRequirementsLedger;
+          } catch {
+            // Ledger artifact may not exist yet
+          }
+          if (isApprovedArchitectureReview(parseResult.data, existingLedger)) {
+            emit(
+              'architecture_review.completed',
+              'info',
+              'architecture review already approved (reusing existing review)',
+              { policy: ctx.executionPolicy },
+            );
+            return { outcome: 'passed' };
+          }
         }
       }
     } catch {
@@ -65,8 +90,10 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     }
 
     // 2. Validate required inputs: issue.md, design.md, and plan.md
+    let issueMd: string;
+    let issueCommentsMd: string | undefined;
     try {
-      await ctx.artifacts.read(ctx.runUuid, 'issue.md');
+      issueMd = await ctx.artifacts.read(ctx.runUuid, 'issue.md');
       await ctx.artifacts.read(ctx.runUuid, 'design.md');
       await ctx.artifacts.read(ctx.runUuid, 'plan.md');
     } catch (e) {
@@ -77,14 +104,47 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       return this.fail(ctx, emit, 'missing_artifact', message);
     }
 
-    // 3. Resolve reviewer profile (independent critic/reviewer)
+    try {
+      issueCommentsMd = await ctx.artifacts.read(ctx.runUuid, 'issue-comments.md');
+    } catch {
+      // Optional input
+    }
+
+    // 3. Build or read deterministic requirements ledger
+    let ledger: ArchitectureRequirementsLedger;
+    try {
+      const existingLedgerRaw = await ctx.artifacts.read(
+        ctx.runUuid,
+        'architecture-requirements.json',
+      );
+      ledger = JSON.parse(existingLedgerRaw) as ArchitectureRequirementsLedger;
+    } catch {
+      ledger = await buildArchitectureRequirementsLedger({
+        issueNumber: ctx.issueNumber,
+        repoFullName: ctx.repoFullName,
+        issueMd,
+        issueCommentsMd,
+        github: ctx.github,
+      });
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: this.phase,
+        relativePath: 'architecture-requirements.json',
+        contents: JSON.stringify(ledger, null, 2),
+      });
+      emit('artifact.created', 'info', 'artifact created: architecture-requirements.json', {
+        relativePath: 'architecture-requirements.json',
+      });
+    }
+
+    // 4. Resolve reviewer profile (independent critic/reviewer)
     const reviewerProfile =
       ctx.resolveProfile?.('architecture-review') ??
       ctx.resolveProfile?.('pr-reviewer') ??
       ctx.resolveProfile?.('critic') ??
       AgentProfileName(this.opts.profileName ?? 'gemini');
 
-    // 4. Load reviewer prompt template
+    // 5. Load reviewer prompt template
     let reviewTemplate: string | undefined;
     if (ctx.promptsRoot) {
       try {
@@ -96,7 +156,9 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       }
     }
 
-    // 5. Reviewer Invocation (Pass 1)
+    const formattedLedger = formatRequirementsLedgerForPrompt(ledger);
+
+    // 6. Reviewer Invocation (Pass 1)
     const reviewResult = await runSingleShotAgentPhase(ctx, {
       phase: 'architecture-review',
       profile: reviewerProfile,
@@ -105,6 +167,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       vars: {
         issue_number: String(ctx.issueNumber),
         cwd: ctx.cwd,
+        requirements_ledger: formattedLedger,
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
       skipCompletedEmit: true,
@@ -117,11 +180,13 @@ export class ArchitectureReviewHandler implements PhaseHandler {
 
     const reviewData: ArchitectureReviewResult = reviewResult.result;
 
-    const isApproved = isApprovedArchitectureReview(reviewData);
+    const isApproved = isApprovedArchitectureReview(reviewData, ledger);
     const blockingFindings = this.getBlockingFindings(reviewData);
-    const failedReqs = this.getFailedRequirementChecks(reviewData);
+    const failedReqs = this.getFailedRequirementChecks(reviewData, ledger);
+    const failedWitnesses = this.getFailedWitnessScenarios(reviewData);
+    const totalGapsCount = blockingFindings.length + failedReqs.length + failedWitnesses.length;
 
-    if (isApproved) {
+    if (isApproved && totalGapsCount === 0) {
       await this.persistReviewArtifacts(ctx, emit, reviewData);
       emit(
         'architecture_review.completed',
@@ -129,6 +194,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         'architecture review approved on initial evaluation',
         {
           policy: ctx.executionPolicy,
+          requirementsCheckedCount: reviewData.requirements_checks?.length ?? 0,
         },
       );
       return { outcome: 'passed' };
@@ -138,16 +204,17 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     await this.persistReviewArtifacts(ctx, emit, reviewData);
 
     if (this.maxCorrections === 0) {
-      const totalGapsCount = blockingFindings.length + failedReqs.length;
-      const failureSummary = `Architecture review identified ${totalGapsCount} blocking gap(s) (${blockingFindings.length} finding(s), ${failedReqs.length} failed requirement(s)) and maxCorrections is 0`;
+      const failureSummary = `Architecture review identified ${totalGapsCount} blocking gap(s) (${blockingFindings.length} finding(s), ${failedReqs.length} failed/omitted requirement(s), ${failedWitnesses.length} failed witness(es)) and maxCorrections is 0`;
       emit('architecture_review.exhausted', 'warn', failureSummary, {
         policy: ctx.executionPolicy,
         maxCorrections: 0,
         blockingFindingsCount: blockingFindings.length,
         failedRequirementsCount: failedReqs.length,
+        failedWitnessesCount: failedWitnesses.length,
       });
       return this.needsHumanReview(ctx, emit, failureSummary, [
         'architecture-review.json',
+        'architecture-requirements.json',
         'design.md',
         'plan.md',
       ]);
@@ -156,19 +223,22 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     let currentReviewData = reviewData;
     let currentBlockingFindings = blockingFindings;
     let currentFailedReqs = failedReqs;
+    let currentFailedWitnesses = failedWitnesses;
 
     for (let correction = 1; correction <= this.maxCorrections; correction++) {
-      const totalGapsCount = currentBlockingFindings.length + currentFailedReqs.length;
+      const currentGapsCount =
+        currentBlockingFindings.length + currentFailedReqs.length + currentFailedWitnesses.length;
       emit(
         'architecture_review.findings_found',
         'warn',
-        `architecture review identified ${totalGapsCount} blocking gap(s) (${currentBlockingFindings.length} finding(s), ${currentFailedReqs.length} failed requirement(s)); invoking targeted planner correction (attempt ${correction}/${this.maxCorrections})`,
+        `architecture review identified ${currentGapsCount} blocking gap(s) (${currentBlockingFindings.length} finding(s), ${currentFailedReqs.length} failed/omitted requirement(s), ${currentFailedWitnesses.length} failed witness(es)); invoking targeted planner correction (attempt ${correction}/${this.maxCorrections})`,
         {
           policy: ctx.executionPolicy,
           correctionAttempt: correction,
           maxCorrections: this.maxCorrections,
           blockingFindingsCount: currentBlockingFindings.length,
           failedRequirementsCount: currentFailedReqs.length,
+          failedWitnessesCount: currentFailedWitnesses.length,
         },
       );
 
@@ -176,6 +246,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         currentReviewData,
         currentBlockingFindings,
         currentFailedReqs,
+        currentFailedWitnesses,
       );
 
       const plannerProfile =
@@ -204,6 +275,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
           issue_number: String(ctx.issueNumber),
           cwd: ctx.cwd,
           review_findings: formattedFindings,
+          requirements_ledger: formattedLedger,
         },
         agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
         resultMeta: {
@@ -224,7 +296,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
           ctx,
           emit,
           `Targeted planner correction failed to execute during architecture review (attempt ${correction}/${this.maxCorrections})`,
-          ['architecture-review.json', 'design.md', 'plan.md'],
+          ['architecture-review.json', 'architecture-requirements.json', 'design.md', 'plan.md'],
         );
       }
 
@@ -285,6 +357,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         vars: {
           issue_number: String(ctx.issueNumber),
           cwd: ctx.cwd,
+          requirements_ledger: formattedLedger,
         },
         agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
         skipCompletedEmit: true,
@@ -295,7 +368,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
           ctx,
           emit,
           `Architecture re-verification agent invocation failed on attempt ${correction}/${this.maxCorrections}`,
-          ['architecture-review.json', 'design.md', 'plan.md'],
+          ['architecture-review.json', 'architecture-requirements.json', 'design.md', 'plan.md'],
         );
       }
 
@@ -303,8 +376,14 @@ export class ArchitectureReviewHandler implements PhaseHandler {
 
       await this.persistReviewArtifacts(ctx, emit, revalData);
 
-      const isRevalApproved = isApprovedArchitectureReview(revalData);
-      if (isRevalApproved) {
+      const isRevalApproved = isApprovedArchitectureReview(revalData, ledger);
+      const revalBlockingFindings = this.getBlockingFindings(revalData);
+      const revalFailedReqs = this.getFailedRequirementChecks(revalData, ledger);
+      const revalFailedWitnesses = this.getFailedWitnessScenarios(revalData);
+      const revalGapsCount =
+        revalBlockingFindings.length + revalFailedReqs.length + revalFailedWitnesses.length;
+
+      if (isRevalApproved && revalGapsCount === 0) {
         emit(
           'architecture_review.completed',
           'info',
@@ -320,33 +399,81 @@ export class ArchitectureReviewHandler implements PhaseHandler {
 
       // Update state for next correction iteration
       currentReviewData = revalData;
-      currentBlockingFindings = this.getBlockingFindings(revalData);
-      currentFailedReqs = this.getFailedRequirementChecks(revalData);
+      currentBlockingFindings = revalBlockingFindings;
+      currentFailedReqs = revalFailedReqs;
+      currentFailedWitnesses = revalFailedWitnesses;
     }
 
     // Budget exhausted -> Escalate to human review
-    const remainingGapsCount = currentBlockingFindings.length + currentFailedReqs.length;
-    const failureSummary = `Architecture review did not converge within fixed budget: ${remainingGapsCount} blocking gap(s) remain after ${this.maxCorrections} correction attempt(s) (${currentBlockingFindings.length} finding(s), ${currentFailedReqs.length} failed requirement(s))`;
+    const remainingGapsCount =
+      currentBlockingFindings.length + currentFailedReqs.length + currentFailedWitnesses.length;
+    const failureSummary = `Architecture review did not converge within fixed budget: ${remainingGapsCount} blocking gap(s) remain after ${this.maxCorrections} correction attempt(s) (${currentBlockingFindings.length} finding(s), ${currentFailedReqs.length} failed/omitted requirement(s), ${currentFailedWitnesses.length} failed witness(es))`;
     emit('architecture_review.exhausted', 'warn', failureSummary, {
       policy: ctx.executionPolicy,
       maxCorrections: this.maxCorrections,
       remainingFindingsCount: currentBlockingFindings.length,
       remainingFailedRequirementsCount: currentFailedReqs.length,
+      remainingFailedWitnessesCount: currentFailedWitnesses.length,
     });
 
     return this.needsHumanReview(ctx, emit, failureSummary, [
       'architecture-review.json',
+      'architecture-requirements.json',
       'design.md',
       'plan.md',
     ]);
   }
 
-  private getFailedRequirementChecks(result: ArchitectureReviewResult) {
-    return (result.requirements_checks ?? []).filter((c) => c.result.toUpperCase() === 'FAIL');
+  private getFailedRequirementChecks(
+    result: ArchitectureReviewResult,
+    ledger?: ArchitectureRequirementsLedger,
+  ): FailedRequirementCheck[] {
+    const failed: FailedRequirementCheck[] = [];
+    const checks = result.requirements_checks ?? [];
+
+    for (const c of checks) {
+      if (c.result?.toUpperCase() === 'FAIL') {
+        failed.push({
+          requirement_id: c.requirement_id,
+          requirement: c.requirement,
+          evidence: c.evidence,
+        });
+      }
+    }
+
+    // Check for omitted ledger items
+    if (ledger && ledger.items.length > 0) {
+      for (const item of ledger.items) {
+        const match = checks.find(
+          (c) =>
+            (c.requirement_id &&
+              c.requirement_id.toLowerCase().trim() === item.id.toLowerCase().trim()) ||
+            c.requirement.trim().toLowerCase() === item.title.trim().toLowerCase() ||
+            (item.description &&
+              c.requirement.trim().toLowerCase() === item.description.trim().toLowerCase()) ||
+            c.requirement.trim().toLowerCase().includes(item.id.toLowerCase().trim()),
+        );
+        if (!match) {
+          failed.push({
+            requirement_id: item.id,
+            requirement: item.title,
+            evidence: `Requirement was omitted from review disposition (Source: ${item.source})`,
+            source: item.source,
+          });
+        }
+      }
+    }
+
+    return failed;
+  }
+
+  private getFailedWitnessScenarios(result: ArchitectureReviewResult): WitnessScenario[] {
+    return (result.witness_scenarios ?? []).filter((w) => w.result?.toUpperCase() === 'FAIL');
   }
 
   private getBlockingFindings(result: ArchitectureReviewResult) {
-    const isExplicitlyApproved = isApprovedArchitectureReview(result);
+    const isExplicitlyApproved =
+      result.verdict?.toUpperCase() === 'APPROVE' || result.verdict?.toUpperCase() === 'PASS';
     return result.findings.filter((f) => {
       if (f.blocking === true) return true;
       if (['critical', 'high', 'P0', 'P1'].includes(f.severity)) return true;
@@ -358,7 +485,8 @@ export class ArchitectureReviewHandler implements PhaseHandler {
   private formatFindingsForPrompt(
     result: ArchitectureReviewResult,
     blockingFindings: ArchitectureReviewResult['findings'],
-    failedReqs: ArchitectureReviewResult['requirements_checks'],
+    failedReqs: FailedRequirementCheck[],
+    failedWitnesses: WitnessScenario[] = [],
   ): string {
     const lines: string[] = [];
     if (result.summary) {
@@ -366,9 +494,24 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     }
 
     if (failedReqs && failedReqs.length > 0) {
-      lines.push('### Failed Requirements Checks:');
+      lines.push('### Failed & Omitted Requirements Checks:');
       for (const check of failedReqs) {
-        lines.push(`- [FAIL] ${check.requirement}: ${check.evidence ?? 'No evidence provided'}`);
+        const idPrefix = check.requirement_id ? `[${check.requirement_id}] ` : '';
+        lines.push(
+          `- [FAIL] ${idPrefix}${check.requirement}: ${check.evidence ?? 'No evidence provided'}`,
+        );
+      }
+      lines.push('');
+    }
+
+    if (failedWitnesses && failedWitnesses.length > 0) {
+      lines.push('### Failed Consumer Witness Scenarios:');
+      for (const witness of failedWitnesses) {
+        lines.push(`- [FAIL] **Scenario:** ${witness.scenario}`);
+        lines.push(`  - Evidence: ${witness.evidence}`);
+        if (witness.counterexample) {
+          lines.push(`  - Counterexample / Stress Case: ${witness.counterexample}`);
+        }
       }
       lines.push('');
     }

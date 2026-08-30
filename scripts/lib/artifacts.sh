@@ -53,6 +53,7 @@ whole-change-review.json
 follow-up-review.json
 architecture-review.json
 architecture-review.md
+architecture-requirements.json
 implementation-log-task-*.md
 issue.md
 issue-comments.md

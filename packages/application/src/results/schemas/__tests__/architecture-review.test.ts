@@ -75,7 +75,51 @@ describe('architectureReviewResultSchema', () => {
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.requirements_checks).toEqual([]);
+      expect(parsed.data.witness_scenarios).toEqual([]);
       expect(parsed.data.findings).toEqual([]);
+    }
+  });
+
+  it('validates new architectural finding categories', () => {
+    const categories = [
+      'representational_completeness',
+      'provenance_layering',
+      'conditional_invariants',
+      'witness_scenarios',
+    ] as const;
+
+    for (const category of categories) {
+      const data = {
+        category,
+        severity: 'high',
+        evidence: 'Evidence',
+        rationale: 'Rationale',
+        minimal_correction: 'Correction',
+      };
+      const parsed = architectureReviewFindingSchema.safeParse(data);
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  it('validates structured witness scenarios in result', () => {
+    const data = {
+      verdict: 'APPROVE',
+      requirements_checks: [{ requirement_id: 'REQ-1', requirement: 'Req 1', result: 'PASS' }],
+      witness_scenarios: [
+        {
+          scenario: '12s soundbed looped to 30s timeline',
+          result: 'PASS',
+          evidence: 'Loop representation explicitly supports 12 + 12 + 6 segments',
+          counterexample: 'Partial loop tail handling verified',
+        },
+      ],
+      findings: [],
+    };
+    const parsed = architectureReviewResultSchema.safeParse(data);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.witness_scenarios).toHaveLength(1);
+      expect(parsed.data.witness_scenarios?.[0]?.scenario).toContain('12s soundbed');
     }
   });
 });
@@ -135,6 +179,95 @@ describe('isApprovedArchitectureReview', () => {
     const data = {
       verdict: 'REQUEST_CHANGES' as const,
       requirements_checks: [{ requirement: 'Req 1', result: 'PASS' as const }],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(data)).toBe(false);
+  });
+
+  it('enforces deterministic requirements ledger disposition', () => {
+    const ledger = {
+      version: 1 as const,
+      issueNumber: 1129,
+      items: [
+        {
+          id: 'REQ-1',
+          category: 'goal' as const,
+          title: 'Representational completeness',
+          source: 'issue.md',
+        },
+        {
+          id: 'AC-1',
+          category: 'acceptance_criteria' as const,
+          title: 'Every ledger item must be dispositioned',
+          source: 'issue.md',
+        },
+      ],
+    };
+
+    // 1. All ledger items dispositioned with PASS -> true
+    const approvedData = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        {
+          requirement_id: 'REQ-1',
+          requirement: 'Representational completeness',
+          result: 'PASS' as const,
+        },
+        {
+          requirement_id: 'AC-1',
+          requirement: 'Every ledger item must be dispositioned',
+          result: 'PASS' as const,
+        },
+      ],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(approvedData, ledger)).toBe(true);
+
+    // 2. One ledger item omitted from reviewer output -> false
+    const omittedData = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        {
+          requirement_id: 'REQ-1',
+          requirement: 'Representational completeness',
+          result: 'PASS' as const,
+        },
+      ],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(omittedData, ledger)).toBe(false);
+
+    // 3. One ledger item dispositioned with FAIL -> false
+    const failedData = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        {
+          requirement_id: 'REQ-1',
+          requirement: 'Representational completeness',
+          result: 'PASS' as const,
+        },
+        {
+          requirement_id: 'AC-1',
+          requirement: 'Every ledger item must be dispositioned',
+          result: 'FAIL' as const,
+        },
+      ],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(failedData, ledger)).toBe(false);
+  });
+
+  it('rejects approval when any witness scenario has FAIL result', () => {
+    const data = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [{ requirement: 'Req 1', result: 'PASS' as const }],
+      witness_scenarios: [
+        {
+          scenario: 'Loop soundbed 12s to 30s',
+          result: 'FAIL' as const,
+          evidence: 'Loop representation drops tail trim',
+        },
+      ],
       findings: [],
     };
     expect(isApprovedArchitectureReview(data)).toBe(false);

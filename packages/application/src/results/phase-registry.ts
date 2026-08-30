@@ -176,7 +176,7 @@ export const PHASE_RESULT_REGISTRY: {
   'architecture-review': {
     schema: architectureReviewResultSchema,
     schemaContractText:
-      '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "requirements_checks": Array<{\n    "requirement": string,\n    "result": "PASS" | "FAIL",\n    "evidence"?: string\n  }>,\n  "findings"?: Array<{\n    "category"?: "requirements_reconciliation" | "contract_conservation" | "invariant_completeness" | "downstream_compatibility" | "other",\n    "severity": "critical" | "high" | "medium" | "low",\n    "target"?: string,\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string\n  }>,\n  "summary"?: string\n}',
+      '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "requirements_checks": Array<{\n    "requirement_id"?: string,\n    "requirement": string,\n    "result": "PASS" | "FAIL",\n    "evidence"?: string\n  }>,\n  "witness_scenarios"?: Array<{\n    "scenario": string,\n    "result": "PASS" | "FAIL",\n    "evidence": string,\n    "counterexample"?: string\n  }>,\n  "findings"?: Array<{\n    "category"?: "requirements_reconciliation" | "contract_conservation" | "invariant_completeness" | "downstream_compatibility" | "representational_completeness" | "provenance_layering" | "conditional_invariants" | "witness_scenarios" | "other",\n    "severity": "critical" | "high" | "medium" | "low",\n    "target"?: string,\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string\n  }>,\n  "summary"?: string\n}',
   },
   'plan-design': {
     schema: plannerPackageSchema,
