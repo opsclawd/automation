@@ -1,5 +1,5 @@
 import type { AgentInvocation, AgentInvocationId } from '@ai-sdlc/domain';
-import { PHASE_RESULT_REGISTRY, normalizePhaseId, type PhaseResultMeta } from './phase-registry.js';
+import { getPhaseResultMeta, normalizePhaseId, type PhaseResultMeta } from './phase-registry.js';
 import type { ArtifactStore, StructuredResultRepairPort } from '../ports.js';
 import { ArtifactNotFoundError } from '../ports.js';
 import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
@@ -110,10 +110,11 @@ export async function extractResult<T = unknown>(
   if (resultMeta) {
     meta = resultMeta;
   } else {
-    if (!Object.hasOwn(PHASE_RESULT_REGISTRY, phase)) {
+    const registryMeta = getPhaseResultMeta(phase);
+    if (!registryMeta) {
       throw new Error(`no result schema registered for phase '${invocation.phaseId}'`);
     }
-    meta = PHASE_RESULT_REGISTRY[phase]! as PhaseResultMeta<T>;
+    meta = registryMeta as PhaseResultMeta<T>;
   }
 
   const runId = invocation.runId as unknown as string;

@@ -304,9 +304,51 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
     const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
       .calls;
     const completedEvents = publishedEvents.filter(
-      (call) => (call[0] as { name?: string })?.name === 'follow-up-review.completed',
+      (call) => (call[1] as { type?: string })?.type === 'follow-up-review.completed',
     );
     expect(completedEvents).toHaveLength(0);
+  });
+
+  it('emits completion event by default when skipCompletedEmit is not set', async () => {
+    await artifacts.write({
+      runId: 'run-1128',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        evaluations: [],
+        new_findings: [],
+        summary: 'All good',
+      }),
+    });
+
+    agent.enqueue('follow-up-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const result = await runSingleShotAgentPhase<FollowUpReviewResult>(ctx, {
+      phase: PhaseName('follow-up-review'),
+      profile: AgentProfileName('follow-up-review'),
+      step: 'follow-up-review',
+      vars: { cwd: ctx.cwd },
+      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+    });
+
+    expect(result.outcome).toBe('passed');
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const completedEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'follow-up-review.completed',
+    );
+    expect(completedEvents).toHaveLength(1);
   });
 
   it('exercises structured-result repair through centralized extraction when repair port is available', async () => {

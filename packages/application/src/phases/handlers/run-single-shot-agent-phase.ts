@@ -13,9 +13,9 @@ import { renderPrompt } from '../../prompts/render-prompt.js';
 import { TemplateError, TemplateNotFoundError } from '../../prompts/errors.js';
 import { validateAgentContract } from '../../agent/validate-agent-contract.js';
 import { extractResult } from '../../results/extract-result.js';
-import type { PhaseResultMeta } from '../../results/phase-registry.js';
 import { AgentInvocationId, type AgentInvocation } from '@ai-sdlc/domain';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
+import type { PhaseResultMeta } from '../../results/phase-registry.js';
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
 import type { StructuredResultRepairPort } from '../../ports.js';
 
@@ -32,12 +32,6 @@ export interface SingleShotConfigBase {
   skipCompletedEmit?: boolean;
 }
 
-export interface SingleShotConfigWithExtraction<T = unknown> extends SingleShotConfigBase {
-  skipResultExtraction?: false | undefined;
-  /** Optional custom schema / meta override for result extraction. */
-  resultMeta?: PhaseResultMeta<T> | undefined;
-}
-
 export interface SingleShotConfigSkipExtraction extends SingleShotConfigBase {
   /** Skip result extraction for phases where the agent drafts artifacts without
    *  producing a result.json (e.g. create-pr, where the result values like
@@ -46,9 +40,21 @@ export interface SingleShotConfigSkipExtraction extends SingleShotConfigBase {
   resultMeta?: never;
 }
 
+export interface SingleShotConfigWithExplicitMeta<T> extends SingleShotConfigBase {
+  skipResultExtraction?: false | undefined;
+  /** Explicit schema / meta override for result extraction. Result type is bound to meta schema. */
+  resultMeta: PhaseResultMeta<T>;
+}
+
+export interface SingleShotConfigFromRegistry extends SingleShotConfigBase {
+  skipResultExtraction?: false | undefined;
+  resultMeta?: undefined;
+}
+
 export type SingleShotConfig<T = unknown> =
-  | SingleShotConfigWithExtraction<T>
-  | SingleShotConfigSkipExtraction;
+  | SingleShotConfigSkipExtraction
+  | SingleShotConfigWithExplicitMeta<T>
+  | SingleShotConfigFromRegistry;
 
 export type SingleShotAgentPhaseFailure = {
   outcome: 'failed' | 'blocked' | 'needs_human_review';
@@ -130,14 +136,18 @@ function buildFailure(
   };
 }
 
-export async function runSingleShotAgentPhase<T = unknown>(
-  ctx: PhaseHandlerContext,
-  config: SingleShotConfigWithExtraction<T>,
-): Promise<{ outcome: 'passed'; result: T } | SingleShotAgentPhaseFailure>;
 export async function runSingleShotAgentPhase(
   ctx: PhaseHandlerContext,
   config: SingleShotConfigSkipExtraction,
 ): Promise<{ outcome: 'passed' } | SingleShotAgentPhaseFailure>;
+export async function runSingleShotAgentPhase<T>(
+  ctx: PhaseHandlerContext,
+  config: SingleShotConfigWithExplicitMeta<T>,
+): Promise<{ outcome: 'passed'; result: T } | SingleShotAgentPhaseFailure>;
+export async function runSingleShotAgentPhase<T = unknown>(
+  ctx: PhaseHandlerContext,
+  config: SingleShotConfigFromRegistry,
+): Promise<{ outcome: 'passed'; result: T } | SingleShotAgentPhaseFailure>;
 export async function runSingleShotAgentPhase<T = unknown>(
   ctx: PhaseHandlerContext,
   config: SingleShotConfig<T>,
