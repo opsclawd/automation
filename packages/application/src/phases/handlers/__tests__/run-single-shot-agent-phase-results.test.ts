@@ -8,8 +8,8 @@ import type { PhaseHandlerContext } from '../../handler.js';
 import { FakeArtifactStore, FakeAgentPort, FakeGitPort } from '../../../test-doubles/index.js';
 import type {
   StructuredResultRepairPort,
-  RepairStructuredResultParams,
-  RepairStructuredResultResult,
+  StructuredResultRepairInput,
+  StructuredResultRepairResult,
 } from '../../../ports/structured-result-repair-port.js';
 import {
   plannerPackageSchema,
@@ -98,9 +98,9 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
     expect(result.outcome).toBe('passed');
     if (result.outcome === 'passed') {
       expect(result.result).toBeDefined();
-      expect(result.result?.verdict).toBe('APPROVE');
-      expect(result.result?.evaluations).toHaveLength(1);
-      expect(result.result?.evaluations[0]?.finding_id).toBe('f-1');
+      expect(result.result.verdict).toBe('APPROVE');
+      expect(result.result.evaluations).toHaveLength(1);
+      expect(result.result.evaluations[0]?.finding_id).toBe('f-1');
     }
   });
 
@@ -143,8 +143,8 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
 
     expect(result.outcome).toBe('passed');
     if (result.outcome === 'passed') {
-      expect(result.result?.verdict).toBe('APPROVE');
-      expect(result.result?.summary).toContain('No new blocking defect was found.');
+      expect(result.result.verdict).toBe('APPROVE');
+      expect(result.result.summary).toContain('No new blocking defect was found.');
     }
   });
 
@@ -261,9 +261,52 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
 
     expect(result.outcome).toBe('passed');
     if (result.outcome === 'passed') {
-      expect(result.result?.design_md).toBe('# Custom Design');
-      expect(result.result?.plan_md).toContain('## Task 1: Do it');
+      expect(result.result.design_md).toBe('# Custom Design');
+      expect(result.result.plan_md).toContain('## Task 1: Do it');
     }
+  });
+
+  it('suppresses completion event when skipCompletedEmit is true', async () => {
+    await artifacts.write({
+      runId: 'run-1128',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        evaluations: [],
+        new_findings: [],
+        summary: 'All good',
+      }),
+    });
+
+    agent.enqueue('follow-up-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const result = await runSingleShotAgentPhase<FollowUpReviewResult>(ctx, {
+      phase: PhaseName('follow-up-review'),
+      profile: AgentProfileName('follow-up-review'),
+      step: 'follow-up-review',
+      vars: { cwd: ctx.cwd },
+      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+      skipCompletedEmit: true,
+    });
+
+    expect(result.outcome).toBe('passed');
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const completedEvents = publishedEvents.filter(
+      (call) => (call[0] as { name?: string })?.name === 'follow-up-review.completed',
+    );
+    expect(completedEvents).toHaveLength(0);
   });
 
   it('exercises structured-result repair through centralized extraction when repair port is available', async () => {
@@ -285,8 +328,8 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
       let repairCalled = false;
       const repairPort: StructuredResultRepairPort = {
         repairStructuredResult: async (
-          params: RepairStructuredResultParams,
-        ): Promise<RepairStructuredResultResult> => {
+          params: StructuredResultRepairInput,
+        ): Promise<StructuredResultRepairResult> => {
           repairCalled = true;
           // Repair fixes the artifact in artifact store
           await artifacts.write({
@@ -332,7 +375,7 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
       expect(repairCalled).toBe(true);
       expect(result.outcome).toBe('passed');
       if (result.outcome === 'passed') {
-        expect(result.result?.evaluations[0]?.finding_id).toBe('repaired-1');
+        expect(result.result.evaluations[0]?.finding_id).toBe('repaired-1');
       }
     } finally {
       rmSync(tempDir, { recursive: true, force: true });

@@ -246,6 +246,7 @@ export class ReviewFixHandler implements PhaseHandler {
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
       resultMeta: PHASE_RESULT_REGISTRY['whole-change-review']!,
+      skipCompletedEmit: true,
     });
 
     if (runResult.outcome !== 'passed') {
@@ -254,7 +255,7 @@ export class ReviewFixHandler implements PhaseHandler {
     }
 
     // 8. Extract and validate structured review verdict
-    const verdictOutcome = evaluateWholeChangeReviewVerdict(runResult.result!, {
+    const verdictOutcome = evaluateWholeChangeReviewVerdict(runResult.result, {
       issueBodyPresent: issueMd.trim().length > 0,
     });
 
@@ -507,6 +508,7 @@ export class ReviewFixHandler implements PhaseHandler {
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
       resultMeta: PHASE_RESULT_REGISTRY['narrow-verification']!,
+      skipCompletedEmit: true,
     });
 
     if (verifyRunResult.outcome !== 'passed') {
@@ -521,7 +523,7 @@ export class ReviewFixHandler implements PhaseHandler {
       reviewOutcome.findings.length +
       reviewOutcome.acceptanceCriteria.filter((c) => c.result?.toUpperCase() === 'FAIL').length;
 
-    const verifyOutcome = evaluateNarrowVerificationVerdict(verifyRunResult.result!, {
+    const verifyOutcome = evaluateNarrowVerificationVerdict(verifyRunResult.result, {
       originalFindingsCount,
     });
 

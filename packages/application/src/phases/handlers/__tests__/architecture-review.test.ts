@@ -63,6 +63,11 @@ describe('ArchitectureReviewHandler', () => {
     };
   };
 
+  function eventsOf(ctx: PhaseHandlerContext, eventType: string) {
+    const calls = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    return calls.filter((c) => (c[1] as { type?: string })?.type === eventType);
+  }
+
   it('skips agent invocation and returns passed under standard policy', async () => {
     const handler = new ArchitectureReviewHandler();
     const ctx = createTestContext({ executionPolicy: 'standard' });
@@ -168,6 +173,7 @@ describe('ArchitectureReviewHandler', () => {
 
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
+    expect(eventsOf(ctx, 'architecture_review.completed')).toHaveLength(1);
 
     const persistedReview = await ctx.artifacts.read(ctx.runUuid, 'architecture-review.json');
     expect(JSON.parse(persistedReview).verdict).toBe('APPROVE');
@@ -448,6 +454,7 @@ describe('ArchitectureReviewHandler', () => {
 
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('needs_human_review');
+    expect(eventsOf(ctx, 'architecture_review.completed')).toHaveLength(0);
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.kind).toBe('needs_human_review');
       expect(result.failure.message).toContain('Architecture review did not converge');

@@ -110,6 +110,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         cwd: ctx.cwd,
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+      skipCompletedEmit: true,
     });
 
     if (reviewResult.outcome !== 'passed') {
@@ -117,7 +118,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       return reviewResult;
     }
 
-    const reviewData: ArchitectureReviewResult = reviewResult.result!;
+    const reviewData: ArchitectureReviewResult = reviewResult.result;
 
     const isApproved = isApprovedArchitectureReview(reviewData);
     const blockingFindings = this.getBlockingFindings(reviewData);
@@ -213,6 +214,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
           schemaContractText:
             '{\n  "design_md": string,\n  "plan_md": string,\n  "summary"?: string,\n  "result"?: "ready" | "blocked"\n}',
         },
+        skipCompletedEmit: true,
       });
 
       if (fixResult.outcome !== 'passed') {
@@ -229,7 +231,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         );
       }
 
-      const { design_md: correctedDesignMd, plan_md: correctedPlanMd } = fixResult.result!;
+      const { design_md: correctedDesignMd, plan_md: correctedPlanMd } = fixResult.result;
 
       // Deterministic validation on corrected plan
       const planValidation = validatePlanTaskList(
@@ -288,6 +290,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
           cwd: ctx.cwd,
         },
         agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+        skipCompletedEmit: true,
       });
 
       if (revalResult.outcome !== 'passed') {
@@ -299,7 +302,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         );
       }
 
-      const revalData: ArchitectureReviewResult = revalResult.result!;
+      const revalData: ArchitectureReviewResult = revalResult.result;
 
       await this.persistReviewArtifacts(ctx, emit, revalData);
 

@@ -95,6 +95,13 @@ describe('FixReviewHandler', () => {
 
     expect(result.outcome).toBe('passed');
 
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const completedEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.completed',
+    );
+    expect(completedEvents).toHaveLength(1);
+
     // Validation evidence must be invalidated
     const valResultAfter = await artifacts.read('run-1', 'validation.result');
     expect(valResultAfter.trim()).toBe('invalidated');
@@ -146,6 +153,12 @@ describe('FixReviewHandler', () => {
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('needs_human_review');
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const completedEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.completed',
+    );
+    expect(completedEvents).toHaveLength(0);
     if (result.outcome === 'needs_human_review') {
       expect(result.failure.kind).toBe('needs_human_review');
       expect(result.failure.message).toContain('targeted fixer reported it cannot fix');

@@ -89,6 +89,13 @@ describe('InitialReviewHandler', () => {
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
 
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const completedEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'initial_review.completed',
+    );
+    expect(completedEvents).toHaveLength(1);
+
     const reviewJson = await artifacts.read('run-1', 'whole-change-review.json');
     expect(JSON.parse(reviewJson).verdict).toBe('APPROVE');
 

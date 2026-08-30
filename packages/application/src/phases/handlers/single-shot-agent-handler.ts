@@ -81,15 +81,24 @@ export class SingleShotAgentHandler implements PhaseHandler {
       };
     }
 
-    const result = await runSingleShotAgentPhase(ctx, {
-      phase: this.phase,
-      profile,
-      step: this.step,
-      vars: { issue_number: String(ctx.issueNumber), cwd: ctx.cwd },
-      agentContract: def.agentContract,
-      ...(this.options.skipResultExtraction ? { skipResultExtraction: true } : {}),
-      ...(this.options.cleanArtifacts ? { cleanArtifacts: true } : {}),
-    });
+    const result = this.options.skipResultExtraction
+      ? await runSingleShotAgentPhase(ctx, {
+          phase: this.phase,
+          profile,
+          step: this.step,
+          vars: { issue_number: String(ctx.issueNumber), cwd: ctx.cwd },
+          agentContract: def.agentContract,
+          skipResultExtraction: true,
+          ...(this.options.cleanArtifacts ? { cleanArtifacts: true } : {}),
+        })
+      : await runSingleShotAgentPhase(ctx, {
+          phase: this.phase,
+          profile,
+          step: this.step,
+          vars: { issue_number: String(ctx.issueNumber), cwd: ctx.cwd },
+          agentContract: def.agentContract,
+          ...(this.options.cleanArtifacts ? { cleanArtifacts: true } : {}),
+        });
     if (
       this.options.skipResultExtraction &&
       !this.options.skipCompletedEmit &&

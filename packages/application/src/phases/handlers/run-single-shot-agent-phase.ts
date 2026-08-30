@@ -19,7 +19,7 @@ import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
 import type { StructuredResultRepairPort } from '../../ports.js';
 
-export interface SingleShotConfig {
+export interface SingleShotConfigBase {
   phase: PhaseName;
   profile: AgentProfileName;
   step: string;
@@ -27,20 +27,38 @@ export interface SingleShotConfig {
   template?: string;
   vars: Record<string, string>;
   agentContract: AgentContract;
-  /** Skip result extraction for phases where the agent drafts artifacts without
-   *  producing a result.json (e.g. create-pr, where the result values like
-   *  prNumber/prUrl are only known after the handler's deterministic steps). */
-  skipResultExtraction?: boolean;
   cleanArtifacts?: boolean;
-  /** Optional custom schema / meta override for result extraction. */
-  resultMeta?: PhaseResultMeta;
   /** Skip emitting <phase>.completed when caller handles completion emission after deterministic post-processing. */
   skipCompletedEmit?: boolean;
 }
 
+export interface SingleShotConfigWithExtraction<T = unknown> extends SingleShotConfigBase {
+  skipResultExtraction?: false | undefined;
+  /** Optional custom schema / meta override for result extraction. */
+  resultMeta?: PhaseResultMeta<T> | undefined;
+}
+
+export interface SingleShotConfigSkipExtraction extends SingleShotConfigBase {
+  /** Skip result extraction for phases where the agent drafts artifacts without
+   *  producing a result.json (e.g. create-pr, where the result values like
+   *  prNumber/prUrl are only known after the handler's deterministic steps). */
+  skipResultExtraction: true;
+  resultMeta?: never;
+}
+
+export type SingleShotConfig<T = unknown> =
+  | SingleShotConfigWithExtraction<T>
+  | SingleShotConfigSkipExtraction;
+
+export type SingleShotAgentPhaseFailure = {
+  outcome: 'failed' | 'blocked' | 'needs_human_review';
+  failure: Failure;
+};
+
 export type SingleShotAgentPhaseResult<T = unknown> =
-  | { outcome: 'passed'; result?: T }
-  | { outcome: 'failed' | 'blocked' | 'needs_human_review'; failure: Failure };
+  | { outcome: 'passed'; result: T }
+  | { outcome: 'passed'; result?: undefined }
+  | SingleShotAgentPhaseFailure;
 
 function assertField<T>(value: T | undefined, name: string): T {
   if (value === undefined) {
@@ -114,7 +132,15 @@ function buildFailure(
 
 export async function runSingleShotAgentPhase<T = unknown>(
   ctx: PhaseHandlerContext,
-  config: SingleShotConfig,
+  config: SingleShotConfigWithExtraction<T>,
+): Promise<{ outcome: 'passed'; result: T } | SingleShotAgentPhaseFailure>;
+export async function runSingleShotAgentPhase(
+  ctx: PhaseHandlerContext,
+  config: SingleShotConfigSkipExtraction,
+): Promise<{ outcome: 'passed' } | SingleShotAgentPhaseFailure>;
+export async function runSingleShotAgentPhase<T = unknown>(
+  ctx: PhaseHandlerContext,
+  config: SingleShotConfig<T>,
 ): Promise<SingleShotAgentPhaseResult<T>> {
   const emit: EventEmitter = createEventEmitter(ctx, config.phase);
 
@@ -422,8 +448,12 @@ export async function runSingleShotAgentPhase<T = unknown>(
     }
   }
 
+  if (config.skipResultExtraction) {
+    return { outcome: 'passed' };
+  }
+
   return {
     outcome: 'passed',
-    ...(extractedResult !== undefined ? { result: extractedResult } : {}),
+    result: extractedResult!,
   };
 }

@@ -71,6 +71,7 @@ export class FixReviewHandler implements PhaseHandler {
         mustNotChangeBranch: true,
         mustNotCreateCommit: true,
       },
+      skipCompletedEmit: true,
     });
 
     if (fixRunResult.outcome !== 'passed') {
@@ -79,7 +80,7 @@ export class FixReviewHandler implements PhaseHandler {
     }
 
     // 5. Check result for cannot_fix verdict
-    if (fixRunResult.result?.result === 'cannot_fix') {
+    if (fixRunResult.result.result === 'cannot_fix') {
       const message = 'targeted fixer reported it cannot fix the review findings';
       emit('fix_review.failed', 'error', message);
       return {

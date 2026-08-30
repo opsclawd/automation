@@ -1,4 +1,4 @@
-import type { ZodTypeAny } from 'zod';
+import type { ZodType } from 'zod';
 import { implementResultSchema } from './schemas/implement.js';
 import { qualityReviewResultSchema } from './schemas/quality-review.js';
 import { fixReviewResultSchema } from './schemas/fix-review.js';
@@ -16,8 +16,10 @@ import { followUpReviewResultSchema } from './schemas/follow-up-review.js';
 import { architectureReviewResultSchema } from './schemas/architecture-review.js';
 import { plannerPackageSchema } from './schemas/planner-package.js';
 
-export interface PhaseResultMeta {
-  schema: ZodTypeAny;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface PhaseResultMeta<T = any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  schema: ZodType<T, any, any>;
   schemaContractText: string;
 }
 

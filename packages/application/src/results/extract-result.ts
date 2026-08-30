@@ -19,7 +19,7 @@ export type ExtractResultOutcome<T = unknown> =
         | typeof CONTRACT_VIOLATION_CODES.ARTIFACT_READ_ERROR;
     };
 
-export interface ExtractResultInput {
+export interface ExtractResultInput<T = unknown> {
   invocation: AgentInvocation;
   ports: {
     artifacts: ArtifactStore;
@@ -30,13 +30,13 @@ export interface ExtractResultInput {
   rerunContext?: { cwd: string; [key: string]: unknown } | undefined;
   repairExpectedHead?: string | undefined;
   transcriptEvidence?: string | undefined;
-  resultMeta?: PhaseResultMeta | undefined;
+  resultMeta?: PhaseResultMeta<T> | undefined;
 }
 
 async function readAndValidate<T = unknown>(
   runId: string,
   resultJsonPath: string | undefined,
-  meta: PhaseResultMeta,
+  meta: PhaseResultMeta<T>,
   ports: { artifacts: ArtifactStore },
 ): Promise<
   | { ok: true; result: T }
@@ -96,24 +96,24 @@ async function readAndValidate<T = unknown>(
     };
   }
 
-  return { ok: true, result: result.data as T };
+  return { ok: true, result: result.data };
 }
 
 export async function extractResult<T = unknown>(
-  input: ExtractResultInput,
+  input: ExtractResultInput<T>,
 ): Promise<ExtractResultOutcome<T>> {
   const { invocation, ports, resultMeta } = input;
   const rawPhase = invocation.phaseId as string;
   const phase = normalizePhaseId(rawPhase);
 
-  let meta: PhaseResultMeta;
+  let meta: PhaseResultMeta<T>;
   if (resultMeta) {
     meta = resultMeta;
   } else {
     if (!Object.hasOwn(PHASE_RESULT_REGISTRY, phase)) {
       throw new Error(`no result schema registered for phase '${invocation.phaseId}'`);
     }
-    meta = PHASE_RESULT_REGISTRY[phase]!;
+    meta = PHASE_RESULT_REGISTRY[phase]! as PhaseResultMeta<T>;
   }
 
   const runId = invocation.runId as unknown as string;

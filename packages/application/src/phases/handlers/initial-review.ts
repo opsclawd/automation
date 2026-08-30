@@ -132,6 +132,7 @@ export class InitialReviewHandler implements PhaseHandler {
         validation_evidence: validationEvidence,
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+      skipCompletedEmit: true,
     });
 
     if (runResult.outcome !== 'passed') {
@@ -140,7 +141,7 @@ export class InitialReviewHandler implements PhaseHandler {
     }
 
     // 8. Extract and validate structured review verdict
-    const verdictOutcome = evaluateWholeChangeReviewVerdict(runResult.result!, {
+    const verdictOutcome = evaluateWholeChangeReviewVerdict(runResult.result, {
       issueBodyPresent: issueMd.trim().length > 0,
     });
 

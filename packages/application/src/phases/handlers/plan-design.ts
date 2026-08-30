@@ -102,7 +102,7 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
       return runResult;
     }
 
-    const { design_md, plan_md } = runResult.result!;
+    const { design_md, plan_md } = runResult.result;
 
     // 6. Deterministic validation on plan
     const validation = validatePlanTaskList(plan_md, undefined, ctx, 'plan-design');

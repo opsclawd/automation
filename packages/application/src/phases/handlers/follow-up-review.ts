@@ -132,6 +132,7 @@ export class FollowUpReviewHandler implements PhaseHandler {
         fix_diff: fixDiff || '(no diff)',
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+      skipCompletedEmit: true,
     });
 
     if (runResult.outcome !== 'passed') {
@@ -139,7 +140,7 @@ export class FollowUpReviewHandler implements PhaseHandler {
       return runResult;
     }
 
-    const parsedResult: FollowUpReviewResult = { ...runResult.result! };
+    const parsedResult: FollowUpReviewResult = { ...runResult.result };
 
     // 9. Update finding ledger
     const updatedLedger = updateFindingLedger(
