@@ -44,3 +44,32 @@ export const architectureReviewResultSchema = z.object({
 export type ArchitectureReviewFinding = z.infer<typeof architectureReviewFindingSchema>;
 export type RequirementsCheck = z.infer<typeof requirementsCheckSchema>;
 export type ArchitectureReviewResult = z.infer<typeof architectureReviewResultSchema>;
+
+/**
+ * Evaluates whether an architecture review result meets all criteria for approval:
+ * 1. verdict is 'APPROVE' or 'PASS'
+ * 2. requirements_checks is present, non-empty, and every check has result 'PASS'
+ * 3. no blocking findings (blocking === true or severity in ['critical', 'high', 'P0', 'P1'])
+ */
+export function isApprovedArchitectureReview(review: ArchitectureReviewResult): boolean {
+  const verdict = review.verdict?.toUpperCase();
+  if (verdict !== 'APPROVE' && verdict !== 'PASS') {
+    return false;
+  }
+  if (!review.requirements_checks || review.requirements_checks.length === 0) {
+    return false;
+  }
+  const allReqsPass = review.requirements_checks.every((c) => c.result?.toUpperCase() === 'PASS');
+  if (!allReqsPass) {
+    return false;
+  }
+  const hasBlockingFindings = review.findings?.some((f) => {
+    if (f.blocking === true) return true;
+    if (['critical', 'high', 'P0', 'P1'].includes(f.severity)) return true;
+    return false;
+  });
+  if (hasBlockingFindings) {
+    return false;
+  }
+  return true;
+}

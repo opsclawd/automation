@@ -41,6 +41,13 @@ describe('phase definitions registry', () => {
     expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(16);
   });
 
+  it('defines architecture-review with required inputs issue.md, design.md, plan.md', () => {
+    const def = getPhaseDefinition('architecture-review' as PhaseName);
+    expect(def.inputs.required).toEqual(['issue.md', 'design.md', 'plan.md']);
+    expect(def.inputs.optional).toEqual(['issue-comments.md']);
+    expect(def.outputs).toEqual(['architecture-review.json']);
+  });
+
   it('exposes typed error classes with correct names', () => {
     expect(new UnknownPhaseError('bogus')).toBeInstanceOf(Error);
     expect(new UnknownPhaseError('bogus').name).toBe('UnknownPhaseError');

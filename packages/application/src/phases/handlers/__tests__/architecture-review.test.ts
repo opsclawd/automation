@@ -78,7 +78,11 @@ describe('ArchitectureReviewHandler', () => {
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'architecture-review.json',
-      contents: JSON.stringify({ verdict: 'APPROVE', requirements_checks: [], findings: [] }),
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        requirements_checks: [{ requirement: 'Req 1', result: 'PASS' }],
+        findings: [],
+      }),
     });
 
     const result = await handler.run(ctx);
@@ -92,7 +96,7 @@ describe('ArchitectureReviewHandler', () => {
     );
   });
 
-  it('fails if design.md or plan.md is missing', async () => {
+  it('fails if issue.md, design.md, or plan.md is missing', async () => {
     const handler = new ArchitectureReviewHandler();
     const ctx = createTestContext();
 
@@ -107,6 +111,11 @@ describe('ArchitectureReviewHandler', () => {
     const handler = new ArchitectureReviewHandler();
     const ctx = createTestContext();
 
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 1122\nRequirements description.',
+    });
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'design.md',
@@ -164,6 +173,11 @@ describe('ArchitectureReviewHandler', () => {
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 1122\nRequirements description.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
       relativePath: 'design.md',
       contents: '# Design 1122\nInitial design missing contract.',
     });
@@ -176,7 +190,7 @@ describe('ArchitectureReviewHandler', () => {
 
     const agent = ctx.agent as FakeAgentPort;
     const reviewerProfile = 'profile-for-architecture-review';
-    const plannerProfile = 'profile-for-plan-design';
+    const plannerProfile = 'profile-for-architecture-fix';
 
     // 1. Initial Review -> REQUEST_CHANGES with finding
     agent.enqueue(reviewerProfile, async () => {
@@ -301,6 +315,11 @@ describe('ArchitectureReviewHandler', () => {
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 1122\nRequirements description.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
       relativePath: 'design.md',
       contents: '# Design 1122\nFlawed design.',
     });
@@ -313,7 +332,7 @@ describe('ArchitectureReviewHandler', () => {
 
     const agent = ctx.agent as FakeAgentPort;
     const reviewerProfile = 'profile-for-architecture-review';
-    const plannerProfile = 'profile-for-plan-design';
+    const plannerProfile = 'profile-for-architecture-fix';
 
     // 1. Initial Review -> REQUEST_CHANGES
     agent.enqueue(reviewerProfile, async () => {
@@ -427,5 +446,128 @@ describe('ArchitectureReviewHandler', () => {
       expect(result.failure.kind).toBe('needs_human_review');
       expect(result.failure.message).toContain('Architecture review did not converge');
     }
+  });
+
+  it('rejects APPROVE verdict if requirements_checks contains a FAIL and triggers correction pass', async () => {
+    const handler = new ArchitectureReviewHandler();
+    const ctx = createTestContext();
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 1122\nRequirements description.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design 1122\nInitial design missing requirement.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents:
+        '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: do setup\n- Invariants: none\n- Verification: `pnpm test`\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    const reviewerProfile = 'profile-for-architecture-review';
+    const plannerProfile = 'profile-for-architecture-fix';
+
+    // 1. Initial Review -> APPROVE verdict but requirement check failed!
+    agent.enqueue(reviewerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          requirements_checks: [
+            { requirement: 'Persist executed timeline', result: 'FAIL', evidence: 'Not in design' },
+          ],
+          findings: [],
+        }),
+      });
+      return {
+        id: 'inv-1' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(reviewerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    // 2. Targeted Planner Correction
+    agent.enqueue(plannerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          design_md: '# Design 1122\nAdded timeline persistence.',
+          plan_md:
+            '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: persist timeline\n- Invariants: none\n- Verification: `pnpm test`\n',
+        }),
+      });
+      return {
+        id: 'inv-2' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(plannerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    // 3. Re-verification -> APPROVE with all requirements PASS
+    agent.enqueue(reviewerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          requirements_checks: [
+            { requirement: 'Persist executed timeline', result: 'PASS', evidence: 'Now present' },
+          ],
+          findings: [],
+        }),
+      });
+      return {
+        id: 'inv-3' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(reviewerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('passed');
   });
 });

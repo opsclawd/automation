@@ -6,6 +6,7 @@ import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import {
   architectureReviewResultSchema,
+  isApprovedArchitectureReview,
   type ArchitectureReviewResult,
 } from '../../results/schemas/architecture-review.js';
 import { plannerPackageSchema } from '../../results/schemas/planner-package.js';
@@ -43,9 +44,9 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     try {
       const existingRaw = await ctx.artifacts.read(ctx.runUuid, 'architecture-review.json');
       if (existingRaw.trim().length > 0) {
-        const parsed = JSON.parse(existingRaw) as { verdict?: string };
-        const verdict = parsed.verdict?.toUpperCase();
-        if (verdict === 'APPROVE' || verdict === 'PASS') {
+        const parsedObj = JSON.parse(existingRaw);
+        const parseResult = architectureReviewResultSchema.safeParse(parsedObj);
+        if (parseResult.success && isApprovedArchitectureReview(parseResult.data)) {
           emit(
             'architecture_review.completed',
             'info',
@@ -56,27 +57,28 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         }
       }
     } catch {
-      // Artifact not present, proceed with review
+      // Artifact not present or invalid, proceed with review
     }
 
-    // 2. Validate required inputs: design.md and plan.md
+    // 2. Validate required inputs: issue.md, design.md, and plan.md
     try {
+      await ctx.artifacts.read(ctx.runUuid, 'issue.md');
       await ctx.artifacts.read(ctx.runUuid, 'design.md');
       await ctx.artifacts.read(ctx.runUuid, 'plan.md');
     } catch (e) {
       const message =
         e instanceof ArtifactNotFoundError
-          ? 'design.md or plan.md not found in artifact store'
+          ? 'issue.md, design.md, or plan.md not found in artifact store'
           : `Failed to read planning artifacts: ${e instanceof Error ? e.message : String(e)}`;
       return this.fail(ctx, emit, 'missing_artifact', message);
     }
 
-    // 3. Resolve reviewer profile
+    // 3. Resolve reviewer profile (independent critic/reviewer)
     const reviewerProfile =
       ctx.resolveProfile?.('architecture-review') ??
-      ctx.resolveProfile?.('plan-review') ??
-      ctx.resolveProfile?.('plan-design') ??
-      AgentProfileName(this.opts.profileName ?? 'opencode-frontier');
+      ctx.resolveProfile?.('pr-reviewer') ??
+      ctx.resolveProfile?.('critic') ??
+      AgentProfileName(this.opts.profileName ?? 'gemini');
 
     // 4. Load reviewer prompt template
     let reviewTemplate: string | undefined;
@@ -134,10 +136,11 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       );
     }
 
-    const isApproved = this.isVerdictApproved(reviewData);
+    const isApproved = isApprovedArchitectureReview(reviewData);
     const blockingFindings = this.getBlockingFindings(reviewData);
+    const failedReqs = this.getFailedRequirementChecks(reviewData);
 
-    if (isApproved && blockingFindings.length === 0) {
+    if (isApproved) {
       await this.persistReviewArtifacts(ctx, emit, reviewData);
       emit(
         'architecture_review.completed',
@@ -152,19 +155,29 @@ export class ArchitectureReviewHandler implements PhaseHandler {
 
     // 7. Findings identified -> Targeted Planner Correction Pass (Pass 2)
     await this.persistReviewArtifacts(ctx, emit, reviewData);
+    const totalGapsCount = blockingFindings.length + failedReqs.length;
     emit(
       'architecture_review.findings_found',
       'warn',
-      `architecture review identified ${blockingFindings.length} blocking finding(s); invoking targeted planner correction`,
-      { policy: ctx.executionPolicy, blockingFindingsCount: blockingFindings.length },
+      `architecture review identified ${totalGapsCount} blocking gap(s) (${blockingFindings.length} finding(s), ${failedReqs.length} failed requirement(s)); invoking targeted planner correction`,
+      {
+        policy: ctx.executionPolicy,
+        blockingFindingsCount: blockingFindings.length,
+        failedRequirementsCount: failedReqs.length,
+      },
     );
 
-    const formattedFindings = this.formatFindingsForPrompt(reviewData, blockingFindings);
+    const formattedFindings = this.formatFindingsForPrompt(
+      reviewData,
+      blockingFindings,
+      failedReqs,
+    );
 
     const plannerProfile =
+      ctx.resolveProfile?.('architecture-fix') ??
       ctx.resolveProfile?.('plan-design') ??
-      ctx.resolveProfile?.('architecture-review') ??
-      AgentProfileName('opencode-frontier');
+      ctx.resolveProfile?.('planner') ??
+      AgentProfileName('architect');
 
     let fixTemplate: string | undefined;
     if (ctx.promptsRoot) {
@@ -321,10 +334,11 @@ export class ArchitectureReviewHandler implements PhaseHandler {
 
     await this.persistReviewArtifacts(ctx, emit, revalData);
 
-    const isRevalApproved = this.isVerdictApproved(revalData);
+    const isRevalApproved = isApprovedArchitectureReview(revalData);
     const revalBlockingFindings = this.getBlockingFindings(revalData);
+    const revalFailedReqs = this.getFailedRequirementChecks(revalData);
 
-    if (isRevalApproved && revalBlockingFindings.length === 0) {
+    if (isRevalApproved) {
       emit(
         'architecture_review.completed',
         'info',
@@ -335,10 +349,12 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     }
 
     // Budget exhausted (1 review + 1 fix + 1 verification) -> Escalate to human review
-    const failureSummary = `Architecture review did not converge within fixed budget: ${revalBlockingFindings.length} blocking finding(s) remain`;
+    const remainingGapsCount = revalBlockingFindings.length + revalFailedReqs.length;
+    const failureSummary = `Architecture review did not converge within fixed budget: ${remainingGapsCount} blocking gap(s) remain (${revalBlockingFindings.length} finding(s), ${revalFailedReqs.length} failed requirement(s))`;
     emit('architecture_review.exhausted', 'warn', failureSummary, {
       policy: ctx.executionPolicy,
       remainingFindingsCount: revalBlockingFindings.length,
+      remainingFailedRequirementsCount: revalFailedReqs.length,
     });
 
     return this.needsHumanReview(ctx, emit, failureSummary, [
@@ -348,13 +364,12 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     ]);
   }
 
-  private isVerdictApproved(result: ArchitectureReviewResult): boolean {
-    const v = result.verdict.toUpperCase();
-    return v === 'APPROVE' || v === 'PASS';
+  private getFailedRequirementChecks(result: ArchitectureReviewResult) {
+    return (result.requirements_checks ?? []).filter((c) => c.result.toUpperCase() === 'FAIL');
   }
 
   private getBlockingFindings(result: ArchitectureReviewResult) {
-    const isExplicitlyApproved = this.isVerdictApproved(result);
+    const isExplicitlyApproved = isApprovedArchitectureReview(result);
     return result.findings.filter((f) => {
       if (f.blocking === true) return true;
       if (['critical', 'high', 'P0', 'P1'].includes(f.severity)) return true;
@@ -366,35 +381,33 @@ export class ArchitectureReviewHandler implements PhaseHandler {
   private formatFindingsForPrompt(
     result: ArchitectureReviewResult,
     blockingFindings: ArchitectureReviewResult['findings'],
+    failedReqs: ArchitectureReviewResult['requirements_checks'],
   ): string {
     const lines: string[] = [];
     if (result.summary) {
       lines.push(`### Review Summary\n${result.summary}\n`);
     }
 
-    if (result.requirements_checks && result.requirements_checks.length > 0) {
-      const failedChecks = result.requirements_checks.filter(
-        (c) => c.result.toUpperCase() === 'FAIL',
-      );
-      if (failedChecks.length > 0) {
-        lines.push('### Failed Requirements Checks:');
-        for (const check of failedChecks) {
-          lines.push(`- [FAIL] ${check.requirement}: ${check.evidence ?? 'No evidence provided'}`);
-        }
-        lines.push('');
+    if (failedReqs && failedReqs.length > 0) {
+      lines.push('### Failed Requirements Checks:');
+      for (const check of failedReqs) {
+        lines.push(`- [FAIL] ${check.requirement}: ${check.evidence ?? 'No evidence provided'}`);
       }
+      lines.push('');
     }
 
-    lines.push('### Blocking Architectural Findings:');
-    for (const [idx, finding] of blockingFindings.entries()) {
-      lines.push(
-        `#### Finding ${idx + 1} [${finding.severity.toUpperCase()}] (${finding.category ?? 'general'})`,
-      );
-      if (finding.target) lines.push(`- **Target:** ${finding.target}`);
-      lines.push(`- **Evidence:** ${finding.evidence}`);
-      lines.push(`- **Rationale:** ${finding.rationale}`);
-      lines.push(`- **Minimal Correction:** ${finding.minimal_correction}`);
-      lines.push('');
+    if (blockingFindings.length > 0) {
+      lines.push('### Blocking Architectural Findings:');
+      for (const [idx, finding] of blockingFindings.entries()) {
+        lines.push(
+          `#### Finding ${idx + 1} [${finding.severity.toUpperCase()}] (${finding.category ?? 'general'})`,
+        );
+        if (finding.target) lines.push(`- **Target:** ${finding.target}`);
+        lines.push(`- **Evidence:** ${finding.evidence}`);
+        lines.push(`- **Rationale:** ${finding.rationale}`);
+        lines.push(`- **Minimal Correction:** ${finding.minimal_correction}`);
+        lines.push('');
+      }
     }
 
     return lines.join('\n');

@@ -112,8 +112,8 @@ const _phaseDefinitions = {
   'architecture-review': {
     name: makePhaseName('architecture-review'),
     inputs: {
-      required: ['design.md', 'plan.md'],
-      optional: ['issue.md', 'issue-comments.md'],
+      required: ['issue.md', 'design.md', 'plan.md'],
+      optional: ['issue-comments.md'],
     },
     outputs: ['architecture-review.json'],
     agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   architectureReviewResultSchema,
   architectureReviewFindingSchema,
+  isApprovedArchitectureReview,
 } from '../architecture-review.js';
 
 describe('architectureReviewResultSchema', () => {
@@ -76,5 +77,66 @@ describe('architectureReviewResultSchema', () => {
       expect(parsed.data.requirements_checks).toEqual([]);
       expect(parsed.data.findings).toEqual([]);
     }
+  });
+});
+
+describe('isApprovedArchitectureReview', () => {
+  it('returns true when verdict is APPROVE, requirements_checks is non-empty with all PASS, and findings is empty', () => {
+    const data = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        { requirement: 'Req 1', result: 'PASS' as const },
+        { requirement: 'Req 2', result: 'PASS' as const },
+      ],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(data)).toBe(true);
+  });
+
+  it('returns false when verdict is APPROVE but requirements_checks contains a FAIL', () => {
+    const data = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [
+        { requirement: 'Req 1', result: 'PASS' as const },
+        { requirement: 'Req 2', result: 'FAIL' as const, evidence: 'Missing field' },
+      ],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(data)).toBe(false);
+  });
+
+  it('returns false when verdict is APPROVE but requirements_checks is empty', () => {
+    const data = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(data)).toBe(false);
+  });
+
+  it('returns false when verdict is APPROVE with all PASS reqs but contains a blocking finding', () => {
+    const data = {
+      verdict: 'APPROVE' as const,
+      requirements_checks: [{ requirement: 'Req 1', result: 'PASS' as const }],
+      findings: [
+        {
+          severity: 'high' as const,
+          evidence: 'Gap',
+          rationale: 'Reason',
+          minimal_correction: 'Fix',
+          blocking: true,
+        },
+      ],
+    };
+    expect(isApprovedArchitectureReview(data)).toBe(false);
+  });
+
+  it('returns false when verdict is REQUEST_CHANGES', () => {
+    const data = {
+      verdict: 'REQUEST_CHANGES' as const,
+      requirements_checks: [{ requirement: 'Req 1', result: 'PASS' as const }],
+      findings: [],
+    };
+    expect(isApprovedArchitectureReview(data)).toBe(false);
   });
 });

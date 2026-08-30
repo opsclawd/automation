@@ -8,7 +8,7 @@ Working directory: {{var:cwd}}
 Issue number: {{var:issue_number}}
 
 Issue description & authoritative requirements:
-{{artifact?:issue.md}}
+{{artifact:issue.md}}
 
 Issue comments:
 {{artifact?:issue-comments.md}}
@@ -51,16 +51,19 @@ Specifically evaluate the proposed design and plan against these four core dimen
 - Detect fields that are individually valid but semantically correlated and require cross-field validation.
 - Verify state transitions, rollback/cleanup invariants, and recovery paths.
 
-### 4. Downstream Consumer Compatibility (Bounded)
-- When the change introduces or modifies contracts, APIs, schemas, persistence formats, or boundaries used by directly referenced dependencies/consumers:
-  - Verify the proposed contract is sufficient and backwards/forwards compatible for those direct consumers.
-  - Identify breaking mutations that downstream work would immediately require.
-  - Do NOT recursively crawl unrelated issue trees; keep analysis strictly bounded to directly referenced dependencies/consumers.
+### 4. Downstream Consumer Compatibility (Mandatory Bounded Discovery)
+For contract, schema, API, configuration, persistence, or foundation work:
+1. **Read directly referenced issues:** Read every issue directly referenced in the issue body or comments using `gh issue view <issue>`.
+2. **Discover direct dependents:** Search GitHub issues for direct dependents that reference the current issue using `gh issue list --search "Depends on #{{var:issue_number}}" --json number,title,body` or `gh issue list --search "#{{var:issue_number}}" --json number,title,body`.
+3. **Read direct consumer issues:** Read the bodies of those direct consumer issues to identify unstated downstream contract assumptions or required fields before approving.
+4. **Verify contract sufficiency:** Verify the proposed design and plan provide the necessary fields, representations, and invariants for those direct consumers.
+5. **Strict bounding:** Stop strictly at direct consumers — do NOT recursively crawl entire issue trees.
 
 ## EVALUATION GUIDELINES
 
 - Do not manufacture findings for style preferences. Focus on material architectural soundness, contract correctness, requirement gaps, and downstream safety.
-- Explicitly check every requirement and acceptance criterion from the issue.
+- Explicitly check every requirement and acceptance criterion from the issue in `requirements_checks`.
+- An `APPROVE` verdict strictly requires that `requirements_checks` is non-empty, every listed requirement check is `PASS`, and there are 0 blocking or high-severity findings. If any requirement fails or any blocking finding exists, you MUST use `REQUEST_CHANGES`.
 - For every blocking gap, provide:
   - `category`: `requirements_reconciliation` | `contract_conservation` | `invariant_completeness` | `downstream_compatibility` | `other`
   - `severity`: `critical` | `high` | `medium` | `low`

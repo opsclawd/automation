@@ -169,7 +169,8 @@
     },
     "phaseProfiles": {
       "plan-design": { "role": "planner" },
-      "architecture-review": { "role": "planner" },
+      "architecture-review": { "role": "pr-reviewer" },
+      "architecture-fix": { "role": "planner" },
       "plan-write": { "profile": "codex-writer", "fallbackProfile": "architect" },
       "implement": { "role": "implementer" },
       "quality-review": { "role": "critic" },
