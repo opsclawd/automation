@@ -71,6 +71,14 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
       await artifacts.write({ runId: ctx.runUuid, relativePath: 'plan.md', contents: '# Plan' });
       return { outcome: 'passed' };
     });
+    registerHandler('architecture-review', async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'architecture-review.json',
+        contents: JSON.stringify({ verdict: 'APPROVE', requirements_checks: [], findings: [] }),
+      });
+      return { outcome: 'passed' };
+    });
     registerHandler('plan-write');
     registerHandler('plan-review');
     registerHandler('implement', async (ctx) => {
@@ -765,5 +773,65 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     expect(handlers['plan-review']?.runCalls).toHaveLength(1);
     expect(handlers['compound']?.runCalls).toHaveLength(1);
     expect(handlers['post-pr-review']?.runCalls).toHaveLength(1);
+    expect(handlers['architecture-review']?.runCalls).toHaveLength(0);
+  });
+
+  it('standard execution policy omits architecture-review', async () => {
+    const { run, handlers, executor } = setupExecutor('standard');
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('passed');
+    expect(handlers['plan-design']?.runCalls).toHaveLength(1);
+    expect(handlers['architecture-review']?.runCalls).toHaveLength(0);
+    expect(handlers['implement']?.runCalls).toHaveLength(1);
+  });
+
+  it('strict execution policy executes architecture-review after plan-design before implement', async () => {
+    const { run, handlers, executor } = setupExecutor('strict');
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('passed');
+    expect(handlers['plan-design']?.runCalls).toHaveLength(1);
+    expect(handlers['architecture-review']?.runCalls).toHaveLength(1);
+    expect(handlers['implement']?.runCalls).toHaveLength(1);
+  });
+
+  it('strict run escalates to needs_human_review when architecture-review fails', async () => {
+    const { run, handlers, executor } = setupExecutor('strict');
+
+    handlers['architecture-review']!.handlerFn = async (ctx) => ({
+      outcome: 'needs_human_review',
+      failure: {
+        runUuid: ctx.runUuid,
+        phase: 'architecture-review',
+        kind: 'needs_human_review',
+        message: 'Architecture review failed to converge',
+        canRetry: true,
+        suggestedAction: 'Intervene manually',
+        artifacts: ['architecture-review.json'],
+        detectedAt: new Date(),
+      },
+    });
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('needs_human_review');
+    expect(handlers['plan-design']?.runCalls).toHaveLength(1);
+    expect(handlers['architecture-review']?.runCalls).toHaveLength(1);
+    expect(handlers['implement']?.runCalls).toHaveLength(0);
   });
 });

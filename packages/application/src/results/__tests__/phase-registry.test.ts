@@ -17,6 +17,7 @@ describe('PHASE_RESULT_REGISTRY', () => {
   it('contains all expected phases in registry', () => {
     const expected = [
       'implement',
+      'architecture-review',
       'quality-review',
       'fix-review',
       'initial-review',
@@ -39,6 +40,7 @@ describe('PHASE_RESULT_REGISTRY', () => {
 
   it.each([
     'implement',
+    'architecture-review',
     'quality-review',
     'fix-review',
     'create-pr',

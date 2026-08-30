@@ -37,8 +37,8 @@ describe('phase definitions registry', () => {
     }
   });
 
-  it('has exactly 15 definitions (no extras)', () => {
-    expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(15);
+  it('has exactly 16 definitions (no extras)', () => {
+    expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(16);
   });
 
   it('exposes typed error classes with correct names', () => {

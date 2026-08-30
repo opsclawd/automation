@@ -983,6 +983,14 @@ export class RunExecutor {
       if (step.status === 'terminal') return step.terminalResult!;
     }
 
+    // 2b. architecture-review (strict policy pre-implementation assurance)
+    if (state.currentRun.executionPolicy === 'strict') {
+      if (!state.completedSet.has('architecture-review')) {
+        const step = await this.executeSinglePhase(PhaseName('architecture-review'), run, state);
+        if (step.status === 'terminal') return step.terminalResult!;
+      }
+    }
+
     // 3. implement
     if (!state.completedSet.has('implement')) {
       const step = await this.executeSinglePhase(PhaseName('implement'), run, state);

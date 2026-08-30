@@ -1,7 +1,7 @@
 import { type PhaseName, type ExecutionPolicy } from '@ai-sdlc/domain';
 import {
   CANONICAL_PHASE_ORDER,
-  LEAN_PHASE_ORDER,
+  resolvePhaseOrder,
   PHASE_DEFINITIONS,
   orderedPhases,
   type PhaseDefinition,
@@ -69,9 +69,11 @@ class LegacyPhaseGraph implements PhaseGraph {
 }
 
 class LeanPhaseGraph implements PhaseGraph {
-  readonly scheduledPhases: readonly PhaseName[] = LEAN_PHASE_ORDER;
+  readonly scheduledPhases: readonly PhaseName[];
 
-  constructor(readonly policy: 'standard' | 'strict') {}
+  constructor(readonly policy: 'standard' | 'strict') {
+    this.scheduledPhases = resolvePhaseOrder(policy);
+  }
 
   isReachable(phaseName: string): boolean {
     return this.scheduledPhases.includes(phaseName as PhaseName);

@@ -3,6 +3,7 @@ export * from './phase-graph.js';
 export * from './handler.js';
 export * from './handlers/read-issue.js';
 export * from './handlers/plan-design.js';
+export * from './handlers/architecture-review.js';
 export * from './handlers/plan-write.js';
 export * from './derive-steps.js';
 export * from './plan-tasks.js';

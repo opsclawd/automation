@@ -13,6 +13,7 @@ import { arbiterResultSchema } from './schemas/arbiter.js';
 import { fixValidateResultSchema } from './schemas/fix-validate.js';
 import { planFixResultSchema } from './schemas/plan-fix.js';
 import { followUpReviewResultSchema } from './schemas/follow-up-review.js';
+import { architectureReviewResultSchema } from './schemas/architecture-review.js';
 
 export interface PhaseResultMeta {
   schema: ZodTypeAny;
@@ -28,6 +29,7 @@ export function normalizePhaseId(phaseId: string): string {
 // TODO: converge PHASE_RESULT_REGISTRY into CANONICAL_PHASE_ORDER so there's one source of truth.
 export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   'plan-design': null,
+  'architecture-review': null,
   'plan-write': null,
   'plan-review': null,
   implement: 'implement',
@@ -129,5 +131,10 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
     schema: planFixResultSchema,
     schemaContractText:
       '{\n  "verdict": "done_with_fixes" | "done_no_fixes_needed" | "cannot_fix",\n  "summary": string,\n  "rebuttal"?: string\n}',
+  },
+  'architecture-review': {
+    schema: architectureReviewResultSchema,
+    schemaContractText:
+      '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "requirements_checks": Array<{\n    "requirement": string,\n    "result": "PASS" | "FAIL",\n    "evidence"?: string\n  }>,\n  "findings"?: Array<{\n    "category"?: "requirements_reconciliation" | "contract_conservation" | "invariant_completeness" | "downstream_compatibility" | "other",\n    "severity": "critical" | "high" | "medium" | "low",\n    "target"?: string,\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string\n  }>,\n  "summary"?: string\n}',
   },
 };
