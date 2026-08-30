@@ -6267,6 +6267,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             config.agent.phaseProfiles?.['architecture-review']?.profile ??
             config.agent.phaseProfiles?.['plan-design']?.profile ??
             'opencode-frontier',
+          maxCorrections: config.phases.architectureReview?.maxCorrections ?? 2,
         }),
       );
       phaseRegistry.register(

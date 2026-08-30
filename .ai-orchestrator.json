@@ -33,6 +33,7 @@
     "implement": { "maxIterations": 5 },
     "fixValidate": { "maxIterations": 2 },
     "planReview": { "maxIterations": 5, "enabled": true },
+    "architectureReview": { "maxCorrections": 2 },
     "postPrReview": { "maxPolls": 10, "pollIntervalSeconds": 300 }
   },
   "timeouts": {

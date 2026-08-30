@@ -14,12 +14,16 @@ import { validatePlanTaskList } from '../plan-tasks.js';
 
 export interface ArchitectureReviewHandlerOpts {
   profileName?: string;
+  maxCorrections?: number;
 }
 
 export class ArchitectureReviewHandler implements PhaseHandler {
   readonly phase = PhaseName('architecture-review');
+  readonly maxCorrections: number;
 
-  constructor(private readonly opts: ArchitectureReviewHandlerOpts = {}) {}
+  constructor(private readonly opts: ArchitectureReviewHandlerOpts = {}) {
+    this.maxCorrections = opts.maxCorrections ?? 2;
+  }
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
@@ -153,208 +157,246 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       return { outcome: 'passed' };
     }
 
-    // 7. Findings identified -> Targeted Planner Correction Pass (Pass 2)
+    // 7. Findings identified -> Targeted Planner Correction Pass(es)
     await this.persistReviewArtifacts(ctx, emit, reviewData);
-    const totalGapsCount = blockingFindings.length + failedReqs.length;
-    emit(
-      'architecture_review.findings_found',
-      'warn',
-      `architecture review identified ${totalGapsCount} blocking gap(s) (${blockingFindings.length} finding(s), ${failedReqs.length} failed requirement(s)); invoking targeted planner correction`,
-      {
+
+    if (this.maxCorrections === 0) {
+      const totalGapsCount = blockingFindings.length + failedReqs.length;
+      const failureSummary = `Architecture review identified ${totalGapsCount} blocking gap(s) (${blockingFindings.length} finding(s), ${failedReqs.length} failed requirement(s)) and maxCorrections is 0`;
+      emit('architecture_review.exhausted', 'warn', failureSummary, {
         policy: ctx.executionPolicy,
+        maxCorrections: 0,
         blockingFindingsCount: blockingFindings.length,
         failedRequirementsCount: failedReqs.length,
-      },
-    );
-
-    const formattedFindings = this.formatFindingsForPrompt(
-      reviewData,
-      blockingFindings,
-      failedReqs,
-    );
-
-    const plannerProfile =
-      ctx.resolveProfile?.('architecture-fix') ??
-      ctx.resolveProfile?.('plan-design') ??
-      ctx.resolveProfile?.('planner') ??
-      AgentProfileName('architect');
-
-    let fixTemplate: string | undefined;
-    if (ctx.promptsRoot) {
-      try {
-        fixTemplate = loadPromptTemplate('architecture-review', 'architecture-fix', {
-          promptsRoot: ctx.promptsRoot,
-        });
-      } catch {
-        // Fallback handled in runSingleShotAgentPhase
-      }
+      });
+      return this.needsHumanReview(ctx, emit, failureSummary, [
+        'architecture-review.json',
+        'design.md',
+        'plan.md',
+      ]);
     }
 
-    const fixResult = await runSingleShotAgentPhase(ctx, {
-      phase: this.phase,
-      profile: plannerProfile,
-      step: 'architecture-fix',
-      ...(fixTemplate ? { template: fixTemplate } : {}),
-      vars: {
-        issue_number: String(ctx.issueNumber),
-        cwd: ctx.cwd,
-        review_findings: formattedFindings,
-      },
-      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
-      skipResultExtraction: true,
-    });
+    let currentReviewData = reviewData;
+    let currentBlockingFindings = blockingFindings;
+    let currentFailedReqs = failedReqs;
 
-    if (fixResult.outcome !== 'passed') {
+    for (let correction = 1; correction <= this.maxCorrections; correction++) {
+      const totalGapsCount = currentBlockingFindings.length + currentFailedReqs.length;
       emit(
-        'architecture_review.fix_failed',
-        'error',
-        'targeted planner correction invocation failed',
+        'architecture_review.findings_found',
+        'warn',
+        `architecture review identified ${totalGapsCount} blocking gap(s) (${currentBlockingFindings.length} finding(s), ${currentFailedReqs.length} failed requirement(s)); invoking targeted planner correction (attempt ${correction}/${this.maxCorrections})`,
+        {
+          policy: ctx.executionPolicy,
+          correctionAttempt: correction,
+          maxCorrections: this.maxCorrections,
+          blockingFindingsCount: currentBlockingFindings.length,
+          failedRequirementsCount: currentFailedReqs.length,
+        },
       );
-      return this.needsHumanReview(
-        ctx,
-        emit,
-        'Targeted planner correction failed to execute during architecture review',
-        ['architecture-review.json', 'design.md', 'plan.md'],
-      );
-    }
 
-    // Parse and validate corrected planner package
-    let correctedDesignMd: string;
-    let correctedPlanMd: string;
-    try {
-      const rawFixJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-      const parsedFixObj = JSON.parse(rawFixJson);
-      const fixParseResult = plannerPackageSchema.safeParse(parsedFixObj);
-      if (!fixParseResult.success) {
+      const formattedFindings = this.formatFindingsForPrompt(
+        currentReviewData,
+        currentBlockingFindings,
+        currentFailedReqs,
+      );
+
+      const plannerProfile =
+        ctx.resolveProfile?.('architecture-fix') ??
+        ctx.resolveProfile?.('plan-design') ??
+        ctx.resolveProfile?.('planner') ??
+        AgentProfileName('architect');
+
+      let fixTemplate: string | undefined;
+      if (ctx.promptsRoot) {
+        try {
+          fixTemplate = loadPromptTemplate('architecture-review', 'architecture-fix', {
+            promptsRoot: ctx.promptsRoot,
+          });
+        } catch {
+          // Fallback handled in runSingleShotAgentPhase
+        }
+      }
+
+      const fixResult = await runSingleShotAgentPhase(ctx, {
+        phase: this.phase,
+        profile: plannerProfile,
+        step: 'architecture-fix',
+        ...(fixTemplate ? { template: fixTemplate } : {}),
+        vars: {
+          issue_number: String(ctx.issueNumber),
+          cwd: ctx.cwd,
+          review_findings: formattedFindings,
+        },
+        agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+        skipResultExtraction: true,
+      });
+
+      if (fixResult.outcome !== 'passed') {
+        emit(
+          'architecture_review.fix_failed',
+          'error',
+          `targeted planner correction invocation failed on attempt ${correction}/${this.maxCorrections}`,
+        );
         return this.needsHumanReview(
           ctx,
           emit,
-          `Corrected planner package schema validation failed: ${fixParseResult.error.message}`,
-          ['architecture-review.json', 'result.json'],
+          `Targeted planner correction failed to execute during architecture review (attempt ${correction}/${this.maxCorrections})`,
+          ['architecture-review.json', 'design.md', 'plan.md'],
         );
       }
-      correctedDesignMd = fixParseResult.data.design_md;
-      correctedPlanMd = fixParseResult.data.plan_md;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      return this.needsHumanReview(
-        ctx,
-        emit,
-        `Failed to parse corrected planner package from architecture-fix: ${message}`,
-        ['architecture-review.json'],
-      );
-    }
 
-    // Deterministic validation on corrected plan
-    const planValidation = validatePlanTaskList(
-      correctedPlanMd,
-      undefined,
-      ctx,
-      'architecture-review',
-    );
-    if (!planValidation.success) {
-      return this.needsHumanReview(
-        ctx,
-        emit,
-        `Deterministic plan check failed on corrected plan: ${planValidation.error}`,
-        ['architecture-review.json', 'plan.md'],
-      );
-    }
-
-    // Persist authoritative corrected artifacts
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: this.phase,
-      relativePath: 'design.md',
-      contents: correctedDesignMd,
-    });
-    emit('artifact.created', 'info', 'artifact updated: design.md', { relativePath: 'design.md' });
-
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: this.phase,
-      relativePath: 'plan.md',
-      contents: correctedPlanMd,
-    });
-    emit('artifact.created', 'info', 'artifact updated: plan.md', { relativePath: 'plan.md' });
-
-    // 8. Single Verification Pass (Pass 3)
-    emit(
-      'architecture_review.verification_started',
-      'info',
-      'running architecture re-verification pass on corrected artifacts',
-      { policy: ctx.executionPolicy },
-    );
-
-    const revalResult = await runSingleShotAgentPhase(ctx, {
-      phase: this.phase,
-      profile: reviewerProfile,
-      step: 'architecture-verify',
-      ...(reviewTemplate ? { template: reviewTemplate } : {}),
-      vars: {
-        issue_number: String(ctx.issueNumber),
-        cwd: ctx.cwd,
-      },
-      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
-      skipResultExtraction: true,
-    });
-
-    if (revalResult.outcome !== 'passed') {
-      return this.needsHumanReview(
-        ctx,
-        emit,
-        'Architecture re-verification agent invocation failed',
-        ['architecture-review.json', 'design.md', 'plan.md'],
-      );
-    }
-
-    let revalData: ArchitectureReviewResult;
-    try {
-      const rawRevalJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
-      const parsedRevalObj = JSON.parse(rawRevalJson);
-      const parseResult = architectureReviewResultSchema.safeParse(parsedRevalObj);
-      if (!parseResult.success) {
+      // Parse and validate corrected planner package
+      let correctedDesignMd: string;
+      let correctedPlanMd: string;
+      try {
+        const rawFixJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
+        const parsedFixObj = JSON.parse(rawFixJson);
+        const fixParseResult = plannerPackageSchema.safeParse(parsedFixObj);
+        if (!fixParseResult.success) {
+          return this.needsHumanReview(
+            ctx,
+            emit,
+            `Corrected planner package schema validation failed on attempt ${correction}/${this.maxCorrections}: ${fixParseResult.error.message}`,
+            ['architecture-review.json', 'result.json'],
+          );
+        }
+        correctedDesignMd = fixParseResult.data.design_md;
+        correctedPlanMd = fixParseResult.data.plan_md;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
         return this.needsHumanReview(
           ctx,
           emit,
-          `Architecture re-verification result schema validation failed: ${parseResult.error.message}`,
+          `Failed to parse corrected planner package from architecture-fix (attempt ${correction}/${this.maxCorrections}): ${message}`,
           ['architecture-review.json'],
         );
       }
-      revalData = parseResult.data;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      return this.needsHumanReview(
+
+      // Deterministic validation on corrected plan
+      const planValidation = validatePlanTaskList(
+        correctedPlanMd,
+        undefined,
         ctx,
-        emit,
-        `Failed to parse architecture re-verification result: ${message}`,
-        ['architecture-review.json'],
+        'architecture-review',
       );
-    }
+      if (!planValidation.success) {
+        return this.needsHumanReview(
+          ctx,
+          emit,
+          `Deterministic plan check failed on corrected plan (attempt ${correction}/${this.maxCorrections}): ${planValidation.error}`,
+          ['architecture-review.json', 'plan.md'],
+        );
+      }
 
-    await this.persistReviewArtifacts(ctx, emit, revalData);
+      // Persist authoritative corrected artifacts
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: this.phase,
+        relativePath: 'design.md',
+        contents: correctedDesignMd,
+      });
+      emit('artifact.created', 'info', 'artifact updated: design.md', {
+        relativePath: 'design.md',
+      });
 
-    const isRevalApproved = isApprovedArchitectureReview(revalData);
-    const revalBlockingFindings = this.getBlockingFindings(revalData);
-    const revalFailedReqs = this.getFailedRequirementChecks(revalData);
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: this.phase,
+        relativePath: 'plan.md',
+        contents: correctedPlanMd,
+      });
+      emit('artifact.created', 'info', 'artifact updated: plan.md', { relativePath: 'plan.md' });
 
-    if (isRevalApproved) {
+      // Verification Pass
       emit(
-        'architecture_review.completed',
+        'architecture_review.verification_started',
         'info',
-        'architecture review approved after targeted correction and verification',
-        { policy: ctx.executionPolicy },
+        `running architecture re-verification pass on corrected artifacts (attempt ${correction}/${this.maxCorrections})`,
+        {
+          policy: ctx.executionPolicy,
+          correctionAttempt: correction,
+          maxCorrections: this.maxCorrections,
+        },
       );
-      return { outcome: 'passed' };
+
+      const revalResult = await runSingleShotAgentPhase(ctx, {
+        phase: this.phase,
+        profile: reviewerProfile,
+        step: 'architecture-verify',
+        ...(reviewTemplate ? { template: reviewTemplate } : {}),
+        vars: {
+          issue_number: String(ctx.issueNumber),
+          cwd: ctx.cwd,
+        },
+        agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+        skipResultExtraction: true,
+      });
+
+      if (revalResult.outcome !== 'passed') {
+        return this.needsHumanReview(
+          ctx,
+          emit,
+          `Architecture re-verification agent invocation failed on attempt ${correction}/${this.maxCorrections}`,
+          ['architecture-review.json', 'design.md', 'plan.md'],
+        );
+      }
+
+      let revalData: ArchitectureReviewResult;
+      try {
+        const rawRevalJson = await ctx.artifacts.read(ctx.runUuid, 'result.json');
+        const parsedRevalObj = JSON.parse(rawRevalJson);
+        const parseResult = architectureReviewResultSchema.safeParse(parsedRevalObj);
+        if (!parseResult.success) {
+          return this.needsHumanReview(
+            ctx,
+            emit,
+            `Architecture re-verification result schema validation failed on attempt ${correction}/${this.maxCorrections}: ${parseResult.error.message}`,
+            ['architecture-review.json'],
+          );
+        }
+        revalData = parseResult.data;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        return this.needsHumanReview(
+          ctx,
+          emit,
+          `Failed to parse architecture re-verification result (attempt ${correction}/${this.maxCorrections}): ${message}`,
+          ['architecture-review.json'],
+        );
+      }
+
+      await this.persistReviewArtifacts(ctx, emit, revalData);
+
+      const isRevalApproved = isApprovedArchitectureReview(revalData);
+      if (isRevalApproved) {
+        emit(
+          'architecture_review.completed',
+          'info',
+          `architecture review approved after targeted correction and verification (attempt ${correction}/${this.maxCorrections})`,
+          {
+            policy: ctx.executionPolicy,
+            correctionAttempt: correction,
+            maxCorrections: this.maxCorrections,
+          },
+        );
+        return { outcome: 'passed' };
+      }
+
+      // Update state for next correction iteration
+      currentReviewData = revalData;
+      currentBlockingFindings = this.getBlockingFindings(revalData);
+      currentFailedReqs = this.getFailedRequirementChecks(revalData);
     }
 
-    // Budget exhausted (1 review + 1 fix + 1 verification) -> Escalate to human review
-    const remainingGapsCount = revalBlockingFindings.length + revalFailedReqs.length;
-    const failureSummary = `Architecture review did not converge within fixed budget: ${remainingGapsCount} blocking gap(s) remain (${revalBlockingFindings.length} finding(s), ${revalFailedReqs.length} failed requirement(s))`;
+    // Budget exhausted -> Escalate to human review
+    const remainingGapsCount = currentBlockingFindings.length + currentFailedReqs.length;
+    const failureSummary = `Architecture review did not converge within fixed budget: ${remainingGapsCount} blocking gap(s) remain after ${this.maxCorrections} correction attempt(s) (${currentBlockingFindings.length} finding(s), ${currentFailedReqs.length} failed requirement(s))`;
     emit('architecture_review.exhausted', 'warn', failureSummary, {
       policy: ctx.executionPolicy,
-      remainingFindingsCount: revalBlockingFindings.length,
-      remainingFailedRequirementsCount: revalFailedReqs.length,
+      maxCorrections: this.maxCorrections,
+      remainingFindingsCount: currentBlockingFindings.length,
+      remainingFailedRequirementsCount: currentFailedReqs.length,
     });
 
     return this.needsHumanReview(ctx, emit, failureSummary, [

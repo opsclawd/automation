@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ArchitectureReviewHandler } from '../architecture-review.js';
-import { PhaseName, AgentProfileName, type AgentInvocationId, type RunId } from '@ai-sdlc/domain';
+import {
+  PhaseName,
+  AgentProfileName,
+  type AgentInvocation,
+  type AgentInvocationId,
+  type RunId,
+} from '@ai-sdlc/domain';
 import {
   FakeArtifactStore,
   FakeAgentPort,
@@ -309,8 +315,8 @@ describe('ArchitectureReviewHandler', () => {
     expect(updatedPlan).toContain('do setup with field x');
   });
 
-  it('escalates to needs_human_review when re-verification fails', async () => {
-    const handler = new ArchitectureReviewHandler();
+  it('escalates to needs_human_review when re-verification fails (maxCorrections: 1)', async () => {
+    const handler = new ArchitectureReviewHandler({ maxCorrections: 1 });
     const ctx = createTestContext();
 
     await ctx.artifacts.write({
@@ -446,6 +452,214 @@ describe('ArchitectureReviewHandler', () => {
       expect(result.failure.kind).toBe('needs_human_review');
       expect(result.failure.message).toContain('Architecture review did not converge');
     }
+  });
+
+  it('escalates immediately to needs_human_review when maxCorrections is 0 and review has findings', async () => {
+    const handler = new ArchitectureReviewHandler({ maxCorrections: 0 });
+    const ctx = createTestContext();
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 1122\nRequirements description.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design 1122\nFlawed design.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents:
+        '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: do setup\n- Invariants: none\n- Verification: `pnpm test`\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    const reviewerProfile = 'profile-for-architecture-review';
+
+    // 1. Initial Review -> REQUEST_CHANGES
+    agent.enqueue(reviewerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'REQUEST_CHANGES',
+          findings: [
+            {
+              category: 'invariant_completeness',
+              severity: 'critical',
+              evidence: 'Missing transition guard',
+              rationale: 'Breaks state machine',
+              minimal_correction: 'Add transition guard',
+              blocking: true,
+            },
+          ],
+        }),
+      });
+      return {
+        id: 'inv-1' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(reviewerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain('maxCorrections is 0');
+    }
+  });
+
+  it('supports multiple corrections (maxCorrections: 2) and succeeds when second verification passes', async () => {
+    const handler = new ArchitectureReviewHandler({ maxCorrections: 2 });
+    const ctx = createTestContext();
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 1122\nRequirements description.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design 1122\nInitial flawed design.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents:
+        '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: do setup\n- Invariants: none\n- Verification: `pnpm test`\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    const reviewerProfile = 'profile-for-architecture-review';
+    const plannerProfile = 'profile-for-architecture-fix';
+
+    const makeInv = (profile: string, id: string): AgentInvocation => ({
+      id: id as AgentInvocationId,
+      runId: ctx.runUuid as RunId,
+      phaseId: PhaseName('architecture-review'),
+      profile: AgentProfileName(profile),
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4',
+      startedAt: new Date(),
+      endedAt: new Date(),
+      startCommitSha: 'sha123',
+      exitCode: 0,
+      durationMs: 100,
+      timeoutMs: 1000,
+      outcome: 'success',
+      contractViolations: [],
+    });
+
+    // 1. Initial Review -> REQUEST_CHANGES (Finding 1 & 2)
+    agent.enqueue(reviewerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'REQUEST_CHANGES',
+          requirements_checks: [
+            { requirement: 'Requirement A', result: 'PASS', evidence: 'Present' },
+            { requirement: 'Requirement B', result: 'FAIL', evidence: 'Missing B' },
+          ],
+          findings: [
+            {
+              category: 'contract_conservation',
+              severity: 'high',
+              evidence: 'Missing field x',
+              rationale: 'Required by consumer',
+              minimal_correction: 'Add field x',
+              blocking: true,
+            },
+          ],
+        }),
+      });
+      return makeInv(reviewerProfile, 'inv-1');
+    });
+
+    // 2. Correction 1: Planner fixes field x but still misses Requirement B
+    agent.enqueue(plannerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          design_md: '# Design 1122\nAdded field x.',
+          plan_md:
+            '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: setup with field x\n- Invariants: none\n- Verification: `pnpm test`\n',
+        }),
+      });
+      return makeInv(plannerProfile, 'inv-2');
+    });
+
+    // 3. Verification 1 -> still REQUEST_CHANGES (Requirement B still failing)
+    agent.enqueue(reviewerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'REQUEST_CHANGES',
+          requirements_checks: [
+            { requirement: 'Requirement A', result: 'PASS', evidence: 'Present' },
+            { requirement: 'Requirement B', result: 'FAIL', evidence: 'Still missing B' },
+          ],
+          findings: [],
+        }),
+      });
+      return makeInv(reviewerProfile, 'inv-3');
+    });
+
+    // 4. Correction 2: Planner fixes Requirement B
+    agent.enqueue(plannerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          design_md: '# Design 1122\nAdded field x and resolved Requirement B.',
+          plan_md:
+            '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: setup with field x and B\n- Invariants: none\n- Verification: `pnpm test`\n',
+        }),
+      });
+      return makeInv(plannerProfile, 'inv-4');
+    });
+
+    // 5. Verification 2 -> APPROVE!
+    agent.enqueue(reviewerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          requirements_checks: [
+            { requirement: 'Requirement A', result: 'PASS', evidence: 'Present' },
+            { requirement: 'Requirement B', result: 'PASS', evidence: 'Resolved' },
+          ],
+          findings: [],
+        }),
+      });
+      return makeInv(reviewerProfile, 'inv-5');
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('passed');
+
+    const finalDesign = await ctx.artifacts.read(ctx.runUuid, 'design.md');
+    expect(finalDesign).toContain('resolved Requirement B');
   });
 
   it('rejects APPROVE verdict if requirements_checks contains a FAIL and triggers correction pass', async () => {
