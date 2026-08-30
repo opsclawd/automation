@@ -48,6 +48,8 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
       'review-head-sha.txt',
       'whole-change-review.json',
       'follow-up-review.json',
+      'architecture-review.json',
+      'architecture-review.md',
     ];
     expect(ORCHESTRATOR_ARTIFACT_PATHS).toEqual(expected);
     expect(Object.isFrozen(ORCHESTRATOR_ARTIFACT_PATHS)).toBe(true);

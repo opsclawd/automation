@@ -115,7 +115,7 @@ const _phaseDefinitions = {
       required: ['issue.md', 'design.md', 'plan.md'],
       optional: ['issue-comments.md'],
     },
-    outputs: ['architecture-review.json'],
+    outputs: ['architecture-review.json', 'architecture-review.md'],
     agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
     retrySafety: 'safe',
     skippable: false,

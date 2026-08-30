@@ -33,6 +33,8 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'review-head-sha.txt',
   'whole-change-review.json',
   'follow-up-review.json',
+  'architecture-review.json',
+  'architecture-review.md',
 ] as const);
 
 export const ORCHESTRATOR_PATCH_EXCLUDE = '*.patch';

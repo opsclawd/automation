@@ -51,6 +51,8 @@ review-convergence.json
 review-head-sha.txt
 whole-change-review.json
 follow-up-review.json
+architecture-review.json
+architecture-review.md
 implementation-log-task-*.md
 issue.md
 issue-comments.md
