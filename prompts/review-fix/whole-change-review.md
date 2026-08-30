@@ -50,6 +50,21 @@ Review the change as a whole. Look for material problems including:
 - inadequate tests
 - important error-handling, security, data-integrity, concurrency, or performance problems where relevant
 
+### Production-Artifact Fidelity & Environment Grounding
+
+- When issue correctness materially depends on repository-owned runtime configuration, certified templates, profiles, schemas, workflow definitions, migrations, generated contracts, capability declarations, or equivalent runtime artifacts, inspect the authoritative production artifact rather than relying solely on code abstractions or synthetic fixtures.
+- Determine which artifact is authoritative from the repository itself rather than assuming test fixtures represent production.
+- Synthetic, unit, or integration fixtures support correctness evaluation but cannot by themselves prove correctness when they materially differ from authoritative production artifacts or construct configurations/topologies absent from production.
+
+### Supported Success-Path Verification
+
+- Verify that at least one valid end-to-end success path exists under the actual supported production configuration for the behavior required by the issue.
+- A solution is not correct if it merely changes the failure mode or converts one failure into an unavoidable downstream failure, leaving the supported production configuration internally unsatisfiable.
+- For optional or capability-dependent behavior, verify consistency among declared capabilities, validation rules, runtime behavior, and output/provenance contracts when materially relevant.
+- Report material production-artifact mismatches or unsatisfiable configurations as blocking findings when they violate the issue or Acceptance Criteria.
+
+### Evaluation Guidelines
+
 Do not manufacture findings merely to have findings. Do not block on stylistic preferences unless they create a material correctness or maintainability problem.
 
 Explicitly verify every Acceptance Criterion from the issue as PASS or FAIL with supporting evidence.
