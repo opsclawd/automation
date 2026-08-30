@@ -3,7 +3,6 @@ import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } fro
 import { createEventEmitter } from '../handler.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
-import type { FixReviewResult } from '../../results/schemas/fix-review.js';
 import { formatLedgerForFixPrompt, type FindingLedger } from '../../review-fix/finding-ledger.js';
 import { invalidateValidationEvidence } from '../validation-evidence.js';
 
@@ -56,8 +55,8 @@ export class FixReviewHandler implements PhaseHandler {
     }
 
     // 4. Run fixer agent invocation
-    const fixRunResult = await runSingleShotAgentPhase<FixReviewResult>(ctx, {
-      phase: this.phase,
+    const fixRunResult = await runSingleShotAgentPhase(ctx, {
+      phase: 'fix-review',
       profile: fixProfile,
       step: 'targeted-fix',
       ...(fixTemplate ? { template: fixTemplate } : {}),

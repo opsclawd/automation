@@ -4,7 +4,6 @@ import { createEventEmitter } from '../handler.js';
 import { SingleShotAgentHandler } from './single-shot-agent-handler.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
-import type { PlannerPackage } from '../../results/schemas/planner-package.js';
 import { validatePlanTaskList } from '../plan-tasks.js';
 
 export class PlanDesignHandler extends SingleShotAgentHandler {
@@ -88,8 +87,8 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
     }
 
     // 4. Run single planner invocation without worktree delivery requirements
-    const runResult = await runSingleShotAgentPhase<PlannerPackage>(ctx, {
-      phase: this.phase,
+    const runResult = await runSingleShotAgentPhase(ctx, {
+      phase: 'plan-design',
       profile,
       step: 'plan-unified',
       ...(template ? { template } : {}),

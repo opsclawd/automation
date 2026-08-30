@@ -11,11 +11,7 @@ import type {
   StructuredResultRepairInput,
   StructuredResultRepairResult,
 } from '../../../ports/structured-result-repair-port.js';
-import {
-  plannerPackageSchema,
-  type PlannerPackage,
-} from '../../../results/schemas/planner-package.js';
-import type { FollowUpReviewResult } from '../../../results/schemas/follow-up-review.js';
+import { plannerPackageSchema } from '../../../results/schemas/planner-package.js';
 
 const { mockLoadPromptTemplate, mockRenderPrompt } = vi.hoisted(() => ({
   mockLoadPromptTemplate: vi.fn(() => '# Template\n'),
@@ -247,8 +243,8 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
       outcome: 'success',
     }));
 
-    const result = await runSingleShotAgentPhase<PlannerPackage>(ctx, {
-      phase: PhaseName('architecture-review'),
+    const result = await runSingleShotAgentPhase(ctx, {
+      phase: 'architecture-review',
       profile: AgentProfileName('architecture-review'),
       step: 'architecture-fix',
       vars: { cwd: ctx.cwd },
@@ -291,8 +287,8 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
       outcome: 'success',
     }));
 
-    const result = await runSingleShotAgentPhase<FollowUpReviewResult>(ctx, {
-      phase: PhaseName('follow-up-review'),
+    const result = await runSingleShotAgentPhase(ctx, {
+      phase: 'follow-up-review',
       profile: AgentProfileName('follow-up-review'),
       step: 'follow-up-review',
       vars: { cwd: ctx.cwd },
@@ -334,8 +330,8 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
       outcome: 'success',
     }));
 
-    const result = await runSingleShotAgentPhase<FollowUpReviewResult>(ctx, {
-      phase: PhaseName('follow-up-review'),
+    const result = await runSingleShotAgentPhase(ctx, {
+      phase: 'follow-up-review',
       profile: AgentProfileName('follow-up-review'),
       step: 'follow-up-review',
       vars: { cwd: ctx.cwd },
@@ -406,8 +402,8 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
         outcome: 'success',
       }));
 
-      const result = await runSingleShotAgentPhase<FollowUpReviewResult>(ctx, {
-        phase: PhaseName('follow-up-review'),
+      const result = await runSingleShotAgentPhase(ctx, {
+        phase: 'follow-up-review',
         profile: AgentProfileName('follow-up-review'),
         step: 'follow-up-review',
         vars: { cwd: ctx.cwd },

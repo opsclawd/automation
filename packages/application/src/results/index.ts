@@ -80,7 +80,12 @@ export type {
   TaskManifestEntry,
 } from './schemas/task-manifest.js';
 export { extractResult } from './extract-result.js';
-export type { ExtractResultOutcome, ExtractResultInput } from './extract-result.js';
+export type {
+  ExtractResultOutcome,
+  ExtractResultInput,
+  ExtractResultInputWithMeta,
+  ExtractResultInputFromRegistry,
+} from './extract-result.js';
 export { normalizePhaseId } from './phase-registry.js';
 export { classifyResultFailure } from './failure-classification.js';
 export type { ResultFailureClassification } from './failure-classification.js';

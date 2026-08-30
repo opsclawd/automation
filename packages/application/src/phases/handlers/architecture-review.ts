@@ -9,10 +9,7 @@ import {
   isApprovedArchitectureReview,
   type ArchitectureReviewResult,
 } from '../../results/schemas/architecture-review.js';
-import {
-  plannerPackageSchema,
-  type PlannerPackage,
-} from '../../results/schemas/planner-package.js';
+import { plannerPackageSchema } from '../../results/schemas/planner-package.js';
 import { validatePlanTaskList } from '../plan-tasks.js';
 
 export interface ArchitectureReviewHandlerOpts {
@@ -100,8 +97,8 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     }
 
     // 5. Reviewer Invocation (Pass 1)
-    const reviewResult = await runSingleShotAgentPhase<ArchitectureReviewResult>(ctx, {
-      phase: this.phase,
+    const reviewResult = await runSingleShotAgentPhase(ctx, {
+      phase: 'architecture-review',
       profile: reviewerProfile,
       step: 'architecture-review',
       ...(reviewTemplate ? { template: reviewTemplate } : {}),
@@ -198,7 +195,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         }
       }
 
-      const fixResult = await runSingleShotAgentPhase<PlannerPackage>(ctx, {
+      const fixResult = await runSingleShotAgentPhase(ctx, {
         phase: this.phase,
         profile: plannerProfile,
         step: 'architecture-fix',
@@ -280,8 +277,8 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         },
       );
 
-      const revalResult = await runSingleShotAgentPhase<ArchitectureReviewResult>(ctx, {
-        phase: this.phase,
+      const revalResult = await runSingleShotAgentPhase(ctx, {
+        phase: 'architecture-review',
         profile: reviewerProfile,
         step: 'architecture-verify',
         ...(reviewTemplate ? { template: reviewTemplate } : {}),

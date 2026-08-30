@@ -1,5 +1,6 @@
 import type { AgentInvocation } from '@ai-sdlc/domain';
 import { extractResult, type ExtractResultOutcome } from '../results/extract-result.js';
+import { PHASE_RESULT_REGISTRY } from '../results/phase-registry.js';
 import type { ArtifactStore, StructuredResultRepairPort } from '../ports.js';
 import type { WholePrReviewResult } from '../results/schemas/whole-pr-review.js';
 import type {
@@ -342,11 +343,12 @@ export async function readWholeChangeReviewVerdict(
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
   opts?: ReadWholeChangeReviewVerdictOptions,
 ): Promise<WholeChangeVerdictOutcome> {
-  const r = await extractResult<WholeChangeReviewResult>({
+  const r = await extractResult({
     invocation,
     ports,
     cwd: opts?.cwd,
     transcriptEvidence: opts?.transcriptEvidence,
+    resultMeta: PHASE_RESULT_REGISTRY['whole-change-review'],
   });
   if (!r.ok) {
     return {
@@ -462,11 +464,12 @@ export async function readNarrowVerificationVerdict(
   ports: { artifacts: ArtifactStore; repair?: StructuredResultRepairPort; agent?: unknown },
   opts?: ReadNarrowVerificationVerdictOptions,
 ): Promise<NarrowVerificationVerdictOutcome> {
-  const r = await extractResult<NarrowVerificationResult>({
+  const r = await extractResult({
     invocation,
     ports,
     cwd: opts?.cwd,
     transcriptEvidence: opts?.transcriptEvidence,
+    resultMeta: PHASE_RESULT_REGISTRY['narrow-verification'],
   });
   if (!r.ok) {
     return {

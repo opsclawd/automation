@@ -8,7 +8,6 @@ import {
   evaluateWholeChangeReviewVerdict,
   type EvaluatedWholeChangeVerdict,
 } from '../../review-fix/read-verdicts.js';
-import type { WholeChangeReviewResult } from '../../results/schemas/whole-change-review.js';
 import { createFindingLedger } from '../../review-fix/finding-ledger.js';
 import { verifyValidationFreshness } from '../validation-evidence.js';
 
@@ -120,8 +119,8 @@ export class InitialReviewHandler implements PhaseHandler {
     }
 
     // 7. Invoke single-shot reviewer agent (read-only)
-    const runResult = await runSingleShotAgentPhase<WholeChangeReviewResult>(ctx, {
-      phase: this.phase,
+    const runResult = await runSingleShotAgentPhase(ctx, {
+      phase: 'initial-review',
       profile,
       step: 'initial-review',
       ...(template ? { template } : {}),

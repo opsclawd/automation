@@ -15,8 +15,6 @@ import { recordValidationHeadSha } from '../validation-headsha.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import { PHASE_RESULT_REGISTRY } from '../../results/phase-registry.js';
-import type { WholeChangeReviewResult } from '../../results/schemas/whole-change-review.js';
-import type { NarrowVerificationResult } from '../../results/schemas/narrow-verification.js';
 import {
   evaluateWholeChangeReviewVerdict,
   evaluateNarrowVerificationVerdict,
@@ -233,7 +231,7 @@ export class ReviewFixHandler implements PhaseHandler {
     }
 
     // 7. Invoke single-shot reviewer agent (read-only)
-    const runResult = await runSingleShotAgentPhase<WholeChangeReviewResult>(ctx, {
+    const runResult = await runSingleShotAgentPhase(ctx, {
       phase: this.phase,
       profile,
       step: 'whole-change-review',
@@ -494,7 +492,7 @@ export class ReviewFixHandler implements PhaseHandler {
       }
     }
 
-    const verifyRunResult = await runSingleShotAgentPhase<NarrowVerificationResult>(ctx, {
+    const verifyRunResult = await runSingleShotAgentPhase(ctx, {
       phase: this.phase,
       profile: verifyProfile,
       step: 'narrow-verification',

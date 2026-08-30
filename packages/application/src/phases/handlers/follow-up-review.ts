@@ -118,8 +118,8 @@ export class FollowUpReviewHandler implements PhaseHandler {
     }
 
     // 7. Invoke single-shot follow-up reviewer agent (read-only)
-    const runResult = await runSingleShotAgentPhase<FollowUpReviewResult>(ctx, {
-      phase: this.phase,
+    const runResult = await runSingleShotAgentPhase(ctx, {
+      phase: 'follow-up-review',
       profile,
       step: 'follow-up-review',
       ...(template ? { template } : {}),
