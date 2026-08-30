@@ -651,4 +651,37 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     expect(lifecycle.executeCalls).toHaveLength(0);
     expect(eventRepo.events).toHaveLength(0);
   });
+
+  it('permits architecture-review artifacts (architecture-review.json, architecture-review.md) without boundary violation', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: work']),
+    });
+    const steps = new FakeStepRepository();
+    const git = new FakeGitPort();
+    git.headByCwd.set('/tmp/wt', 'head-sha');
+    // Git status shows architecture-review artifacts present in the worktree
+    git.statusByCwd.set('/tmp/wt', '?? architecture-review.json\n?? architecture-review.md\n');
+
+    const lifecycle = new FakeWorktreeLifecycle();
+    const eventRepo = new FakeEventRepository();
+    const setup = vi.fn(async () => ({ ok: true }));
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      git.statusByCwd.set('/tmp/wt', '');
+      return { outcome: 'success' };
+    });
+    const { ctx } = makeCtx(artifacts, git, {
+      priorPhaseName: 'architecture-review',
+      worktreeLifecycle: lifecycle,
+      eventRepository: eventRepo,
+    });
+
+    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(setup).toHaveBeenCalled();
+    expect(runStep).toHaveBeenCalled();
+  });
 });

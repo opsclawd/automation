@@ -45,7 +45,7 @@ describe('phase definitions registry', () => {
     const def = getPhaseDefinition('architecture-review' as PhaseName);
     expect(def.inputs.required).toEqual(['issue.md', 'design.md', 'plan.md']);
     expect(def.inputs.optional).toEqual(['issue-comments.md']);
-    expect(def.outputs).toEqual(['architecture-review.json']);
+    expect(def.outputs).toEqual(['architecture-review.json', 'architecture-review.md']);
   });
 
   it('exposes typed error classes with correct names', () => {
