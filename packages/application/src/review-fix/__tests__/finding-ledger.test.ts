@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   createFindingLedger,
   updateFindingLedger,
+  appendFindingLedgerEntries,
   computeFindingFingerprint,
   hasUnresolvedBlockingFindings,
   formatLedgerForPrompt,
@@ -9,7 +10,7 @@ import {
 } from '../finding-ledger.js';
 
 describe('finding-ledger', () => {
-  it('creates ledger with stable fingerprints from initial review findings', () => {
+  it('creates ledger with stable fingerprints and provenance from review findings', () => {
     const findings = [
       {
         severity: 'high' as const,
@@ -39,7 +40,7 @@ describe('finding-ledger', () => {
       },
     ];
 
-    const ledger = createFindingLedger(findings, acs);
+    const ledger = createFindingLedger(findings, acs, 'spec-review');
 
     expect(ledger.version).toBe(1);
     expect(ledger.iterationCount).toBe(0);
@@ -48,17 +49,57 @@ describe('finding-ledger', () => {
     // Failed AC entry
     expect(ledger.entries[0]!.id).toBe('AC-1');
     expect(ledger.entries[0]!.status).toBe('unresolved');
+    expect(ledger.entries[0]!.source).toBe('spec-review');
     expect(ledger.entries[0]!.isAcceptanceCriterionFailure).toBe(true);
 
     // Finding entries
     expect(ledger.entries[1]!.status).toBe('unresolved');
+    expect(ledger.entries[1]!.source).toBe('spec-review');
     expect(ledger.entries[1]!.files).toEqual(['packages/app.ts']);
     expect(ledger.entries[2]!.status).toBe('unresolved');
+    expect(ledger.entries[2]!.source).toBe('spec-review');
 
     expect(hasUnresolvedBlockingFindings(ledger)).toBe(true);
   });
 
-  it('updates finding ledger on follow-up review', () => {
+  it('appends quality-review findings with quality-review provenance to existing ledger', () => {
+    const specFindings = [
+      {
+        severity: 'high' as const,
+        files: ['src/spec.ts'],
+        evidence: 'spec violation',
+        rationale: 'spec issue',
+        minimal_correction: 'fix spec',
+      },
+    ];
+    const ledger = createFindingLedger(specFindings, [], 'spec-review');
+
+    const qualityFindings = [
+      {
+        severity: 'critical' as const,
+        files: ['src/arch.ts'],
+        evidence: 'layer boundary broken',
+        rationale: 'imports infra from app',
+        minimal_correction: 'use port',
+        blocking: true,
+      },
+    ];
+
+    const updated = appendFindingLedgerEntries(ledger, qualityFindings, 'quality-review');
+
+    expect(updated.entries).toHaveLength(2);
+    expect(updated.entries[0]!.source).toBe('spec-review');
+    expect(updated.entries[1]!.source).toBe('quality-review');
+    expect(updated.entries[1]!.severity).toBe('critical');
+    expect(updated.entries[1]!.files).toEqual(['src/arch.ts']);
+
+    // Retrying / appending the identical findings again should be a no-op (idempotent)
+    const repeated = appendFindingLedgerEntries(updated, qualityFindings, 'quality-review');
+    expect(repeated.entries).toHaveLength(2);
+    expect(repeated.entries.map((e) => e.id)).toEqual(updated.entries.map((e) => e.id));
+  });
+
+  it('updates finding ledger on follow-up review preserving provenance', () => {
     const findings = [
       {
         severity: 'high' as const,
@@ -76,7 +117,7 @@ describe('finding-ledger', () => {
       },
     ];
 
-    const ledger = createFindingLedger(findings);
+    const ledger = createFindingLedger(findings, [], 'spec-review');
     const f1Id = ledger.entries[0]!.id;
     const f2Id = ledger.entries[1]!.id;
 
@@ -111,15 +152,18 @@ describe('finding-ledger', () => {
 
     const f1 = updated.entries.find((e) => e.id === f1Id)!;
     expect(f1.status).toBe('resolved');
+    expect(f1.source).toBe('spec-review');
     expect(f1.resolvedInIteration).toBe(1);
     expect(f1.resolutionEvidence).toBe('try/catch added in app.ts');
 
     const f2 = updated.entries.find((e) => e.id === f2Id)!;
     expect(f2.status).toBe('unresolved');
+    expect(f2.source).toBe('spec-review');
 
     const f3 = updated.entries.find((e) => e.id !== f1Id && e.id !== f2Id)!;
     expect(f3.status).toBe('unresolved');
     expect(f3.sourceIteration).toBe(1);
+    expect(f3.source).toBe('spec-review');
 
     expect(hasUnresolvedBlockingFindings(updated)).toBe(true);
   });
@@ -134,7 +178,7 @@ describe('finding-ledger', () => {
         minimal_correction: 'fix bug',
       },
     ];
-    const ledger = createFindingLedger(findings);
+    const ledger = createFindingLedger(findings, [], 'spec-review');
     const id = ledger.entries[0]!.id;
 
     const updated = updateFindingLedger(
@@ -147,7 +191,7 @@ describe('finding-ledger', () => {
     expect(hasUnresolvedBlockingFindings(updated)).toBe(false);
   });
 
-  it('formats ledger for reviewer prompt and fixer prompt', () => {
+  it('formats ledger for reviewer prompt and fixer prompt with source tags', () => {
     const findings = [
       {
         severity: 'high' as const,
@@ -157,16 +201,18 @@ describe('finding-ledger', () => {
         minimal_correction: 'add optional chaining',
       },
     ];
-    const ledger = createFindingLedger(findings);
+    const ledger = createFindingLedger(findings, [], 'quality-review');
     const promptText = formatLedgerForPrompt(ledger);
     const fixPromptText = formatLedgerForFixPrompt(ledger);
 
     expect(promptText).toContain('UNRESOLVED BLOCKING FINDINGS');
     expect(promptText).toContain('user object may be undefined');
     expect(promptText).toContain('src/core.ts');
+    expect(promptText).toContain('Source: quality-review (iteration 0)');
 
     expect(fixPromptText).toContain('FINDINGS TO RESOLVE');
     expect(fixPromptText).toContain('add optional chaining');
+    expect(fixPromptText).toContain('Source: quality-review');
   });
 
   it('generates consistent hash fingerprints', () => {

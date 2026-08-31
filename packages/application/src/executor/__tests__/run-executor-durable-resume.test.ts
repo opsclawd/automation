@@ -107,7 +107,8 @@ class FakeWorktreeLifecycle implements WorktreeLifecyclePort {
 const PHASES_AFTER_IMPLEMENT = [
   'validate',
   'fix-validate',
-  'initial-review',
+  'spec-review',
+  'quality-review',
   'fix-review',
   'follow-up-review',
   'review-fix',
@@ -139,15 +140,25 @@ function makePassingHandler(phase: string, runSpy?: ReturnType<typeof vi.fn>): P
     phase: makePhaseName(phase),
     run: async (ctx: PhaseHandlerContext): Promise<PhaseResult> => {
       runSpy?.(ctx);
-      if (phase === 'initial-review') {
+      if (phase === 'spec-review') {
         try {
           await ctx.artifacts.write({
             runId: ctx.runUuid,
-            relativePath: 'whole-change-review.json',
-            contents: JSON.stringify({ verdict: 'APPROVE', acceptance_criteria: [], findings: [] }),
+            relativePath: 'spec-review.json',
+            contents: JSON.stringify({ verdict: 'PASS', requirements_checks: [], findings: [] }),
           });
         } catch {
           // ignore in double if artifacts store is mocked without write
+        }
+      } else if (phase === 'quality-review') {
+        try {
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            relativePath: 'quality-review.json',
+            contents: JSON.stringify({ verdict: 'APPROVE', findings: [] }),
+          });
+        } catch {
+          // ignore
         }
       } else if (phase === 'follow-up-review') {
         try {

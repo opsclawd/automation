@@ -51,6 +51,11 @@ review-convergence.json
 review-head-sha.txt
 whole-change-review.json
 follow-up-review.json
+spec-review.json
+spec-review.md
+spec-requirements-ledger.json
+quality-review.json
+quality-review.md
 architecture-review.json
 architecture-review.md
 architecture-requirements.json

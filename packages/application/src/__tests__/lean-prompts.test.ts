@@ -192,44 +192,34 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
     });
   });
 
-  describe('Initial Review prompt (prompts/review-fix/initial-review.md)', () => {
-    it('loads and renders initial review template with production-artifact fidelity and AC verification', async () => {
-      const template = loadPromptTemplate('review-fix', 'initial-review', { promptsRoot });
+  describe('Spec Review prompt (prompts/review-fix/spec-review.md)', () => {
+    it('loads and renders spec review template with requirements ledger, hard gates and falsification guidance', async () => {
+      const template = loadPromptTemplate('review-fix', 'spec-review', { promptsRoot });
 
       // Grounding & Read-only
       expect(template).toMatch(/read-only review/i);
       expect(template).toContain('{{var:complete_diff}}');
       expect(template).toContain('{{var:validation_evidence}}');
+      expect(template).toContain('{{var:requirements_ledger}}');
+      expect(template).toContain('{{artifact:design.md}}');
 
-      // Production-artifact fidelity & supported success path (#1118)
-      expect(template).toMatch(/Production-Artifact Fidelity & Environment Grounding/i);
-      expect(template).toMatch(
-        /inspect the authoritative production artifact rather than relying solely on code abstractions or synthetic fixtures/i,
-      );
-      expect(template).toMatch(
-        /Verify that at least one valid end-to-end success path exists under the actual supported production configuration/i,
-      );
-      expect(template).toMatch(/converts? one failure into an unavoidable downstream failure/i);
-      expect(template).toMatch(
-        /consistency among declared capabilities, validation rules, runtime behavior, and output\/provenance contracts/i,
-      );
-
-      // Generic durable wording without target-repo specifics
-      expect(template).not.toMatch(/audioPrompt/i);
-      expect(template).not.toMatch(/\bLTX\b/);
-      expect(template).not.toMatch(/ComfyUI/i);
-      expect(template).not.toMatch(/RenderProfile/i);
+      // Hard gates and falsification
+      expect(template).toMatch(/Hard Gates & Adversarial Falsification/i);
+      expect(template).toMatch(/falsify/i);
+      expect(template).toMatch(/hash mismatch prevents FFmpeg dispatch/i);
+      expect(template).toMatch(/counterexample_considered/i);
 
       // Output contract
       expect(template).toContain('result.json');
       expect(template).toContain('"verdict"');
+      expect(template).toContain('"requirements_checks"');
 
       // Render verification
       const artifacts = new FakeArtifactStore();
       await artifacts.write({
         runId: 'run-test',
         relativePath: 'issue.md',
-        contents: '# Issue 1118',
+        contents: '# Issue 1132',
       });
       await artifacts.write({ runId: 'run-test', relativePath: 'design.md', contents: '# Design' });
       await artifacts.write({ runId: 'run-test', relativePath: 'plan.md', contents: '# Plan' });
@@ -237,15 +227,67 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       const rendered = await renderPrompt(template, {
         runId: 'run-test',
         vars: {
-          issue_number: '1118',
+          issue_number: '1132',
           cwd: '/tmp/wt',
           complete_diff: 'diff --git a/app.ts b/app.ts',
           validation_evidence: 'All tests passed',
+          requirements_ledger: '- [AC-1] Check hash',
         },
         artifacts,
       });
       expect(rendered).toContain('diff --git a/app.ts b/app.ts');
-      expect(rendered).toContain('Production-Artifact Fidelity');
+      expect(rendered).toContain('- [AC-1] Check hash');
+      expect(rendered).toContain('Hard Gates & Adversarial Falsification');
+    });
+  });
+
+  describe('Quality Review prompt (prompts/review-fix/quality-review.md)', () => {
+    it('loads and renders quality review template with architecture, layer boundaries, and quality checklist', async () => {
+      const template = loadPromptTemplate('review-fix', 'quality-review', { promptsRoot });
+
+      // Grounding & Read-only
+      expect(template).toMatch(/read-only review/i);
+      expect(template).toContain('{{var:complete_diff}}');
+      expect(template).toContain('{{var:validation_evidence}}');
+      expect(template).toContain('{{var:spec_review_summary}}');
+
+      // Architecture & Layer Boundaries
+      expect(template).toMatch(/Architecture & Layer Boundaries/i);
+      expect(template).toMatch(/`AGENTS\.md`/);
+      expect(template).toMatch(/packages\/application/);
+
+      // Scope distinction
+      expect(template).toMatch(/Do (?:\*\*|)?not(?:\*\*|)? duplicate the spec review/i);
+
+      // Output contract
+      expect(template).toContain('result.json');
+      expect(template).toContain('"verdict"');
+      expect(template).toContain('"findings"');
+
+      // Render verification
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'run-test',
+        relativePath: 'issue.md',
+        contents: '# Issue 1132',
+      });
+      await artifacts.write({ runId: 'run-test', relativePath: 'design.md', contents: '# Design' });
+      await artifacts.write({ runId: 'run-test', relativePath: 'plan.md', contents: '# Plan' });
+
+      const rendered = await renderPrompt(template, {
+        runId: 'run-test',
+        vars: {
+          issue_number: '1132',
+          cwd: '/tmp/wt',
+          complete_diff: 'diff --git a/app.ts b/app.ts',
+          validation_evidence: 'All tests passed',
+          spec_review_summary: 'Spec review passed all checks',
+        },
+        artifacts,
+      });
+      expect(rendered).toContain('diff --git a/app.ts b/app.ts');
+      expect(rendered).toContain('Spec review passed all checks');
+      expect(rendered).toContain('Architecture & Layer Boundaries');
     });
   });
 

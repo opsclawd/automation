@@ -3,7 +3,7 @@ import {
   buildArchitectureRequirementsLedger,
   formatRequirementsLedgerForPrompt,
   type ArchitectureRequirementsLedger,
-} from '../architecture-requirements.js';
+} from '../requirements-ledger.js';
 import { FakeGitHubPort } from '../../test-doubles/fake-github-port.js';
 
 describe('buildArchitectureRequirementsLedger', () => {
@@ -31,6 +31,7 @@ describe('buildArchitectureRequirementsLedger', () => {
       category: 'acceptance_criteria',
       title: 'Strict architecture review includes representational completeness',
       source: 'issue.md',
+      hardGate: false,
     });
     expect(acs[1]!.id).toBe('AC-2');
     expect(acs[2]!.id).toBe('AC-3');
@@ -502,7 +503,7 @@ describe('formatRequirementsLedgerForPrompt', () => {
     };
 
     const text = formatRequirementsLedgerForPrompt(ledger);
-    expect(text).toContain('# Architecture Requirements Ledger (Issue #1129)');
+    expect(text).toContain('# Requirements Ledger (Issue #1129)');
     expect(text).toContain('[AC-1] [ACCEPTANCE_CRITERIA]');
     expect(text).toContain('Representational completeness check');
     expect(text).toContain('[CONSUMER-128-AC-1] [CONSUMER_REQUIREMENT]');
