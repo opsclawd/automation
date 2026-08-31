@@ -25,6 +25,24 @@ export { postPrReviewResultSchema } from './schemas/post-pr-review.js';
 export type { PostPrReviewResult } from './schemas/post-pr-review.js';
 export { postPrReviewCommentSchema } from './schemas/post-pr-review.js';
 export type { PostPrReviewComment } from './schemas/post-pr-review.js';
+export {
+  postImplementationSpecReviewResultSchema,
+  postImplementationRequirementCheckSchema,
+  isApprovedSpecReview,
+} from './schemas/post-implementation-spec-review.js';
+export type {
+  PostImplementationSpecReviewResult,
+  PostImplementationRequirementCheck,
+} from './schemas/post-implementation-spec-review.js';
+export {
+  postImplementationQualityReviewResultSchema,
+  postImplementationQualityReviewFindingSchema,
+  isApprovedQualityReview,
+} from './schemas/post-implementation-quality-review.js';
+export type {
+  PostImplementationQualityReviewResult,
+  PostImplementationQualityReviewFinding,
+} from './schemas/post-implementation-quality-review.js';
 export { specReviewResultSchema, specReviewFindingSchema } from './schemas/spec-review.js';
 export type { SpecReviewResult } from './schemas/spec-review.js';
 export { wholePrReviewResultSchema } from './schemas/whole-pr-review.js';

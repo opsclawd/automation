@@ -97,7 +97,7 @@ describe('resolveProfileForPhase', () => {
     expect(profile).toBe(AgentProfileName('pi-local'));
   });
 
-  it('resolves distinct initial-review and follow-up-review profiles', () => {
+  it('resolves distinct spec-review, quality-review and follow-up-review profiles', () => {
     const config = {
       ...baseConfig,
       profiles: {
@@ -108,6 +108,12 @@ describe('resolveProfileForPhase', () => {
           model: 'claude-opus-4-20250514',
           timeoutMinutes: 30,
         },
+        'critic-profile': {
+          runtime: 'opencode' as const,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-20250514',
+          timeoutMinutes: 20,
+        },
         'flash-cheap': {
           runtime: 'opencode' as const,
           provider: 'anthropic',
@@ -116,12 +122,14 @@ describe('resolveProfileForPhase', () => {
         },
       },
       phaseProfiles: {
-        'initial-review': { profile: 'gemini-strong' },
+        'spec-review': { profile: 'gemini-strong' },
+        'quality-review': { profile: 'critic-profile' },
         'follow-up-review': { profile: 'flash-cheap' },
       },
     };
-    expect(resolveProfileForPhase(config, 'initial-review')).toBe(
-      AgentProfileName('gemini-strong'),
+    expect(resolveProfileForPhase(config, 'spec-review')).toBe(AgentProfileName('gemini-strong'));
+    expect(resolveProfileForPhase(config, 'quality-review')).toBe(
+      AgentProfileName('critic-profile'),
     );
     expect(resolveProfileForPhase(config, 'follow-up-review')).toBe(
       AgentProfileName('flash-cheap'),

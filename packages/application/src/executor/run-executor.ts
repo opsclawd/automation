@@ -145,7 +145,7 @@ export class RunExecutor {
 
         const isImplementPhase = firstIncompletePhase === 'implement';
         // Lean's review-convergence loop (validate -> fix-validate ->
-        // initial-review -> fix-review -> follow-up-review -> create-pr)
+        // spec-review -> quality-review -> fix-review -> follow-up-review -> create-pr)
         // legitimately runs with an uncommitted worktree: fix-review leaves
         // real diffs in place for validate/follow-up-review to inspect
         // against the run's fixed startCommitSha, and nothing commits until
@@ -157,7 +157,8 @@ export class RunExecutor {
         const leanReviewLoopTolerantPhases: readonly string[] = [
           'validate',
           'fix-validate',
-          'initial-review',
+          'spec-review',
+          'quality-review',
           'fix-review',
           'follow-up-review',
           'create-pr',
@@ -1056,7 +1057,8 @@ export class RunExecutor {
     const prAlreadyCompleted =
       state.completedSet.has('create-pr') || state.completedSet.has('wait-merge');
     if (!prAlreadyCompleted) {
-      const initialReviewName = PhaseName('initial-review');
+      const specReviewName = PhaseName('spec-review');
+      const qualityReviewName = PhaseName('quality-review');
       const ctx = this.buildContext(state.currentRun, state.approvedInboundPaths);
       const maxReviewFixIterations =
         input.reviewConvergenceMaxIterations ?? this.deps.reviewConvergenceMaxIterations ?? 4;
@@ -1075,40 +1077,69 @@ export class RunExecutor {
         convergenceState = undefined;
       }
 
-      // If initial-review is not yet recorded as completed and no convergence state exists
-      if (!state.completedSet.has('initial-review') && !convergenceState) {
-        const step = await this.executeSinglePhase(initialReviewName, run, state);
+      // If spec-review is not yet recorded as completed and no convergence state exists
+      if (!state.completedSet.has('spec-review') && !convergenceState) {
+        const step = await this.executeSinglePhase(specReviewName, run, state);
         if (step.status === 'terminal') return step.terminalResult!;
+      }
 
-        let initialVerdict: 'APPROVE' | 'REQUEST_CHANGES' = 'REQUEST_CHANGES';
+      // If quality-review is not yet recorded as completed and no convergence state exists
+      if (!state.completedSet.has('quality-review') && !convergenceState) {
+        const step = await this.executeSinglePhase(qualityReviewName, run, state);
+        if (step.status === 'terminal') return step.terminalResult!;
+      }
+
+      // Evaluate both review verdicts to decide initial convergence state
+      if (!convergenceState) {
+        let specApproved = false;
+        let qualityApproved = false;
+
         try {
-          const wholeChangeResult = await ctx.artifacts.read(run.uuid, 'whole-change-review.json');
-          const parsed = JSON.parse(wholeChangeResult) as { verdict?: string };
-          initialVerdict =
-            parsed.verdict?.toUpperCase() === 'APPROVE' ? 'APPROVE' : 'REQUEST_CHANGES';
-        } catch {
-          // If whole-change-review.json is missing or corrupted, check ledger
-          try {
-            const ledgerRaw = await ctx.artifacts.read(run.uuid, 'finding-ledger.json');
-            const ledger = JSON.parse(ledgerRaw) as { entries?: Array<{ status?: string }> };
-            const hasUnresolved = ledger.entries?.some((e) => e.status === 'unresolved');
-            initialVerdict = hasUnresolved ? 'REQUEST_CHANGES' : 'APPROVE';
-          } catch (ledgerErr) {
-            return this.escalateToHumanReview(
-              state.currentRun,
-              initialReviewName,
-              `Missing or unreadable review artifacts after initial-review: ${ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr)}`,
-              now(),
-              phases,
-            );
-          }
+          const specResultRaw = await ctx.artifacts.read(run.uuid, 'spec-review.json');
+          const parsed = JSON.parse(specResultRaw) as { verdict?: string };
+          specApproved = parsed.verdict?.toUpperCase() === 'PASS';
+        } catch (specErr) {
+          return this.escalateToHumanReview(
+            state.currentRun,
+            specReviewName,
+            `Missing or unreadable review artifacts after spec-review: ${specErr instanceof Error ? specErr.message : String(specErr)}`,
+            now(),
+            phases,
+          );
         }
 
-        if (initialVerdict === 'APPROVE') {
+        try {
+          const qualResultRaw = await ctx.artifacts.read(run.uuid, 'quality-review.json');
+          const parsed = JSON.parse(qualResultRaw) as { verdict?: string };
+          qualityApproved = parsed.verdict?.toUpperCase() === 'APPROVE';
+        } catch (qualErr) {
+          return this.escalateToHumanReview(
+            state.currentRun,
+            qualityReviewName,
+            `Missing or unreadable review artifacts after quality-review: ${qualErr instanceof Error ? qualErr.message : String(qualErr)}`,
+            now(),
+            phases,
+          );
+        }
+
+        // Defense-in-depth: check finding-ledger for any unresolved findings
+        try {
+          const ledgerRaw = await ctx.artifacts.read(run.uuid, 'finding-ledger.json');
+          const ledger = JSON.parse(ledgerRaw) as { entries?: Array<{ status?: string }> };
+          const hasUnresolved = ledger.entries?.some((e) => e.status === 'unresolved');
+          if (hasUnresolved) {
+            specApproved = false;
+            qualityApproved = false;
+          }
+        } catch {
+          // Ledger artifact might not exist if no findings were created
+        }
+
+        if (specApproved && qualityApproved) {
           convergenceState = { iteration: 0, subStep: 'approved', verdict: 'APPROVE' };
           await ctx.artifacts.write({
             runId: run.uuid,
-            phaseId: initialReviewName,
+            phaseId: qualityReviewName,
             relativePath: 'review-convergence.json',
             contents: JSON.stringify(convergenceState, null, 2),
           });
@@ -1116,7 +1147,7 @@ export class RunExecutor {
           convergenceState = { iteration: 1, subStep: 'fix-review', verdict: 'REQUEST_CHANGES' };
           await ctx.artifacts.write({
             runId: run.uuid,
-            phaseId: initialReviewName,
+            phaseId: qualityReviewName,
             relativePath: 'review-convergence.json',
             contents: JSON.stringify(convergenceState, null, 2),
           });

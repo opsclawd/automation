@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ArchitectureRequirementsLedger } from '../../phases/architecture-requirements.js';
+import type { ArchitectureRequirementsLedger } from '../../phases/requirements-ledger.js';
 
 export const architectureReviewFindingSchema = z.object({
   category: z

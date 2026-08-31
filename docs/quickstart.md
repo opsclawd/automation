@@ -143,7 +143,8 @@ read_issue
 → implement
 → validate
 → fix-validate
-→ initial-review
+→ spec-review
+→ quality-review
 → fix-review
 → follow-up-review
 → create-pr
@@ -160,7 +161,8 @@ read_issue
 → implement
 → validate
 → fix-validate
-→ initial-review
+→ spec-review
+→ quality-review
 → fix-review
 → follow-up-review
 → create-pr

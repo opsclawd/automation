@@ -37,8 +37,8 @@ describe('phase definitions registry', () => {
     }
   });
 
-  it('has exactly 16 definitions (no extras)', () => {
-    expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(16);
+  it('has exactly 17 definitions (no extras)', () => {
+    expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(17);
   });
 
   it('defines architecture-review with required inputs issue.md, design.md, plan.md', () => {

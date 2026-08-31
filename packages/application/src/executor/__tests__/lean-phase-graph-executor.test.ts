@@ -94,11 +94,29 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
       return { outcome: 'passed' };
     });
     registerHandler('fix-validate');
-    registerHandler('initial-review', async (ctx) => {
+    registerHandler('spec-review', async (ctx) => {
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'whole-change-review.json',
-        contents: JSON.stringify({ verdict: 'APPROVE', acceptance_criteria: [], findings: [] }),
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'PASS', requirements_checks: [], findings: [] }),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'spec-review.md',
+        contents: '# Spec Review\nPASS',
+      });
+      return { outcome: 'passed' };
+    });
+    registerHandler('quality-review', async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'quality-review.json',
+        contents: JSON.stringify({ verdict: 'APPROVE', findings: [] }),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'quality-review.md',
+        contents: '# Quality Review\nLGTM',
       });
       await artifacts.write({
         runId: ctx.runUuid,
@@ -182,7 +200,8 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     expect(handlers['plan-design']?.runCalls).toHaveLength(1);
     expect(handlers['implement']?.runCalls).toHaveLength(1);
     expect(handlers['validate']?.runCalls).toHaveLength(1);
-    expect(handlers['initial-review']?.runCalls).toHaveLength(1);
+    expect(handlers['spec-review']?.runCalls).toHaveLength(1);
+    expect(handlers['quality-review']?.runCalls).toHaveLength(1);
     expect(handlers['create-pr']?.runCalls).toHaveLength(1);
     expect(handlers['wait-merge']?.runCalls).toHaveLength(1);
 
@@ -228,7 +247,8 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     expect(result.run.status).toBe('passed');
     expect(validateAttempts).toBe(2); // initial validate + revalidation
     expect(handlers['fix-validate']?.runCalls).toHaveLength(1);
-    expect(handlers['initial-review']?.runCalls).toHaveLength(1);
+    expect(handlers['spec-review']?.runCalls).toHaveLength(1);
+    expect(handlers['quality-review']?.runCalls).toHaveLength(1);
   });
 
   it('escalates to needs_human_review when revalidation fails after fix-validate', async () => {
@@ -253,14 +273,15 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
 
     expect(result.run.status).toBe('needs_human_review');
     expect(handlers['fix-validate']?.runCalls).toHaveLength(1);
-    expect(handlers['initial-review']?.runCalls).toHaveLength(0); // Did not proceed to review
+    expect(handlers['spec-review']?.runCalls).toHaveLength(0); // Did not proceed to review
+    expect(handlers['quality-review']?.runCalls).toHaveLength(0);
   });
 
   it('converges review via fix-review and follow-up-review when initial review requests changes', async () => {
     const { run, handlers, artifacts, executor } = setupExecutor('standard');
 
-    // Initial review requests changes
-    handlers['initial-review']!.handlerFn = async (ctx) => {
+    // Spec review requests changes
+    handlers['spec-review']!.handlerFn = async (ctx) => {
       const ledger = createFindingLedger([
         {
           severity: 'high',
@@ -277,13 +298,13 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
       });
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'whole-change-review.json',
-        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', findings: ledger.entries }),
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'FAIL', findings: ledger.entries }),
       });
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'code-review.md',
-        contents: '# Review\nChanges requested',
+        relativePath: 'spec-review.md',
+        contents: '# Spec Review\nChanges requested',
       });
       return { outcome: 'passed' };
     };
@@ -312,7 +333,93 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     });
 
     expect(result.run.status).toBe('passed');
-    expect(handlers['initial-review']?.runCalls).toHaveLength(1);
+    expect(handlers['spec-review']?.runCalls).toHaveLength(1);
+    expect(handlers['quality-review']?.runCalls).toHaveLength(1);
+    expect(handlers['fix-review']?.runCalls).toHaveLength(1);
+    expect(handlers['follow-up-review']?.runCalls).toHaveLength(1);
+    expect(handlers['create-pr']?.runCalls).toHaveLength(1);
+    expect(handlers['wait-merge']?.runCalls).toHaveLength(1);
+  });
+
+  it('converges review via fix-review and follow-up-review when quality-review independently requests changes', async () => {
+    const { run, handlers, artifacts, executor } = setupExecutor('standard');
+
+    // Spec review passes
+    handlers['spec-review']!.handlerFn = async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'PASS', requirements_checks: [], findings: [] }),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'spec-review.md',
+        contents: '# Spec Review\nAll requirements satisfied',
+      });
+      return { outcome: 'passed' };
+    };
+
+    // Quality review requests changes
+    handlers['quality-review']!.handlerFn = async (ctx) => {
+      const ledger = createFindingLedger(
+        [
+          {
+            category: 'architecture',
+            severity: 'critical',
+            files: ['packages/application/src/bad.ts'],
+            evidence: 'Imports infrastructure directly',
+            rationale: 'Layer boundary broken',
+            minimal_correction: 'Use port',
+            blocking: true,
+          },
+        ],
+        [],
+        'quality-review',
+      );
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'finding-ledger.json',
+        contents: JSON.stringify(ledger),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'quality-review.json',
+        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', findings: ledger.entries }),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'quality-review.md',
+        contents: '# Quality Review\nArchitecture defect found',
+      });
+      return { outcome: 'passed' };
+    };
+
+    handlers['fix-review']!.handlerFn = async () => ({ outcome: 'passed' });
+
+    // Follow-up review approves
+    handlers['follow-up-review']!.handlerFn = async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'follow-up-review.json',
+        contents: JSON.stringify({ verdict: 'APPROVE', evaluations: [], new_findings: [] }),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'finding-ledger.json',
+        contents: JSON.stringify({ version: 1, iterationCount: 1, entries: [] }),
+      });
+      return { outcome: 'passed' };
+    };
+
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('passed');
+    expect(handlers['spec-review']?.runCalls).toHaveLength(1);
+    expect(handlers['quality-review']?.runCalls).toHaveLength(1);
     expect(handlers['fix-review']?.runCalls).toHaveLength(1);
     expect(handlers['follow-up-review']?.runCalls).toHaveLength(1);
     expect(handlers['create-pr']?.runCalls).toHaveLength(1);
@@ -354,7 +461,8 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     expect(handlers['validate']?.runCalls).toHaveLength(0);
 
     // Ran subsequent lean phases
-    expect(handlers['initial-review']?.runCalls).toHaveLength(1);
+    expect(handlers['spec-review']?.runCalls).toHaveLength(1);
+    expect(handlers['quality-review']?.runCalls).toHaveLength(1);
     expect(handlers['create-pr']?.runCalls).toHaveLength(1);
     expect(handlers['wait-merge']?.runCalls).toHaveLength(1);
   });
@@ -370,7 +478,14 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     } as unknown as PhaseHandlerContext;
     await recordValidationEvidence(fakeCtx, 'validate');
 
-    run.completedPhases = ['read_issue', 'plan-design', 'implement', 'validate', 'initial-review'];
+    run.completedPhases = [
+      'read_issue',
+      'plan-design',
+      'implement',
+      'validate',
+      'spec-review',
+      'quality-review',
+    ];
     runRepo.update(run.uuid, { completedPhases: run.completedPhases });
 
     // Persist review convergence state indicating fix-review completed in iteration 1
@@ -400,8 +515,9 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     });
 
     expect(result.run.status).toBe('passed');
-    // Did NOT rerun initial-review or fix-review!
-    expect(handlers['initial-review']?.runCalls).toHaveLength(0);
+    // Did NOT rerun spec-review or fix-review!
+    expect(handlers['spec-review']?.runCalls).toHaveLength(0);
+    expect(handlers['quality-review']?.runCalls).toHaveLength(0);
     expect(handlers['fix-review']?.runCalls).toHaveLength(0);
     // Proceeded to validate, follow-up-review, create-pr, wait-merge
     expect(handlers['validate']?.runCalls).toHaveLength(1);
@@ -420,7 +536,14 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     } as unknown as PhaseHandlerContext;
     await recordValidationEvidence(fakeCtx, 'validate');
 
-    run.completedPhases = ['read_issue', 'plan-design', 'implement', 'validate', 'initial-review'];
+    run.completedPhases = [
+      'read_issue',
+      'plan-design',
+      'implement',
+      'validate',
+      'spec-review',
+      'quality-review',
+    ];
     runRepo.update(run.uuid, { completedPhases: run.completedPhases });
 
     await artifacts.write({
@@ -449,7 +572,8 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     });
 
     expect(result.run.status).toBe('passed');
-    expect(handlers['initial-review']?.runCalls).toHaveLength(0);
+    expect(handlers['spec-review']?.runCalls).toHaveLength(0);
+    expect(handlers['quality-review']?.runCalls).toHaveLength(0);
     expect(handlers['fix-review']?.runCalls).toHaveLength(0);
     expect(handlers['validate']?.runCalls).toHaveLength(0);
     expect(handlers['follow-up-review']?.runCalls).toHaveLength(1);
@@ -492,7 +616,8 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
       'plan-design',
       'implement',
       'validate',
-      'initial-review',
+      'spec-review',
+      'quality-review',
       'fix-review',
       'validate',
     ];
@@ -538,11 +663,11 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
   it('honors configured reviewConvergenceMaxIterations override', async () => {
     const { run, handlers, artifacts, executor } = setupExecutor('standard');
 
-    handlers['initial-review']!.handlerFn = async (ctx) => {
+    handlers['spec-review']!.handlerFn = async (ctx) => {
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'whole-change-review.json',
-        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', findings: [{ severity: 'high' }] }),
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'FAIL', findings: [{ severity: 'high' }] }),
       });
       return { outcome: 'passed' };
     };
@@ -576,7 +701,7 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     const { run, handlers, executor } = setupExecutor('standard');
 
     // Handler returns passed but writes invalid/empty review artifacts
-    handlers['initial-review']!.handlerFn = async () => ({ outcome: 'passed' });
+    handlers['spec-review']!.handlerFn = async () => ({ outcome: 'passed' });
 
     const result = await executor.execute({
       run,
@@ -591,8 +716,8 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
   it('converges across multiple review/fix iterations before approval', async () => {
     const { run, handlers, artifacts, executor } = setupExecutor('standard');
 
-    // Initial review requests changes
-    handlers['initial-review']!.handlerFn = async (ctx) => {
+    // Spec review requests changes
+    handlers['spec-review']!.handlerFn = async (ctx) => {
       const ledger = createFindingLedger([
         {
           severity: 'high',
@@ -616,8 +741,8 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
       });
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'whole-change-review.json',
-        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', findings: ledger.entries }),
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'FAIL', findings: ledger.entries }),
       });
       return { outcome: 'passed' };
     };
@@ -661,7 +786,8 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     });
 
     expect(result.run.status).toBe('passed');
-    expect(handlers['initial-review']?.runCalls).toHaveLength(1);
+    expect(handlers['spec-review']?.runCalls).toHaveLength(1);
+    expect(handlers['quality-review']?.runCalls).toHaveLength(1);
     expect(handlers['fix-review']?.runCalls).toHaveLength(2);
     expect(handlers['follow-up-review']?.runCalls).toHaveLength(2);
     expect(handlers['create-pr']?.runCalls).toHaveLength(1);
@@ -670,11 +796,11 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
   it('stops and escalates to needs_human_review immediately when fixer reports cannot_fix', async () => {
     const { run, handlers, artifacts, executor } = setupExecutor('standard');
 
-    handlers['initial-review']!.handlerFn = async (ctx) => {
+    handlers['spec-review']!.handlerFn = async (ctx) => {
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'whole-change-review.json',
-        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', findings: [{ severity: 'high' }] }),
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'FAIL', findings: [{ severity: 'high' }] }),
       });
       return { outcome: 'passed' };
     };
@@ -709,8 +835,8 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
   it('does not create PR and continues convergence when follow-up review artifact says APPROVE but ledger has unresolved findings', async () => {
     const { run, handlers, artifacts, executor } = setupExecutor('standard');
 
-    // Initial review requests changes
-    handlers['initial-review']!.handlerFn = async (ctx) => {
+    // Spec review requests changes
+    handlers['spec-review']!.handlerFn = async (ctx) => {
       const ledger = createFindingLedger([
         {
           severity: 'high',
@@ -727,8 +853,8 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
       });
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'whole-change-review.json',
-        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES', findings: ledger.entries }),
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'FAIL', findings: ledger.entries }),
       });
       return { outcome: 'passed' };
     };

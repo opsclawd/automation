@@ -15,7 +15,7 @@ import {
   buildArchitectureRequirementsLedger,
   formatRequirementsLedgerForPrompt,
   type ArchitectureRequirementsLedger,
-} from '../architecture-requirements.js';
+} from '../requirements-ledger.js';
 import { plannerPackageSchema } from '../../results/schemas/planner-package.js';
 import { validatePlanTaskList } from '../plan-tasks.js';
 

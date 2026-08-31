@@ -94,11 +94,29 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
     });
 
     registerHandler('fix-validate');
-    registerHandler('initial-review', async (ctx) => {
+    registerHandler('spec-review', async (ctx) => {
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'whole-change-review.json',
-        contents: JSON.stringify({ verdict: 'APPROVE', acceptance_criteria: [], findings: [] }),
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'PASS', requirements_checks: [], findings: [] }),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'spec-review.md',
+        contents: '# Spec Review\nPASS',
+      });
+      return { outcome: 'passed' };
+    });
+    registerHandler('quality-review', async (ctx) => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'quality-review.json',
+        contents: JSON.stringify({ verdict: 'APPROVE', findings: [] }),
+      });
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'quality-review.md',
+        contents: '# Quality Review\nLGTM',
       });
       await artifacts.write({
         runId: ctx.runUuid,
@@ -194,7 +212,7 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
     expect(fp3).not.toBe(fp1);
   });
 
-  it('routes through fix-validate and revalidation when initial validation defers before initial-review', async () => {
+  it('routes through fix-validate and revalidation when initial validation defers before review', async () => {
     const { run, handlers, executor } = setupExecutor('standard');
 
     let validateAttempts = 0;
@@ -218,7 +236,8 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
     expect(result.run.status).toBe('passed');
     expect(handlers['validate']?.runCalls).toHaveLength(2); // initial validate + revalidation
     expect(handlers['fix-validate']?.runCalls).toHaveLength(1);
-    expect(handlers['initial-review']?.runCalls).toHaveLength(1);
+    expect(handlers['spec-review']?.runCalls).toHaveLength(1);
+    expect(handlers['quality-review']?.runCalls).toHaveLength(1);
   });
 
   it('escalates to needs_human_review and does NOT invoke reviewer when initial validation repair fails', async () => {
@@ -248,17 +267,18 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
     expect(result.run.status).toBe('needs_human_review');
     expect(handlers['validate']?.runCalls).toHaveLength(1);
     expect(handlers['fix-validate']?.runCalls).toHaveLength(1);
-    expect(handlers['initial-review']?.runCalls).toHaveLength(0); // Reviewer never called!
+    expect(handlers['spec-review']?.runCalls).toHaveLength(0); // Reviewer never called!
+    expect(handlers['quality-review']?.runCalls).toHaveLength(0);
   });
 
   it('invalidates prior validation evidence on fix-review and runs deterministic validation before follow-up review', async () => {
     const { run, handlers, artifacts, executor } = setupExecutor('standard');
 
-    handlers['initial-review']!.handlerFn = async (ctx) => {
+    handlers['spec-review']!.handlerFn = async (ctx) => {
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'whole-change-review.json',
-        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES' }),
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'FAIL' }),
       });
       const ledger = createFindingLedger([
         {
@@ -321,7 +341,7 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
     });
 
     expect(result.run.status).toBe('passed');
-    // Validate ran twice: once before initial-review, once after fix-review before follow-up-review
+    // Validate ran twice: once before reviews, once after fix-review before follow-up-review
     expect(validationCallCount).toBe(2);
     expect(handlers['fix-review']?.runCalls).toHaveLength(1);
     expect(handlers['follow-up-review']?.runCalls).toHaveLength(1);
@@ -331,11 +351,11 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
   it('routes to fix-validate when validation fails after fix-review and resumes follow-up review after repair', async () => {
     const { run, handlers, artifacts, executor } = setupExecutor('standard');
 
-    handlers['initial-review']!.handlerFn = async (ctx) => {
+    handlers['spec-review']!.handlerFn = async (ctx) => {
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'whole-change-review.json',
-        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES' }),
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'FAIL' }),
       });
       const ledger = createFindingLedger([
         {
@@ -408,11 +428,11 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
   it('escalates to needs_human_review when persistent validation failure occurs after review fix without invoking follow-up reviewer', async () => {
     const { run, handlers, artifacts, executor } = setupExecutor('standard');
 
-    handlers['initial-review']!.handlerFn = async (ctx) => {
+    handlers['spec-review']!.handlerFn = async (ctx) => {
       await artifacts.write({
         runId: ctx.runUuid,
-        relativePath: 'whole-change-review.json',
-        contents: JSON.stringify({ verdict: 'REQUEST_CHANGES' }),
+        relativePath: 'spec-review.json',
+        contents: JSON.stringify({ verdict: 'FAIL' }),
       });
       const ledger = createFindingLedger([
         {
@@ -507,7 +527,8 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
     expect(result.run.status).toBe('passed');
     // Revalidation MUST have been forced because evidence was invalidated across the boundary
     expect(revalidated).toBe(true);
-    expect(handlers['initial-review']?.runCalls).toHaveLength(1);
+    expect(handlers['spec-review']?.runCalls).toHaveLength(1);
+    expect(handlers['quality-review']?.runCalls).toHaveLength(1);
   });
 
   it('detects in-place source content modification of existing dirty file and forces revalidation before review', async () => {
@@ -550,12 +571,18 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
       (executor as unknown as { deps: { contextFactory: typeof ctxFactory } }).deps.contextFactory =
         ctxFactory;
 
-      // Write issue.md required by initial-review handler
+      // Write issue.md and design.md required by spec-review handler
       await artifacts.write({
         runId: run.uuid,
         phaseId: 'read_issue',
         relativePath: 'issue.md',
         contents: '# Issue 1109',
+      });
+      await artifacts.write({
+        runId: run.uuid,
+        phaseId: 'plan-design',
+        relativePath: 'design.md',
+        contents: '# Design 1109',
       });
 
       const reviewCtx = ctxFactory(run);
@@ -575,13 +602,13 @@ describe('Validation Guarded Review (Issue #1109 Invariants)', () => {
         'export const value = 2; // in-place code mutation\n',
       );
 
-      // Initial review handler checks freshness and will reject if stale
-      const initialReviewHandler = new (
-        await import('../../phases/handlers/initial-review.js')
-      ).InitialReviewHandler();
+      // Spec review handler checks freshness and will reject if stale
+      const specReviewHandler = new (
+        await import('../../phases/handlers/spec-review.js')
+      ).SpecReviewHandler();
 
       // Review handler directly fails if validation is not re-run
-      const reviewResult = await initialReviewHandler.run(reviewCtx);
+      const reviewResult = await specReviewHandler.run(reviewCtx);
       expect(reviewResult.outcome).toBe('failed');
       if (reviewResult.outcome === 'failed') {
         expect(reviewResult.failure.kind).toBe('validation_failed');

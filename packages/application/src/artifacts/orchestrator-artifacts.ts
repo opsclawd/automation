@@ -23,8 +23,8 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   // create-pr writes this itself, then its own clean-worktree guard reads the
   // tree on resume — omitting it made create-pr block on its own output.
   'pr-url.txt',
-  // Lean review-loop bookkeeping (#1106/#1110): written by initial-review,
-  // fix-review, follow-up-review, and the run-executor's review-convergence
+  // Lean review-loop bookkeeping (#1106/#1110): written by spec-review,
+  // quality-review, fix-review, follow-up-review, and the run-executor's review-convergence
   // state machine. Omitting these made deterministic-validation freshness
   // checks see the orchestrator's own instrumentation writes as source
   // changes and spuriously block follow-up-review (#1109 regression).
@@ -33,6 +33,11 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'review-head-sha.txt',
   'whole-change-review.json',
   'follow-up-review.json',
+  'spec-review.json',
+  'spec-review.md',
+  'spec-requirements-ledger.json',
+  'quality-review.json',
+  'quality-review.md',
   'architecture-review.json',
   'architecture-review.md',
   'architecture-requirements.json',

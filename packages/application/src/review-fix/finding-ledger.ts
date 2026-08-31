@@ -4,6 +4,9 @@ import type {
   AcceptanceCriterionCheck,
 } from '../results/schemas/whole-change-review.js';
 import type { FollowUpFindingEvaluation } from '../results/schemas/follow-up-review.js';
+import type { PostImplementationQualityReviewFinding } from '../results/schemas/post-implementation-quality-review.js';
+
+export type FindingProvenanceSource = 'spec-review' | 'quality-review';
 
 export interface FindingLedgerEntry {
   id: string;
@@ -14,6 +17,7 @@ export interface FindingLedgerEntry {
   rationale: string;
   minimal_correction: string;
   sourceIteration: number;
+  source: FindingProvenanceSource;
   resolvedInIteration?: number;
   resolutionEvidence?: string;
   isAcceptanceCriterionFailure?: boolean;
@@ -48,17 +52,73 @@ export function computeFindingFingerprint(
   return `F-${fallbackIndex + 1}`;
 }
 
+export function appendFindingsToLedger(
+  entries: FindingLedgerEntry[],
+  findings: Array<
+    | WholeChangeReviewFinding
+    | PostImplementationQualityReviewFinding
+    | {
+        severity?: string;
+        files?: string[];
+        evidence?: string;
+        rationale?: string;
+        minimal_correction?: string;
+        blocking?: boolean;
+      }
+  >,
+  source: FindingProvenanceSource,
+  iteration: number,
+  seenIds: Set<string>,
+): FindingLedgerEntry[] {
+  const result = [...entries];
+  for (let i = 0; i < findings.length; i++) {
+    const f = findings[i]!;
+    let id = computeFindingFingerprint(f, entries.length + i);
+    const isContentFingerprint = /^F-[0-9a-f]{8}$/i.test(id);
+    if (isContentFingerprint && seenIds.has(id)) {
+      continue;
+    }
+    let suffix = 1;
+    while (seenIds.has(id)) {
+      id = `${computeFindingFingerprint(f, entries.length + i)}-${suffix++}`;
+    }
+    seenIds.add(id);
+
+    result.push({
+      id,
+      status: 'unresolved',
+      severity: f.severity || 'high',
+      files: f.files || [],
+      evidence: f.evidence || '',
+      rationale: f.rationale || '',
+      minimal_correction: f.minimal_correction || '',
+      sourceIteration: iteration,
+      source,
+      isAcceptanceCriterionFailure: false,
+    });
+  }
+  return result;
+}
+
 export function createFindingLedger(
-  findings: WholeChangeReviewFinding[],
-  acceptanceCriteria: AcceptanceCriterionCheck[] = [],
+  findings: Array<WholeChangeReviewFinding | PostImplementationQualityReviewFinding> = [],
+  acceptanceCriteria: Array<
+    | AcceptanceCriterionCheck
+    | { requirement?: string; criterion?: string; result?: string; evidence?: string }
+  > = [],
+  source: FindingProvenanceSource = 'spec-review',
 ): FindingLedger {
   const entries: FindingLedgerEntry[] = [];
   const seenIds = new Set<string>();
 
-  // Add failed acceptance criteria as high-priority findings
+  // Add failed acceptance criteria / requirements as high-priority findings
   const failingACs = acceptanceCriteria.filter((ac) => ac.result?.toUpperCase() === 'FAIL');
   for (let i = 0; i < failingACs.length; i++) {
     const ac = failingACs[i]!;
+    const text =
+      ('criterion' in ac ? ac.criterion : undefined) ??
+      ('requirement' in ac ? ac.requirement : '') ??
+      '';
     let id = `AC-${i + 1}`;
     let suffix = 1;
     while (seenIds.has(id)) {
@@ -71,41 +131,40 @@ export function createFindingLedger(
       status: 'unresolved',
       severity: 'high',
       files: [],
-      evidence: ac.evidence || 'Acceptance criterion not satisfied',
-      rationale: `Failed acceptance criterion: ${ac.criterion}`,
-      minimal_correction: `Implement requirement to satisfy: ${ac.criterion}`,
+      evidence: ac.evidence || 'Requirement not satisfied',
+      rationale: `Failed requirement: ${text}`,
+      minimal_correction: `Implement requirement to satisfy: ${text}`,
       sourceIteration: 0,
+      source: 'spec-review',
       isAcceptanceCriterionFailure: true,
     });
   }
 
-  // Add review findings
-  for (let i = 0; i < findings.length; i++) {
-    const f = findings[i]!;
-    let id = computeFindingFingerprint(f, i);
-    let suffix = 1;
-    while (seenIds.has(id)) {
-      id = `${computeFindingFingerprint(f, i)}-${suffix++}`;
-    }
-    seenIds.add(id);
-
-    entries.push({
-      id,
-      status: 'unresolved',
-      severity: f.severity || 'high',
-      files: f.files || [],
-      evidence: f.evidence || '',
-      rationale: f.rationale || '',
-      minimal_correction: f.minimal_correction || '',
-      sourceIteration: 0,
-      isAcceptanceCriterionFailure: false,
-    });
-  }
+  const withFindings = appendFindingsToLedger(entries, findings, source, 0, seenIds);
 
   return {
     version: 1,
     iterationCount: 0,
-    entries,
+    entries: withFindings,
+  };
+}
+
+export function appendFindingLedgerEntries(
+  ledger: FindingLedger,
+  findings: Array<WholeChangeReviewFinding | PostImplementationQualityReviewFinding>,
+  source: FindingProvenanceSource,
+): FindingLedger {
+  const seenIds = new Set(ledger.entries.map((e) => e.id));
+  const updatedEntries = appendFindingsToLedger(
+    ledger.entries,
+    findings,
+    source,
+    ledger.iterationCount,
+    seenIds,
+  );
+  return {
+    ...ledger,
+    entries: updatedEntries,
   };
 }
 
@@ -114,6 +173,7 @@ export function updateFindingLedger(
   evaluations: FollowUpFindingEvaluation[],
   newFindings: WholeChangeReviewFinding[] = [],
   iterationIndex: number,
+  newFindingsSource: FindingProvenanceSource = 'spec-review',
 ): FindingLedger {
   const evalMap = new Map<string, FollowUpFindingEvaluation>();
   for (const ev of evaluations) {
@@ -129,6 +189,7 @@ export function updateFindingLedger(
       if (ev.resolved) {
         return {
           ...entry,
+          source: entry.source ?? 'spec-review',
           status: 'resolved',
           resolvedInIteration: iterationIndex,
           resolutionEvidence: ev.evidence,
@@ -136,39 +197,28 @@ export function updateFindingLedger(
       }
       return {
         ...entry,
+        source: entry.source ?? 'spec-review',
         status: 'unresolved',
       };
     }
-    return entry;
+    return {
+      ...entry,
+      source: entry.source ?? 'spec-review',
+    };
   });
 
-  // Append new findings
-  for (let i = 0; i < newFindings.length; i++) {
-    const nf = newFindings[i]!;
-    let id = computeFindingFingerprint(nf, ledger.entries.length + i);
-    let suffix = 1;
-    while (existingIds.has(id)) {
-      id = `${computeFindingFingerprint(nf, ledger.entries.length + i)}-${suffix++}`;
-    }
-    existingIds.add(id);
-
-    updatedEntries.push({
-      id,
-      status: 'unresolved',
-      severity: nf.severity || 'high',
-      files: nf.files || [],
-      evidence: nf.evidence || '',
-      rationale: nf.rationale || '',
-      minimal_correction: nf.minimal_correction || '',
-      sourceIteration: iterationIndex,
-      isAcceptanceCriterionFailure: false,
-    });
-  }
+  const withNewFindings = appendFindingsToLedger(
+    updatedEntries,
+    newFindings,
+    newFindingsSource,
+    iterationIndex,
+    existingIds,
+  );
 
   return {
     version: 1,
     iterationCount: iterationIndex,
-    entries: updatedEntries,
+    entries: withNewFindings,
   };
 }
 
@@ -194,7 +244,7 @@ export function formatLedgerForPrompt(ledger: FindingLedger): string {
       }
       lines.push(`  Evidence: ${f.evidence}`);
       lines.push(`  Required Fix: ${f.minimal_correction}`);
-      lines.push(`  Source: iteration ${f.sourceIteration}`);
+      lines.push(`  Source: ${f.source ?? 'spec-review'} (iteration ${f.sourceIteration})`);
       lines.push('');
     }
   }
@@ -208,8 +258,9 @@ export function formatLedgerForPrompt(ledger: FindingLedger): string {
       if (f.resolutionEvidence) {
         lines.push(`  Resolution Evidence: ${f.resolutionEvidence}`);
       }
+      lines.push(`  Source: ${f.source ?? 'spec-review'}`);
+      lines.push('');
     }
-    lines.push('');
   }
 
   return lines.join('\n');
@@ -229,6 +280,7 @@ export function formatLedgerForFixPrompt(ledger: FindingLedger): string {
     }
     lines.push(`  Evidence: ${f.evidence}`);
     lines.push(`  Required Fix: ${f.minimal_correction}`);
+    lines.push(`  Source: ${f.source ?? 'spec-review'}`);
     lines.push('');
   }
   return lines.join('\n');

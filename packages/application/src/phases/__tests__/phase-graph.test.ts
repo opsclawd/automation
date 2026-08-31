@@ -43,12 +43,14 @@ describe('phase-graph', () => {
     expect(archReviewIdx).toBe(planDesignIdx + 1);
     expect(implementIdx).toBe(archReviewIdx + 1);
 
-    // Both lean orders must contain initial-review, follow-up-review, wait-merge
-    expect(standardOrder).toContain(PhaseName('initial-review'));
+    // Both lean orders must contain spec-review, quality-review, follow-up-review, wait-merge
+    expect(standardOrder).toContain(PhaseName('spec-review'));
+    expect(standardOrder).toContain(PhaseName('quality-review'));
     expect(standardOrder).toContain(PhaseName('follow-up-review'));
     expect(standardOrder).toContain(PhaseName('wait-merge'));
 
-    expect(strictOrder).toContain(PhaseName('initial-review'));
+    expect(strictOrder).toContain(PhaseName('spec-review'));
+    expect(strictOrder).toContain(PhaseName('quality-review'));
     expect(strictOrder).toContain(PhaseName('follow-up-review'));
     expect(strictOrder).toContain(PhaseName('wait-merge'));
 
@@ -65,13 +67,15 @@ describe('phase-graph', () => {
 
     const standardGraph = resolvePhaseGraph('standard');
     expect(standardGraph.policy).toBe('standard');
-    expect(standardGraph.isReachable('initial-review')).toBe(true);
+    expect(standardGraph.isReachable('spec-review')).toBe(true);
+    expect(standardGraph.isReachable('quality-review')).toBe(true);
     expect(standardGraph.isReachable('architecture-review')).toBe(false);
     expect(standardGraph.isReachable('plan-write')).toBe(false);
 
     const strictGraph = resolvePhaseGraph('strict');
     expect(strictGraph.policy).toBe('strict');
-    expect(strictGraph.isReachable('initial-review')).toBe(true);
+    expect(strictGraph.isReachable('spec-review')).toBe(true);
+    expect(strictGraph.isReachable('quality-review')).toBe(true);
     expect(strictGraph.isReachable('architecture-review')).toBe(true);
     expect(strictGraph.isReachable('plan-write')).toBe(false);
   });

@@ -229,3 +229,26 @@ export async function verifyValidationFreshness(
     currentFingerprint,
   };
 }
+
+/**
+ * Verify whether a review approval recorded for phaseId is fresh against current worktree HEAD.
+ */
+export async function isReviewApprovalFresh(
+  ctx: PhaseHandlerContext,
+  phaseId?: string,
+): Promise<boolean> {
+  try {
+    const artifactName = phaseId ? `${phaseId}-head-sha.txt` : 'review-head-sha.txt';
+    let recorded = '';
+    try {
+      recorded = (await ctx.artifacts.read(ctx.runUuid, artifactName)).trim();
+    } catch {
+      recorded = (await ctx.artifacts.read(ctx.runUuid, 'review-head-sha.txt')).trim();
+    }
+    if (!recorded) return false;
+    const current = (await ctx.git.headCommitSha(ctx.cwd)).trim();
+    return recorded === current;
+  } catch {
+    return false;
+  }
+}

@@ -80,7 +80,8 @@ import {
   ImplementHandler,
   ValidateHandler,
   ReviewFixHandler,
-  InitialReviewHandler,
+  SpecReviewHandler,
+  QualityReviewHandler,
   FixReviewHandler,
   FollowUpReviewHandler,
   CompoundHandler,
@@ -6782,9 +6783,20 @@ export function composeRoot(opts: ComposeOptions): Container {
       );
 
       phaseRegistry.register(
-        new InitialReviewHandler({
+        new SpecReviewHandler({
           profileName:
-            config.agent.phaseProfiles?.['initial-review']?.profile ?? 'opencode-frontier',
+            config.agent.phaseProfiles?.['post-implementation-spec-review']?.profile ??
+            config.agent.phaseProfiles?.['spec-review']?.profile ??
+            'opencode-frontier',
+        }),
+      );
+
+      phaseRegistry.register(
+        new QualityReviewHandler({
+          profileName:
+            config.agent.phaseProfiles?.['post-implementation-quality-review']?.profile ??
+            config.agent.phaseProfiles?.['quality-review']?.profile ??
+            'opencode-frontier',
         }),
       );
 

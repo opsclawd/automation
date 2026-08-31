@@ -100,8 +100,9 @@ export class FollowUpReviewHandler implements PhaseHandler {
     };
     const profile =
       resolve('follow-up-review') ??
-      resolve('initial-review') ??
-      resolve('whole-pr-review') ??
+      resolve('spec-review') ??
+      resolve('quality-review') ??
+      resolve('pr-reviewer') ??
       resolve('implement') ??
       AgentProfileName(this.opts.profileName ?? 'opencode-frontier');
 

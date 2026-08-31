@@ -174,13 +174,14 @@
       "architecture-fix": { "role": "planner" },
       "plan-write": { "profile": "codex-writer", "fallbackProfile": "architect" },
       "implement": { "role": "implementer" },
+      "post-implementation-spec-review": { "role": "pr-reviewer" },
+      "post-implementation-quality-review": { "role": "critic" },
       "quality-review": { "role": "critic" },
       "spec-review": {
         "role": "critic",
         "fallbackProfile": "codex-reviewer",
         "fallbackTriggers": ["timeout", "quota_exceeded", "runtime_error"]
       },
-      "initial-review": { "role": "pr-reviewer" },
       "follow-up-review": { "role": "critic" },
       "fix-review": { "role": "fixer" },
       "whole-pr-fix-review": { "role": "fixer" },

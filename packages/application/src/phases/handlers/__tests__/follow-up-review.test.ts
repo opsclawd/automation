@@ -74,7 +74,7 @@ describe('FollowUpReviewHandler', () => {
 
     await artifacts.write({
       runId: 'run-1',
-      phaseId: PhaseName('initial-review'),
+      phaseId: PhaseName('spec-review'),
       relativePath: 'finding-ledger.json',
       contents: JSON.stringify(initialLedger),
     });
@@ -155,7 +155,7 @@ describe('FollowUpReviewHandler', () => {
 
     await artifacts.write({
       runId: 'run-1',
-      phaseId: PhaseName('initial-review'),
+      phaseId: PhaseName('spec-review'),
       relativePath: 'finding-ledger.json',
       contents: JSON.stringify(initialLedger),
     });
@@ -241,7 +241,7 @@ describe('FollowUpReviewHandler', () => {
 
     await artifacts.write({
       runId: 'run-1',
-      phaseId: PhaseName('initial-review'),
+      phaseId: PhaseName('spec-review'),
       relativePath: 'finding-ledger.json',
       contents: JSON.stringify(initialLedger),
     });
@@ -326,14 +326,14 @@ describe('FollowUpReviewHandler', () => {
     ]);
     await artifacts.write({
       runId: 'run-1',
-      phaseId: PhaseName('initial-review'),
+      phaseId: PhaseName('spec-review'),
       relativePath: 'finding-ledger.json',
       contents: JSON.stringify(initialLedger),
     });
 
     await artifacts.write({
       runId: 'run-1',
-      phaseId: PhaseName('initial-review'),
+      phaseId: PhaseName('spec-review'),
       relativePath: 'review-head-sha.txt',
       contents: '1111111111111111111111111111111111111111',
     });
