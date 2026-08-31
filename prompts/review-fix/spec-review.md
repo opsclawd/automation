@@ -76,6 +76,14 @@ A single failed normative requirement makes the verdict `FAIL`.
 - Determine which artifact is authoritative from the repository itself rather than assuming test fixtures represent production.
 - Verify that at least one valid end-to-end success path exists under the actual supported production configuration for the behavior required by the issue.
 
+### Workspace Bookkeeping (Do Not Flag)
+
+If you inspect `git status` or the worktree directly, you will see untracked files. The orchestrator pipeline itself writes and reads its own bookkeeping files across phases; the exact ones currently present are listed below.
+
+{{var:orchestrator_bookkeeping_files}}
+
+This exemption is narrow: it applies only to the exact untracked paths listed, as they exist right now. It does not extend to tracked files (even ones with the same name), to any content or behavior change in the branch diff, or to `.gitignore`/`.prettierignore` modifications — an implementation change that widens an ignore file to hide unrelated untracked output is still a real finding and must be evaluated normally.
+
 ### Evaluation Guidelines
 
 - Do not manufacture findings when no material defect exists.

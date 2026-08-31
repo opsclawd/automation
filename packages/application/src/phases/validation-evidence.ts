@@ -12,6 +12,48 @@ export const VALIDATION_HEADSHA_ARTIFACT = 'validation.headsha';
 export const VALIDATION_FINGERPRINT_ARTIFACT = 'validation.fingerprint';
 
 /**
+ * Returns the exact untracked paths in the current worktree that match a
+ * known orchestrator-artifact pattern (status code `??` only — this
+ * deliberately excludes modifications to already-tracked files of the same
+ * name, and excludes ignore-file changes, since those are real product/repo
+ * state and must stay subject to normal review regardless of filename).
+ *
+ * Used to give reviewer agents (spec-review, quality-review,
+ * follow-up-review) the exact, current, run-specific list of files they may
+ * safely ignore — rather than the full static pattern allowlist
+ * (`orchestratorExcludePatterns()`), which includes broad names like
+ * `design.md`/`result.json`/`*.diff` that could otherwise create a blind
+ * spot for real product files that happen to share a name.
+ */
+export async function listOrchestratorOwnedUntrackedPaths(ctx: {
+  git: GitPort;
+  cwd: string;
+}): Promise<string[]> {
+  let rawStatus = '';
+  try {
+    rawStatus = await ctx.git.status(ctx.cwd);
+  } catch {
+    return [];
+  }
+
+  const paths = new Set<string>();
+  for (const line of rawStatus.split('\n').filter(Boolean)) {
+    const trimmed = line.replace(/\r$/, '');
+    if (!trimmed || trimmed.length < 3) continue;
+    const statusCode = trimmed.slice(0, 2);
+    if (statusCode !== '??') continue;
+
+    const rawPaths = parseGitStatusLine(trimmed);
+    for (const relPath of rawPaths.map((p) => unquoteGitPath(p)).filter((p) => p.length > 0)) {
+      if (isOrchestratorArtifactPattern(relPath)) {
+        paths.add(relPath);
+      }
+    }
+  }
+  return [...paths].sort();
+}
+
+/**
  * Computes a deterministic SHA-256 fingerprint of the current worktree source state.
  *
  * The source state fingerprint accounts for:

@@ -232,11 +232,13 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
           complete_diff: 'diff --git a/app.ts b/app.ts',
           validation_evidence: 'All tests passed',
           requirements_ledger: '- [AC-1] Check hash',
+          orchestrator_bookkeeping_files: '- `review-head-sha.txt`',
         },
         artifacts,
       });
       expect(rendered).toContain('diff --git a/app.ts b/app.ts');
       expect(rendered).toContain('- [AC-1] Check hash');
+      expect(rendered).toContain('review-head-sha.txt');
       expect(rendered).toContain('Hard Gates & Adversarial Falsification');
     });
   });
@@ -282,6 +284,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
           complete_diff: 'diff --git a/app.ts b/app.ts',
           validation_evidence: 'All tests passed',
           spec_review_summary: 'Spec review passed all checks',
+          orchestrator_bookkeeping_files: '- `review-head-sha.txt`',
         },
         artifacts,
       });
@@ -366,11 +369,13 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
           complete_diff: 'diff --git a/app.ts b/app.ts',
           fix_diff: 'diff --git a/app.ts b/app.ts (fix)',
           validation_evidence: 'All tests passed',
+          orchestrator_bookkeeping_files: '- `review-head-sha.txt`',
         },
         artifacts,
       });
       expect(rendered).toContain('1. Finding A (unresolved)');
       expect(rendered).toContain('diff --git a/app.ts b/app.ts (fix)');
+      expect(rendered).toContain('review-head-sha.txt');
     });
   });
 

@@ -11,7 +11,11 @@ import {
   hasUnresolvedBlockingFindings,
   type FindingLedger,
 } from '../../review-fix/finding-ledger.js';
-import { verifyValidationFreshness } from '../validation-evidence.js';
+import {
+  verifyValidationFreshness,
+  listOrchestratorOwnedUntrackedPaths,
+} from '../validation-evidence.js';
+import { formatOrchestratorOwnedUntrackedPathsForPrompt } from '../../artifacts/orchestrator-artifacts.js';
 
 export interface FollowUpReviewHandlerOpts {
   profileName?: string;
@@ -118,6 +122,8 @@ export class FollowUpReviewHandler implements PhaseHandler {
       }
     }
 
+    const orchestratorOwnedPaths = await listOrchestratorOwnedUntrackedPaths(ctx);
+
     // 7. Invoke single-shot follow-up reviewer agent (read-only)
     const runResult = await runSingleShotAgentPhase(ctx, {
       phase: 'follow-up-review',
@@ -131,6 +137,8 @@ export class FollowUpReviewHandler implements PhaseHandler {
         validation_evidence: validationEvidence,
         complete_diff: completeDiff || '(no diff)',
         fix_diff: fixDiff || '(no diff)',
+        orchestrator_bookkeeping_files:
+          formatOrchestratorOwnedUntrackedPathsForPrompt(orchestratorOwnedPaths),
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
       skipCompletedEmit: true,
