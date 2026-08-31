@@ -80,14 +80,27 @@ export function orchestratorExcludePatterns(): readonly string[] {
 // themselves as part of independently investigating the worktree — unlike
 // the deterministic-validation fingerprint (which mechanically excludes
 // this same file list), a reviewer has no way to know these untracked
-// files are the orchestrator's own expected bookkeeping unless told. Wire
-// this into review-phase prompts (spec-review, quality-review,
-// follow-up-review) so it stops misreading its own operational
-// instrumentation as leftover scratch/hygiene pollution.
-export function formatOrchestratorBookkeepingFilesForPrompt(): string {
-  return orchestratorExcludePatterns()
-    .map((pattern) => `- \`${pattern}\``)
-    .join('\n');
+// files are the orchestrator's own expected bookkeeping unless told.
+//
+// This is deliberately scoped to the exact, currently-observed untracked
+// paths for the run (see listOrchestratorOwnedUntrackedPaths), not the full
+// static pattern allowlist — passing the whole allowlist would create a
+// blind spot for real product files that happen to share a name (e.g.
+// design.md, result.json, *.diff), and the exemption never covers tracked
+// files, branch-diff changes, or ignore-file modifications, so an
+// implementation change that widens .gitignore/.prettierignore to hide real
+// pollution still gets reviewed normally.
+export function formatOrchestratorOwnedUntrackedPathsForPrompt(paths: readonly string[]): string {
+  if (paths.length === 0) {
+    return '(none currently untracked in this worktree)';
+  }
+  const list = paths.map((p) => `- \`${p}\``).join('\n');
+  return (
+    `Orchestrator-owned untracked paths for this run:\n${list}\n\n` +
+    'Ignore these exact untracked paths only. This exemption does not apply to tracked files ' +
+    'with the same names, branch-diff changes, `.gitignore`/`.prettierignore` modifications, or ' +
+    'any other file merely matching a similar name or pattern.'
+  );
 }
 
 function patternToRegExp(pattern: string): RegExp {

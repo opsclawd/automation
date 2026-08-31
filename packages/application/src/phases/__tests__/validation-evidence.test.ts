@@ -4,10 +4,12 @@ import {
   recordValidationEvidence,
   invalidateValidationEvidence,
   verifyValidationFreshness,
+  listOrchestratorOwnedUntrackedPaths,
   VALIDATION_RESULT_ARTIFACT,
   VALIDATION_HEADSHA_ARTIFACT,
   VALIDATION_FINGERPRINT_ARTIFACT,
 } from '../validation-evidence.js';
+import { formatOrchestratorOwnedUntrackedPathsForPrompt } from '../../artifacts/orchestrator-artifacts.js';
 import { FakeArtifactStore, FakeGitPort } from '../../test-doubles/index.js';
 import type { PhaseHandlerContext } from '../handler.js';
 
@@ -352,5 +354,56 @@ describe('validation-evidence', () => {
     const freshnessWithArtifacts = await verifyValidationFreshness(ctx);
     expect(freshnessWithArtifacts.fresh).toBe(false);
     expect(freshnessWithArtifacts.reason).toContain('Failed to inspect worktree state');
+  });
+});
+
+describe('listOrchestratorOwnedUntrackedPaths', () => {
+  it('returns only untracked orchestrator-artifact paths, excluding real files and non-untracked entries', async () => {
+    const git = new FakeGitPort();
+    git.statusByCwd.set(
+      '/test/repo',
+      [
+        '?? review-head-sha.txt',
+        '?? spec-review-head-sha.txt',
+        // Real, non-bookkeeping untracked file — must not be exempted.
+        '?? src/new-feature.ts',
+        // Tracked modification to a file that happens to share a
+        // bookkeeping name — must not be exempted (only "??" counts).
+        ' M finding-ledger.json',
+      ].join('\n'),
+    );
+
+    const paths = await listOrchestratorOwnedUntrackedPaths({ git, cwd: '/test/repo' });
+
+    expect(paths).toEqual(['review-head-sha.txt', 'spec-review-head-sha.txt']);
+  });
+
+  it('returns an empty array when git status fails', async () => {
+    const git = new FakeGitPort();
+    // No status registered for this cwd — FakeGitPort throws for unknown cwds
+    // in some configurations; either way, this must fail closed to empty
+    // rather than throwing.
+    const paths = await listOrchestratorOwnedUntrackedPaths({ git, cwd: '/unknown/repo' });
+    expect(paths).toEqual([]);
+  });
+});
+
+describe('formatOrchestratorOwnedUntrackedPathsForPrompt', () => {
+  it('renders a placeholder when no orchestrator-owned paths are present', () => {
+    expect(formatOrchestratorOwnedUntrackedPathsForPrompt([])).toBe(
+      '(none currently untracked in this worktree)',
+    );
+  });
+
+  it('lists exact paths and explicitly scopes the exemption away from tracked files, diffs, and ignore-file changes', () => {
+    const formatted = formatOrchestratorOwnedUntrackedPathsForPrompt([
+      'review-head-sha.txt',
+      'spec-review-head-sha.txt',
+    ]);
+    expect(formatted).toContain('`review-head-sha.txt`');
+    expect(formatted).toContain('`spec-review-head-sha.txt`');
+    expect(formatted).toContain('exact untracked paths only');
+    expect(formatted).toMatch(/tracked files/i);
+    expect(formatted).toMatch(/\.gitignore/);
   });
 });

@@ -15,8 +15,12 @@ import {
   type RequirementsLedger,
 } from '../requirements-ledger.js';
 import { createFindingLedger } from '../../review-fix/finding-ledger.js';
-import { verifyValidationFreshness, isReviewApprovalFresh } from '../validation-evidence.js';
-import { formatOrchestratorBookkeepingFilesForPrompt } from '../../artifacts/orchestrator-artifacts.js';
+import {
+  verifyValidationFreshness,
+  isReviewApprovalFresh,
+  listOrchestratorOwnedUntrackedPaths,
+} from '../validation-evidence.js';
+import { formatOrchestratorOwnedUntrackedPathsForPrompt } from '../../artifacts/orchestrator-artifacts.js';
 
 export interface SpecReviewHandlerOpts {
   profileName?: string;
@@ -174,6 +178,7 @@ export class SpecReviewHandler implements PhaseHandler {
     }
 
     const formattedLedger = formatRequirementsLedgerForPrompt(ledger);
+    const orchestratorOwnedPaths = await listOrchestratorOwnedUntrackedPaths(ctx);
 
     // 8. Invoke single-shot reviewer agent
     const runResult = await runSingleShotAgentPhase(ctx, {
@@ -187,7 +192,8 @@ export class SpecReviewHandler implements PhaseHandler {
         complete_diff: completeDiff || '(no diff)',
         validation_evidence: validationEvidence,
         requirements_ledger: formattedLedger,
-        orchestrator_bookkeeping_files: formatOrchestratorBookkeepingFilesForPrompt(),
+        orchestrator_bookkeeping_files:
+          formatOrchestratorOwnedUntrackedPathsForPrompt(orchestratorOwnedPaths),
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
       resultMeta: {
