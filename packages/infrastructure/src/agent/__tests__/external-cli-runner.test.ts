@@ -204,6 +204,37 @@ describe('runExternalCli', () => {
     });
   });
 
+  describe('spawn failure (e.g. E2BIG) is not misreported as a clean success', () => {
+    it('reports outcome "failed" (not silently exitCode 0) when the process never actually spawns', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        // Linux's hard MAX_ARG_STRLEN kernel limit for a single argv element
+        // is 131072 bytes (32 pages). This reproduces a genuine spawn-level
+        // E2BIG against a real process, not a mock — execa (reject: false)
+        // resolves instead of throwing when this happens, with no real exit
+        // code and empty stdout/stderr. Before this fix, `exitCode = r.exitCode
+        // ?? 0` silently treated that as outcome 'success' with exit 0.
+        const oversizedArg = 'A'.repeat(200_000);
+        const result = await runExternalCli({
+          runtime: 'antigravity',
+          bin: 'true',
+          args: [oversizedArg],
+          cwd,
+          artifactsDir,
+          model: 'test',
+        });
+        expect(result.outcome).toBe('failed');
+        expect(result.exitCode).not.toBe(0);
+        const stderrText = readFileSync(result.stderrPath, 'utf-8');
+        expect(stderrText).toContain('SPAWN_FAILED');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('artifact remediation', () => {
     it('moves misplaced design.md from subdirectory to worktree root', async () => {
       const cwd = makeTmpDir();

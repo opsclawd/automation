@@ -93,6 +93,29 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.exitCode).toBe(5);
   });
 
+  it('rejects an oversized prompt as PROMPT_BUDGET_EXCEEDED before ever spawning agy', async () => {
+    const cwd = makeWorktree();
+    const promptPath = join(cwd, 'prompt.md');
+    // Linux's hard MAX_ARG_STRLEN kernel limit for a single argv element is
+    // 131072 bytes; agy only accepts the prompt as a positional CLI
+    // argument (stdin is a broken substitute, see #709), so any prompt at
+    // or above this size can never be spawned successfully. binaryPath
+    // points at a nonexistent binary: if the pre-flight guard failed to
+    // short-circuit, invoke() would try to actually spawn it and this test
+    // would fail with an ENOENT-style 'failed' outcome instead.
+    writeFileSync(promptPath, 'A'.repeat(150_000));
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'does-not-exist.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd, { promptPath }));
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain('prompt_budget_exceeded');
+    expect(r.exitCode).not.toBe(0);
+    const stderrText = readFileSync(r.stderrPath, 'utf-8');
+    expect(stderrText).toContain('PROMPT_BUDGET_EXCEEDED');
+  });
+
   it('passes the prompt via --print as a positional argument', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
