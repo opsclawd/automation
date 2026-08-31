@@ -93,6 +93,18 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         outcome = 'failed';
         contractViolations = [CONTRACT_VIOLATION_CODES.CANCELLED_BY_ORCHESTRATOR];
       }
+    } else if (r.exitCode === undefined) {
+      // execa (with reject: false) resolves instead of throwing when the
+      // process never actually started — e.g. E2BIG (argv too large for the
+      // OS), ENOENT, EACCES. In that case there is no real exit code, and
+      // defaulting it to 0 above would misreport a spawn failure as a clean,
+      // empty "success" (observed live: agy invocations with a large enough
+      // prompt passed as a positional CLI arg exited "successfully" in
+      // ~20ms with zero stdout/stderr, silently discarding the review).
+      outcome = 'failed';
+      exitCode = 1;
+      const spawnMessage = r.shortMessage || 'process failed to start';
+      stderrForLog = `SPAWN_FAILED: ${spawnMessage}\n${stderrForLog}`;
     } else if (exitCode !== 0) {
       outcome = 'failed';
       if (!input.skipErrorScanning) {

@@ -117,6 +117,23 @@ function applyAntigravityJsonUsage(
   }
 }
 
+// Linux caps any single argv element at MAX_ARG_STRLEN = 32 pages (verified
+// live: 32 * 4096 = 131072 bytes exactly — spawn() throws E2BIG at 131072
+// bytes, succeeds at 131071). This is independent of the aggregate ARG_MAX
+// (env + all args combined, normally ~2MB) and is not configurable at
+// runtime. Since the prompt is necessarily passed as a single positional
+// argv element (see the comment below on why stdin isn't viable), any
+// prompt at or above this size can never be spawned successfully — with
+// execa's `reject: false`, that failure resolves silently (no throw, no
+// stdout, no stderr, no real exit code) rather than raising an error,
+// which without this guard was previously misreported as an empty
+// "success" in ~20ms (issue: agy fallback invocations for prompt-heavy
+// review phases silently discarding the review). Reject up front, well
+// under the hard limit, so this becomes a fast, correctly-classified
+// PROMPT_BUDGET_EXCEEDED the router already knows how to fall back on,
+// instead of a doomed spawn attempt.
+const AGY_MAX_PROMPT_BYTES = 120_000;
+
 const AGY_MODEL_LABEL_EXCEPTIONS: Readonly<Record<string, string>> = Object.freeze({
   'gpt-oss-120b-medium': 'GPT-OSS 120B (Medium)',
 });
@@ -329,6 +346,40 @@ export class AntigravityAgentAdapter implements AgentPort {
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
     const bin = this.opts.binaryPath ?? 'agy';
     const prompt = readFileSync(request.promptPath, 'utf-8');
+
+    const promptBytes = Buffer.byteLength(prompt, 'utf-8');
+    if (promptBytes >= AGY_MAX_PROMPT_BYTES) {
+      const invocationDir = join(
+        this.opts.artifactsDir,
+        `inv-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+      mkdirSync(invocationDir, { recursive: true });
+      const stdoutPath = join(invocationDir, 'stdout.log');
+      const stderrPath = join(invocationDir, 'stderr.log');
+      writeFileSync(stdoutPath, '');
+      writeFileSync(
+        stderrPath,
+        `PROMPT_BUDGET_EXCEEDED: prompt is ${promptBytes} bytes, which meets or exceeds the ` +
+          `${AGY_MAX_PROMPT_BYTES}-byte safety threshold below Linux's hard 131072-byte ` +
+          `single-argv-element limit (agy accepts the prompt only as a positional CLI ` +
+          `argument; piped stdin is not a working substitute — see #709). This prompt can ` +
+          `never be spawned successfully via agy; fall back to a different profile instead ` +
+          `of attempting it.`,
+      );
+      return {
+        runtime: 'antigravity',
+        provider: request.provider ?? '',
+        model: request.model ?? '',
+        exitCode: 1,
+        durationMs: 0,
+        stdoutPath,
+        stderrPath,
+        contractViolations: [CONTRACT_VIOLATION_CODES.PROMPT_BUDGET_EXCEEDED],
+        outcome: 'contract_violation',
+        endCommitSha: request.startCommitSha,
+      };
+    }
+
     const scratchDir =
       this.opts.scratchDir ?? resolve(homedir(), '.gemini/antigravity-cli/scratch');
 
@@ -353,15 +404,16 @@ export class AntigravityAgentAdapter implements AgentPort {
     const printTimeoutMins = Math.max(1, Math.floor(printTimeoutMs / 60_000) - 1);
     const modelLabel = resolveAgyModelLabel(request.model);
 
-    // Verified headless contract (agy 1.0.3): passing the prompt as a
-    // positional argument after --print is the only verified stable contract.
-    // Deviation to '-' + stdin (added in a prior iteration) caused the CLI
-    // to ignore the prompt and return a generic greeting in some environments
-    // (#709).
+    // Verified headless contract (agy 1.0.3, re-verified live against 1.1.22):
+    // passing the prompt as a positional argument after --print is the only
+    // verified stable contract. Deviation to '-' + stdin (added in a prior
+    // iteration) caused the CLI to ignore the prompt and return a generic
+    // greeting instead — still reproduces on 1.1.22 (#709).
     //
-    // NOTE: This introduces a risk of E2BIG (argument list too long) for
-    // extremely large prompts, but is necessary for correct prompt reception
-    // given agy's verified interface.
+    // This makes the argv element the only viable prompt transport, which
+    // risks E2BIG for large prompts — handled above by the pre-flight
+    // AGY_MAX_PROMPT_BYTES guard, which rejects oversized prompts as
+    // PROMPT_BUDGET_EXCEEDED before ever attempting to spawn.
     //
     // --dangerously-skip-permissions and detached:true are load-bearing, not
     // incidental — verified directly against the live binary: without
