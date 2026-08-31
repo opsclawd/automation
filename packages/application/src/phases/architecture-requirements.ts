@@ -341,9 +341,12 @@ export async function buildArchitectureRequirementsLedger(
 
   // 4. Two-Stage Relationship-Validated Direct Consumer Discovery
   const currentIssueFullText = `${opts.issueMd}\n${opts.issueCommentsMd ?? ''}`;
-  const candidateNumbers = new Set<number>(
-    findCandidateIssueNumbers(currentIssueFullText, opts.issueNumber),
-  );
+  const candidateMap = new Map<number, { number: number; title: string; body: string } | null>();
+
+  // Collect candidate issue numbers from text references in current issue
+  for (const num of findCandidateIssueNumbers(currentIssueFullText, opts.issueNumber)) {
+    candidateMap.set(num, null);
+  }
 
   if (opts.github && opts.repoFullName) {
     if (typeof opts.github.searchIssues === 'function') {
@@ -354,7 +357,8 @@ export async function buildArchitectureRequirementsLedger(
         );
         for (const dep of searchResults) {
           if (dep.number !== opts.issueNumber) {
-            candidateNumbers.add(dep.number);
+            // Preserve the search result object (number, title, body) directly
+            candidateMap.set(dep.number, dep);
           }
         }
       } catch (err) {
@@ -368,6 +372,7 @@ export async function buildArchitectureRequirementsLedger(
 
     // Stage 2: Validate each candidate's relationship until we collect up to 10 validated direct consumers
     const validatedConsumers: Array<{ number: number; title: string; body: string }> = [];
+    const validatedConsumerNumbers = new Set<number>();
     const currentDownstreamPhrases = [
       'required by',
       'depended on by',
@@ -385,26 +390,42 @@ export async function buildArchitectureRequirementsLedger(
       currentDownstreamPhrases,
     );
 
-    for (const candNum of candidateNumbers) {
+    for (const [candNum, knownCandidate] of candidateMap.entries()) {
       if (validatedConsumers.length >= 10) {
         break;
       }
 
-      let candidateIssue: { number: number; title: string; body: string } | undefined;
-      try {
-        candidateIssue = await opts.github.getIssue(opts.repoFullName, candNum);
-      } catch (err) {
-        // If this candidate was explicitly declared as a direct consumer in the current issue text,
-        // failing to fetch it is a hard error (fail-closed).
-        if (declaredConsumers.has(candNum)) {
-          throw new Error(
-            `Failed to fetch declared direct consumer issue #${candNum}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
+      let candidateIssue = knownCandidate;
+
+      if (!candidateIssue) {
+        // Candidate was only found in issue text references, so fetch it
+        try {
+          candidateIssue = await opts.github.getIssue(opts.repoFullName, candNum);
+        } catch (err) {
+          // If this candidate was explicitly declared as a direct consumer in the current issue text,
+          // failing to fetch it is a hard error (fail-closed).
+          if (declaredConsumers.has(candNum)) {
+            throw new Error(
+              `Failed to fetch declared direct consumer issue #${candNum}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
+
+          // Check if this is an expected "not an issue / 404 / PR reference"
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const isExpectedNotFound = /not found|no issue|could not resolve to an issue|404/i.test(
+            errMsg,
           );
+
+          if (isExpectedNotFound) {
+            // Incidental token match or PR reference that is not an issue -> safely ignore
+            continue;
+          }
+
+          // Unexpected GitHub / network / server / rate limit error -> fail closed
+          throw new Error(`Failed to fetch candidate issue #${candNum}: ${errMsg}`);
         }
-        // For incidental token matches or PR references (e.g. "PR #126"), not finding an issue is expected/skipped
-        continue;
       }
 
       if (
@@ -418,7 +439,10 @@ export async function buildArchitectureRequirementsLedger(
           currentIssueFullText,
         )
       ) {
-        validatedConsumers.push(candidateIssue);
+        if (!validatedConsumerNumbers.has(candNum)) {
+          validatedConsumerNumbers.add(candNum);
+          validatedConsumers.push(candidateIssue);
+        }
       }
     }
 

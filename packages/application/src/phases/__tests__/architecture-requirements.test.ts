@@ -390,6 +390,61 @@ Also note dependency in #13.
     expect(ledger.items.some((it) => it.id === 'CONSUMER-13-AC-1')).toBe(true);
   });
 
+  it('preserves search-discovered consumer directly without refetching or omission', async () => {
+    const github = new FakeGitHubPort();
+    // Issue #200 is in search results
+    github.issues.set('test-org/test-repo/200', {
+      number: 200,
+      title: 'Search Discovered Consumer',
+      body: 'Depends on #1129\n## Acceptance criteria\n- [ ] Search consumer AC',
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 1129
+## Acceptance criteria
+- [ ] Base feature
+`;
+
+    const ledger = await buildArchitectureRequirementsLedger({
+      issueNumber: 1129,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    expect(ledger.items.some((it) => it.id === 'CONSUMER-200-AC-1')).toBe(true);
+    expect(ledger.items.find((it) => it.id === 'CONSUMER-200-AC-1')!.title).toBe(
+      'Search consumer AC',
+    );
+  });
+
+  it('fails closed when an unexpected network or server error occurs fetching a candidate issue', async () => {
+    const github = new FakeGitHubPort();
+    // Override getIssue to throw an unexpected server error
+    github.getIssue = async () => {
+      throw new Error('ETIMEDOUT: GitHub API network failure');
+    };
+
+    const issueMd = `
+# Issue 1129
+See discussion in #555.
+## Acceptance criteria
+- [ ] Base feature
+`;
+
+    await expect(
+      buildArchitectureRequirementsLedger({
+        issueNumber: 1129,
+        repoFullName: 'test-org/test-repo',
+        issueMd,
+        github,
+      }),
+    ).rejects.toThrow(
+      'Failed to fetch candidate issue #555: ETIMEDOUT: GitHub API network failure',
+    );
+  });
+
   it('fails closed when candidate consumer issue fetch or search fails', async () => {
     const github = new FakeGitHubPort(); // issue 999 not in map -> will throw
 
