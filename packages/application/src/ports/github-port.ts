@@ -108,4 +108,5 @@ export interface GitHubPort {
     labels: { add?: string[]; remove?: string[] },
   ): Promise<void>;
   listReviews(repoFullName: string, prNumber: number): Promise<PullRequestReview[]>;
+  searchIssues?(repoFullName: string, query: string): Promise<GitHubIssue[]>;
 }
