@@ -83,6 +83,38 @@ describe('validation-evidence', () => {
     expect(current).toBe(recorded);
   });
 
+  it('does not treat spec-review/quality-review-owned headsha files as source changes', async () => {
+    // Reproduces a real failure observed live: spec-review.ts and
+    // quality-review.ts each additionally write their own phase-prefixed
+    // headsha file (spec-review-head-sha.txt / quality-review-head-sha.txt)
+    // alongside the shared review-head-sha.txt. spec-review writing its
+    // file — right before quality-review's own freshness check runs —
+    // shifted the fingerprint and quality-review spuriously failed with
+    // "worktree source state modified since last validation" despite no
+    // real source change.
+    const git = new FakeGitPort();
+    git.headByCwd.set('/test/repo', 'a'.repeat(40));
+    git.worktreeFileContents.set('/test/repo:src/foo.ts', 'export const foo = 1;\n');
+
+    git.statusByCwd.set('/test/repo', [' M src/foo.ts', '?? review-head-sha.txt'].join('\n'));
+    const recorded = await computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' });
+
+    // spec-review's handler additionally writes spec-review-head-sha.txt
+    // before quality-review's freshness check runs.
+    git.statusByCwd.set(
+      '/test/repo',
+      [
+        ' M src/foo.ts',
+        '?? review-head-sha.txt',
+        '?? spec-review-head-sha.txt',
+        '?? quality-review-head-sha.txt',
+      ].join('\n'),
+    );
+    const current = await computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' });
+
+    expect(current).toBe(recorded);
+  });
+
   it('records validation evidence across all three artifacts', async () => {
     const artifacts = new FakeArtifactStore();
     const git = new FakeGitPort();

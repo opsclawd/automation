@@ -46,6 +46,8 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
       'finding-ledger.json',
       'review-convergence.json',
       'review-head-sha.txt',
+      'spec-review-head-sha.txt',
+      'quality-review-head-sha.txt',
       'whole-change-review.json',
       'follow-up-review.json',
       'spec-review.json',

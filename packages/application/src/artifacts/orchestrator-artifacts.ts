@@ -31,6 +31,14 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'finding-ledger.json',
   'review-convergence.json',
   'review-head-sha.txt',
+  // spec-review.ts and quality-review.ts each additionally write their own
+  // phase-prefixed headsha file (alongside the shared review-head-sha.txt
+  // above). Omitting these made quality-review's deterministic-validation
+  // freshness check see spec-review's own bookkeeping write as a source
+  // change and spuriously fail with "worktree source state modified since
+  // last validation" immediately after a clean spec-review pass.
+  'spec-review-head-sha.txt',
+  'quality-review-head-sha.txt',
   'whole-change-review.json',
   'follow-up-review.json',
   'spec-review.json',
