@@ -76,6 +76,14 @@ A single failed normative requirement makes the verdict `FAIL`.
 - Determine which artifact is authoritative from the repository itself rather than assuming test fixtures represent production.
 - Verify that at least one valid end-to-end success path exists under the actual supported production configuration for the behavior required by the issue.
 
+### Workspace Bookkeeping (Do Not Flag)
+
+If you inspect `git status` or the worktree directly, you will see untracked files. The following are the orchestrator's own operational bookkeeping — written and read by the pipeline itself across phases, not scratch clutter, not something that needs cleanup, and not a finding:
+
+{{var:orchestrator_bookkeeping_files}}
+
+Do not flag the presence of these files (or ignore-file entries that reference them) as a scope, hygiene, or scratch-artifact violation.
+
 ### Evaluation Guidelines
 
 - Do not manufacture findings when no material defect exists.

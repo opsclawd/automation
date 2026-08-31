@@ -156,6 +156,13 @@ describe('SpecReviewHandler', () => {
 
     const headSha = await artifacts.read(ctx.runUuid, 'review-head-sha.txt');
     expect(headSha.trim()).toBe('commit-sha-1132');
+
+    // The reviewer is given the orchestrator's own bookkeeping filenames so
+    // it doesn't independently discover them via `git status` and flag them
+    // as scratch-artifact/hygiene findings.
+    const renderCall = mockRenderPrompt.mock.calls.at(-1)?.[1] as { vars: Record<string, string> };
+    expect(renderCall.vars.orchestrator_bookkeeping_files).toContain('review-head-sha.txt');
+    expect(renderCall.vars.orchestrator_bookkeeping_files).toContain('spec-review-head-sha.txt');
   });
 
   it('records failing requirements in finding-ledger when spec review requests changes', async () => {

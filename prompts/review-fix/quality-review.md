@@ -80,6 +80,14 @@ Evaluate whether the implementation is technically sound across the following di
 
 Do **not** duplicate the spec review's requirement-by-requirement checklist. Spec compliance is evaluated separately by `spec-review`. Focus purely on code quality, safety, architecture, and maintainability.
 
+### Workspace Bookkeeping (Do Not Flag)
+
+If you inspect `git status` or the worktree directly, you will see untracked files. The following are the orchestrator's own operational bookkeeping — written and read by the pipeline itself across phases, not scratch clutter, not something that needs cleanup, and not a finding:
+
+{{var:orchestrator_bookkeeping_files}}
+
+Do not flag the presence of these files (or ignore-file entries that reference them) as a scope, hygiene, or scratch-artifact violation.
+
 ### Evaluation Guidelines
 
 - Do not manufacture findings when no material defect exists.

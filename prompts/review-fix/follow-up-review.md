@@ -61,6 +61,14 @@ Your responsibilities:
    - `APPROVE` if all previous blocking findings are resolved and no new blocking defects exist.
    - `REQUEST_CHANGES` if any finding remains unresolved or a new material defect was introduced.
 
+### Workspace Bookkeeping (Do Not Flag)
+
+If you inspect `git status` or the worktree directly, you will see untracked files. The following are the orchestrator's own operational bookkeeping — written and read by the pipeline itself across phases, not scratch clutter, not something that needs cleanup, and not a finding:
+
+{{var:orchestrator_bookkeeping_files}}
+
+Do not flag the presence of these files (or ignore-file entries that reference them) as a scope, hygiene, or scratch-artifact violation, and do not evaluate a prior finding about these specific files as unresolved on that basis.
+
 ## OUTPUT FORMAT
 
 Write your review to `./result.json`:

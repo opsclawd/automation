@@ -76,6 +76,20 @@ export function orchestratorExcludePatterns(): readonly string[] {
   ]);
 }
 
+// Reviewer agents are given tool access and routinely run `git status`
+// themselves as part of independently investigating the worktree — unlike
+// the deterministic-validation fingerprint (which mechanically excludes
+// this same file list), a reviewer has no way to know these untracked
+// files are the orchestrator's own expected bookkeeping unless told. Wire
+// this into review-phase prompts (spec-review, quality-review,
+// follow-up-review) so it stops misreading its own operational
+// instrumentation as leftover scratch/hygiene pollution.
+export function formatOrchestratorBookkeepingFilesForPrompt(): string {
+  return orchestratorExcludePatterns()
+    .map((pattern) => `- \`${pattern}\``)
+    .join('\n');
+}
+
 function patternToRegExp(pattern: string): RegExp {
   const regexString =
     '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$';

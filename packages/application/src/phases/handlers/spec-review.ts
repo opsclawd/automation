@@ -16,6 +16,7 @@ import {
 } from '../requirements-ledger.js';
 import { createFindingLedger } from '../../review-fix/finding-ledger.js';
 import { verifyValidationFreshness, isReviewApprovalFresh } from '../validation-evidence.js';
+import { formatOrchestratorBookkeepingFilesForPrompt } from '../../artifacts/orchestrator-artifacts.js';
 
 export interface SpecReviewHandlerOpts {
   profileName?: string;
@@ -186,6 +187,7 @@ export class SpecReviewHandler implements PhaseHandler {
         complete_diff: completeDiff || '(no diff)',
         validation_evidence: validationEvidence,
         requirements_ledger: formattedLedger,
+        orchestrator_bookkeeping_files: formatOrchestratorBookkeepingFilesForPrompt(),
       },
       agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
       resultMeta: {
