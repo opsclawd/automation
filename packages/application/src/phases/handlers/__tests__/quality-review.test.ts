@@ -191,6 +191,15 @@ describe('QualityReviewHandler', () => {
               minimal_correction: 'Use port',
               blocking: true,
             },
+            {
+              category: 'reliability',
+              severity: 'medium',
+              files: ['packages/application/src/retry.ts'],
+              evidence: 'Missing max retry bounds',
+              rationale: 'Infinite loop risk on network drop',
+              minimal_correction: 'Set maxRetries: 3',
+              blocking: false,
+            },
           ],
           summary: 'Layer boundary defect identified',
         }),
@@ -217,10 +226,12 @@ describe('QualityReviewHandler', () => {
 
     const ledgerRaw = await artifacts.read(ctx.runUuid, 'finding-ledger.json');
     const ledger = JSON.parse(ledgerRaw);
-    expect(ledger.entries).toHaveLength(2);
+    expect(ledger.entries).toHaveLength(3);
     expect(ledger.entries[0].source).toBe('spec-review');
     expect(ledger.entries[1].source).toBe('quality-review');
     expect(ledger.entries[1].severity).toBe('critical');
+    expect(ledger.entries[2].source).toBe('quality-review');
+    expect(ledger.entries[2].severity).toBe('medium');
   });
 
   it('resumes with approval reuse when recorded review-head-sha matches current HEAD', async () => {

@@ -95,7 +95,7 @@ Write your review to `./result.json`:
   "verdict": "APPROVE" | "REQUEST_CHANGES",
   "findings": [
     {
-      "category": "correctness" | "architecture" | "security" | "data_integrity" | "concurrency_performance" | "maintainability" | "scope" | "contract_change" | "scratch_artifact" | "test_quality" | "production_fidelity" | "other",
+      "category": "correctness" | "architecture" | "reliability" | "error_handling" | "security" | "data_integrity" | "concurrency_performance" | "maintainability" | "scope" | "contract_change" | "scratch_artifact" | "test_quality" | "production_fidelity" | "other",
       "severity": "critical" | "high" | "medium" | "low",
       "files": ["path/to/file.ts"],
       "evidence": "Concrete evidence or code snippet",
