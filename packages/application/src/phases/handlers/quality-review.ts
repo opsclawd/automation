@@ -150,7 +150,7 @@ export class QualityReviewHandler implements PhaseHandler {
       resultMeta: {
         schema: postImplementationQualityReviewResultSchema,
         schemaContractText:
-          '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "findings"?: Array<{\n    "category"?: "correctness" | "architecture" | "security" | "data_integrity" | "concurrency_performance" | "maintainability" | "scope" | "contract_change" | "scratch_artifact" | "test_quality" | "production_fidelity" | "other",\n    "severity": "critical" | "high" | "medium" | "low" | "P0" | "P1" | "P2" | "P3",\n    "files"?: string[],\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string,\n    "blocking"?: boolean\n  }>,\n  "summary"?: string,\n  "review_md"?: string\n}',
+          '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "findings"?: Array<{\n    "category"?: "correctness" | "architecture" | "reliability" | "error_handling" | "security" | "data_integrity" | "concurrency_performance" | "maintainability" | "scope" | "contract_change" | "scratch_artifact" | "test_quality" | "production_fidelity" | "other",\n    "severity": "critical" | "high" | "medium" | "low" | "P0" | "P1" | "P2" | "P3",\n    "files"?: string[],\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string,\n    "blocking"?: boolean\n  }>,\n  "summary"?: string,\n  "review_md"?: string\n}',
       },
       skipCompletedEmit: true,
     });

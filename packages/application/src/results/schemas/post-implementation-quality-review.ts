@@ -7,6 +7,8 @@ export const postImplementationQualityReviewFindingSchema = z.object({
     .enum([
       'correctness',
       'architecture',
+      'reliability',
+      'error_handling',
       'security',
       'data_integrity',
       'concurrency_performance',

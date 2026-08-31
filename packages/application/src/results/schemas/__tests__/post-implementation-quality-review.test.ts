@@ -30,8 +30,24 @@ describe('postImplementationQualityReviewResultSchema', () => {
           minimal_correction: 'Use port instead',
           blocking: true,
         },
+        {
+          category: 'reliability',
+          severity: 'medium',
+          files: ['packages/application/src/handler.ts'],
+          evidence: 'Missing timeout handler',
+          rationale: 'Unhandled timeout may lead to hung process',
+          minimal_correction: 'Add abort signal timeout',
+        },
+        {
+          category: 'error_handling',
+          severity: 'low',
+          files: ['packages/application/src/error.ts'],
+          evidence: 'Swallowed error in catch block',
+          rationale: 'Loss of error context',
+          minimal_correction: 'Log error or rethrow',
+        },
       ],
-      summary: 'Found layer boundary violation',
+      summary: 'Found layer boundary violation and reliability risks',
     };
 
     const parsed = postImplementationQualityReviewResultSchema.safeParse(valid);
