@@ -57,6 +57,41 @@ describe('architectureReviewResultSchema', () => {
     }
   });
 
+  it('validates a finding categorized as upstream_dependency_verification (Section 8: assumed inputs the design has not verified exist)', () => {
+    const data = {
+      verdict: 'REQUEST_CHANGES',
+      requirements_checks: [
+        {
+          requirement: 'Resolve generation components from GenerationManifest provenance',
+          result: 'FAIL',
+          evidence: 'No repository/port exists to look up a generation manifest by ID',
+        },
+      ],
+      findings: [
+        {
+          category: 'upstream_dependency_verification',
+          severity: 'critical',
+          target: 'design.md',
+          evidence:
+            'Design assumes generationManifestId can be resolved to component identity, but no port or repository provides this read path in the current codebase',
+          rationale:
+            'The data may exist in storage, but without a concrete application-layer access path the design cannot actually implement this requirement',
+          minimal_correction:
+            'Either add the missing repository as part of this issue scope, or explicitly narrow the acceptance criterion',
+          blocking: true,
+        },
+      ],
+      summary: 'Design assumes an unverified upstream dependency.',
+    };
+
+    const parsed = architectureReviewResultSchema.safeParse(data);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.findings?.[0]?.category).toBe('upstream_dependency_verification');
+      expect(parsed.data.findings?.[0]?.blocking).toBe(true);
+    }
+  });
+
   it('rejects missing mandatory fields on finding', () => {
     const finding = {
       category: 'invariant_completeness',

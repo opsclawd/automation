@@ -8,6 +8,7 @@ export const architectureReviewFindingSchema = z.object({
       'contract_conservation',
       'invariant_completeness',
       'downstream_compatibility',
+      'upstream_dependency_verification',
       'representational_completeness',
       'provenance_layering',
       'conditional_invariants',
