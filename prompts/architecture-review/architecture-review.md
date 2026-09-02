@@ -83,6 +83,14 @@ For contract, schema, API, configuration, persistence, or foundation work:
 4. **Verify contract sufficiency:** Verify the proposed design and plan provide the necessary fields, representations, and invariants for those direct consumers.
 5. **Strict bounding:** Stop strictly at direct consumers — do NOT recursively crawl entire issue trees.
 
+### 8. Upstream Dependency Verification (Mandatory Bounded Discovery)
+The mirror image of Section 7: that section verifies the design provides what later work will need FROM it; this section verifies the design's own assumed inputs actually exist FOR it, right now — not by the time some later sprint issue lands.
+1. **Enumerate assumed upstream dependencies:** From the design and plan, list every external read, lookup, or capability the proposed work assumes is already available — data it reads but does not itself create (e.g. "resolve X from Y's governance provenance", "look up the record referenced by this ID", "the guard must evaluate Z's stored identity").
+2. **Search for a concrete, current mechanism:** For each one, actually search the existing codebase (grep for the relevant port/repository interfaces, read schema/migration files, read the modules that would produce or store this data) for a real, presently-reachable mechanism providing it. "Presumably exists" or "can be added later" is not verification — cite the actual file/interface/table, or its absence.
+3. **Distinguish "exists and reachable" from "exists but unreachable":** Data sitting in a table or object store is NOT sufficient on its own if no application-layer port/repository actually exposes it to the code being designed. Both the underlying data AND a concrete access path must exist, or the plan must explicitly build the access path as part of this issue's own scope.
+4. **Flag unverified assumptions:** If a dependency cannot be verified to exist and be reachable, you MUST either require the design/plan to explicitly build it as part of this issue's scope, or require the acceptance criterion depending on it to be explicitly narrowed or deferred before approval. An unverified assumption that "this will just work" is a blocking gap, not a detail to defer to implementation or review-fix.
+5. **Strict bounding:** Verify only dependencies the design/plan explicitly or implicitly assumes already exist — do not invent hypothetical future dependencies unrelated to this issue's stated requirements.
+
 ## EVALUATION GUIDELINES
 
 - Do not manufacture findings for style preferences. Focus on material architectural soundness, contract correctness, requirement gaps, and downstream safety.
@@ -96,7 +104,7 @@ For contract, schema, API, configuration, persistence, or foundation work:
   If ANY requirement fails, any ledger item is omitted, any consumer requirement lacks witness coverage, any witness scenario fails, or any blocking finding exists, you MUST use `REQUEST_CHANGES`.
 
 - For every blocking gap, provide:
-  - `category`: `requirements_reconciliation` | `contract_conservation` | `invariant_completeness` | `downstream_compatibility` | `representational_completeness` | `provenance_layering` | `conditional_invariants` | `witness_scenarios` | `other`
+  - `category`: `requirements_reconciliation` | `contract_conservation` | `invariant_completeness` | `downstream_compatibility` | `upstream_dependency_verification` | `representational_completeness` | `provenance_layering` | `conditional_invariants` | `witness_scenarios` | `other`
   - `severity`: `critical` | `high` | `medium` | `low`
   - `target`: `design.md` or `plan.md`
   - `evidence`: concrete citation or missing detail
@@ -130,7 +138,7 @@ Write your structured review to `./result.json`:
   ],
   "findings": [
     {
-      "category": "representational_completeness" | "provenance_layering" | "conditional_invariants" | "witness_scenarios" | "requirements_reconciliation" | "contract_conservation" | "invariant_completeness" | "downstream_compatibility" | "other",
+      "category": "representational_completeness" | "provenance_layering" | "conditional_invariants" | "witness_scenarios" | "requirements_reconciliation" | "contract_conservation" | "invariant_completeness" | "downstream_compatibility" | "upstream_dependency_verification" | "other",
       "severity": "critical" | "high" | "medium" | "low",
       "target": "design.md" | "plan.md",
       "evidence": "Concrete evidence from issue/code/design",
