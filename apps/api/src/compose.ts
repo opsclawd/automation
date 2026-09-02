@@ -6400,6 +6400,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           timeoutSeconds: config.validation.timeout,
           logDir: join(runsDir, 'validate'),
           fixValidateEnabled: config.phases.fixValidate?.enabled !== false,
+          ...(config.validation.narrowByChangedFiles !== false
+            ? { discoverWorkspacePackages }
+            : {}),
         }),
       );
 

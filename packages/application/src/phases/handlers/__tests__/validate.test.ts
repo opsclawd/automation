@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ValidateHandler } from '../validate.js';
+import { ValidateHandler, type ValidateWorkspaceDiscoveryResult } from '../validate.js';
 import { RunValidation } from '../../../run-validation.js';
 import { FakeValidationPort } from '../../../test-doubles/fake-validation-port.js';
 import { FakeValidationRunRepository } from '../../../test-doubles/fake-validation-run-repository.js';
@@ -503,6 +503,181 @@ describe('ValidateHandler', () => {
       const artifactFailed = events.filter((e) => e.type === 'validate.artifact_write_failed');
       expect(artifactFailed).toHaveLength(1);
       expect(artifactFailed[0].level).toBe('warn');
+    });
+  });
+
+  describe('scope narrowing (fix-review loop cost reduction)', () => {
+    function singlePackageDiscovery(): (cwd: string) => Promise<ValidateWorkspaceDiscoveryResult> {
+      return async () => ({
+        success: true,
+        descriptors: [{ name: '@ai-sdlc/application', directory: 'packages/application' }],
+      });
+    }
+
+    it('runs the full configured commands when discoverWorkspacePackages is not provided, even with a start commit', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha');
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build', 'pnpm lint'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+      }).run({ ...ctx, startCommitSha: 'base-sha' });
+
+      expect(result.outcome).toBe('passed');
+      expect(validation.lastInput!.commands).toEqual(['pnpm build', 'pnpm lint']);
+    });
+
+    it('runs the full configured commands when no start commit is recorded, even with discovery provided', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx, artifacts } = makeCtx();
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'fix-review',
+        relativePath: 'review-convergence.json',
+        contents: JSON.stringify({ iteration: 3, subStep: 'validate', verdict: 'REQUEST_CHANGES' }),
+      });
+
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build', 'pnpm lint'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+        discoverWorkspacePackages: singlePackageDiscovery(),
+      }).run(ctx); // no startCommitSha
+
+      expect(validation.lastInput!.commands).toEqual(['pnpm build', 'pnpm lint']);
+    });
+
+    it('runs full validation on the first review-fix iteration (no review-convergence.json yet)', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx, events } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha');
+      ctx.git.changedFilesResults.set('base-sha|head-sha', ['packages/application/src/foo.ts']);
+
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build', 'pnpm lint'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+        discoverWorkspacePackages: singlePackageDiscovery(),
+      }).run({ ...ctx, startCommitSha: 'base-sha' });
+
+      expect(validation.lastInput!.commands).toEqual(['pnpm build', 'pnpm lint']);
+      const planned = events.filter((e) => e.type === 'validate.scope_planned');
+      expect(planned).toHaveLength(1);
+      expect(planned[0].metadata).toMatchObject({ mode: 'full', reason: 'first_iteration' });
+    });
+
+    it('narrows to the touched package and its dependents from the second review-fix iteration onward', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx, artifacts, events } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha');
+      ctx.git.changedFilesResults.set('base-sha|head-sha', ['packages/application/src/foo.ts']);
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'fix-review',
+        relativePath: 'review-convergence.json',
+        contents: JSON.stringify({ iteration: 2, subStep: 'validate', verdict: 'REQUEST_CHANGES' }),
+      });
+
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+        discoverWorkspacePackages: singlePackageDiscovery(),
+      }).run({ ...ctx, startCommitSha: 'base-sha' });
+
+      expect(validation.lastInput!.commands).toEqual(['pnpm --filter @ai-sdlc/application build']);
+      const planned = events.filter((e) => e.type === 'validate.scope_planned');
+      expect(planned).toHaveLength(1);
+      expect(planned[0].metadata).toMatchObject({
+        mode: 'narrow',
+        narrowedPackages: ['@ai-sdlc/application'],
+      });
+    });
+
+    it('includes uncommitted (dirty) files alongside committed changes when computing the changed-path set', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx, artifacts } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha');
+      ctx.git.changedFilesResults.set('base-sha|head-sha', []);
+      ctx.git.statusByCwd.set('/tmp/wt', '?? packages/application/src/new-file.ts');
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'fix-review',
+        relativePath: 'review-convergence.json',
+        contents: JSON.stringify({ iteration: 2, subStep: 'validate', verdict: 'REQUEST_CHANGES' }),
+      });
+
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+        discoverWorkspacePackages: singlePackageDiscovery(),
+      }).run({ ...ctx, startCommitSha: 'base-sha', executionPolicy: 'strict' });
+
+      expect(validation.lastInput!.commands).toEqual(['pnpm --filter @ai-sdlc/application build']);
+    });
+
+    it('falls back to full validation when workspace discovery fails', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx, artifacts, events } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha');
+      ctx.git.changedFilesResults.set('base-sha|head-sha', ['packages/application/src/foo.ts']);
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'fix-review',
+        relativePath: 'review-convergence.json',
+        contents: JSON.stringify({ iteration: 2, subStep: 'validate', verdict: 'REQUEST_CHANGES' }),
+      });
+
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+        discoverWorkspacePackages: async () => ({ success: false, reason: 'no manifests found' }),
+      }).run({ ...ctx, startCommitSha: 'base-sha' });
+
+      expect(validation.lastInput!.commands).toEqual(['pnpm build']);
+      const skipped = events.filter((e) => e.type === 'validate.narrowing_skipped');
+      expect(skipped).toHaveLength(1);
+    });
+
+    it('falls back to full validation (never throws) when computing changed files fails', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx, artifacts, events } = makeCtx();
+      // headByCwd deliberately left unset so ctx.git.headCommitSha() throws.
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'fix-review',
+        relativePath: 'review-convergence.json',
+        contents: JSON.stringify({ iteration: 2, subStep: 'validate', verdict: 'REQUEST_CHANGES' }),
+      });
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+        discoverWorkspacePackages: singlePackageDiscovery(),
+      }).run({ ...ctx, startCommitSha: 'base-sha' });
+
+      expect(result.outcome).toBe('passed');
+      expect(validation.lastInput!.commands).toEqual(['pnpm build']);
+      const skipped = events.filter((e) => e.type === 'validate.narrowing_skipped');
+      expect(skipped).toHaveLength(1);
     });
   });
 
