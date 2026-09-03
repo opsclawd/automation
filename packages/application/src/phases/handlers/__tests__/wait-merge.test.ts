@@ -271,4 +271,86 @@ describe('WaitMergeHandler', () => {
 
     expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([5000, 5000]);
   });
+
+  it('skips the initial delay on a resumed attempt (e.g. after orphan recovery), checking immediately instead', async () => {
+    const artifacts = new FakeArtifactStore();
+    const github = new FakeGitHubPort();
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('create-pr'),
+      relativePath: 'pr-url.txt',
+      contents: 'https://github.com/owner/repo/pull/42',
+    });
+
+    // Simulates a prior wait-merge entry that already rested once: the
+    // resume marker it wrote on that first entry is already present.
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('wait-merge'),
+      relativePath: 'wait-merge-attempted.marker',
+      contents: new Date(0).toISOString(),
+    });
+
+    github.mergeReadiness.set('owner/repo/42', {
+      prNumber: 42,
+      state: 'merged',
+      isMerged: true,
+      ciStatus: 'passed',
+      mergeStateStatus: 'clean',
+    });
+
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const handler = new WaitMergeHandler({
+      maxPolls: 3,
+      pollIntervalMs: 120_000,
+      initialDelayMs: 600_000,
+      sleep,
+    });
+    const ctx = createMockContext(artifacts, github);
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    // No 600_000ms initial delay before the first (and only, since it
+    // resolves immediately) check.
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('writes the resume marker on a genuinely fresh first entry, but does not sleep again for it on that same entry', async () => {
+    const artifacts = new FakeArtifactStore();
+    const github = new FakeGitHubPort();
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('create-pr'),
+      relativePath: 'pr-url.txt',
+      contents: 'https://github.com/owner/repo/pull/42',
+    });
+
+    github.mergeReadiness.set('owner/repo/42', {
+      prNumber: 42,
+      state: 'open',
+      isMerged: false,
+      ciStatus: 'pending',
+      mergeStateStatus: 'unknown',
+    });
+
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const handler = new WaitMergeHandler({
+      maxPolls: 3,
+      pollIntervalMs: 120_000,
+      initialDelayMs: 600_000,
+      sleep,
+    });
+    const ctx = createMockContext(artifacts, github);
+
+    await handler.run(ctx);
+
+    // Fresh entry still applies the full initial delay this one time.
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([600_000, 120_000, 120_000]);
+    await expect(artifacts.read('run-1', 'wait-merge-attempted.marker')).resolves.toEqual(
+      expect.any(String),
+    );
+  });
 });

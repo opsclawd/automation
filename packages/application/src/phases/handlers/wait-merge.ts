@@ -37,9 +37,44 @@ export class WaitMergeHandler implements PhaseHandler {
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
+
+    // A prior invocation of this phase for the same run parks as 'resting'
+    // (outcome: 'resting') when its bounded poll window elapses without a
+    // resolution — the process exits normally and expects to be resumed
+    // later, whether by a scheduler or by the orphan-recovery sweep picking
+    // up a run whose recorded pid is no longer alive (which looks
+    // indistinguishable from a crash at the DB level). Without this marker,
+    // every such resumed entry re-applies the full initialDelayMs blind
+    // wait (10 minutes by default) before its first check, even though real
+    // wall-clock time has already passed and the PR may already be merged
+    // — repeatedly starving whatever else is waiting on this repo's single
+    // worker lease. A resumed entry checks immediately instead.
+    const RESUME_MARKER_PATH = 'wait-merge-attempted.marker';
+    let isResumedAttempt = false;
+    try {
+      await ctx.artifacts.read(ctx.runUuid, RESUME_MARKER_PATH);
+      isResumedAttempt = true;
+    } catch {
+      // No marker yet: this is the first entry into wait-merge for this run.
+    }
+    if (!isResumedAttempt) {
+      try {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: this.phase,
+          relativePath: RESUME_MARKER_PATH,
+          contents: ctx.now().toISOString(),
+        });
+      } catch {
+        // Best-effort: if this write fails, the worst case is a resumed
+        // entry re-applying one more initial delay, not a correctness bug.
+      }
+    }
+
     emit('wait_merge.started', 'info', 'waiting for PR merge and CI completion', {
       policy: ctx.executionPolicy,
       maxPolls: this.maxPolls,
+      resumedAttempt: isResumedAttempt,
     });
 
     // 1. Read pr-url.txt
@@ -65,7 +100,8 @@ export class WaitMergeHandler implements PhaseHandler {
     // comment-tracking machinery this phase doesn't need. The first check is
     // delayed by initialDelayMs (CI typically takes several minutes to even
     // start reporting), then subsequent checks use the shorter pollIntervalMs.
-    if (this.maxPolls > 1 && this.initialDelayMs > 0) {
+    // A resumed attempt (see marker check above) skips this delay entirely.
+    if (this.maxPolls > 1 && this.initialDelayMs > 0 && !isResumedAttempt) {
       await this.sleep(this.initialDelayMs);
     }
 
