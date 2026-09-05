@@ -2001,3 +2001,110 @@ describe('fallback event triggerDetail', () => {
     });
   });
 });
+
+// Regression coverage for a real production incident: quality-review's
+// primary invocation resolves via the legacy phaseProfiles key
+// ('post-implementation-quality-review'), but a naive fallback lookup keyed
+// on the bare runtime phase id ('quality-review') found a *different*,
+// unrelated phaseProfiles entry — so a configured fallback (e.g. to a strong
+// model) silently never engaged, and the router fell through to whatever
+// unrelated default happened to live under the bare key instead.
+describe('legacy phase-profile alias fallback resolution (quality-review / spec-review)', () => {
+  it('falls back using the profile configured under the legacy post-implementation-quality-review key, not an unrelated entry under the bare quality-review key', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus: EventBusPort = {
+      subscribe: () => () => {},
+      publish: (_runId: string, event: OrchestratorEvent) => {
+        events.push(event);
+      },
+    };
+
+    const legacyAliasConfig: AgentConfig = {
+      defaultProfile: 'opencode-frontier',
+      profiles: {
+        'opencode-frontier': {
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          timeoutMinutes: 1,
+        },
+        // The primary model for quality-review, configured under the legacy key.
+        sol: { runtime: 'codex', provider: 'openai', model: 'gpt-5.6-sol', timeoutMinutes: 1 },
+        // The INTENDED fallback, also only configured under the legacy key.
+        opus: { runtime: 'claude-code', provider: 'anthropic', model: 'opus', timeoutMinutes: 1 },
+        // An unrelated default that lives under the bare key and must NOT be used.
+        junior: {
+          runtime: 'opencode',
+          provider: 'opencode',
+          model: 'deepseek-v4-flash-free',
+          timeoutMinutes: 1,
+        },
+      },
+      phaseProfiles: {
+        // Unrelated base-config-style default under the bare/current phase name.
+        'quality-review': { profile: 'junior' },
+        // The user's actual configured intent, under the legacy pre-split name.
+        'post-implementation-quality-review': { profile: 'sol', fallbackProfile: 'opus' },
+      },
+    };
+
+    const codexAdapter = new StubAdapter({
+      runtime: 'codex',
+      provider: 'openai',
+      model: 'gpt-5.6-sol',
+      exitCode: 1,
+      durationMs: 100,
+      stdoutPath: '/tmp/sol.out',
+      stderrPath: '/tmp/sol.err',
+      contractViolations: [],
+      outcome: 'timeout',
+    });
+
+    const claudeCodeAdapter = new StubAdapter({
+      runtime: 'claude-code',
+      provider: 'anthropic',
+      model: 'opus',
+      exitCode: 0,
+      durationMs: 500,
+      stdoutPath: '/tmp/opus.out',
+      stderrPath: '/tmp/opus.err',
+      contractViolations: [],
+      outcome: 'success',
+    });
+
+    const opencodeAdapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'opencode',
+      model: 'deepseek-v4-flash-free',
+      exitCode: 0,
+      durationMs: 500,
+      stdoutPath: '/tmp/junior.out',
+      stderrPath: '/tmp/junior.err',
+      contractViolations: [],
+      outcome: 'success',
+    });
+
+    let invocationCount = 0;
+    const router = new AgentRuntimeRouter({
+      agent: legacyAliasConfig,
+      adapters: {
+        codex: codexAdapter,
+        'claude-code': claudeCodeAdapter,
+        opencode: opencodeAdapter,
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      usageRepository: new FakeAgentUsagePort(),
+      clock: () => FIXED_NOW,
+      idFactory: () => `inv-${++invocationCount}`,
+    });
+
+    const result = await router.invoke(
+      req({ profile: AgentProfileName('sol'), phaseId: 'quality-review' }),
+    );
+
+    expect(result.outcome).toBe('success');
+    expect(result.runtime).toBe('claude-code');
+    expect(result.model).toBe('opus');
+  });
+});
