@@ -207,6 +207,7 @@ import {
   type LoadedConfig,
   type OrchestratorConfig,
   PHASE_FALLBACKS,
+  resolvePhaseProfileEntry,
   type AgentConfig,
   type ExecutionPolicy,
 } from '@ai-sdlc/shared';
@@ -6788,8 +6789,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(
         new SpecReviewHandler({
           profileName:
-            config.agent.phaseProfiles?.['post-implementation-spec-review']?.profile ??
-            config.agent.phaseProfiles?.['spec-review']?.profile ??
+            (config.agent &&
+              resolvePhaseProfileEntry(config.agent.phaseProfiles, 'spec-review')?.profile) ??
             'opencode-frontier',
         }),
       );
@@ -6797,8 +6798,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(
         new QualityReviewHandler({
           profileName:
-            config.agent.phaseProfiles?.['post-implementation-quality-review']?.profile ??
-            config.agent.phaseProfiles?.['quality-review']?.profile ??
+            (config.agent &&
+              resolvePhaseProfileEntry(config.agent.phaseProfiles, 'quality-review')?.profile) ??
             'opencode-frontier',
         }),
       );

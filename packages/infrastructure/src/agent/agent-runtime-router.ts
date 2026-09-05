@@ -15,7 +15,12 @@ import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/app
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationPort } from '@ai-sdlc/application/ports';
 import type { AgentUsagePort, EventBusPort } from '@ai-sdlc/application/ports';
-import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
+import {
+  ConfigError,
+  resolvePhaseProfileEntry,
+  type AgentConfig,
+  type OrchestratorEvent,
+} from '@ai-sdlc/shared';
 import {
   testQuotaPatterns,
   testTokenLimitPatterns,
@@ -583,9 +588,12 @@ export class AgentRuntimeRouter implements AgentPort {
     // is responsible for passing --phase-id "fix-review-N" (not "whole-pr-fix-review-N")
     // for the whole-PR fix-review loop. If --phase-id naming ever changes to match
     // --phase, the router will need to consult PHASE_FALLBACKS for adapter-level fallback.
+    // It DOES consult LEGACY_PHASE_PROFILE_PREFERENCE (via resolvePhaseProfileEntry)
+    // for spec-review/quality-review, which is a different, opposite-precedence
+    // mechanism — see the doc comment on resolvePhaseProfileEntry.
     const routingPhase = normalizeRoutingPhase(request.phaseId);
     if (!isFallbackOrCallerSignalled && this.shouldFallback(result, request.phaseId)) {
-      let phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
+      let phaseEntry = resolvePhaseProfileEntry(this.opts.agent.phaseProfiles, routingPhase);
       if (!phaseEntry && routingPhase === 'arbiter') {
         phaseEntry =
           this.opts.agent.phaseProfiles['plan-design'] ??
@@ -644,8 +652,10 @@ export class AgentRuntimeRouter implements AgentPort {
 
     // NOTE: Does not consult PHASE_FALLBACKS — relies on caller passing a phaseId
     // whose normalized form exists in phaseProfiles. See comment in dispatch().
+    // It DOES consult LEGACY_PHASE_PROFILE_PREFERENCE via resolvePhaseProfileEntry,
+    // matching dispatch() above — see comment there and on resolvePhaseProfileEntry.
     const routingPhase = normalizeRoutingPhase(phaseId);
-    let phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
+    let phaseEntry = resolvePhaseProfileEntry(this.opts.agent.phaseProfiles, routingPhase);
     if (!phaseEntry && routingPhase === 'arbiter') {
       phaseEntry =
         this.opts.agent.phaseProfiles['plan-design'] ?? this.opts.agent.phaseProfiles['fix-review'];
