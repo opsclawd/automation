@@ -8,7 +8,13 @@ export const postImplementationRequirementCheckSchema = z.object({
   result: z.enum(['PASS', 'FAIL', 'pass', 'fail']),
   evidence: z.string().min(1),
   test_evidence: z.string().optional(),
-  counterexample_considered: z.string().optional(),
+  // .nullable(): same class of gap as architecture-review.ts's
+  // `counterexample` field (see that file's comment) -- a model can
+  // reasonably emit JSON `null` for "no counterexample was needed",
+  // which .optional() alone rejects. Consumers (spec-review.ts:243,351)
+  // already do falsy/truthy checks that treat null and undefined
+  // identically, so widening here is safe.
+  counterexample_considered: z.string().nullable().optional(),
 });
 
 export const postImplementationSpecReviewResultSchema = z.object({

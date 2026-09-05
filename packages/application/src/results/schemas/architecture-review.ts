@@ -37,7 +37,14 @@ export const witnessScenarioSchema = z.object({
   scenario: z.string().min(1),
   result: z.enum(['PASS', 'FAIL', 'pass', 'fail']),
   evidence: z.string().min(1),
-  counterexample: z.string().optional(),
+  // .nullable() in addition to .optional(): a real run (issue-157,
+  // 2026-09-05) had the model emit explicit JSON `null` for a passing
+  // scenario with no counterexample, which .optional() alone rejects
+  // (it only tolerates the key being absent, not present-with-null).
+  // Every consumer of this field already does a plain truthy check
+  // (architecture-review.ts:580, `if (witness.counterexample)`), which
+  // treats null identically to undefined, so widening here is safe.
+  counterexample: z.string().nullable().optional(),
 });
 
 export const architectureReviewResultSchema = z.object({
