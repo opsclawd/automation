@@ -293,10 +293,20 @@ export class ArchitectureReviewHandler implements PhaseHandler {
           'error',
           `targeted planner correction invocation failed on attempt ${correction}/${this.maxCorrections}`,
         );
+        // An agent-invocation failure here (crash, timeout, provider
+        // hiccup, malformed structured output) is not necessarily a
+        // sign the underlying findings are unfixable -- retry with a
+        // fresh invocation (same currentBlockingFindings/etc. as
+        // input, unchanged since this branch never reassigns them)
+        // before burning the whole run on what may be a transient
+        // failure. Only escalate once genuinely out of attempts.
+        if (correction < this.maxCorrections) {
+          continue;
+        }
         return this.needsHumanReview(
           ctx,
           emit,
-          `Targeted planner correction failed to execute during architecture review (attempt ${correction}/${this.maxCorrections})`,
+          `Targeted planner correction failed to execute after ${this.maxCorrections} attempt(s) during architecture review`,
           ['architecture-review.json', 'architecture-requirements.json', 'design.md', 'plan.md'],
         );
       }
@@ -311,10 +321,32 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         'architecture-review',
       );
       if (!planValidation.success) {
+        emit(
+          'architecture_review.plan_check_failed',
+          'warn',
+          `Deterministic plan check failed on corrected plan (attempt ${correction}/${this.maxCorrections}): ${planValidation.error}`,
+          {
+            policy: ctx.executionPolicy,
+            correctionAttempt: correction,
+            maxCorrections: this.maxCorrections,
+          },
+        );
+        // A malformed corrected plan (e.g. an unclosed markdown code
+        // fence) is a common, cheap LLM formatting slip, not evidence
+        // of a deeper problem -- retry the correction attempt (with
+        // the same currentReviewData/currentBlockingFindings/etc. as
+        // input, unchanged since this branch never reassigns them)
+        // rather than burning the rest of the correction budget on a
+        // single bad generation. Only escalate once genuinely out of
+        // attempts, matching how every other exit from this loop body
+        // already treats maxCorrections as the real retry budget.
+        if (correction < this.maxCorrections) {
+          continue;
+        }
         return this.needsHumanReview(
           ctx,
           emit,
-          `Deterministic plan check failed on corrected plan (attempt ${correction}/${this.maxCorrections}): ${planValidation.error}`,
+          `Deterministic plan check failed on corrected plan after ${this.maxCorrections} correction attempt(s): ${planValidation.error}`,
           ['architecture-review.json', 'plan.md'],
         );
       }
@@ -365,10 +397,32 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       });
 
       if (revalResult.outcome !== 'passed') {
+        emit(
+          'architecture_review.verification_failed',
+          'warn',
+          `architecture re-verification agent invocation failed on attempt ${correction}/${this.maxCorrections}`,
+          {
+            policy: ctx.executionPolicy,
+            correctionAttempt: correction,
+            maxCorrections: this.maxCorrections,
+          },
+        );
+        // Same reasoning as the fix-invocation-failure branch above:
+        // a re-verification agent-invocation failure (crash, timeout,
+        // provider hiccup) is not evidence the correction itself was
+        // wrong -- retry the full correction cycle before escalating.
+        // currentBlockingFindings/etc. are unchanged from before this
+        // iteration, so the next attempt re-targets the same gaps;
+        // the corrected design.md/plan.md already persisted this
+        // iteration will simply be overwritten again if the retry
+        // produces different content, which is safe.
+        if (correction < this.maxCorrections) {
+          continue;
+        }
         return this.needsHumanReview(
           ctx,
           emit,
-          `Architecture re-verification agent invocation failed on attempt ${correction}/${this.maxCorrections}`,
+          `Architecture re-verification agent invocation failed after ${this.maxCorrections} attempt(s)`,
           ['architecture-review.json', 'architecture-requirements.json', 'design.md', 'plan.md'],
         );
       }
