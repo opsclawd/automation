@@ -65,3 +65,4 @@ Write `./result.json` with:
 - Do NOT switch git branches.
 - Do NOT ask questions.
 - Write `./result.json` before stopping.
+- If `./result.json` already exists and needs revision (e.g. a second pass over your own review found something new), rewrite the entire file from scratch. Do NOT patch/diff-edit it — context-based patch tools are unreliable against large JSON arrays, since they require reproducing exact surrounding text; a failed or partial patch application can silently corrupt the file.
