@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   isProtectedFilePath,
+  isAdditiveOrchestratorConfigChange,
   undeclaredUntrackedFiles,
   remediateScratchFiles,
   recordScratchFilesReport,
@@ -24,6 +25,91 @@ describe('scratch-file-remediation', () => {
       expect(isProtectedFilePath('get_diff.sh')).toBe(false);
       expect(isProtectedFilePath('foo.gitignore')).toBe(false);
       expect(isProtectedFilePath('packages/foo.gitignore')).toBe(false);
+    });
+  });
+
+  describe('isAdditiveOrchestratorConfigChange', () => {
+    const base = {
+      validation: {
+        commands: ['pnpm build', 'pnpm test'],
+        timeout: 300,
+        forbiddenArtifactPaths: ['certification/'],
+      },
+    };
+
+    it('permits appending a new validation command to validation.commands', () => {
+      const oldContent = JSON.stringify(base);
+      const newContent = JSON.stringify({
+        ...base,
+        validation: { ...base.validation, commands: ['pnpm build', 'pnpm test', 'pnpm test:new'] },
+      });
+      expect(isAdditiveOrchestratorConfigChange(oldContent, newContent)).toBe(true);
+    });
+
+    it('permits inserting a new validation command in the middle of validation.additionalCommands', () => {
+      const oldObj = { validation: { additionalCommands: ['pnpm a', 'pnpm c'], timeout: 900 } };
+      const newObj = {
+        validation: { additionalCommands: ['pnpm a', 'pnpm b', 'pnpm c'], timeout: 900 },
+      };
+      expect(
+        isAdditiveOrchestratorConfigChange(JSON.stringify(oldObj), JSON.stringify(newObj)),
+      ).toBe(true);
+    });
+
+    it('rejects removing an existing validation command', () => {
+      const oldContent = JSON.stringify(base);
+      const newContent = JSON.stringify({
+        ...base,
+        validation: { ...base.validation, commands: ['pnpm test'] },
+      });
+      expect(isAdditiveOrchestratorConfigChange(oldContent, newContent)).toBe(false);
+    });
+
+    it('rejects reordering existing validation commands even if none are removed', () => {
+      const oldContent = JSON.stringify(base);
+      const newContent = JSON.stringify({
+        ...base,
+        validation: { ...base.validation, commands: ['pnpm test', 'pnpm build'] },
+      });
+      expect(isAdditiveOrchestratorConfigChange(oldContent, newContent)).toBe(false);
+    });
+
+    it('rejects a change that also widens forbiddenArtifactPaths alongside a permitted command addition', () => {
+      const oldContent = JSON.stringify(base);
+      const newContent = JSON.stringify({
+        validation: {
+          ...base.validation,
+          commands: ['pnpm build', 'pnpm test', 'pnpm test:new'],
+          forbiddenArtifactPaths: [],
+        },
+      });
+      expect(isAdditiveOrchestratorConfigChange(oldContent, newContent)).toBe(false);
+    });
+
+    it('rejects a change to an unrelated top-level field', () => {
+      const oldContent = JSON.stringify(base);
+      const newContent = JSON.stringify({ ...base, phases: { skip: ['implement'] } });
+      expect(isAdditiveOrchestratorConfigChange(oldContent, newContent)).toBe(false);
+    });
+
+    it('rejects when nothing actually changed (no insertion to justify permitting)', () => {
+      const content = JSON.stringify(base);
+      expect(isAdditiveOrchestratorConfigChange(content, content)).toBe(false);
+    });
+
+    it('rejects malformed JSON on either side', () => {
+      const oldContent = JSON.stringify(base);
+      expect(isAdditiveOrchestratorConfigChange(oldContent, '{not json')).toBe(false);
+      expect(isAdditiveOrchestratorConfigChange('{not json', oldContent)).toBe(false);
+    });
+
+    it('rejects when validation.commands changes type from array to something else', () => {
+      const oldContent = JSON.stringify(base);
+      const newContent = JSON.stringify({
+        ...base,
+        validation: { ...base.validation, commands: 'pnpm build' },
+      });
+      expect(isAdditiveOrchestratorConfigChange(oldContent, newContent)).toBe(false);
     });
   });
 

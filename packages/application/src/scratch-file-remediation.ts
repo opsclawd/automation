@@ -19,6 +19,99 @@ export function isProtectedFilePath(filePath: string): boolean {
   );
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => deepEqual(v, b[i]));
+  }
+  if (isRecord(a) || isRecord(b)) {
+    if (!isRecord(a) || !isRecord(b)) return false;
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    return aKeys.every((k) => Object.hasOwn(b, k) && deepEqual(a[k], b[k]));
+  }
+  return false;
+}
+
+/**
+ * True when `oldArr` appears as a subsequence of `newArr` — i.e. every entry
+ * of `oldArr` is still present in `newArr`, in the same relative order, with
+ * nothing removed or reordered. `newArr` may additionally insert new entries
+ * anywhere. Used to permit an agent to *add* a validation command without
+ * permitting it to remove or reorder an existing one (which would weaken
+ * validation rather than strengthen it).
+ */
+function isPureInsertion(oldArr: readonly string[], newArr: readonly string[]): boolean {
+  if (newArr.length <= oldArr.length) return false;
+  let i = 0;
+  for (const item of newArr) {
+    if (i < oldArr.length && item === oldArr[i]) i++;
+  }
+  return i === oldArr.length;
+}
+
+/**
+ * `.ai-orchestrator.json` is protected because an agent could otherwise
+ * silently weaken its own validation gate (delete a required command, widen
+ * a forbidden-artifact allowlist, etc.) and have that change ride along
+ * unreviewed in its own PR. But an agent legitimately needs to *add* a new
+ * validation command when its own issue scope adds a new test suite that
+ * should be enforced going forward (e.g. a new adapter's integration tests) —
+ * refusing that penalizes the correct behavior of wiring new tests into the
+ * gate. This narrowly permits ONLY that shape of change: `validation.commands`
+ * and/or `validation.additionalCommands` gaining new string entries with
+ * every existing entry still present in the same order, and nothing else in
+ * the file differing at all.
+ */
+export function isAdditiveOrchestratorConfigChange(
+  oldContent: string,
+  newContent: string,
+): boolean {
+  let oldJson: unknown;
+  let newJson: unknown;
+  try {
+    oldJson = JSON.parse(oldContent);
+    newJson = JSON.parse(newContent);
+  } catch {
+    return false;
+  }
+  if (!isRecord(oldJson) || !isRecord(newJson)) return false;
+
+  const oldValidation = isRecord(oldJson.validation) ? oldJson.validation : undefined;
+  const newValidation = isRecord(newJson.validation) ? newJson.validation : undefined;
+  if (!oldValidation || !newValidation) return false;
+
+  let sawInsertion = false;
+  for (const key of ['commands', 'additionalCommands'] as const) {
+    const oldArr = oldValidation[key];
+    const newArr = newValidation[key];
+    if (deepEqual(oldArr, newArr)) continue;
+    if (!isStringArray(oldArr) || !isStringArray(newArr)) return false;
+    if (!isPureInsertion(oldArr, newArr)) return false;
+    sawInsertion = true;
+  }
+  if (!sawInsertion) return false;
+
+  const stripCommandArrays = (validation: Record<string, unknown>): Record<string, unknown> => {
+    const { commands: _commands, additionalCommands: _additionalCommands, ...rest } = validation;
+    return rest;
+  };
+
+  const oldRest = { ...oldJson, validation: stripCommandArrays(oldValidation) };
+  const newRest = { ...newJson, validation: stripCommandArrays(newValidation) };
+  return deepEqual(oldRest, newRest);
+}
+
 function isExemptOrDeclaredPath(
   path: string,
   writableFiles: ReadonlySet<string>,
