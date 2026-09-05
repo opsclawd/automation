@@ -28,6 +28,29 @@ describe('postImplementationSpecReviewResultSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts explicit JSON null for counterexample_considered (regression: same class of gap as architecture-review witness_scenarios.counterexample, 2026-09-05)', () => {
+    const valid = {
+      verdict: 'PASS',
+      requirements_checks: [
+        {
+          requirement_id: 'AC-1',
+          requirement: 'Non-hard-gate requirement with no counterexample needed',
+          result: 'PASS',
+          evidence: 'Straightforward check with no adversarial case',
+          counterexample_considered: null,
+        },
+      ],
+      findings: [],
+      summary: 'All spec requirements satisfied',
+    };
+
+    const parsed = postImplementationSpecReviewResultSchema.safeParse(valid);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.requirements_checks[0]?.counterexample_considered).toBeNull();
+    }
+  });
+
   it('rejects payload missing evidence in requirement check', () => {
     const invalid = {
       verdict: 'PASS',

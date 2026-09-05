@@ -157,6 +157,27 @@ describe('architectureReviewResultSchema', () => {
       expect(parsed.data.witness_scenarios?.[0]?.scenario).toContain('12s soundbed');
     }
   });
+
+  it('accepts explicit JSON null for counterexample on a passing scenario (regression: issue-157 run 2026-09-05)', () => {
+    const data = {
+      verdict: 'APPROVE',
+      requirements_checks: [{ requirement_id: 'REQ-1', requirement: 'Req 1', result: 'PASS' }],
+      witness_scenarios: [
+        {
+          scenario: 'Base happy path with no adversarial case',
+          result: 'PASS',
+          evidence: 'Standard flow verified end to end',
+          counterexample: null,
+        },
+      ],
+      findings: [],
+    };
+    const parsed = architectureReviewResultSchema.safeParse(data);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.witness_scenarios?.[0]?.counterexample).toBeNull();
+    }
+  });
 });
 
 describe('isApprovedArchitectureReview', () => {
