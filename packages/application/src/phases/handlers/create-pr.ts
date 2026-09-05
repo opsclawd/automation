@@ -7,7 +7,10 @@ import {
   uncommittedSourcePaths,
   formatDirtyPaths,
 } from '../../artifacts/orchestrator-artifacts.js';
-import { isProtectedFilePath } from '../../scratch-file-remediation.js';
+import {
+  isProtectedFilePath,
+  isAdditiveOrchestratorConfigChange,
+} from '../../scratch-file-remediation.js';
 import { recordValidationHeadSha } from '../validation-headsha.js';
 import { RunId } from '@ai-sdlc/domain';
 import type { RunValidation } from '../../run-validation.js';
@@ -68,7 +71,29 @@ export class CreatePrHandler implements PhaseHandler {
     const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
 
     if (isLeanPolicy && dirtyPaths.length > 0) {
-      const unapprovedProtected = dirtyPaths.filter((p) => isProtectedFilePath(p));
+      const protectedPaths = dirtyPaths.filter((p) => isProtectedFilePath(p));
+      const unapprovedProtected: string[] = [];
+      for (const p of protectedPaths) {
+        if (p === '.ai-orchestrator.json') {
+          const [headContent, worktreeContent] = await Promise.all([
+            ctx.git.fileContent(ctx.cwd, 'HEAD', p).catch(() => undefined),
+            ctx.git.worktreeFileContent(ctx.cwd, p),
+          ]);
+          if (
+            headContent !== undefined &&
+            worktreeContent !== undefined &&
+            isAdditiveOrchestratorConfigChange(headContent, worktreeContent)
+          ) {
+            emit(
+              'create_pr.protected_file_permitted',
+              'info',
+              `permitting additive-only validation-command change to ${p}`,
+            );
+            continue;
+          }
+        }
+        unapprovedProtected.push(p);
+      }
       if (unapprovedProtected.length > 0) {
         const msg = `PR creation blocked by unpermitted protected files in worktree: ${unapprovedProtected.join(', ')}`;
         emit('create_pr.blocked', 'error', msg, { paths: unapprovedProtected });

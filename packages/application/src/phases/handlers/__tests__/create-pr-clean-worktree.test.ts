@@ -203,5 +203,60 @@ describe('CreatePrHandler clean-worktree gate', () => {
       expect(git.pushes).toEqual([]);
       expect(github.createdPrInputs).toEqual([]);
     });
+
+    it('permits PR creation under lean policy when .ai-orchestrator.json only gains a new validation command', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+      };
+      git.statusByCwd.set('/tmp/wt', ' M .ai-orchestrator.json\n');
+      const headConfig = JSON.stringify({ validation: { commands: ['pnpm build'] } });
+      const worktreeConfig = JSON.stringify({
+        validation: { commands: ['pnpm build', 'pnpm test:new'] },
+      });
+      git.fileContentResults.set('HEAD:.ai-orchestrator.json', headConfig);
+      git.worktreeFileContents.set('/tmp/wt:.ai-orchestrator.json', worktreeConfig);
+
+      const revalidateCalls: string[] = [];
+      const leanHandler = createRevalidateHandler(true, revalidateCalls);
+      const result = await leanHandler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.addCalls).toEqual([{ cwd: '/tmp/wt', files: ['.ai-orchestrator.json'] }]);
+      expect(git.commits).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+      expect(events.some((e) => e.type === 'create_pr.protected_file_permitted')).toBe(true);
+    });
+
+    it('still blocks PR creation under lean policy when .ai-orchestrator.json changes something beyond an added validation command', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+      };
+      git.statusByCwd.set('/tmp/wt', ' M .ai-orchestrator.json\n');
+      const headConfig = JSON.stringify({
+        validation: { commands: ['pnpm build'], forbiddenArtifactPaths: ['certification/'] },
+      });
+      const worktreeConfig = JSON.stringify({
+        validation: {
+          commands: ['pnpm build', 'pnpm test:new'],
+          forbiddenArtifactPaths: [],
+        },
+      });
+      git.fileContentResults.set('HEAD:.ai-orchestrator.json', headConfig);
+      git.worktreeFileContents.set('/tmp/wt:.ai-orchestrator.json', worktreeConfig);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.message).toContain('unpermitted protected files');
+        expect(result.failure.message).toContain('.ai-orchestrator.json');
+      }
+      expect(git.commits).toEqual([]);
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+    });
   });
 });
