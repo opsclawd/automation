@@ -1221,4 +1221,196 @@ describe('ArchitectureReviewHandler', () => {
     expect(eventsOf(ctx, 'architecture_review.verification_started')).toHaveLength(2);
     expect(eventsOf(ctx, 'architecture_review.completed')).toHaveLength(1);
   });
+
+  it('retries the correction attempt (does not escalate) when the deterministic plan check fails on a malformed corrected plan, and still succeeds within budget (regression: issue-157 run 2026-09-05, unclosed code fence)', async () => {
+    const handler = new ArchitectureReviewHandler({ maxCorrections: 2 });
+    const ctx = createTestContext();
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 157\n## Acceptance criteria\n- [ ] Full reconciliation\n',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design 157\nInitial design.',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents:
+        '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: do setup\n- Invariants: none\n- Verification: `pnpm test`\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    const reviewerProfile = 'profile-for-architecture-review';
+    const plannerProfile = 'profile-for-architecture-fix';
+
+    // 1. Initial Review -> Fail
+    agent.enqueue(reviewerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'REQUEST_CHANGES',
+          requirements_checks: [
+            {
+              requirement_id: 'AC-1',
+              requirement: 'Full reconciliation',
+              result: 'FAIL',
+              evidence: 'Gap 1',
+            },
+          ],
+          findings: [
+            {
+              category: 'requirements_reconciliation',
+              severity: 'high',
+              target: 'design.md',
+              evidence: 'Gap 1',
+              rationale: 'Missing requirement',
+              minimal_correction: 'Fix gap 1',
+              blocking: true,
+            },
+          ],
+        }),
+      });
+      return {
+        id: 'inv-1' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(reviewerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    // 2. First Planner fix -> corrected plan has an unclosed code fence
+    agent.enqueue(plannerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          design_md: '# Design 157\nAttempted fix.',
+          plan_md:
+            '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: fix gap 1\n- Invariants: none\n- Verification:\n```pnpm test\n',
+        }),
+      });
+      return {
+        id: 'inv-2' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(plannerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    // 3. Second Planner fix -> corrected plan is well-formed this time
+    agent.enqueue(plannerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          design_md: '# Design 157\nResolved gap 1.',
+          plan_md:
+            '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: fix gap 1\n- Invariants: none\n- Verification: `pnpm test`\n',
+        }),
+      });
+      return {
+        id: 'inv-3' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(plannerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    // 4. Re-verification -> Pass. Note this is the reviewer's *second*
+    // enqueued response overall but only the *first* re-verification --
+    // no re-verification agent call happens for the failed first
+    // correction attempt, since the deterministic check rejects that
+    // corrected plan before the loop body ever reaches the
+    // re-verification step.
+    agent.enqueue(reviewerProfile, async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          requirements_checks: [
+            {
+              requirement_id: 'AC-1',
+              requirement: 'Full reconciliation',
+              result: 'PASS',
+              evidence: 'Resolved',
+            },
+          ],
+          findings: [],
+        }),
+      });
+      return {
+        id: 'inv-4' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(reviewerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('passed');
+
+    // The malformed first correction's design.md must never have been
+    // persisted as authoritative -- only the second (valid) correction's
+    // content should have landed.
+    const finalDesign = await ctx.artifacts.read(ctx.runUuid, 'design.md');
+    expect(finalDesign).toContain('Resolved gap 1.');
+    expect(finalDesign).not.toContain('Attempted fix.');
+
+    expect(eventsOf(ctx, 'architecture_review.plan_check_failed')).toHaveLength(1);
+    // Only one re-verification pass ever ran (for the second, valid
+    // correction) -- confirms the retry did not also waste a
+    // re-verification agent call on the rejected first attempt.
+    expect(eventsOf(ctx, 'architecture_review.verification_started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'architecture_review.completed')).toHaveLength(1);
+  });
 });

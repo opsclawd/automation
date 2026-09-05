@@ -311,10 +311,32 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         'architecture-review',
       );
       if (!planValidation.success) {
+        emit(
+          'architecture_review.plan_check_failed',
+          'warn',
+          `Deterministic plan check failed on corrected plan (attempt ${correction}/${this.maxCorrections}): ${planValidation.error}`,
+          {
+            policy: ctx.executionPolicy,
+            correctionAttempt: correction,
+            maxCorrections: this.maxCorrections,
+          },
+        );
+        // A malformed corrected plan (e.g. an unclosed markdown code
+        // fence) is a common, cheap LLM formatting slip, not evidence
+        // of a deeper problem -- retry the correction attempt (with
+        // the same currentReviewData/currentBlockingFindings/etc. as
+        // input, unchanged since this branch never reassigns them)
+        // rather than burning the rest of the correction budget on a
+        // single bad generation. Only escalate once genuinely out of
+        // attempts, matching how every other exit from this loop body
+        // already treats maxCorrections as the real retry budget.
+        if (correction < this.maxCorrections) {
+          continue;
+        }
         return this.needsHumanReview(
           ctx,
           emit,
-          `Deterministic plan check failed on corrected plan (attempt ${correction}/${this.maxCorrections}): ${planValidation.error}`,
+          `Deterministic plan check failed on corrected plan after ${this.maxCorrections} correction attempt(s): ${planValidation.error}`,
           ['architecture-review.json', 'plan.md'],
         );
       }
