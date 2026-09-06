@@ -795,7 +795,7 @@ describe('ValidateHandler', () => {
       expect(result.outcome).toBe('passed');
     });
 
-    it('passes when the new config is covered by a knownUnwiredVitestConfigs entry (LTX-style)', async () => {
+    it('flags a hardware-dependent config too, since there is no exclusion list', async () => {
       const { ctx, git } = makeWiringCtx({
         'test:ltx-production': 'vitest run --config vitest.ltx.config.ts',
       });
@@ -807,15 +807,10 @@ describe('ValidateHandler', () => {
         commands: ['pnpm build'],
         timeoutSeconds: 300,
         logDir: '/tmp/wt/.ai-runs/r1/validate',
-        knownUnwiredVitestConfigs: [
-          {
-            file: 'vitest.ltx.config.ts',
-            reason: 'Requires real GPU/ComfyUI hardware the orchestrator sandbox lacks.',
-          },
-        ],
+        fixValidateEnabled: true,
       }).run(ctx);
 
-      expect(result.outcome).toBe('passed');
+      expect(result.outcome).toBe('deferred');
     });
 
     it('does not run the check at all when startCommitSha is absent (never blocks pre-existing runs)', async () => {

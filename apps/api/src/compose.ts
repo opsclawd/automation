@@ -6404,9 +6404,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           ...(config.validation.narrowByChangedFiles !== false
             ? { discoverWorkspacePackages }
             : {}),
-          ...(config.validation.knownUnwiredVitestConfigs
-            ? { knownUnwiredVitestConfigs: config.validation.knownUnwiredVitestConfigs }
-            : {}),
         }),
       );
 

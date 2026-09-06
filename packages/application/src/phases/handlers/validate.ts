@@ -14,7 +14,6 @@ import type { ValidationCommand } from '../../ports/validation-port.js';
 import {
   findUnwiredVitestConfigs,
   formatUnwiredVitestConfigsMessage,
-  type KnownUnwiredVitestConfig,
 } from '../../vitest-config-wiring.js';
 
 export type ValidateWorkspaceDiscoveryResult =
@@ -84,11 +83,6 @@ export interface ValidateHandlerOpts {
    * validation runs the full configured set exactly as before.
    */
   discoverWorkspacePackages?: (cwd: string) => Promise<ValidateWorkspaceDiscoveryResult>;
-  /**
-   * Deliberate, human-approved exceptions to the unwired-vitest-config gate
-   * below (validation.knownUnwiredVitestConfigs in .ai-orchestrator.json).
-   */
-  knownUnwiredVitestConfigs?: readonly KnownUnwiredVitestConfig[] | undefined;
 }
 
 export class ValidateHandler implements PhaseHandler {
@@ -335,9 +329,11 @@ export class ValidateHandler implements PhaseHandler {
   /**
    * Fails closed when this run introduces a new dedicated vitest config
    * (e.g. `vitest.whisperx.config.ts`) whose corresponding `pnpm test:x`
-   * script is not wired into validation.additionalCommands, and which isn't
-   * covered by a human-approved validation.knownUnwiredVitestConfigs entry.
-   * See vitest-config-wiring.ts for the incident this reproduces.
+   * script is not wired into validation.additionalCommands. See
+   * vitest-config-wiring.ts for the incident this reproduces and why there is
+   * deliberately no config-level exclusion: a suite that depends on hardware
+   * or an environment that isn't always present should skip itself cleanly
+   * (Vitest's it.skipIf/describe.skipIf), not be excluded from validation.
    *
    * Never blocks on its own inability to determine newness or read
    * package.json — those degrade to skipping the check (return undefined),
@@ -372,7 +368,6 @@ export class ValidateHandler implements PhaseHandler {
       createdFiles,
       packageJsonScripts,
       resolvedCommands: this.opts.commands,
-      knownUnwired: this.opts.knownUnwiredVitestConfigs,
     });
 
     if (findings.length === 0) return undefined;
@@ -389,7 +384,7 @@ export class ValidateHandler implements PhaseHandler {
       message,
       canRetry: true,
       suggestedAction:
-        'Add the missing "pnpm test:x" command to .ai-orchestrator.json validation.additionalCommands, or ask a human to add a validation.knownUnwiredVitestConfigs entry.',
+        'Add the missing "pnpm test:x" command to .ai-orchestrator.json validation.additionalCommands. If it depends on hardware or an environment that is not always available, make the test skip itself cleanly instead of excluding it.',
       artifacts: [],
       detectedAt: ctx.now(),
     };

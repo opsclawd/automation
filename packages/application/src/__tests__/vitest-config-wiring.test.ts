@@ -50,22 +50,16 @@ describe('findUnwiredVitestConfigs', () => {
     expect(findings).toEqual([{ file: 'vitest.piper.config.ts', script: undefined }]);
   });
 
-  it('does not flag a config explicitly excused via knownUnwired (LTX-style GPU-only case)', () => {
+  it('flags a hardware-dependent config too — there is no exclusion list; the test should skip itself instead', () => {
     const findings = findUnwiredVitestConfigs({
       createdFiles: ['vitest.ltx.config.ts'],
       packageJsonScripts: {
         'test:ltx-production': 'vitest run --config vitest.ltx.config.ts',
       },
       resolvedCommands: ['pnpm build'],
-      knownUnwired: [
-        {
-          file: 'vitest.ltx.config.ts',
-          reason: 'Requires real GPU/ComfyUI hardware the orchestrator sandbox does not have.',
-        },
-      ],
     });
 
-    expect(findings).toEqual([]);
+    expect(findings).toEqual([{ file: 'vitest.ltx.config.ts', script: 'test:ltx-production' }]);
   });
 
   it('never flags pre-existing configs that were merely modified, not created', () => {
@@ -126,7 +120,7 @@ describe('formatUnwiredVitestConfigsMessage', () => {
     expect(message).toContain('vitest.whisperx.config.ts');
     expect(message).toContain('test:whisperx');
     expect(message).toContain('validation.additionalCommands');
-    expect(message).toContain('knownUnwiredVitestConfigs');
+    expect(message).toContain('skip itself cleanly');
   });
 
   it('handles a finding with no known script', () => {

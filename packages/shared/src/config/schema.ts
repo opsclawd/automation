@@ -14,27 +14,6 @@ const validationSchema = z.object({
   timeout: z.number().int().positive(),
   forbiddenArtifactPaths: z.array(z.string().trim().min(1)).optional(),
   narrowByChangedFiles: z.boolean().default(true),
-  /**
-   * Deliberate, human-reviewed exceptions to the "every new vitest.*.config.ts
-   * must have a wired-in validation command" gate (see validate.ts's
-   * checkForUnwiredVitestConfigs). Each entry names a real vitest config file
-   * that intentionally has no automated command — e.g. one that requires real
-   * GPU/hardware the orchestrator's own sandbox doesn't have — and why.
-   *
-   * This field is deliberately NOT in create-pr.ts's
-   * isAdditiveOrchestratorConfigChange allowlist: an orchestrator-authored PR
-   * cannot add itself to this list. Only a human, editing this file directly
-   * outside a normal agent run, can. That's intentional — it is exactly the
-   * self-certification loophole this field would otherwise reopen.
-   */
-  knownUnwiredVitestConfigs: z
-    .array(
-      z.object({
-        file: z.string().trim().min(1),
-        reason: z.string().trim().min(1),
-      }),
-    )
-    .optional(),
 });
 
 const phasesSchema = z.object({
