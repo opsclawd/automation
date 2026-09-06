@@ -11,6 +11,11 @@ import { normalizeTaskPath } from '../../task-file-boundaries.js';
 import { recordValidationEvidence } from '../validation-evidence.js';
 import { planRevalidation, type WorkspacePackageDescriptor } from '../../revalidation-plan.js';
 import type { ValidationCommand } from '../../ports/validation-port.js';
+import {
+  findUnwiredVitestConfigs,
+  formatUnwiredVitestConfigsMessage,
+  type KnownUnwiredVitestConfig,
+} from '../../vitest-config-wiring.js';
 
 export type ValidateWorkspaceDiscoveryResult =
   | { success: true; descriptors: WorkspacePackageDescriptor[] }
@@ -79,6 +84,11 @@ export interface ValidateHandlerOpts {
    * validation runs the full configured set exactly as before.
    */
   discoverWorkspacePackages?: (cwd: string) => Promise<ValidateWorkspaceDiscoveryResult>;
+  /**
+   * Deliberate, human-approved exceptions to the unwired-vitest-config gate
+   * below (validation.knownUnwiredVitestConfigs in .ai-orchestrator.json).
+   */
+  knownUnwiredVitestConfigs?: readonly KnownUnwiredVitestConfig[] | undefined;
 }
 
 export class ValidateHandler implements PhaseHandler {
@@ -157,6 +167,11 @@ export class ValidateHandler implements PhaseHandler {
       };
       emit('validate.failed', 'error', message);
       return { outcome: 'failed', failure };
+    }
+
+    const unwiredVitestResult = await this.checkUnwiredVitestConfigs(ctx, emit);
+    if (unwiredVitestResult) {
+      return unwiredVitestResult;
     }
 
     const { commands: plannedCommands, tiers: plannedTiers } = await this.planCommands(
@@ -315,5 +330,87 @@ export class ValidateHandler implements PhaseHandler {
       });
       return fullCommands;
     }
+  }
+
+  /**
+   * Fails closed when this run introduces a new dedicated vitest config
+   * (e.g. `vitest.whisperx.config.ts`) whose corresponding `pnpm test:x`
+   * script is not wired into validation.additionalCommands, and which isn't
+   * covered by a human-approved validation.knownUnwiredVitestConfigs entry.
+   * See vitest-config-wiring.ts for the incident this reproduces.
+   *
+   * Never blocks on its own inability to determine newness or read
+   * package.json — those degrade to skipping the check (return undefined),
+   * matching planCommands' "never under-validate by accident, but never
+   * hard-fail on infrastructure it can't inspect" posture.
+   */
+  private async checkUnwiredVitestConfigs(
+    ctx: PhaseHandlerContext,
+    emit: EventEmitter,
+  ): Promise<PhaseResult | undefined> {
+    if (!ctx.startCommitSha) return undefined;
+
+    let createdFiles: string[];
+    try {
+      const headSha = await ctx.git.headCommitSha(ctx.cwd);
+      createdFiles = await ctx.git.createdFiles(ctx.cwd, ctx.startCommitSha, headSha);
+    } catch {
+      return undefined;
+    }
+
+    let packageJsonScripts: Record<string, string> = {};
+    try {
+      const raw = await ctx.git.worktreeFileContent(ctx.cwd, 'package.json');
+      if (raw === undefined) return undefined;
+      const parsed = JSON.parse(raw) as { scripts?: Record<string, string> };
+      packageJsonScripts = parsed.scripts ?? {};
+    } catch {
+      return undefined;
+    }
+
+    const findings = findUnwiredVitestConfigs({
+      createdFiles,
+      packageJsonScripts,
+      resolvedCommands: this.opts.commands,
+      knownUnwired: this.opts.knownUnwiredVitestConfigs,
+    });
+
+    if (findings.length === 0) return undefined;
+
+    const message = formatUnwiredVitestConfigsMessage(findings);
+    emit('validate.unwired_vitest_config', 'warn', message, {
+      findings: findings.map((f) => f.file),
+    });
+
+    const failure: Failure = {
+      runUuid: ctx.runUuid,
+      phase: 'validate',
+      kind: 'validation_failed',
+      message,
+      canRetry: true,
+      suggestedAction:
+        'Add the missing "pnpm test:x" command to .ai-orchestrator.json validation.additionalCommands, or ask a human to add a validation.knownUnwiredVitestConfigs entry.',
+      artifacts: [],
+      detectedAt: ctx.now(),
+    };
+
+    try {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'validate',
+        relativePath: 'validate/failure.json',
+        contents: JSON.stringify(failure, null, 2),
+      });
+    } catch {
+      emit('validate.artifact_write_failed', 'warn', 'failed to write failure.json artifact');
+    }
+
+    if (this.opts.fixValidateEnabled) {
+      emit('validate.deferred', 'warn', message);
+      return { outcome: 'deferred' };
+    }
+
+    emit('validate.failed', 'error', message);
+    return { outcome: 'failed', failure };
   }
 }
