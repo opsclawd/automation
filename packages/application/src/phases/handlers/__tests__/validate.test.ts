@@ -727,4 +727,105 @@ describe('ValidateHandler', () => {
       expect(validation.lastInput!.logDir).toBe('/custom/log/dir');
     });
   });
+
+  describe('unwired vitest config gate', () => {
+    function makeWiringCtx(scripts: Record<string, string>) {
+      const { ctx, events, artifacts } = makeCtx();
+      const withStart = { ...ctx, startCommitSha: 'start-sha' } as typeof ctx;
+      const git = withStart.git as import('../../../test-doubles/fake-git-port.js').FakeGitPort;
+      git.headByCwd.set(withStart.cwd, 'head-sha');
+      git.worktreeFileContents.set(`${withStart.cwd}:package.json`, JSON.stringify({ scripts }));
+      return { ctx: withStart, events, artifacts, git };
+    }
+
+    it('reproduces the WhisperX incident: fails (deferred) when a new vitest config script is not wired', async () => {
+      const { ctx, git } = makeWiringCtx({
+        'test:whisperx': 'vitest run --config vitest.whisperx.config.ts',
+      });
+      git.createdFilesResults.set('start-sha|head-sha', ['vitest.whisperx.config.ts']);
+
+      const { runValidation } = deps('passed');
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: true,
+      }).run(ctx);
+
+      expect(result.outcome).toBe('deferred');
+    });
+
+    it('fails outcome (not deferred) when fixValidateEnabled is false', async () => {
+      const { ctx, git } = makeWiringCtx({
+        'test:whisperx': 'vitest run --config vitest.whisperx.config.ts',
+      });
+      git.createdFilesResults.set('start-sha|head-sha', ['vitest.whisperx.config.ts']);
+
+      const { runValidation } = deps('passed');
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.message).toContain('vitest.whisperx.config.ts');
+        expect(result.failure.message).toContain('test:whisperx');
+      }
+    });
+
+    it('passes when the corresponding command is already wired', async () => {
+      const { ctx, git } = makeWiringCtx({
+        'test:whisperx': 'vitest run --config vitest.whisperx.config.ts',
+      });
+      git.createdFilesResults.set('start-sha|head-sha', ['vitest.whisperx.config.ts']);
+
+      const { runValidation } = deps('passed');
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build', 'pnpm test:whisperx'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      expect(result.outcome).toBe('passed');
+    });
+
+    it('flags a hardware-dependent config too, since there is no exclusion list', async () => {
+      const { ctx, git } = makeWiringCtx({
+        'test:ltx-production': 'vitest run --config vitest.ltx.config.ts',
+      });
+      git.createdFilesResults.set('start-sha|head-sha', ['vitest.ltx.config.ts']);
+
+      const { runValidation } = deps('passed');
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: true,
+      }).run(ctx);
+
+      expect(result.outcome).toBe('deferred');
+    });
+
+    it('does not run the check at all when startCommitSha is absent (never blocks pre-existing runs)', async () => {
+      const { runValidation } = deps('passed');
+      const { ctx } = makeCtx();
+      expect(ctx.startCommitSha).toBeUndefined();
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      expect(result.outcome).toBe('passed');
+    });
+  });
 });
