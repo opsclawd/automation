@@ -19,9 +19,9 @@ Implementation plan:
 {{artifact:plan.md}}
 
 Deterministic validation failures to fix:
-```
+----- BEGIN VALIDATION FAILURES -----
 {{var:validation_failures}}
-```
+----- END VALIDATION FAILURES -----
 
 ## TASK
 
