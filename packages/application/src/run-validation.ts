@@ -10,6 +10,7 @@ import type {
   ValidationPort,
   ValidationCommand,
   ValidationScopeSummary,
+  ValidationCommandResult,
 } from './ports/validation-port.js';
 import type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
 import {
@@ -42,6 +43,7 @@ export interface RunValidationOutput {
   validationRun: ValidationRun;
   passed: boolean;
   failure?: Failure;
+  results?: ValidationCommandResult[];
 }
 
 /**
@@ -116,6 +118,6 @@ export class RunValidation {
       ? undefined
       : (validationRunToFailure(validationRun, this.deps.now()) ?? undefined);
 
-    return { validationRun, passed, ...(failure ? { failure } : {}) };
+    return { validationRun, passed, ...(failure ? { failure } : {}), results };
   }
 }

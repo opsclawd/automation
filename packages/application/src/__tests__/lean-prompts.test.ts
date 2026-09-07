@@ -429,4 +429,71 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(rendered).toContain('done_with_fixes');
     });
   });
+
+  describe('Fix Validate prompt (prompts/fix-validate/fix-validate.md)', () => {
+    it('loads and renders fix-validate template with plain banner delimiters instead of backtick fences', async () => {
+      const template = loadPromptTemplate('fix-validate', 'fix-validate', { promptsRoot });
+
+      // Grounding & Placeholders
+      expect(template).toContain('{{var:WORKSPACE_CONSTRAINTS}}');
+      expect(template).toContain('{{var:SCRATCH_FILE_POLICY}}');
+      expect(template).toContain('{{var:cwd}}');
+      expect(template).toContain('{{var:issue_number}}');
+      expect(template).toContain('{{artifact?:issue.md}}');
+      expect(template).toContain('{{artifact:design.md}}');
+      expect(template).toContain('{{artifact:plan.md}}');
+
+      // Banner delimiters replacing backtick fence (Finding 2)
+      expect(template).toContain('----- BEGIN VALIDATION FAILURES -----');
+      expect(template).toContain('{{var:validation_failures}}');
+      expect(template).toContain('----- END VALIDATION FAILURES -----');
+      expect(template).not.toMatch(/```[\r\n]+\{\{var:validation_failures\}\}[\r\n]+```/);
+
+      // Output contract
+      expect(template).toContain('result.json');
+      expect(template).toContain('"result": "fixed"');
+
+      // Critical rules
+      expect(template).toMatch(/Do not ask questions/i);
+      expect(template).toMatch(/Do not switch git branches/i);
+      expect(template).toMatch(/Do not create commits/i);
+
+      // Render verification with log content containing backticks
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'run-test',
+        relativePath: 'issue.md',
+        contents: '# Issue 1149',
+      });
+      await artifacts.write({ runId: 'run-test', relativePath: 'design.md', contents: '# Design' });
+      await artifacts.write({ runId: 'run-test', relativePath: 'plan.md', contents: '# Plan' });
+
+      const failureContent = [
+        '1 validation command(s) failed: test (exit 1). See validate/ logs.',
+        '',
+        '--- validate/0-test.stderr.log (last 100 lines) ---',
+        'Vitest error:',
+        '｀｀｀',
+        '- expected',
+        '+ received',
+        '｀｀｀',
+      ].join('\n');
+
+      const rendered = await renderPrompt(template, {
+        runId: 'run-test',
+        vars: {
+          issue_number: '1149',
+          cwd: '/tmp/wt',
+          validation_failures: failureContent,
+        },
+        artifacts,
+      });
+
+      expect(rendered).toContain('----- BEGIN VALIDATION FAILURES -----');
+      expect(rendered).toContain('1 validation command(s) failed');
+      expect(rendered).toContain('--- validate/0-test.stderr.log (last 100 lines) ---');
+      expect(rendered).toContain('----- END VALIDATION FAILURES -----');
+      expect(rendered).toContain('"result": "fixed"');
+    });
+  });
 });

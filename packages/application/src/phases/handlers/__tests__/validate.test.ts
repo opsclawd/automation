@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ValidateHandler, type ValidateWorkspaceDiscoveryResult } from '../validate.js';
 import { RunValidation } from '../../../run-validation.js';
 import { FakeValidationPort } from '../../../test-doubles/fake-validation-port.js';
@@ -501,8 +501,8 @@ describe('ValidateHandler', () => {
       }).run(ctx);
 
       const artifactFailed = events.filter((e) => e.type === 'validate.artifact_write_failed');
-      expect(artifactFailed).toHaveLength(1);
-      expect(artifactFailed[0].level).toBe('warn');
+      expect(artifactFailed.length).toBeGreaterThanOrEqual(1);
+      expect(artifactFailed[0]?.level).toBe('warn');
     });
   });
 
@@ -826,6 +826,125 @@ describe('ValidateHandler', () => {
       }).run(ctx);
 
       expect(result.outcome).toBe('passed');
+    });
+  });
+
+  describe('failed command log persistence to ctx.artifacts', () => {
+    it('persists stdout and stderr artifacts for failed commands to ctx.artifacts', async () => {
+      const { runValidation, validation } = deps('failed');
+      validation.result = [
+        {
+          command: 'pnpm build',
+          exitCode: 1,
+          durationMs: 1500,
+          stdout: 'Building project...\n',
+          stderr: 'Error: Type error in src/index.ts\n',
+          stdoutPath: 'validate/0-build.stdout.log',
+          stderrPath: 'validate/0-build.stderr.log',
+          outcome: 'failed',
+        },
+      ];
+      const { ctx, artifacts } = makeCtx();
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      const failureJson = await artifacts.read(ctx.runUuid, 'validate/failure.json');
+      expect(failureJson).toContain('1 validation command(s) failed');
+
+      const stdout = await artifacts.read(ctx.runUuid, 'validate/0-build.stdout.log');
+      expect(stdout).toBe('Building project...\n');
+
+      const stderr = await artifacts.read(ctx.runUuid, 'validate/0-build.stderr.log');
+      expect(stderr).toBe('Error: Type error in src/index.ts\n');
+    });
+
+    it('handles results: undefined without throwing (graceful fallback for older runValidation)', async () => {
+      const { ctx, artifacts } = makeCtx();
+      const fakeRunValidation = {
+        execute: async () => ({
+          validationRun: {
+            id: 'vr-1',
+            runId: ctx.runUuid,
+            phaseId: 'validate',
+            startedAt: ctx.now(),
+            completedAt: ctx.now(),
+            commands: [],
+          },
+          passed: false,
+          failure: {
+            runUuid: ctx.runUuid,
+            phase: 'validate',
+            kind: 'validation_failed' as const,
+            message: 'validation failed',
+            canRetry: true,
+            suggestedAction: '',
+            artifacts: [],
+            detectedAt: ctx.now(),
+          },
+          results: undefined,
+        }),
+      } as unknown as RunValidation;
+
+      const result = await new ValidateHandler({
+        runValidation: fakeRunValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      const failureJson = await artifacts.read(ctx.runUuid, 'validate/failure.json');
+      expect(failureJson).toContain('validation failed');
+    });
+
+    it('completes cleanly when an artifact write fails (caught and warn-logged)', async () => {
+      const { runValidation, validation } = deps('failed');
+      validation.result = [
+        {
+          command: 'pnpm build',
+          exitCode: 1,
+          durationMs: 1500,
+          stdout: 'Building project...\n',
+          stderr: 'Error: Type error\n',
+          stdoutPath: 'validate/0-build.stdout.log',
+          stderrPath: 'validate/0-build.stderr.log',
+          outcome: 'failed',
+        },
+      ];
+      const { ctx, artifacts, events } = makeCtx();
+      const origWrite = artifacts.write.bind(artifacts);
+      artifacts.write = vi.fn(async (input) => {
+        if (input.relativePath === 'validate/0-build.stderr.log') {
+          throw new Error('disk full');
+        }
+        return origWrite(input);
+      });
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      // stdout still written
+      const stdout = await artifacts.read(ctx.runUuid, 'validate/0-build.stdout.log');
+      expect(stdout).toBe('Building project...\n');
+
+      // stderr failure warn-logged
+      const warnEvents = events.filter(
+        (e) =>
+          e.type === 'validate.artifact_write_failed' &&
+          e.message?.includes('validate/0-build.stderr.log'),
+      );
+      expect(warnEvents.length).toBeGreaterThan(0);
     });
   });
 });

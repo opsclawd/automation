@@ -10,7 +10,7 @@ import {
 import { normalizeTaskPath } from '../../task-file-boundaries.js';
 import { recordValidationEvidence } from '../validation-evidence.js';
 import { planRevalidation, type WorkspacePackageDescriptor } from '../../revalidation-plan.js';
-import type { ValidationCommand } from '../../ports/validation-port.js';
+import type { ValidationCommand, ValidationCommandResult } from '../../ports/validation-port.js';
 import {
   findUnwiredVitestConfigs,
   formatUnwiredVitestConfigsMessage,
@@ -177,6 +177,7 @@ export class ValidateHandler implements PhaseHandler {
     let passed: boolean;
     let failure: Failure | undefined;
     let validationRunLength: number | undefined;
+    let commandResults: ValidationCommandResult[] = [];
     try {
       const result = await this.opts.runValidation.execute({
         runId: RunId(ctx.runUuid),
@@ -193,6 +194,7 @@ export class ValidateHandler implements PhaseHandler {
       passed = result.passed;
       failure = result.failure;
       validationRunLength = result.validationRun.commands.length;
+      commandResults = result.results ?? [];
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       failure = {
@@ -241,6 +243,33 @@ export class ValidateHandler implements PhaseHandler {
     } catch {
       emit('validate.artifact_write_failed', 'warn', 'failed to write failure.json artifact');
     }
+
+    const failedCommands = commandResults.filter(
+      (r) => r.outcome === 'failed' || r.outcome === 'timed_out' || r.outcome === 'parse_error',
+    );
+    for (const r of failedCommands) {
+      for (const [relativePath, contents] of [
+        [r.stdoutPath, r.stdout],
+        [r.stderrPath, r.stderr],
+      ] as const) {
+        if (!relativePath) continue;
+        try {
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            phaseId: 'validate',
+            relativePath,
+            contents: contents ?? '',
+          });
+        } catch {
+          emit(
+            'validate.artifact_write_failed',
+            'warn',
+            `failed to write ${relativePath} artifact`,
+          );
+        }
+      }
+    }
+
     if (this.opts.fixValidateEnabled) {
       emit('validate.deferred', 'warn', failure.message);
       return { outcome: 'deferred' };

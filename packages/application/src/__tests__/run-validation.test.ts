@@ -349,4 +349,68 @@ describe('RunValidation', () => {
 
     expect(port.lastInput?.validationScope).toBeUndefined();
   });
+
+  it('returns results matching ValidationCommandResult[] with stdout and stderr on a passing run', async () => {
+    const port = new FakeValidationPort();
+    const expectedResults = [
+      {
+        command: 'pnpm build',
+        exitCode: 0,
+        durationMs: 120,
+        stdout: 'Build completed successfully',
+        stderr: '',
+        stdoutPath: 'validate/0-build.stdout.log',
+        stderrPath: 'validate/0-build.stderr.log',
+        outcome: 'passed' as const,
+      },
+    ];
+    port.result = expectedResults;
+    const repo = new FakeValidationRunRepository();
+    const { useCase } = makeUseCase(port, repo);
+
+    const out = await useCase.execute({
+      runId: RUN,
+      phaseId: PhaseName('validate'),
+      cwd: '/work',
+      logDir: '/d',
+      commands: ['pnpm build'],
+      timeoutSeconds: 300,
+    });
+
+    expect(out.passed).toBe(true);
+    expect(out.results).toEqual(expectedResults);
+    expect(out.results?.[0]?.stdout).toBe('Build completed successfully');
+  });
+
+  it('returns results matching ValidationCommandResult[] with stdout and stderr on a failing run', async () => {
+    const port = new FakeValidationPort();
+    const expectedResults = [
+      {
+        command: 'pnpm test',
+        exitCode: 1,
+        durationMs: 450,
+        stdout: 'test 1 passed',
+        stderr: 'AssertionError: expected 1 to be 2',
+        stdoutPath: 'validate/0-test.stdout.log',
+        stderrPath: 'validate/0-test.stderr.log',
+        outcome: 'failed' as const,
+      },
+    ];
+    port.result = expectedResults;
+    const repo = new FakeValidationRunRepository();
+    const { useCase } = makeUseCase(port, repo);
+
+    const out = await useCase.execute({
+      runId: RUN,
+      phaseId: PhaseName('validate'),
+      cwd: '/work',
+      logDir: '/d',
+      commands: ['pnpm test'],
+      timeoutSeconds: 300,
+    });
+
+    expect(out.passed).toBe(false);
+    expect(out.results).toEqual(expectedResults);
+    expect(out.results?.[0]?.stderr).toBe('AssertionError: expected 1 to be 2');
+  });
 });

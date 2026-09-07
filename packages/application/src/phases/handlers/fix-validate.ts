@@ -5,6 +5,7 @@ import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import { recordValidationHeadSha, invalidateValidationEvidence } from '../validation-evidence.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
+import { formatValidationFailures } from './format-validation-failures.js';
 
 export interface FixValidateHandlerOpts {
   runLoop?: (ctx: PhaseHandlerContext) => Promise<{
@@ -65,6 +66,10 @@ export class FixValidateHandler implements PhaseHandler {
       }
     }
 
+    const validationFailures = failureJson
+      ? await formatValidationFailures(failureJson, ctx.artifacts, ctx.runUuid)
+      : 'Deterministic validation failed.';
+
     const runResult = await runSingleShotAgentPhase(ctx, {
       phase: this.phase,
       profile,
@@ -73,7 +78,7 @@ export class FixValidateHandler implements PhaseHandler {
       vars: {
         issue_number: String(ctx.issueNumber),
         cwd: ctx.cwd,
-        validation_failures: failureJson || 'Deterministic validation failed.',
+        validation_failures: validationFailures || 'Deterministic validation failed.',
       },
       agentContract: {
         requiredArtifacts: [],
