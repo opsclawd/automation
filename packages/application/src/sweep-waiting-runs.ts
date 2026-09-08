@@ -4,6 +4,10 @@ import type { EventBusPort } from './ports/event-bus-port.js';
 import type { PrReviewRepositoryPort } from './ports/pr-review-repository-port.js';
 import type { GitHubPort } from './ports/github-port.js';
 import { decideReactivation } from './pr-review/reactivate-on-review.js';
+import {
+  safeDispatchRunNotification,
+  type RunNotificationPort,
+} from './ports/run-notification-port.js';
 
 export interface SweepWaitingRunsDeps {
   runRepository: RunRepositoryPort;
@@ -19,6 +23,7 @@ export interface SweepWaitingRunsDeps {
   resolvePrContext: (
     run: RunRecord,
   ) => Promise<{ repoFullName: string; prNumber: number } | undefined>;
+  runNotification?: RunNotificationPort;
 }
 
 export interface SweepWaitingRunsResult {
@@ -116,6 +121,14 @@ export class SweepWaitingRuns {
                 timestamp: mergedAt.toISOString(),
                 metadata: { reason: 'pr_merged' },
               });
+              if (this.deps.runNotification) {
+                safeDispatchRunNotification(this.deps.runNotification, {
+                  status: 'passed',
+                  repoId: run.repoId,
+                  issueNumber: run.issueNumber,
+                  displayId: run.displayId,
+                });
+              }
               result.passedOnMergedPr++;
             }
           } catch (err) {

@@ -19,6 +19,7 @@ import type {
 } from '../ports.js';
 import { FakeRunRepository as FakeRunRepositoryBase } from '../test-doubles/fake-run-repository.js';
 import { FakeEventBus } from '../test-doubles/fake-event-bus.js';
+import { FakeRunNotification } from '../test-doubles/fake-run-notification.js';
 
 class FakeRunRepository extends FakeRunRepositoryBase {
   inserted: Run[] = [];
@@ -230,6 +231,94 @@ describe('StartIssueRun', () => {
     const patch = repo.finalPatch(out.uuid);
     expect(patch.status).toBe('failed');
     expect(patch.failureReason).toMatch(/3/);
+  });
+
+  it('dispatches notification on passed run when runNotification is provided', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const runNotification = new FakeRunNotification();
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      now: fixedNow,
+      runNotification,
+    });
+    const out = await usecase.execute({ issueNumber: 42, repoId: stableRepoId });
+    expect(out.status).toBe('passed');
+    expect(runNotification.events).toHaveLength(1);
+    expect(runNotification.events[0]).toEqual({
+      status: 'passed',
+      repoId: stableRepoId,
+      issueNumber: 42,
+      displayId: out.displayId,
+    });
+  });
+
+  it('dispatches notification on failed run when runNotification is provided', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 3 });
+    const runNotification = new FakeRunNotification();
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      now: fixedNow,
+      runNotification,
+    });
+    const out = await usecase.execute({ issueNumber: 7, repoId: stableRepoId });
+    expect(out.status).toBe('failed');
+    expect(runNotification.events).toHaveLength(1);
+    expect(runNotification.events[0]?.status).toBe('failed');
+    expect(runNotification.events[0]?.repoId).toBe(stableRepoId);
+    expect(runNotification.events[0]?.issueNumber).toBe(7);
+    expect(runNotification.events[0]?.displayId).toBe(out.displayId);
+  });
+
+  it('dispatches notification when runDirectoryFactory fails', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const runNotification = new FakeRunNotification();
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: () => {
+        throw new Error('EACCES: permission denied creating directory');
+      },
+      runBashScript: fakeBash({ exitCode: 0 }).fn,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      now: fixedNow,
+      runNotification,
+    });
+
+    await expect(usecase.execute({ issueNumber: 99, repoId: stableRepoId })).rejects.toThrow(
+      'EACCES',
+    );
+    expect(runNotification.events).toHaveLength(1);
+    expect(runNotification.events[0]).toEqual({
+      status: 'failed',
+      repoId: stableRepoId,
+      issueNumber: 99,
+      displayId: expect.stringContaining('issue-99-'),
+      failureReason: 'EACCES: permission denied creating directory',
+    });
   });
 
   it('preserves waiting status when poller set it via onAllResolved', async () => {

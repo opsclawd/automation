@@ -18,6 +18,8 @@ import type { PhaseRepositoryPort } from '../../ports/phase-repository-port.js';
 import { RunExecutor } from '../run-executor.js';
 import type { ExecuteRunInput } from '../run-executor.js';
 import { FakePhaseRepository } from '../../test-doubles/fake-phase-repository.js';
+import type { RunNotificationPort } from '../../ports/run-notification-port.js';
+import { FakeRunNotification } from '../../test-doubles/fake-run-notification.js';
 
 const ALL_PHASES = [
   'read_issue',
@@ -101,6 +103,7 @@ function makeDeps(overrides?: {
   registry?: PhaseHandlerRegistry;
   contextFactory?: (run: Run) => PhaseHandlerContext;
   logger?: LoggerPort;
+  runNotification?: RunNotificationPort;
 }) {
   return {
     runRepository: {
@@ -157,6 +160,7 @@ function makeDeps(overrides?: {
       })),
     now: () => fixedNow,
     logger: overrides?.logger,
+    runNotification: overrides?.runNotification,
   };
 }
 
@@ -291,6 +295,162 @@ describe('RunExecutor terminal persistence', () => {
 
       expect(startIdx).toBeGreaterThanOrEqual(0);
       expect(completeIdx).toBeGreaterThan(startIdx);
+    });
+  });
+
+  describe('run notifications on terminal status', () => {
+    it.each(['passed', 'failed', 'blocked', 'needs_human_review'] as const)(
+      'dispatches notification with correct payload on %s terminal outcome',
+      async (outcome) => {
+        const runNotification = new FakeRunNotification();
+        const registry = new PhaseHandlerRegistry();
+
+        if (outcome === 'passed') {
+          registerAllPassed(registry);
+        } else if (outcome === 'failed') {
+          registry.register(makeStubHandler('read_issue', 'failed'));
+        } else if (outcome === 'blocked') {
+          registry.register(makeStubHandler('read_issue', 'blocked'));
+        } else {
+          registry.register(makeStubHandler('read_issue', 'needs_human_review'));
+        }
+
+        const deps = makeDeps({ registry, runNotification });
+        const executor = new RunExecutor(deps);
+        const run = makeRun();
+        const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+
+        const result = await executor.execute(input);
+        expect(result.run.status).toBe(outcome);
+
+        expect(runNotification.events).toHaveLength(1);
+        const event = runNotification.events[0]!;
+        expect(event.status).toBe(outcome);
+        expect(event.repoId).toBe(run.repoId);
+        expect(event.issueNumber).toBe(run.issueNumber);
+        expect(event.displayId).toBe(run.displayId);
+
+        if (outcome === 'passed') {
+          expect(event.failureReason).toBeUndefined();
+        } else {
+          expect(event.failureReason).toBe('handler read_issue failed');
+        }
+      },
+    );
+
+    it('dispatches notification on worktree hydration failure (status=failed)', async () => {
+      const runNotification = new FakeRunNotification();
+      const registry = new PhaseHandlerRegistry();
+      registerAllPassed(registry);
+
+      const deps = makeDeps({
+        registry,
+        runNotification,
+        contextFactory: (_run: Run) => ({
+          runId: 'run-1',
+          runUuid: 'test-uuid',
+          repoFullName: 'acme/widgets',
+          issueNumber: 42,
+          cwd: '/tmp/worktree',
+          artifacts: {
+            read: async () => '',
+            write: async () => ({
+              runId: 'test-uuid',
+              relativePath: '',
+              absolutePath: '',
+              bytes: 0,
+              createdAt: fixedNow,
+            }),
+            list: async () => [],
+            hydrateWorktree: async () => {
+              throw new Error('store connection lost');
+            },
+          },
+          github: {} as never,
+          git: {} as never,
+          agent: {} as never,
+          events: {
+            publish: vi.fn(),
+            subscribe: vi.fn().mockReturnValue(() => {}),
+          },
+          now: () => fixedNow,
+        }),
+      });
+
+      const executor = new RunExecutor(deps);
+      const run = makeRun();
+      const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+
+      const result = await executor.execute(input);
+      expect(result.run.status).toBe('failed');
+
+      expect(runNotification.events).toHaveLength(1);
+      const event = runNotification.events[0]!;
+      expect(event.status).toBe('failed');
+      expect(event.repoId).toBe(run.repoId);
+      expect(event.issueNumber).toBe(run.issueNumber);
+      expect(event.displayId).toBe(run.displayId);
+      expect(event.failureReason).toContain(
+        'failed to hydrate worktree from durable artifacts: store connection lost',
+      );
+    });
+
+    it('handles async rejection from notify without failing the run or propagating to caller', async () => {
+      const runNotification = new FakeRunNotification();
+      runNotification.failWith = new Error('network down');
+      const logger = makeSpyLogger();
+
+      const registry = new PhaseHandlerRegistry();
+      registry.register(makeStubHandler('read_issue', 'failed'));
+
+      const deps = makeDeps({ registry, logger, runNotification });
+      const executor = new RunExecutor(deps);
+      const run = makeRun();
+      const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+
+      const result = await executor.execute(input);
+      expect(result.run.status).toBe('failed');
+
+      // Flush microtasks
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const warnCalls = logger.calls.filter((c) => c.startsWith('warn:run notification failed'));
+      expect(warnCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('handles synchronous throw from notify without failing the run or propagating to caller', async () => {
+      const runNotification = new FakeRunNotification();
+      runNotification.synchronousError = new Error('sync blowup');
+      const logger = makeSpyLogger();
+
+      const registry = new PhaseHandlerRegistry();
+      registerAllPassed(registry);
+
+      const deps = makeDeps({ registry, logger, runNotification });
+      const executor = new RunExecutor(deps);
+      const run = makeRun();
+      const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+
+      const result = await executor.execute(input);
+      expect(result.run.status).toBe('passed');
+
+      const warnCalls = logger.calls.filter((c) =>
+        c.startsWith('warn:run notification threw synchronously'),
+      );
+      expect(warnCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('functions normally when runNotification is undefined (no-op default)', async () => {
+      const registry = new PhaseHandlerRegistry();
+      registerAllPassed(registry);
+
+      const deps = makeDeps({ registry });
+      const executor = new RunExecutor(deps);
+      const run = makeRun();
+      const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+
+      const result = await executor.execute(input);
+      expect(result.run.status).toBe('passed');
     });
   });
 });

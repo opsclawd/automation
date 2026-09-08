@@ -27,3 +27,4 @@ export * from './fake-repository-scheduler-ports.js';
 export * from './fake-worktree-recovery-port.js';
 export * from './fake-operational-recovery-port.js';
 export * from './fake-pr-review-context-source.js';
+export * from './fake-run-notification.js';

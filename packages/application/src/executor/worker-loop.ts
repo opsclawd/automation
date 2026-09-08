@@ -22,6 +22,10 @@ import {
   RepositoryUnavailableError,
   generateJobOwnership,
 } from '@ai-sdlc/domain';
+import {
+  safeDispatchRunNotification,
+  type RunNotificationPort,
+} from '../ports/run-notification-port.js';
 
 export type AbortReason = 'shutdown' | 'user_cancelled' | 'lease_lost' | 'repository_unavailable';
 
@@ -61,6 +65,7 @@ export interface WorkerLoopDeps {
   getQuarantineRoot?(repoId: RepositoryId): string;
   listRunsForRepo?(repoId: RepositoryId): Run[];
   repoAvailability?: RepositoryAvailabilityPort;
+  runNotification?: RunNotificationPort;
   markStopping?: () => void;
   getAbortReason?(): AbortReason | undefined;
 }
@@ -286,6 +291,16 @@ export async function runClaimedJob(
     if (err instanceof RepositoryUnavailableError) {
       deps.repoAvailability?.markUnreachable(deps.repoId, err.cause);
       deps.updateRun(job.runId, { status: 'failed', failureReason: err.cause });
+      const run = deps.findRun(job.runId);
+      if (deps.runNotification) {
+        safeDispatchRunNotification(deps.runNotification, {
+          status: 'failed',
+          repoId: run?.repoId ?? deps.repoId,
+          issueNumber: run?.issueNumber ?? 0,
+          displayId: run?.displayId ?? String(job.runId),
+          failureReason: err.cause,
+        });
+      }
       if (started) {
         try {
           queue.markFailed(ownership, deps.now());

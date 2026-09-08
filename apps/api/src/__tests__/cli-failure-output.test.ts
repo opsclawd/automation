@@ -1,10 +1,10 @@
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram as originalBuildProgram } from '../cli.js';
 import { WorkerScheduler } from '../worker-scheduler.js';
-import { JobQueueRepository } from '@ai-sdlc/infrastructure';
+import { GitWorktreeAdapter, JobQueueRepository } from '@ai-sdlc/infrastructure';
 import { JobId, RepositoryId, RunId, IssueNumber } from '@ai-sdlc/domain';
 
 function buildProgram(opts?: Parameters<typeof originalBuildProgram>[0]) {
@@ -16,6 +16,11 @@ function buildProgram(opts?: Parameters<typeof originalBuildProgram>[0]) {
 }
 
 const tempDirs: string[] = [];
+
+beforeEach(() => {
+  vi.spyOn(GitWorktreeAdapter.prototype, 'seedArtifactExcludes').mockResolvedValue(undefined);
+  vi.spyOn(GitWorktreeAdapter.prototype, 'remoteRef').mockResolvedValue('mock-sha');
+});
 
 afterEach(() => {
   while (tempDirs.length > 0) {

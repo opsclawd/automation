@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SweepOrphanedRuns } from '../sweep-orphaned-runs.js';
 import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
+import { FakeRunNotification } from '../test-doubles/fake-run-notification.js';
 import { canResume, RepositoryId } from '@ai-sdlc/domain';
 import { planRunRecoveryAction, type RunRecord } from '../index.js';
 
@@ -193,5 +194,116 @@ describe('SweepOrphanedRuns', () => {
     expect(result.swept).toBe(1);
     expect(repo.updates).toHaveLength(1);
     expect(repo.updates[0]!.uuid).toBe('o2');
+  });
+
+  it('dispatches notification when an orphaned run is swept to terminal status', () => {
+    const repo = new FakeRunRepository();
+    repo.addRun({
+      uuid: 'orphan-notify',
+      displayId: 'issue-1-20260513-000000',
+      issueNumber: 1,
+      repoId: RepositoryId('org/repo'),
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T18:00:00Z'),
+      pid: 99999,
+    });
+    const fakeNotification = new FakeRunNotification();
+    const isProcessAlive = () => false;
+    const usecase = new SweepOrphanedRuns({
+      runRepository: repo,
+      isProcessAlive,
+      now: fixedNow,
+      runNotification: fakeNotification,
+    });
+
+    const result = usecase.execute();
+    expect(result.swept).toBe(1);
+    expect(fakeNotification.events).toHaveLength(1);
+    expect(fakeNotification.events[0]).toEqual({
+      status: 'failed',
+      repoId: RepositoryId('org/repo'),
+      issueNumber: 1,
+      displayId: 'issue-1-20260513-000000',
+      failureReason: 'orphaned: process 99999 no longer running',
+    });
+  });
+
+  it('dispatches notification with inferred status for blocked or needs_human_review', () => {
+    const repo = new FakeRunRepository();
+    repo.addRun({
+      uuid: 'orphan-review',
+      displayId: 'issue-2-20260513-000000',
+      issueNumber: 2,
+      repoId: RepositoryId('org/repo'),
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T18:00:00Z'),
+      pid: 99999,
+    });
+    const phaseRepo = {
+      listByRun: () => [
+        {
+          id: 'p1',
+          runId: 'orphan-review',
+          phase: 'plan-design',
+          status: 'needs_human_review' as const,
+          startedAt: new Date('2026-05-13T18:05:00Z'),
+          completedAt: new Date('2026-05-13T18:10:00Z'),
+        },
+      ],
+      insert: () => {},
+      update: () => {},
+    };
+    const fakeNotification = new FakeRunNotification();
+    const usecase = new SweepOrphanedRuns({
+      runRepository: repo,
+      phaseRepository: phaseRepo as never,
+      isProcessAlive: () => false,
+      now: fixedNow,
+      runNotification: fakeNotification,
+    });
+
+    const result = usecase.execute();
+    expect(result.swept).toBe(1);
+    expect(fakeNotification.events).toHaveLength(1);
+    expect(fakeNotification.events[0]).toEqual({
+      status: 'needs_human_review',
+      repoId: RepositoryId('org/repo'),
+      issueNumber: 2,
+      displayId: 'issue-2-20260513-000000',
+      failureReason: 'orphaned: process 99999 no longer running',
+    });
+  });
+
+  it('does not dispatch notification when atomicUpdateByUuid fails (CAS mismatch)', () => {
+    const repo = new FakeRunRepository();
+    repo.addRun({
+      uuid: 'orphan-cas-fail',
+      displayId: 'issue-3-20260513-000000',
+      issueNumber: 3,
+      repoId: RepositoryId('org/repo'),
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T18:00:00Z'),
+      pid: 99999,
+    });
+    // Override atomicUpdateByUuid to simulate concurrent update
+    repo.atomicUpdateByUuid = () => false;
+
+    const fakeNotification = new FakeRunNotification();
+    const usecase = new SweepOrphanedRuns({
+      runRepository: repo,
+      isProcessAlive: () => false,
+      now: fixedNow,
+      runNotification: fakeNotification,
+    });
+
+    const result = usecase.execute();
+    expect(result.swept).toBe(0);
+    expect(fakeNotification.events).toHaveLength(0);
   });
 });

@@ -28,6 +28,10 @@ import type {
   RunRepositoryPort,
   TmpDirectoryFactory,
 } from './ports.js';
+import {
+  safeDispatchRunNotification,
+  type RunNotificationPort,
+} from './ports/run-notification-port.js';
 
 export type EventRepositoryFactory = (repoId: RepositoryId) => EventRepositoryPort;
 
@@ -56,6 +60,7 @@ export interface StartIssueRunDeps {
   now?: () => Date;
   logger?: { error: (msg: string, err?: unknown) => void };
   resolveRefSha?: ResolveRefShaFn;
+  runNotification?: RunNotificationPort;
 }
 
 export interface StartIssueRunInput {
@@ -157,6 +162,15 @@ export class StartIssueRun {
         durationMs: 0,
         failureReason,
       });
+      if (this.deps.runNotification) {
+        safeDispatchRunNotification(this.deps.runNotification, {
+          status: 'failed',
+          repoId: run.repoId,
+          issueNumber: run.issueNumber,
+          displayId: run.displayId,
+          failureReason,
+        });
+      }
       throw err;
     }
     let tmpDirHandle: ReturnType<TmpDirectoryFactory>;
@@ -174,6 +188,15 @@ export class StartIssueRun {
         durationMs: 0,
         failureReason,
       });
+      if (this.deps.runNotification) {
+        safeDispatchRunNotification(this.deps.runNotification, {
+          status: 'failed',
+          repoId: run.repoId,
+          issueNumber: run.issueNumber,
+          displayId: run.displayId,
+          failureReason,
+        });
+      }
       throw err;
     }
     const env: Record<string, string> = {
@@ -276,6 +299,15 @@ export class StartIssueRun {
             failureReason: errorMessage,
             durationMs: errorDuration,
           });
+          if (this.deps.runNotification) {
+            safeDispatchRunNotification(this.deps.runNotification, {
+              status: 'failed',
+              repoId: run.repoId,
+              issueNumber: run.issueNumber,
+              displayId: run.displayId,
+              failureReason: errorMessage,
+            });
+          }
           try {
             dir.writeRunJson(failRun(run, errorMessage, completedAt));
           } catch (writeErr) {
@@ -384,6 +416,15 @@ export class StartIssueRun {
             failureReason: failure.message,
             ...(failure.phase ? { currentPhase: failure.phase } : {}),
           });
+          if (this.deps.runNotification) {
+            safeDispatchRunNotification(this.deps.runNotification, {
+              status: 'failed',
+              repoId: run.repoId,
+              issueNumber: run.issueNumber,
+              displayId: run.displayId,
+              failureReason: failure.message,
+            });
+          }
           try {
             dir.writeRunJson(failRun(run, failure.message, completedAt));
           } catch (err) {
@@ -420,6 +461,14 @@ export class StartIssueRun {
             exitCode: exec.exitCode,
             durationMs: exec.durationMs,
           });
+          if (this.deps.runNotification) {
+            safeDispatchRunNotification(this.deps.runNotification, {
+              status: 'passed',
+              repoId: run.repoId,
+              issueNumber: run.issueNumber,
+              displayId: run.displayId,
+            });
+          }
           try {
             dir.writeRunJson(passRun(run, completedAt));
           } catch (err) {

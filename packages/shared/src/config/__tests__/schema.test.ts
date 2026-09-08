@@ -304,3 +304,55 @@ describe('executionPolicy', () => {
     }
   });
 });
+
+describe('notifications config', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: {
+      skip: [],
+      reviewFix: { maxIterations: 5 },
+      implement: { maxIterations: 1 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
+
+  it('defaults notifications to {} when omitted', () => {
+    const parsed = orchestratorConfigSchema.parse(baseConfig);
+    expect(parsed.notifications).toEqual({});
+    expect(parsed.notifications?.runWebhookUrl).toBeUndefined();
+  });
+
+  it('accepts a valid runWebhookUrl', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      notifications: {
+        runWebhookUrl: 'https://ntfy.sh/my-topic',
+      },
+    });
+    expect(parsed.notifications.runWebhookUrl).toBe('https://ntfy.sh/my-topic');
+  });
+
+  it('rejects invalid runWebhookUrl values that are not URLs', () => {
+    const invalidUrls = ['not-a-url', 'http://', '://bad', ''];
+    for (const val of invalidUrls) {
+      const result = orchestratorConfigSchema.safeParse({
+        ...baseConfig,
+        notifications: {
+          runWebhookUrl: val,
+        },
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it('preserves strictObject behavior and rejects unknown root properties', () => {
+    const result = orchestratorConfigSchema.safeParse({
+      ...baseConfig,
+      notifications: {
+        runWebhookUrl: 'https://ntfy.sh/my-topic',
+      },
+      unknownProperty: true,
+    });
+    expect(result.success).toBe(false);
+  });
+});

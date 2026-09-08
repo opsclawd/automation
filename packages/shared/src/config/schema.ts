@@ -479,6 +479,11 @@ export const orchestratorConfigSchema = z
         scopeContractEnforcement: z.boolean().default(true),
       })
       .default({}),
+    notifications: z
+      .object({
+        runWebhookUrl: z.string().url().optional(),
+      })
+      .default({}),
     scheduler: schedulerConfigSchema,
   })
   .superRefine((config, ctx) => {

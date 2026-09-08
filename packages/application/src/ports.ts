@@ -333,3 +333,13 @@ export type {
   RevertScopeFilesPort,
 } from './ports/revert-scope-files-port.js';
 export type { DeleteWorktreeFilePort } from './ports/delete-worktree-file-port.js';
+export type {
+  RunNotificationPort,
+  RunTerminalNotification,
+  RunTerminalStatus,
+} from './ports/run-notification-port.js';
+export {
+  safeDispatchRunNotification,
+  DEFAULT_NOTIFICATION_TIMEOUT_MS,
+  DEFAULT_DRAIN_TIMEOUT_MS,
+} from './ports/run-notification-port.js';

@@ -41,6 +41,10 @@ import type {
 import type { EventRepositoryPort } from '../ports/event-repository-port.js';
 import type { StepRepositoryPort } from '../ports/step-repository-port.js';
 import {
+  safeDispatchRunNotification,
+  type RunNotificationPort,
+} from '../ports/run-notification-port.js';
+import {
   orchestratorExcludePatterns,
   uncommittedSourcePaths,
   unquoteGitPath,
@@ -68,6 +72,7 @@ export interface RunExecutorDeps {
   worktreeLifecycle?: WorktreeLifecyclePort;
   eventRepository?: EventRepositoryPort;
   stepRepository?: StepRepositoryPort;
+  runNotification?: RunNotificationPort;
   reviewConvergenceMaxIterations?: number;
 }
 
@@ -1711,7 +1716,7 @@ export class RunExecutor {
 
   private passRun(currentRun: Run, now: () => Date, phases: PhaseRecord[]): ExecuteRunOutput {
     const finalRun = passRun(currentRun, now());
-    this.terminalStatusWrite(currentRun.uuid, 'passed', {
+    this.terminalStatusWrite(currentRun, 'passed', {
       status: 'passed',
       currentPhase: null,
       completedAt: now(),
@@ -1758,7 +1763,7 @@ export class RunExecutor {
     }
     this.deps.failureRepository.insert(failure);
     this.terminalStatusWrite(
-      run.uuid,
+      run,
       'failed',
       {
         status: 'failed',
@@ -1815,7 +1820,7 @@ export class RunExecutor {
     this.deps.phaseRepository.update(phase);
     this.deps.failureRepository.insert(failure);
     this.terminalStatusWrite(
-      run.uuid,
+      run,
       'blocked',
       {
         status: 'blocked',
@@ -1889,7 +1894,7 @@ export class RunExecutor {
     }
     this.deps.failureRepository.insert(failure);
     this.terminalStatusWrite(
-      run.uuid,
+      run,
       'needs_human_review',
       {
         status: 'needs_human_review',
@@ -1979,7 +1984,7 @@ export class RunExecutor {
     };
     const run = failRun(currentRun, failure.message, at);
     this.deps.failureRepository.insert(failure);
-    this.terminalStatusWrite(run.uuid, 'failed', {
+    this.terminalStatusWrite(run, 'failed', {
       status: 'failed',
       currentPhase: null,
       completedAt: at,
@@ -2023,7 +2028,7 @@ export class RunExecutor {
   }
 
   private terminalStatusWrite(
-    runUuid: string,
+    run: Run,
     status: 'passed' | 'failed' | 'blocked' | 'needs_human_review',
     patch: {
       status: 'passed' | 'failed' | 'blocked' | 'needs_human_review';
@@ -2036,16 +2041,27 @@ export class RunExecutor {
     const operationName = `terminal status write`;
     this.deps.logger?.debug(
       `${operationName} starting`,
-      `runUuid=${runUuid}`,
+      `runUuid=${run.uuid}`,
       `status=${status}`,
       phase !== undefined ? `phase=${phase}` : 'phase=final',
     );
-    this.deps.runRepository.update(runUuid, patch);
+    this.deps.runRepository.update(run.uuid, patch);
     this.deps.logger?.debug(
       `${operationName} completed`,
-      `runUuid=${runUuid}`,
+      `runUuid=${run.uuid}`,
       `status=${status}`,
       phase !== undefined ? `phase=${phase}` : 'phase=final',
+    );
+    safeDispatchRunNotification(
+      this.deps.runNotification,
+      {
+        status,
+        repoId: run.repoId,
+        issueNumber: run.issueNumber,
+        displayId: run.displayId,
+        ...(patch.failureReason ? { failureReason: patch.failureReason } : {}),
+      },
+      this.deps.logger,
     );
   }
 
