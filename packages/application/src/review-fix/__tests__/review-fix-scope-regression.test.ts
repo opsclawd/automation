@@ -18,6 +18,7 @@ import {
   normalizeRepositoryPath,
   deriveAllowedFiles,
   assessChangedFiles,
+  formatScopeWarning,
 } from '../review-fix-scope.js';
 
 function collectEvents() {
@@ -470,5 +471,69 @@ describe('ReviewFixLoop scope regression proof', () => {
         type: 'review_fix.commit_message_amend_failed',
       }),
     );
+  });
+
+  describe('formatScopeWarning carve-out behavior', () => {
+    const assessment = {
+      allowedFiles: ['src/handler.ts'],
+      changedFiles: ['src/handler.ts', 'src/whisperx.ts', 'src/unrelated.ts'],
+      outOfScopeFiles: [
+        { path: 'src/unrelated.ts', reason: 'No justification provided by fixer.' },
+        { path: 'src/whisperx.ts', reason: 'Fixed spawnSync timeout for test' },
+      ],
+    };
+
+    it('produces byte-identical output when no files are critical (regression guard)', () => {
+      const outputWithoutSet = formatScopeWarning(assessment);
+      const outputWithEmptySet = formatScopeWarning(assessment, new Set());
+      const expected = [
+        'Warning: The previous fix attempt modified files outside the scope of the reported findings.',
+        'The reviewer should accept legitimate adjacent changes (such as tests or call sites) but raise a high-severity finding for unrelated edits.',
+        '',
+        'Out-of-scope modified files:',
+        '- src/unrelated.ts: No justification provided by fixer.',
+        '- src/whisperx.ts: Fixed spawnSync timeout for test',
+      ].join('\n');
+
+      expect(outputWithoutSet).toBe(expected);
+      expect(outputWithEmptySet).toBe(expected);
+    });
+
+    it('renders single carve-out block without generic high-severity finding when all files are critical', () => {
+      const allCritical = new Set(['src/unrelated.ts', 'src/whisperx.ts']);
+      const output = formatScopeWarning(assessment, allCritical);
+
+      expect(output).not.toContain('raise a high-severity finding for unrelated edits');
+      expect(output).toContain('Validation-critical modified files:');
+      expect(output).toContain('- src/unrelated.ts: No justification provided by fixer.');
+      expect(output).toContain('- src/whisperx.ts: Fixed spawnSync timeout for test');
+      expect(output).toContain('Do not instruct reverting them.');
+    });
+
+    it('renders both blocks listing only their own files when out-of-scope files are mixed', () => {
+      const criticalSet = new Set(['src/whisperx.ts']);
+      const output = formatScopeWarning(assessment, criticalSet);
+
+      // Critical block
+      expect(output).toContain('Validation-critical modified files:');
+      expect(output).toContain('- src/whisperx.ts: Fixed spawnSync timeout for test');
+
+      // Uncritical block
+      expect(output).toContain('Out-of-scope modified files:');
+      expect(output).toContain('- src/unrelated.ts: No justification provided by fixer.');
+      expect(output).toContain('raise a high-severity finding for unrelated edits');
+
+      // Uncritical block should NOT list whisperx.ts
+      const uncriticalSection = output.split('Out-of-scope modified files:')[1];
+      expect(uncriticalSection).toContain('src/unrelated.ts');
+      expect(uncriticalSection).not.toContain('src/whisperx.ts');
+
+      // Critical block should NOT list unrelated.ts
+      const criticalSection = output
+        .split('Validation-critical modified files:')[1]
+        .split('Warning:')[0];
+      expect(criticalSection).toContain('src/whisperx.ts');
+      expect(criticalSection).not.toContain('src/unrelated.ts');
+    });
   });
 });

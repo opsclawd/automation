@@ -21,6 +21,10 @@ import {
   type WholeChangeVerdictOutcome,
   type NarrowVerificationVerdictOutcome,
 } from '../../review-fix/read-verdicts.js';
+import {
+  formatValidationCriticalFilesWarning,
+  type ValidationCriticalFile,
+} from '../../review-fix/validation-critical-files.js';
 
 export interface ReviewFixHandlerOpts {
   /** Runs the legacy ReviewFixLoop and returns its terminal phase outcome.
@@ -341,6 +345,17 @@ export class ReviewFixHandler implements PhaseHandler {
       }
     }
 
+    // Read validation-critical files if recorded by fix-validate
+    let criticalFiles: ValidationCriticalFile[] = [];
+    try {
+      const raw = await ctx.artifacts.read(ctx.runUuid, 'validate/critical-files.json');
+      const parsed = JSON.parse(raw);
+      criticalFiles = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      criticalFiles = [];
+    }
+    const validationCriticalWarning = formatValidationCriticalFilesWarning(criticalFiles);
+
     // Run fixer agent invocation
     const fixRunResult = await runSingleShotAgentPhase(ctx, {
       phase: this.phase,
@@ -351,6 +366,7 @@ export class ReviewFixHandler implements PhaseHandler {
         issue_number: String(ctx.issueNumber),
         cwd: ctx.cwd,
         review_findings: formattedFindings,
+        validation_critical_files: validationCriticalWarning,
       },
       agentContract: {
         requiredArtifacts: [],

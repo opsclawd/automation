@@ -1,11 +1,15 @@
 import { PhaseName, AgentProfileName, type Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
-import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
+import { ArtifactNotFoundError, type ArtifactStore } from '../../ports/artifact-store.js';
 import { recordValidationHeadSha, invalidateValidationEvidence } from '../validation-evidence.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import { formatValidationFailures } from './format-validation-failures.js';
+import {
+  parseStatusPaths,
+  recordValidationCriticalFilesFromWorktree,
+} from '../../review-fix/validation-critical-files.js';
 
 export interface FixValidateHandlerOpts {
   runLoop?: (ctx: PhaseHandlerContext) => Promise<{
@@ -28,6 +32,117 @@ export class FixValidateHandler implements PhaseHandler {
     return this.runLegacy(ctx);
   }
 
+  private async snapshotDirtyBefore(
+    ctx: PhaseHandlerContext,
+  ): Promise<Map<string, string | undefined>> {
+    const dirtyBefore = new Map<string, string | undefined>();
+    if (!ctx.git) {
+      return dirtyBefore;
+    }
+    try {
+      const statusOutput = await ctx.git.status(ctx.cwd);
+      const dirtyPaths = parseStatusPaths(statusOutput, ctx.cwd);
+      for (const p of dirtyPaths) {
+        try {
+          const content = await ctx.git.worktreeFileContent(ctx.cwd, p);
+          dirtyBefore.set(p, content);
+        } catch {
+          dirtyBefore.set(p, undefined);
+        }
+      }
+    } catch {
+      // best-effort snapshot
+    }
+    return dirtyBefore;
+  }
+
+  private async extractValidationDiagnostic(
+    artifacts: ArtifactStore,
+    runUuid: string,
+    failureJson: string,
+    validationFailures: string,
+  ): Promise<string> {
+    try {
+      const raw = await artifacts.read(runUuid, 'validate/validation-result.json');
+      const parsed = JSON.parse(raw);
+      const commands = Array.isArray(parsed?.commands) ? parsed.commands : [];
+      const failed = commands
+        .filter(
+          (c: { outcome?: string; command?: string }) =>
+            c.outcome === 'failed' || c.outcome === 'timed_out' || c.outcome === 'parse_error',
+        )
+        .map((c: { command?: string }) => (typeof c.command === 'string' ? c.command.trim() : ''))
+        .filter(Boolean);
+      if (failed.length > 0) {
+        return failed.join(', ').slice(0, 200);
+      }
+    } catch {
+      // validate/validation-result.json not available
+    }
+
+    if (failureJson) {
+      try {
+        const parsed = JSON.parse(failureJson);
+        if (typeof parsed?.message === 'string' && parsed.message.trim()) {
+          const firstLine = parsed.message.split('\n')[0]!.trim();
+          if (firstLine) {
+            return firstLine.slice(0, 200);
+          }
+        }
+      } catch {
+        // parse error
+      }
+    }
+
+    return (validationFailures.split('\n')[0] || 'Deterministic validation failed.').slice(0, 200);
+  }
+
+  private async recordAndPersistCriticalFiles(
+    ctx: PhaseHandlerContext,
+    dirtyBefore: Map<string, string | undefined>,
+    diagnostic: string,
+  ): Promise<void> {
+    if (!ctx.git) {
+      return;
+    }
+    try {
+      const criticalFiles = await recordValidationCriticalFilesFromWorktree({
+        git: ctx.git,
+        cwd: ctx.cwd,
+        dirtyBefore,
+        diagnostic,
+      });
+
+      if (criticalFiles.length > 0) {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: this.phase,
+          relativePath: 'validate/critical-files.json',
+          contents: JSON.stringify(criticalFiles, null, 2),
+        });
+      } else {
+        // Ensure an empty current result cannot leave a stale prior artifact visible
+        try {
+          await ctx.artifacts.read(ctx.runUuid, 'validate/critical-files.json');
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            phaseId: this.phase,
+            relativePath: 'validate/critical-files.json',
+            contents: JSON.stringify([], null, 2),
+          });
+        } catch {
+          // No prior artifact to clear, skip write
+        }
+      }
+    } catch (err: unknown) {
+      createEventEmitter(ctx, this.phase)(
+        'fix_validate.critical_files_recording_failed',
+        'warn',
+        `failed to record validation-critical files: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   private async runLean(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
 
@@ -48,6 +163,9 @@ export class FixValidateHandler implements PhaseHandler {
 
     // Invalidate prior validation evidence before the repair Agent Invocation starts
     await invalidateValidationEvidence(ctx, this.phase);
+
+    // Snapshot dirty files before repair attempt
+    const dirtyBefore = await this.snapshotDirtyBefore(ctx);
 
     const profile =
       ctx.resolveProfile?.('fix-validate') ??
@@ -105,6 +223,15 @@ export class FixValidateHandler implements PhaseHandler {
       };
     }
 
+    // Capture validation-critical files changed during this fix attempt and persist before completed event
+    const diagnostic = await this.extractValidationDiagnostic(
+      ctx.artifacts,
+      ctx.runUuid,
+      failureJson,
+      validationFailures,
+    );
+    await this.recordAndPersistCriticalFiles(ctx, dirtyBefore, diagnostic);
+
     emit('fix_validate.completed', 'info', 'fix-validate repair attempt completed', {
       policy: ctx.executionPolicy,
     });
@@ -114,8 +241,9 @@ export class FixValidateHandler implements PhaseHandler {
   private async runLegacy(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
 
+    let failureJson = '';
     try {
-      await ctx.artifacts.read(ctx.runUuid, 'validate/failure.json');
+      failureJson = await ctx.artifacts.read(ctx.runUuid, 'validate/failure.json');
     } catch (e) {
       if (e instanceof ArtifactNotFoundError) {
         emit('fix_validate.skipped', 'info', 'fix-validate skipped — validation already passed');
@@ -125,9 +253,18 @@ export class FixValidateHandler implements PhaseHandler {
 
     emit('fix_validate.started', 'info', 'fix-validate started');
 
+    const dirtyBefore = await this.snapshotDirtyBefore(ctx);
+
     try {
       const result = await this.opts.runLoop!(ctx);
       if (result.phaseOutcome === 'passed') {
+        const diagnostic = await this.extractValidationDiagnostic(
+          ctx.artifacts,
+          ctx.runUuid,
+          failureJson,
+          'Deterministic validation failed.',
+        );
+        await this.recordAndPersistCriticalFiles(ctx, dirtyBefore, diagnostic);
         await recordValidationHeadSha(ctx, 'fix-validate');
         emit('fix_validate.completed', 'info', 'fix-validate converged');
         return { outcome: 'passed' };

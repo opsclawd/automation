@@ -633,4 +633,139 @@ describe('ValidateHandler -> FixValidateHandler end-to-end integration', () => {
       'FfmpegAssemblyError: Process execution timed out after 120000ms: ffmpeg',
     );
   });
+
+  describe('validation-critical files tracking', () => {
+    it('records validation-critical files into validate/critical-files.json when agent modifies files to fix validation', async () => {
+      const { ctx, artifacts, git } = await setupLeanCtx({
+        failure: {
+          phase: 'validate',
+          message: 'pnpm test:whisperx timed out',
+        },
+      });
+
+      git.fileContentResults.set('HEAD:packages/api/src/whisperx.ts', 'timeout=10');
+      git.statusByCwd.set('/tmp/wt', '');
+
+      const fakeAgent = (ctx as { agent: unknown }).agent as { invoke: () => Promise<unknown> };
+      const origInvoke = fakeAgent.invoke;
+      fakeAgent.invoke = async () => {
+        git.worktreeFileContents.set('packages/api/src/whisperx.ts', 'timeout=120');
+        git.statusByCwd.set('/tmp/wt', ' M packages/api/src/whisperx.ts\n');
+        return origInvoke();
+      };
+
+      const handler = new FixValidateHandler();
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      const criticalRaw = await artifacts.read(RUN_UUID, 'validate/critical-files.json');
+      const critical = JSON.parse(criticalRaw);
+      expect(critical).toHaveLength(1);
+      expect(critical[0]).toEqual(
+        expect.objectContaining({
+          path: 'packages/api/src/whisperx.ts',
+          diagnostic: 'pnpm test:whisperx timed out',
+        }),
+      );
+    });
+
+    it('extracts command name from validate/validation-result.json for validation diagnostic', async () => {
+      const { ctx, artifacts, git } = await setupLeanCtx({
+        failure: {
+          phase: 'validate',
+          message: 'generic validation failure',
+        },
+        artifacts: [
+          {
+            path: 'validate/validation-result.json',
+            contents: JSON.stringify({
+              commands: [
+                { command: 'pnpm test:unit', outcome: 'passed' },
+                { command: 'pnpm test:e2e', outcome: 'failed' },
+              ],
+            }),
+          },
+        ],
+      });
+
+      git.fileContentResults.set('HEAD:packages/api/src/whisperx.ts', 'timeout=10');
+      git.statusByCwd.set('/tmp/wt', '');
+
+      const fakeAgent = (ctx as { agent: unknown }).agent as { invoke: () => Promise<unknown> };
+      const origInvoke = fakeAgent.invoke;
+      fakeAgent.invoke = async () => {
+        git.worktreeFileContents.set('packages/api/src/whisperx.ts', 'timeout=120');
+        git.statusByCwd.set('/tmp/wt', ' M packages/api/src/whisperx.ts\n');
+        return origInvoke();
+      };
+
+      const handler = new FixValidateHandler();
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      const criticalRaw = await artifacts.read(RUN_UUID, 'validate/critical-files.json');
+      const critical = JSON.parse(criticalRaw);
+      expect(critical).toHaveLength(1);
+      expect(critical[0].diagnostic).toBe('pnpm test:e2e');
+    });
+
+    it('overwrites previous validate/critical-files.json with empty array when no files are critical', async () => {
+      const { ctx, artifacts, git } = await setupLeanCtx({
+        failure: {
+          phase: 'validate',
+          message: 'flaky test passed on rerun',
+        },
+      });
+
+      // Seed previous critical files
+      await artifacts.write({
+        runId: RUN_UUID,
+        phaseId: 'fix-validate',
+        relativePath: 'validate/critical-files.json',
+        contents: JSON.stringify([
+          {
+            path: 'packages/api/src/old.ts',
+            beforeHash: 'old-before',
+            afterHash: 'old-after',
+            diagnostic: 'old error',
+          },
+        ]),
+      });
+
+      git.statusByCwd.set('/tmp/wt', '');
+
+      const handler = new FixValidateHandler();
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      const criticalRaw = await artifacts.read(RUN_UUID, 'validate/critical-files.json');
+      const critical = JSON.parse(criticalRaw);
+      expect(critical).toEqual([]);
+    });
+
+    it('records validation-critical files in legacy execution policy mode', async () => {
+      const { ctx, artifacts } = makeCtx({ withFailureJson: true });
+      const git = new FakeGitPort();
+      ctx.git = git;
+      ctx.executionPolicy = 'legacy';
+      git.fileContentResults.set('HEAD:packages/api/src/whisperx.ts', 'timeout=10');
+      git.statusByCwd.set('/tmp/wt', '');
+
+      const runLoop = vi.fn(async () => {
+        git.worktreeFileContents.set('packages/api/src/whisperx.ts', 'timeout=120');
+        git.statusByCwd.set('/tmp/wt', ' M packages/api/src/whisperx.ts\n');
+        return { phaseOutcome: 'passed' as const, loopStatus: 'converged' as const };
+      });
+
+      const handler = new FixValidateHandler({ runLoop });
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(runLoop).toHaveBeenCalled();
+      const criticalRaw = await artifacts.read(RUN_UUID, 'validate/critical-files.json');
+      const critical = JSON.parse(criticalRaw);
+      expect(critical).toHaveLength(1);
+      expect(critical[0].path).toBe('packages/api/src/whisperx.ts');
+    });
+  });
 });
