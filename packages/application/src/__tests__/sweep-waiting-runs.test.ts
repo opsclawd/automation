@@ -5,6 +5,7 @@ import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
 import { FakePrReviewRepository } from '../test-doubles/fake-pr-review-repository.js';
 import { FakeGitHubPort } from '../test-doubles/fake-github-port.js';
 import { FakeEventBus } from '../test-doubles/fake-event-bus.js';
+import { FakeRunNotification } from '../test-doubles/fake-run-notification.js';
 
 function makeWaitingRun(uuid: string, completedAt: Date, prNumber = 7) {
   const run = createRun({
@@ -144,8 +145,9 @@ describe('SweepWaitingRuns', () => {
     );
   });
 
-  it('passes a run when the PR is already merged', async () => {
-    const { deps, runRepo, github, eventBus } = makeDeps();
+  it('passes a run when the PR is already merged and dispatches notification', async () => {
+    const fakeNotification = new FakeRunNotification();
+    const { deps, runRepo, github, eventBus } = makeDeps({ runNotification: fakeNotification });
     const run = makeWaitingRun('w4', new Date('2026-06-04T00:30:00Z'));
     runRepo.addRun(run);
     github.prs.set('owner/repo/7', {
@@ -160,6 +162,32 @@ describe('SweepWaitingRuns', () => {
     expect(result.skipped).toBe(0);
     expect(runRepo.findByUuid('w4')?.status).toBe('passed');
     expect(eventBus.published.some((e) => e.event.type === 'post-pr-review.run.passed')).toBe(true);
+    expect(fakeNotification.events).toHaveLength(1);
+    expect(fakeNotification.events[0]).toEqual({
+      status: 'passed',
+      repoId: run.repoId,
+      issueNumber: run.issueNumber,
+      displayId: run.displayId,
+    });
+  });
+
+  it('does not dispatch notification when atomic CAS update returns false on merged PR', async () => {
+    const fakeNotification = new FakeRunNotification();
+    const { deps, runRepo, github } = makeDeps({ runNotification: fakeNotification });
+    const run = makeWaitingRun('w4-cas', new Date('2026-06-04T00:30:00Z'));
+    runRepo.addRun(run);
+    github.prs.set('owner/repo/7', {
+      number: 7,
+      url: 'https://example/pr/7',
+      state: 'merged',
+      headRefName: 'ai/issue-7',
+    });
+    // Simulate CAS failure (e.g. concurrent transition)
+    runRepo.atomicUpdateByUuid = () => false;
+    const sweep = new SweepWaitingRuns(deps);
+    const result = await sweep.execute();
+    expect(result.passedOnMergedPr).toBe(0);
+    expect(fakeNotification.events).toHaveLength(0);
   });
 
   it('cancels a run when the PR is closed (not merged)', async () => {

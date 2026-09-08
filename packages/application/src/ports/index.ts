@@ -168,3 +168,13 @@ export type {
   ExecuteWorktreeLifecyclePlanInput,
   WorktreeLifecycleExecutionResult,
 } from './worktree-lifecycle-port.js';
+export type {
+  RunNotificationPort,
+  RunTerminalNotification,
+  RunTerminalStatus,
+} from './run-notification-port.js';
+export {
+  safeDispatchRunNotification,
+  DEFAULT_NOTIFICATION_TIMEOUT_MS,
+  DEFAULT_DRAIN_TIMEOUT_MS,
+} from './run-notification-port.js';

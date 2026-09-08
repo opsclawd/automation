@@ -56,6 +56,8 @@ import {
   createPrReviewContextSource,
   revertScopeFiles,
   WorktreeLifecycleAdapter,
+  WebhookRunNotificationAdapter,
+  NoopRunNotificationAdapter,
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
@@ -109,6 +111,7 @@ import {
   readFixVerdict,
   PhaseHandlerRegistry,
   RunExecutor,
+  type RunNotificationPort,
   type WorkerLoopDeps,
   type WorkerRegistryPort,
   ArtifactNotFoundError,
@@ -867,6 +870,7 @@ export interface Container {
   phaseRegistry: PhaseHandlerRegistry;
   executionPolicy: ExecutionPolicy;
   runExecutor?: RunExecutor;
+  runNotification?: RunNotificationPort;
   reapOrphanedTestWorkers: ReapOrphanedTestWorkers;
   eventRepository: EventRepository;
   artifactRepository: ArtifactRepository;
@@ -965,6 +969,14 @@ export interface Container {
   refreshRepository: RefreshRepository;
   removeRepository: RemoveRepository;
   runtimeCatalog: RepositoryRuntimeCatalog;
+  /**
+   * Promise that completes when startup recovery sweeps finish.
+   * Awaited by CLI exit handlers before draining notifications to ensure
+   * any terminal notifications triggered by offline merged PRs are registered.
+   */
+  startupSweepPromise?: Promise<unknown> | undefined;
+  drainStartupSweeps?: (timeoutMs?: number) => Promise<void>;
+  trackStartupSweep?: (promise: Promise<unknown>) => void;
 }
 
 export interface ComposeOptions {
@@ -2559,12 +2571,51 @@ export function composeRoot(opts: ComposeOptions): Container {
   const workerLeaseRepository = new WorkerLeaseRepository(db);
   const jobQueue: JobQueuePort = new JobQueueRepository(db, registryBackedRepo);
 
+  const logger: {
+    debug: (message: string, ...args: unknown[]) => void;
+    info: (message: string, ...args: unknown[]) => void;
+    warn: (message: string, ...args: unknown[]) => void;
+    error: (message: string, ...args: unknown[]) => void;
+  } = {
+    // eslint-disable-next-line no-console
+    debug: (msg, ...args) => console.debug(msg, ...args),
+    // eslint-disable-next-line no-console
+    info: (msg, ...args) => console.info(msg, ...args),
+    warn: (msg, ...args) => console.warn(msg, ...args),
+    error: (msg, ...args) => console.error(msg, ...args),
+  };
+
+  let runWebhookUrl: string | undefined;
+  try {
+    const cacheKey = `${effectiveRepoRoot}|${effectiveTargetRepoRoot ?? ''}`;
+    let cachedLayered = layeredConfigCache.get(cacheKey);
+    if (!cachedLayered) {
+      cachedLayered = loadLayeredConfig({
+        automationRoot: effectiveRepoRoot,
+        ...(effectiveTargetRepoRoot !== undefined ? { targetRoot: effectiveTargetRepoRoot } : {}),
+      });
+      layeredConfigCache.set(cacheKey, cachedLayered);
+    }
+    runWebhookUrl = cachedLayered.config.notifications?.runWebhookUrl;
+  } catch {
+    // Fallback if config absent or invalid
+  }
+
+  const runNotification: RunNotificationPort = runWebhookUrl
+    ? new WebhookRunNotificationAdapter(runWebhookUrl, logger)
+    : new NoopRunNotificationAdapter();
+
+  let startupSweepPromise: Promise<unknown> | undefined;
+
   if (opts.runStartupSweeps !== false) {
+    let orphanRecoveryPromise: Promise<unknown> | undefined;
     // Sweep orphaned runs before any new run starts
     const sweep = new SweepOrphanedRuns({
       runRepository,
       phaseRepository,
       isProcessAlive: checkPid,
+      runNotification,
+      logger: sweepLogger,
     });
     const sweepResult = sweep.execute();
     if (sweepResult.swept > 0) {
@@ -2582,7 +2633,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           now: () => new Date(),
           logger: sweepLogger,
         });
-        orphanSweeper
+        orphanRecoveryPromise = orphanSweeper
           .execute(sweepResult.orphanedRuns)
           .then((orphanResult) => {
             if (
@@ -2637,6 +2688,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       eventBus: persistingEventBus,
       now: () => new Date(),
       readyMaxDays,
+      runNotification,
       applyReactivation: (run: RunRecord, decision: { action: string; reason: string }) => {
         applyReactivation(run as never, decision as never, {
           runRepository,
@@ -2646,7 +2698,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       },
       resolvePrContext: async (run: RunRecord) => resolvePrContextForRun(run),
     });
-    waitingSweep.execute().then(
+    const waitingSweepPromise = waitingSweep.execute().then(
       (waitingResult) => {
         if (
           waitingResult.reactivated > 0 ||
@@ -2664,6 +2716,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         console.error('Reactivation sweep error:', err);
       },
     );
+
+    startupSweepPromise = orphanRecoveryPromise
+      ? Promise.all([waitingSweepPromise, orphanRecoveryPromise])
+      : waitingSweepPromise;
   }
 
   const failureRepository = new FailureRepository(db);
@@ -2707,6 +2763,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     baseTmpDir,
     tmpDirectoryFactory,
     repositoryPort: registryBackedRepo,
+    runNotification,
   };
   if (opts.baseBranch !== undefined) deps.baseBranch = opts.baseBranch;
   if (opts.model !== undefined) deps.model = opts.model;
@@ -2721,19 +2778,6 @@ export function composeRoot(opts: ComposeOptions): Container {
   }) satisfies ResolveRefShaFn;
   const startIssueRun = new StartIssueRun(deps);
   const checkMergeReadiness = new CheckMergeReadiness({ prReviewRepo: prReviewRepository });
-  const logger: {
-    debug: (message: string, ...args: unknown[]) => void;
-    info: (message: string, ...args: unknown[]) => void;
-    warn: (message: string, ...args: unknown[]) => void;
-    error: (message: string, ...args: unknown[]) => void;
-  } = {
-    // eslint-disable-next-line no-console
-    debug: (msg, ...args) => console.debug(msg, ...args),
-    // eslint-disable-next-line no-console
-    info: (msg, ...args) => console.info(msg, ...args),
-    warn: (msg, ...args) => console.warn(msg, ...args),
-    error: (msg, ...args) => console.error(msg, ...args),
-  };
 
   const abortRegistry = new AbortRegistry();
   const gitAdapter = new GitWorktreeAdapter(orchestratorExcludePatterns());
@@ -6913,6 +6957,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         worktreeLifecycle: worktreeLifecycleAdapter,
         eventRepository,
         stepRepository,
+        runNotification,
         reviewConvergenceMaxIterations: config.phases.reviewConvergence?.maxIterations ?? 4,
       });
     }
@@ -6964,6 +7009,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventBus: persistingEventBus,
         now: () => new Date(),
         readyMaxDays,
+        runNotification,
         applyReactivation: (run: RunRecord, decision: { action: string; reason: string }) => {
           // Defer database updates only for a genuine reactivation (new review
           // activity) — Task 3's enqueued job drives that via the worker loop.
@@ -7017,6 +7063,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           leases: workerLeaseRepository,
           repos: registryBackedRepo,
           repoId,
+          runNotification,
           executeRun: async ({ run, signal, resumeDisposition }) => {
             runRepository.update(run.uuid, { pid: process.pid });
             const controller = new AbortController();
@@ -7721,6 +7768,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 eventBus: persistingEventBus,
                 now: () => new Date(),
                 readyMaxDays,
+                runNotification,
                 applyReactivation: (
                   run: RunRecord,
                   decision: { action: string; reason: string },
@@ -7762,6 +7810,8 @@ export function composeRoot(opts: ComposeOptions): Container {
               phaseRepository: runtime.phaseRepository,
               isProcessAlive: checkPid,
               now: () => new Date(),
+              runNotification,
+              logger: sweepLogger,
             }).execute();
 
             entry.orphaned = await orphanedRunsSweeper.execute(orphanScan.orphanedRuns);
@@ -7871,6 +7921,11 @@ export function composeRoot(opts: ComposeOptions): Container {
     };
   }
 
+  const trackedStartupSweeps: Promise<unknown>[] = [];
+  if (startupSweepPromise !== undefined) {
+    trackedStartupSweeps.push(startupSweepPromise);
+  }
+
   return {
     runRepository,
     phaseRepository,
@@ -7878,6 +7933,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     executionPolicy,
     reapOrphanedTestWorkers,
     ...(runExecutor !== undefined ? { runExecutor } : {}),
+    ...(runNotification !== undefined ? { runNotification } : {}),
     eventRepository,
     artifactRepository,
     failureRepository,
@@ -7932,6 +7988,38 @@ export function composeRoot(opts: ComposeOptions): Container {
     buildWaitingRunsSweeper,
     buildOrphanedRunsSweeper,
     buildRepositorySweepCoordinator,
+    get startupSweepPromise(): Promise<unknown> | undefined {
+      if (trackedStartupSweeps.length === 0) return undefined;
+      if (trackedStartupSweeps.length === 1) return trackedStartupSweeps[0];
+      return Promise.all(trackedStartupSweeps);
+    },
+    set startupSweepPromise(promise: Promise<unknown> | undefined) {
+      if (promise !== undefined) {
+        trackedStartupSweeps.push(promise);
+      }
+    },
+    trackStartupSweep: (promise: Promise<unknown>): void => {
+      trackedStartupSweeps.push(promise);
+    },
+    drainStartupSweeps: async (timeoutMs?: number) => {
+      if (trackedStartupSweeps.length === 0) return;
+      const combined = Promise.all(trackedStartupSweeps.map((p) => p.catch(() => {})));
+      if (timeoutMs !== undefined && timeoutMs > 0) {
+        let timer: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, timeoutMs);
+        });
+        try {
+          await Promise.race([combined, timeoutPromise]);
+        } finally {
+          if (timer) {
+            clearTimeout(timer);
+          }
+        }
+      } else {
+        await combined;
+      }
+    },
   };
 }
 

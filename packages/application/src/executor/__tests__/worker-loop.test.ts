@@ -16,6 +16,7 @@ import {
   FakeJobQueuePort,
   FakeWorkerRegistryPort,
   FakeWorkerLeasePort,
+  FakeRunNotification,
 } from '../../test-doubles/index.js';
 import { workerLoop } from '../worker-loop.js';
 
@@ -877,6 +878,7 @@ describe('workerLoop', () => {
     const s = setup();
     const markUnreachable = vi.fn();
     const updateRun = vi.fn();
+    const fakeNotification = new FakeRunNotification();
 
     s.queue.enqueue({
       job: createJob({
@@ -912,11 +914,20 @@ describe('workerLoop', () => {
       findRun: (runId) => makeRun(runId as string),
       updateRun,
       repoAvailability: { markUnreachable },
+      runNotification: fakeNotification,
     });
 
     expect(markUnreachable).toHaveBeenCalledWith(RepositoryId('r1'), 'path not accessible');
     expect(updateRun).toHaveBeenCalledWith(RunId('run-1'), {
       status: 'failed',
+      failureReason: 'path not accessible',
+    });
+    expect(fakeNotification.events).toHaveLength(1);
+    expect(fakeNotification.events[0]).toEqual({
+      status: 'failed',
+      repoId: RepositoryId('r1'),
+      issueNumber: 1,
+      displayId: 'disp-run-1',
       failureReason: 'path not accessible',
     });
     expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');

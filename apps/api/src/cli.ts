@@ -34,6 +34,9 @@ import {
   checkPid,
   type ArtifactGuardPort,
   resolvePhaseOrder,
+  safeDispatchRunNotification,
+  DEFAULT_DRAIN_TIMEOUT_MS,
+  type RunNotificationPort,
 } from '@ai-sdlc/application';
 import type { WorkerLoopDeps } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions, type Container, seedTestDatabase } from './compose.js';
@@ -64,6 +67,44 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 
 const EXIT_SIGINT = 130;
 const EXIT_SIGTERM = 143;
+
+/**
+ * Await startup sweep completion and pending notification drain before exiting.
+ * Centralizes one-shot CLI exit handling to ensure terminal status notifications
+ * (e.g. from offline PR merges discovered on startup) are never dropped.
+ */
+export async function drainAndExit(
+  container: Container | undefined,
+  exitCode: number,
+  timeoutMs: number = DEFAULT_DRAIN_TIMEOUT_MS,
+  sweepPromise?: Promise<unknown>,
+): Promise<never> {
+  if (sweepPromise && container?.trackStartupSweep) {
+    container.trackStartupSweep(sweepPromise);
+  }
+  try {
+    if (sweepPromise) {
+      if (timeoutMs > 0) {
+        let timer: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, timeoutMs);
+        });
+        try {
+          await Promise.race([sweepPromise.catch(() => {}), timeoutPromise]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      } else {
+        await sweepPromise.catch(() => {});
+      }
+    }
+    await container?.drainStartupSweeps?.(timeoutMs);
+  } catch {}
+  try {
+    await container?.runNotification?.drain?.(timeoutMs);
+  } catch {}
+  process.exit(exitCode);
+}
 
 export interface BuildProgramOptions {
   composeOverrides?: Partial<ComposeOptions>;
@@ -108,6 +149,7 @@ function startLeaseHeartbeat(
   leaseToken: string,
   ttlMs: number,
   intervalMs: number,
+  onFatalExit?: (exitCode: number) => Promise<never> | Promise<void> | void,
 ): { stop: () => void } {
   let heartbeatFailures = 0;
   const maxHeartbeatFailures = Math.max(1, Math.ceil(ttlMs / intervalMs) - 1);
@@ -127,6 +169,10 @@ function startLeaseHeartbeat(
       if (err instanceof LeaseOwnershipLostError) {
         console.error(`Fatal: lease ownership lost, exiting.`);
         clearInterval(timer);
+        if (onFatalExit) {
+          void onFatalExit(EXIT_INTERNAL_ERROR);
+          return;
+        }
         process.exit(EXIT_INTERNAL_ERROR);
       }
       heartbeatFailures++;
@@ -136,6 +182,10 @@ function startLeaseHeartbeat(
         try {
           leaseRepo.release({ repoId, workerId, runId, leaseToken });
         } catch {}
+        if (onFatalExit) {
+          void onFatalExit(EXIT_INTERNAL_ERROR);
+          return;
+        }
         process.exit(EXIT_INTERNAL_ERROR);
       }
       console.error(
@@ -217,7 +267,8 @@ export function installSignalHandlers(
   },
   repoId: RepositoryId,
   issueNumber: number,
-  onCleanup?: () => void,
+  onCleanup?: () => void | Promise<void>,
+  onExit?: (exitCode: number) => Promise<never> | Promise<void> | void,
 ): { remove: () => void } {
   const cleanup = async (signal: string) => {
     const existing = runRepository.findByIssueNumber(repoId, issueNumber);
@@ -247,25 +298,35 @@ export function installSignalHandlers(
         applied = false;
       }
     }
-    onCleanup?.();
+    try {
+      await onCleanup?.();
+    } catch {}
+  };
+
+  const exitWith = (code: number) => {
+    if (onExit) {
+      void onExit(code);
+      return;
+    }
+    process.exit(code);
   };
 
   const sigintHandler = () => {
-    cleanup('SIGINT').finally(() => process.exit(EXIT_SIGINT));
+    cleanup('SIGINT').finally(() => exitWith(EXIT_SIGINT));
   };
   const sigtermHandler = () => {
-    cleanup('SIGTERM').finally(() => process.exit(EXIT_SIGTERM));
+    cleanup('SIGTERM').finally(() => exitWith(EXIT_SIGTERM));
   };
   const uncaughtHandler = (err: Error) => {
     cleanup('uncaughtException').finally(() => {
       console.error(err instanceof Error ? err.message : String(err));
-      process.exit(EXIT_USER_ERROR);
+      exitWith(EXIT_USER_ERROR);
     });
   };
   const unhandledHandler = (reason: unknown) => {
     cleanup('unhandledRejection').finally(() => {
       console.error(reason instanceof Error ? reason.message : String(reason));
-      process.exit(EXIT_USER_ERROR);
+      exitWith(EXIT_USER_ERROR);
     });
   };
 
@@ -282,6 +343,59 @@ export function installSignalHandlers(
       process.off('unhandledRejection', unhandledHandler);
     },
   };
+}
+
+export function reconcileStrandedRun(
+  run: { uuid: string; repoId: RepositoryId; issueNumber: number; displayId: string },
+  runRepository: {
+    atomicUpdateByUuid(
+      uuid: string,
+      patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+      expectedCurrentStatus: RunStatus,
+    ): boolean;
+  },
+  failureReason: string,
+  runNotification?: RunNotificationPort,
+): boolean {
+  // eslint-disable-next-line no-console
+  console.debug(
+    'terminal status write starting',
+    `runUuid=${run.uuid}`,
+    'status=failed',
+    `reason=${failureReason}`,
+  );
+  let applied = true;
+  try {
+    applied = runRepository.atomicUpdateByUuid(
+      run.uuid,
+      {
+        status: 'failed',
+        completedAt: new Date(),
+        failureReason,
+      },
+      'running',
+    );
+    if (applied && runNotification) {
+      safeDispatchRunNotification(runNotification, {
+        status: 'failed',
+        repoId: run.repoId,
+        issueNumber: run.issueNumber,
+        displayId: run.displayId,
+        failureReason,
+      });
+    }
+    // eslint-disable-next-line no-console
+    console.debug(
+      'terminal status write completed',
+      `runUuid=${run.uuid}`,
+      'status=failed',
+      `applied=${applied}`,
+    );
+  } catch (err) {
+    console.error('Terminal status write failed', err);
+    applied = false;
+  }
+  return applied;
 }
 
 export { findRepoRoot };
@@ -596,6 +710,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       'Target repository root for worktrees and DB (default: orchestrator repo)',
     )
     .action(async (opts: RunCliOptions & { verbose?: boolean }) => {
+      let containerRef: Container | undefined;
       try {
         const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
           console.error(`Error: ${msg}`);
@@ -613,6 +728,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             ...(opts.agentCli !== undefined ? { agentCli: opts.agentCli } : {}),
           },
         });
+        containerRef = c;
         if (tee) c.runRepository; // tee consumed below by run command's existing logic
         if (opts.baseBranch !== undefined && c.runRepository) {
           // baseBranch is propagated via the helper, no extra wiring needed
@@ -621,7 +737,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         // --- executor validation ---
         if (opts.executor && !['bash', 'ts'].includes(opts.executor)) {
           console.error(`Error: --executor must be "bash" or "ts", got "${opts.executor}"`);
-          process.exit(EXIT_USER_ERROR);
+          await drainAndExit(c, EXIT_USER_ERROR);
+          return;
         }
 
         // --- execution policy validation ---
@@ -632,7 +749,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               `Error: conflicting options --strict and --execution-policy ${opts.executionPolicy}. ` +
                 `Use either --strict or --execution-policy <policy>.`,
             );
-            process.exit(EXIT_USER_ERROR);
+            await drainAndExit(c, EXIT_USER_ERROR);
             return;
           }
           resolvedExecutionPolicy = 'strict';
@@ -643,7 +760,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             console.error(
               `Error: --execution-policy must be "legacy", "standard", or "strict", got "${opts.executionPolicy}"`,
             );
-            process.exit(EXIT_USER_ERROR);
+            await drainAndExit(c, EXIT_USER_ERROR);
             return;
           }
           resolvedExecutionPolicy = opts.executionPolicy as ExecutionPolicy;
@@ -662,7 +779,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               `The TypeScript executor selects model and runtime from configured phase profiles. ` +
               `Re-run without ${conflicting.join(' and ')}, or pass --executor bash to use the legacy path.`,
           );
-          process.exit(EXIT_USER_ERROR);
+          await drainAndExit(c, EXIT_USER_ERROR);
+          return;
         }
 
         const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
@@ -673,7 +791,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             console.error(
               'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
             );
-            process.exit(EXIT_USER_ERROR);
+            await drainAndExit(c, EXIT_USER_ERROR);
+            return;
           }
 
           const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
@@ -686,14 +805,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             console.error(
               'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
             );
-            process.exit(EXIT_USER_ERROR);
+            await drainAndExit(c, EXIT_USER_ERROR);
+            return;
           }
 
           if (!c.workerRegistry || !c.workerLoopDeps) {
             console.error(
               'Error: worker registry not available. Ensure agent config is present in .ai-orchestrator.json.',
             );
-            process.exit(EXIT_USER_ERROR);
+            await drainAndExit(c, EXIT_USER_ERROR);
+            return;
           }
 
           const startedAt = new Date();
@@ -715,7 +836,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 `Error: --base-branch "${effectiveBaseBranch}" was not found on origin of ${repoRoot}. ` +
                   `Check the branch name, fetch from origin, or omit --base-branch to use the repository's default branch.`,
               );
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(c, EXIT_USER_ERROR);
+              return;
             }
           }
 
@@ -807,7 +929,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               });
             }
 
-            const handleSignal = (signal: string, exitCode: number) => {
+            const handleSignal = async (signal: string, exitCode: number) => {
               try {
                 abortController.abort();
                 testWorkerReaper?.stop();
@@ -873,12 +995,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 }
                 unsubscribe?.();
               } finally {
-                process.exit(exitCode);
+                await drainAndExit(c, exitCode);
               }
             };
 
-            sigintHandler = () => handleSignal('SIGINT', EXIT_SIGINT);
-            sigtermHandler = () => handleSignal('SIGTERM', EXIT_SIGTERM);
+            sigintHandler = () => {
+              void handleSignal('SIGINT', EXIT_SIGINT);
+            };
+            sigtermHandler = () => {
+              void handleSignal('SIGTERM', EXIT_SIGTERM);
+            };
             process.once('SIGINT', sigintHandler);
             process.once('SIGTERM', sigtermHandler);
 
@@ -943,35 +1069,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               finalRun.status === 'running' &&
               (finalJob?.status === 'failed' || finalJob?.status === 'cancelled')
             ) {
-              // eslint-disable-next-line no-console
-              console.debug(
-                'terminal status write starting',
-                `runUuid=${run.uuid}`,
-                'status=failed',
-                'reason=worker_loop_terminated',
+              reconcileStrandedRun(
+                run,
+                c.runRepository,
+                'worker loop terminated without finalizing run',
+                c.runNotification,
               );
-              let applied = true;
-              try {
-                applied = c.runRepository.atomicUpdateByUuid(
-                  run.uuid,
-                  {
-                    status: 'failed',
-                    completedAt: new Date(),
-                    failureReason: 'worker loop terminated without finalizing run',
-                  },
-                  'running',
-                );
-                // eslint-disable-next-line no-console
-                console.debug(
-                  'terminal status write completed',
-                  `runUuid=${run.uuid}`,
-                  'status=failed',
-                  `applied=${applied}`,
-                );
-              } catch (err) {
-                console.error('Terminal status write failed', err);
-                applied = false;
-              }
               finalRun = c.runRepository.findByUuid(run.uuid) ?? finalRun;
             }
 
@@ -1002,7 +1105,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             if (!isSuccess) {
               printRunFailureSummary(finalRun.uuid, finalRun.failureReason);
             }
-            process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
+            await drainAndExit(c, isSuccess ? 0 : EXIT_USER_ERROR);
+            return;
           } catch (err) {
             if (sigintHandler) process.off('SIGINT', sigintHandler);
             if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
@@ -1013,35 +1117,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // the next attempt. atomicUpdateByUuid is a no-op if the run was
             // never inserted or was already finalized by workerLoop.
             const failureReason = err instanceof Error ? err.message : String(err);
-            // eslint-disable-next-line no-console
-            console.debug(
-              'terminal status write starting',
-              `runUuid=${run.uuid}`,
-              'status=failed',
-              `reason=${failureReason}`,
-            );
-            let applied = true;
-            try {
-              applied = c.runRepository.atomicUpdateByUuid(
-                run.uuid,
-                {
-                  status: 'failed',
-                  completedAt: new Date(),
-                  failureReason,
-                },
-                'running',
-              );
-              // eslint-disable-next-line no-console
-              console.debug(
-                'terminal status write completed',
-                `runUuid=${run.uuid}`,
-                'status=failed',
-                `applied=${applied}`,
-              );
-            } catch (err2) {
-              console.error('Terminal status write failed', err2);
-              applied = false;
-            }
+            reconcileStrandedRun(run, c.runRepository, failureReason, c.runNotification);
             // Only suggest resuming if the run row actually exists —
             // insertIfNoActive may have thrown before inserting it.
             if (c.runRepository.findByUuid(run.uuid)) {
@@ -1049,7 +1125,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             } else {
               console.error(`Run failed: ${failureReason}`);
             }
-            process.exit(EXIT_USER_ERROR);
+            await drainAndExit(c, EXIT_USER_ERROR);
+            return;
           }
         } else {
           // --- Bash executor path ---
@@ -1063,7 +1140,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             console.error(
               'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
             );
-            process.exit(EXIT_USER_ERROR);
+            await drainAndExit(c, EXIT_USER_ERROR);
+            return;
           }
 
           if (callerRepoId) {
@@ -1075,7 +1153,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             });
           }
 
-          const signalHandlers = installSignalHandlers(c.runRepository, repoId, opts.issue);
+          const signalHandlers = installSignalHandlers(
+            c.runRepository,
+            repoId,
+            opts.issue,
+            undefined,
+            (exitCode) => drainAndExit(c, exitCode),
+          );
 
           try {
             const out = await c.startIssueRun.execute({
@@ -1102,14 +1186,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const finalRun = c.runRepository.findByUuid(out.uuid);
               printRunFailureSummary(out.uuid, finalRun?.failureReason);
             }
-            process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
+            await drainAndExit(c, isSuccess ? 0 : EXIT_USER_ERROR);
+            return;
           } finally {
             signalHandlers.remove();
           }
         }
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
-        process.exit(EXIT_INTERNAL_ERROR);
+        await drainAndExit(containerRef, EXIT_INTERNAL_ERROR);
       }
     });
 
@@ -1162,7 +1247,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         console.error(
           `Error: Invalid scheduler configuration: ${parsed.error.errors.map((e) => e.message).join(', ')}`,
         );
-        process.exit(EXIT_USER_ERROR);
+        await drainAndExit(c, EXIT_USER_ERROR);
+        return;
       }
 
       const scheduler = getOrCreateScheduler(
@@ -1185,47 +1271,58 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         shutdownGraceMs: parsed.data.shutdownGraceMs,
       });
 
+      let isShuttingDown = false;
+      let initialSweepPromise: Promise<unknown> | undefined;
       const shutdown = async () => {
+        if (isShuttingDown) return;
+        isShuttingDown = true;
         abortController.abort();
         await shutdownCoordinator.shutdown(abortController.signal);
-        process.exit(0);
+        await drainAndExit(c, 0, DEFAULT_DRAIN_TIMEOUT_MS, initialSweepPromise);
       };
 
       process.on('SIGINT', shutdown);
       process.on('SIGTERM', shutdown);
 
-      try {
-        const initialResult = await sweepCoordinator.execute(workerSweepWorkerId);
-        for (const repoResult of initialResult.results) {
-          if (repoResult.error) {
-            console.error(`Initial sweep error for ${repoResult.fullName}: ${repoResult.error}`);
-          }
-          if (repoResult.orphaned) {
-            const o = repoResult.orphaned;
-            if (o.enqueued > 0 || o.skippedLeaseConflict > 0 || o.enqueueErrors.length > 0) {
-              console.error(
-                `Orphan recovery: ${o.enqueued} enqueued, ${o.skippedLeaseConflict} skipped (lease), ${o.enqueueErrors.length} errors`,
-              );
+      const runInitialSweep = async () => {
+        try {
+          const initialResult = await sweepCoordinator.execute(workerSweepWorkerId);
+          for (const repoResult of initialResult?.results ?? []) {
+            if (repoResult.error) {
+              console.error(`Initial sweep error for ${repoResult.fullName}: ${repoResult.error}`);
+            }
+            if (repoResult.orphaned) {
+              const o = repoResult.orphaned;
+              if (o.enqueued > 0 || o.skippedLeaseConflict > 0 || o.enqueueErrors.length > 0) {
+                console.error(
+                  `Orphan recovery: ${o.enqueued} enqueued, ${o.skippedLeaseConflict} skipped (lease), ${o.enqueueErrors.length} errors`,
+                );
+              }
+            }
+            if (repoResult.waiting) {
+              const w = repoResult.waiting;
+              if (w.reactivated > 0 || w.errors.length > 0 || w.enqueueErrors.length > 0) {
+                console.error(
+                  `Reactivation sweep: ${w.reactivated} reactivated, ${w.errors.length} errors, ${w.enqueueErrors.length} enqueue errors`,
+                );
+              }
             }
           }
-          if (repoResult.waiting) {
-            const w = repoResult.waiting;
-            if (w.reactivated > 0 || w.errors.length > 0 || w.enqueueErrors.length > 0) {
-              console.error(
-                `Reactivation sweep: ${w.reactivated} reactivated, ${w.errors.length} errors, ${w.enqueueErrors.length} enqueue errors`,
-              );
-            }
-          }
+          return initialResult;
+        } catch (err) {
+          console.error('Initial sweep error:', err instanceof Error ? err.message : String(err));
         }
-      } catch (err) {
-        console.error('Initial sweep error:', err instanceof Error ? err.message : String(err));
-      }
+      };
+      initialSweepPromise = runInitialSweep();
+      c.trackStartupSweep?.(initialSweepPromise);
+
+      await initialSweepPromise;
 
       try {
         await scheduler.run(abortController.signal);
       } catch (err) {
         console.error('Scheduler run error:', err instanceof Error ? err.message : String(err));
-        process.exit(EXIT_INTERNAL_ERROR);
+        await drainAndExit(c, EXIT_INTERNAL_ERROR, DEFAULT_DRAIN_TIMEOUT_MS, initialSweepPromise);
       }
     });
 
@@ -1297,7 +1394,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           label: string,
           result: Awaited<ReturnType<typeof sweepCoordinator.execute>>,
         ) => {
-          for (const repoResult of result.results) {
+          for (const repoResult of result?.results ?? []) {
             if (repoResult.error) {
               console.error(`${label} error for ${repoResult.fullName}: ${repoResult.error}`);
             }
@@ -1320,12 +1417,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           }
         };
 
+        let initialSweepPromise: Promise<unknown> | undefined;
+
         const shutdown = async () => {
           if (isShuttingDown) return;
           isShuttingDown = true;
           abortController.abort();
           await shutdownCoordinator.shutdown(abortController.signal);
-          process.exit(0);
+          await drainAndExit(c, 0, DEFAULT_DRAIN_TIMEOUT_MS, initialSweepPromise);
         };
         process.on('SIGINT', shutdown);
         process.on('SIGTERM', shutdown);
@@ -1335,13 +1434,19 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         // begins admitting new work. This runs detached from the command action so
         // that `serve` returns promptly and shutdown signals registered above can
         // still be handled while recovery is in flight.
-        void (async () => {
+        const runInitialSweep = async () => {
           try {
             const initialResult = await sweepCoordinator.execute(serveSweepWorkerId);
             logSweepResult('Initial sweep', initialResult);
           } catch (err) {
             console.error('Initial sweep error:', err instanceof Error ? err.message : String(err));
           }
+        };
+        initialSweepPromise = runInitialSweep();
+        c.trackStartupSweep?.(initialSweepPromise);
+
+        void (async () => {
+          await initialSweepPromise;
 
           if (isShuttingDown) return;
 
@@ -1423,12 +1528,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           }) => {
             if (!opts.issue && !opts.uuid) {
               console.error('Error: specify --issue or --uuid');
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(undefined, EXIT_USER_ERROR);
+              return;
             }
             if (opts.issue && opts.uuid) {
               console.error('Error: specify --issue or --uuid, not both');
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(undefined, EXIT_USER_ERROR);
+              return;
             }
+            let containerRef: Container | undefined;
             try {
               const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
                 console.error(`Error: ${msg}`);
@@ -1437,6 +1545,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const { c } = composeWithTarget(targetRepoRoot, {
                 ...(buildOpts !== undefined ? { buildOpts } : {}),
               });
+              containerRef = c;
               const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
               let uuid: string;
               if (opts.uuid) {
@@ -1449,12 +1558,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                     : undefined;
                 if (!repoId) {
                   console.error('Error: could not determine repository name.');
-                  process.exit(EXIT_USER_ERROR);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
                 }
                 const run = c.runRepository.findByIssueNumber(repoId, opts.issue!);
                 if (!run) {
                   console.error(`No run found for issue ${opts.issue}`);
-                  process.exit(EXIT_USER_ERROR);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
                 }
                 uuid = run.uuid;
               }
@@ -1497,9 +1608,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               } else {
                 process.stdout.write('Run cancelled successfully\n');
               }
+              const isCliTestSuite =
+                buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+              if (!isCliTestSuite) {
+                await drainAndExit(c, 0);
+              } else {
+                await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              }
             } catch (err) {
               console.error(err instanceof Error ? err.message : String(err));
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(containerRef, EXIT_USER_ERROR);
             }
           },
         ),
@@ -1515,6 +1634,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           'Target repository root for runs DB and worktrees (default: orchestrator repo)',
         )
         .action(async (opts: { uuid: string; targetRepoRoot?: string; repositoryId?: string }) => {
+          let containerRef: Container | undefined;
           try {
             const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
               console.error(`Error: ${msg}`);
@@ -1523,13 +1643,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const { c } = composeWithTarget(targetRepoRoot, {
               ...(buildOpts !== undefined ? { buildOpts } : {}),
             });
+            containerRef = c;
             const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
             // An unknown UUID must fail, not report ready: listComments on a
             // nonexistent run returns no rows, which would green-light the merge.
             const run = c.runRepository.findByUuid(opts.uuid);
             if (!run) {
               console.error(`No run found for uuid ${opts.uuid}`);
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(c, EXIT_USER_ERROR);
+              return;
             }
             if (callerRepoId) {
               c.loadRepositoryForRun.execute({
@@ -1542,13 +1664,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.stdout.write(JSON.stringify(result, null, 2) + '\n');
             if (!result.isReady) {
               console.error(`Error: PR is not ready for merge: ${result.reason}`);
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(c, EXIT_USER_ERROR);
+              return;
             }
             console.error('Success: PR is ready for merge.');
-            process.exit(0);
+            await drainAndExit(c, 0);
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
-            process.exit(EXIT_USER_ERROR);
+            await drainAndExit(containerRef, EXIT_USER_ERROR);
           }
         }),
     )
@@ -1562,6 +1685,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           'Target repository root for worktrees and DB (default: orchestrator repo)',
         )
         .action(async (opts: { uuid: string; targetRepoRoot?: string; repositoryId?: string }) => {
+          let containerRef: Container | undefined;
           try {
             const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
               console.error(`Error: ${msg}`);
@@ -1570,16 +1694,19 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const { c } = composeWithTarget(targetRepoRoot, {
               ...(buildOpts !== undefined ? { buildOpts } : {}),
             });
+            containerRef = c;
             if (!c.runExecutor) {
               console.error(
                 'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
               );
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(c, EXIT_USER_ERROR);
+              return;
             }
             const run = c.runRepository.findByUuid(opts.uuid);
             if (!run) {
               console.error(`No run found for uuid ${opts.uuid}`);
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(c, EXIT_USER_ERROR);
+              return;
             }
             const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
             if (callerRepoId) {
@@ -1593,7 +1720,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               console.error(
                 `Run ${opts.uuid} has status ${run.status}, expected queued, running, or waiting`,
               );
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(c, EXIT_USER_ERROR);
+              return;
             }
             const repoId = callerRepoId
               ? (callerRepoId as RepositoryId)
@@ -1602,7 +1730,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 : undefined;
             if (!repoId) {
               console.error('Error: could not determine repository name.');
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(c, EXIT_USER_ERROR);
+              return;
             }
             const workerId = WorkerId(`cli-${process.pid}`);
             const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;
@@ -1622,7 +1751,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 console.error(
                   `Error: repository ${repoId} already has an active lease. Another run is in progress.`,
                 );
-                process.exit(EXIT_USER_ERROR);
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
               }
               throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
             }
@@ -1637,7 +1767,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
             let testWorkerReaper: { stop: () => void } | undefined;
-            const releaseLeaseOnSignal = () => {
+            const releaseLeaseOnSignal = async () => {
               try {
                 testWorkerReaper?.stop();
                 c.workerLeaseRepository.release({
@@ -1651,6 +1781,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
                 );
               }
+              try {
+                await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              } catch {}
+              try {
+                await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              } catch {}
             };
             try {
               signalHandlers = installSignalHandlers(
@@ -1658,6 +1794,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 repoId,
                 run.issueNumber,
                 releaseLeaseOnSignal,
+                (exitCode) => drainAndExit(c, exitCode),
               );
               lease = startLeaseHeartbeat(
                 c.workerLeaseRepository,
@@ -1667,6 +1804,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 acquiredLease.leaseToken,
                 leaseTtlMs,
                 heartbeatIntervalMs,
+                (code) => drainAndExit(c, code),
               );
               testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
               // The executor auto-skips phases in run.completedPhases, so passing
@@ -1687,9 +1825,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               signalHandlers?.remove();
               lease?.stop();
             }
+            const isCliTestSuite =
+              buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+            if (!isCliTestSuite) {
+              await drainAndExit(containerRef, 0);
+            } else {
+              await containerRef?.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              await containerRef?.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+            }
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
-            process.exit(EXIT_USER_ERROR);
+            await drainAndExit(containerRef, EXIT_USER_ERROR);
           }
         }),
     )
@@ -1729,7 +1875,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const bypassPlanValidation =
               buildOpts?.bypassPlanValidation ??
               (isCliTestSuite || process.env.AI_BYPASS_PLAN_VALIDATION === 'true');
+            let containerRef: Container | undefined;
             try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+              });
+              containerRef = c;
+
               if (opts.disposition !== undefined) {
                 if (
                   opts.disposition !== 'preserve_working_tree' &&
@@ -1738,27 +1894,22 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   console.error(
                     'Error: invalid --disposition. Must be preserve_working_tree or reset_to_baseline.',
                   );
-                  process.exit(EXIT_USER_ERROR);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
                 }
               }
-
-              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
-                console.error(`Error: ${msg}`);
-                process.exit(EXIT_USER_ERROR);
-              });
-              const { c } = composeWithTarget(targetRepoRoot, {
-                ...(buildOpts !== undefined ? { buildOpts } : {}),
-              });
               if (!c.runExecutor) {
                 console.error(
                   'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
                 );
-                process.exit(EXIT_USER_ERROR);
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
               }
               const run = c.runRepository.findByUuid(opts.uuid);
               if (!run) {
                 console.error(`No run found for uuid ${opts.uuid}`);
-                process.exit(EXIT_USER_ERROR);
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
               }
               const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
               if (callerRepoId) {
@@ -1777,13 +1928,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   phaseRepository: c.phaseRepository,
                   isProcessAlive: checkPid,
                   now: () => new Date(),
+                  runNotification: c.runNotification,
                 });
                 const entry = reconciler.reconcile(run);
                 if (entry) {
                   const refreshedRun = c.runRepository.findByUuid(opts.uuid);
                   if (!refreshedRun) {
                     console.error(`Error: run ${opts.uuid} not found after reconciliation.`);
-                    process.exit(EXIT_INTERNAL_ERROR);
+                    await drainAndExit(c, EXIT_INTERNAL_ERROR);
+                    return;
                   }
                   reconciledRun = refreshedRun;
                   phases = c.phaseRepository.listByRun(opts.uuid);
@@ -1800,14 +1953,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               if (!bypassPlanValidation) {
                 if (!plan.allowed) {
                   console.error(plan.denialReason || 'Action not allowed');
-                  process.exit(EXIT_USER_ERROR);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
                 }
 
                 if (plan.requiresConfirmation && !opts.confirm) {
                   console.error(
                     'Retrying this phase can duplicate side effects. Re-run with --confirm to continue.',
                   );
-                  process.exit(EXIT_USER_ERROR);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
                 }
               }
 
@@ -1818,7 +1973,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   : undefined;
               if (!repoId) {
                 console.error('Error: could not determine repository name.');
-                process.exit(EXIT_USER_ERROR);
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
               }
               const runPolicy = (reconciledRun.executionPolicy ?? 'legacy').toUpperCase();
               const resumePhase =
@@ -1864,7 +2020,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   console.error(
                     `Error: repository ${repoId} already has an active lease. Another run is in progress.`,
                   );
-                  process.exit(EXIT_USER_ERROR);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
                 }
                 throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
               }
@@ -1874,7 +2031,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               let signalHandlers: { remove: () => void } | undefined;
               let lease: { stop: () => void } | undefined;
               let testWorkerReaper: { stop: () => void } | undefined;
-              const releaseLeaseOnSignal = () => {
+              const releaseLeaseOnSignal = async () => {
                 try {
                   testWorkerReaper?.stop();
                   c.workerLeaseRepository.release({
@@ -1888,6 +2045,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                     `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
                   );
                 }
+                try {
+                  await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                } catch {}
+                try {
+                  await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                } catch {}
               };
 
               let unsubscribe: (() => void) | undefined;
@@ -1906,6 +2069,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   repoId,
                   run.issueNumber,
                   releaseLeaseOnSignal,
+                  (exitCode) => drainAndExit(c, exitCode),
                 );
                 lease = startLeaseHeartbeat(
                   c.workerLeaseRepository,
@@ -1915,6 +2079,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   acquiredLease.leaseToken,
                   leaseTtlMs,
                   heartbeatIntervalMs,
+                  (code) => drainAndExit(c, code),
                 );
                 testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
 
@@ -1952,7 +2117,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 const updatedRun = c.runRepository.findByUuid(opts.uuid);
                 if (!updatedRun) {
                   console.error(`Error: run ${opts.uuid} not found after transition.`);
-                  process.exit(EXIT_USER_ERROR);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
                 }
 
                 const result = await c.runExecutor.execute({
@@ -1976,10 +2142,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               }
             } catch (err) {
               console.error(err instanceof Error ? err.message : String(err));
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(containerRef, EXIT_USER_ERROR);
+              return;
             }
             if (!isCliTestSuite) {
-              process.exit(0);
+              await drainAndExit(containerRef, 0);
+            } else {
+              await containerRef?.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              await containerRef?.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
             }
           },
         ),
@@ -2007,6 +2177,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             lines: number;
             targetRepoRoot?: string;
           }) => {
+            let containerRef: Container | undefined;
             try {
               const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
                 console.error(`Error: ${msg}`);
@@ -2015,15 +2186,18 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const { c } = composeWithTarget(targetRepoRoot, {
                 ...(buildOpts !== undefined ? { buildOpts } : {}),
               });
+              containerRef = c;
               if (!c.repoFullName) {
                 console.error('Error: could not determine repository name.');
-                process.exit(EXIT_USER_ERROR);
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
               }
               const repoId = RepositoryId(c.repoFullName);
               let run = c.runRepository.findByIssueNumber(repoId, opts.issue);
               if (!run) {
                 console.error(`No run found for issue ${opts.issue}`);
-                process.exit(EXIT_USER_ERROR);
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
               }
 
               const terminalStatuses: RunStatus[] = ['passed', 'failed', 'cancelled'];
@@ -2040,7 +2214,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
               process.on('SIGINT', async () => {
                 await stopTailer();
-                process.exit(0);
+                await drainAndExit(c, 0);
               });
 
               for (;;) {
@@ -2100,9 +2274,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
                 await sleep(1000);
               }
+              const isCliTestSuite =
+                buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+              if (!isCliTestSuite) {
+                await drainAndExit(containerRef, 0);
+              } else {
+                await containerRef?.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await containerRef?.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              }
             } catch (err) {
               console.error(err instanceof Error ? err.message : String(err));
-              process.exit(EXIT_USER_ERROR);
+              await drainAndExit(containerRef, EXIT_USER_ERROR);
             }
           },
         ),
@@ -2126,8 +2308,8 @@ const isMain = realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta
 if (isMain) {
   buildProgram()
     .parseAsync(process.argv)
-    .catch((err) => {
+    .catch(async (err) => {
       console.error(err instanceof Error ? err.message : String(err));
-      process.exit(EXIT_INTERNAL_ERROR);
+      await drainAndExit(undefined, EXIT_INTERNAL_ERROR);
     });
 }

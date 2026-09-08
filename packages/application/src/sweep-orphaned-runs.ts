@@ -1,5 +1,9 @@
 import type { RunRecord, RunRepositoryPort } from './ports.js';
 import type { PhaseRepositoryPort } from './ports/phase-repository-port.js';
+import {
+  safeDispatchRunNotification,
+  type RunNotificationPort,
+} from './ports/run-notification-port.js';
 
 export interface SweepOrphanedRunEntry {
   uuid: string;
@@ -16,9 +20,11 @@ export interface SweepOrphanedRunsResult {
 
 export interface SweepOrphanedRunsDeps {
   runRepository: RunRepositoryPort;
-  phaseRepository?: PhaseRepositoryPort;
+  phaseRepository?: PhaseRepositoryPort | undefined;
   isProcessAlive: (pid: number) => boolean;
-  now?: () => Date;
+  now?: (() => Date) | undefined;
+  runNotification?: RunNotificationPort | undefined;
+  logger?: { warn: (msg: string, ...args: unknown[]) => void } | undefined;
 }
 
 export class SweepOrphanedRuns {
@@ -75,6 +81,20 @@ export class SweepOrphanedRuns {
       run.status,
     );
     if (!updated) return undefined;
+
+    if (this.deps.runNotification) {
+      safeDispatchRunNotification(
+        this.deps.runNotification,
+        {
+          status: inferredStatus,
+          repoId: run.repoId,
+          issueNumber: run.issueNumber,
+          displayId: run.displayId,
+          ...(failureReasonToUse ? { failureReason: failureReasonToUse } : {}),
+        },
+        this.deps.logger,
+      );
+    }
 
     const { currentPhase: _currentPhase, ...runWithoutPhase } = run;
     return {

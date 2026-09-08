@@ -46,3 +46,5 @@ export { deleteWorktreeFile } from './git/delete-worktree-file.js';
 export * from './artifacts/filesystem-artifact-store.js';
 export * from './artifacts/file-tailer.js';
 export { createSignatureReferenceAnalyzer } from './typescript/signature-reference-analyzer.js';
+export * from './notifications/webhook-run-notification-adapter.js';
+export * from './notifications/noop-run-notification-adapter.js';

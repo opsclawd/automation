@@ -37,9 +37,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const { sweepsConstructed, lastReadyMaxDays } = vi.hoisted(() => ({
+const { sweepsConstructed, lastReadyMaxDays, lastRunNotification } = vi.hoisted(() => ({
   sweepsConstructed: { count: 0 },
   lastReadyMaxDays: { value: undefined as number | undefined },
+  lastRunNotification: { value: undefined as unknown },
 }));
 
 vi.mock('@ai-sdlc/application', async (importOriginal) => {
@@ -51,8 +52,13 @@ vi.mock('@ai-sdlc/application', async (importOriginal) => {
       constructor(...args: unknown[]) {
         super(...args);
         sweepsConstructed.count++;
-        if (args[0] && typeof args[0] === 'object' && 'readyMaxDays' in args[0]) {
-          lastReadyMaxDays.value = (args[0] as { readyMaxDays: number }).readyMaxDays;
+        if (args[0] && typeof args[0] === 'object') {
+          if ('readyMaxDays' in args[0]) {
+            lastReadyMaxDays.value = (args[0] as { readyMaxDays: number }).readyMaxDays;
+          }
+          if ('runNotification' in args[0]) {
+            lastRunNotification.value = (args[0] as { runNotification?: unknown }).runNotification;
+          }
         }
       }
     },
@@ -63,6 +69,7 @@ describe('composeRoot — SweepWaitingRuns wiring', () => {
   beforeEach(() => {
     sweepsConstructed.count = 0;
     lastReadyMaxDays.value = undefined;
+    lastRunNotification.value = undefined;
   });
 
   it('invokes SweepWaitingRuns when runStartupSweeps !== false', async () => {
@@ -85,6 +92,16 @@ describe('composeRoot — SweepWaitingRuns wiring', () => {
     composeRoot({ repoRoot, scriptPath: '/dev/null' });
     expect(sweepsConstructed.count).toBe(1);
     expect(lastReadyMaxDays.value).toBe(30);
+  });
+
+  it('passes runNotification to SweepWaitingRuns on startup and exposes drainStartupSweeps', async () => {
+    const { composeRoot } = await import('../compose.js');
+    const repoRoot = makeRepo({ withPostPrReview: true });
+    const c = composeRoot({ repoRoot, scriptPath: '/dev/null' });
+    expect(sweepsConstructed.count).toBe(1);
+    expect(lastRunNotification.value).toBe(c.runNotification);
+    expect(c.drainStartupSweeps).toBeTypeOf('function');
+    await c.drainStartupSweeps?.();
   });
 });
 
@@ -116,7 +133,7 @@ describe('composeRoot — OrphanedRunsSweeper wiring', () => {
     const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
     expect(c.buildOrphanedRunsSweeper).toBeTypeOf('function');
     const sweeper = c.buildOrphanedRunsSweeper();
-     
+
     const result = await sweeper.execute([]);
     expect(result.scanned).toBe(0);
     expect(result.enqueued).toBe(0);
