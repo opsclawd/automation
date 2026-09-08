@@ -149,19 +149,84 @@ export function assessChangedFiles(input: {
 }
 
 /**
- * Formats a scope warning block for inclusion in reviewer history context.
+ * Formats a scope warning block for inclusion in reviewer history context,
+ * carving out files modified to satisfy deterministic validation commands.
  */
-export function formatScopeWarning(assessment: ScopeAssessment): string {
-  const lines: string[] = [
-    'Warning: The previous fix attempt modified files outside the scope of the reported findings.',
-    'The reviewer should accept legitimate adjacent changes (such as tests or call sites) but raise a high-severity finding for unrelated edits.',
-    '',
-    'Out-of-scope modified files:',
-  ];
-  for (const item of assessment.outOfScopeFiles) {
-    lines.push(`- ${item.path}: ${item.reason}`);
+export function formatScopeWarning(
+  assessment: ScopeAssessment,
+  validationCritical?:
+    | ReadonlySet<string>
+    | ReadonlyMap<string, { diagnostic?: string } | string>
+    | readonly { path: string; diagnostic?: string }[],
+): string {
+  function getDiagnostic(path: string): string | undefined {
+    if (!validationCritical) return undefined;
+    if (validationCritical instanceof Set) return undefined;
+    if (validationCritical instanceof Map) {
+      const val = validationCritical.get(path);
+      if (typeof val === 'string') return val;
+      return val?.diagnostic;
+    }
+    if (Array.isArray(validationCritical)) {
+      const val = validationCritical.find((f) => f.path === path);
+      return val?.diagnostic;
+    }
+    return undefined;
   }
-  return lines.join('\n');
+
+  function isCritical(path: string): boolean {
+    if (!validationCritical) return false;
+    if (validationCritical instanceof Set) return validationCritical.has(path);
+    if (validationCritical instanceof Map) return validationCritical.has(path);
+    if (Array.isArray(validationCritical)) return validationCritical.some((f) => f.path === path);
+    return false;
+  }
+
+  const critical = assessment.outOfScopeFiles.filter((item) => isCritical(item.path));
+  const uncritical = assessment.outOfScopeFiles.filter((item) => !isCritical(item.path));
+
+  const blocks: string[] = [];
+
+  if (critical.length > 0) {
+    const commandDiags = critical
+      .map((item) => getDiagnostic(item.path))
+      .filter((d): d is string => Boolean(d));
+    const commandRef =
+      commandDiags.length > 0
+        ? `\`${[...new Set(commandDiags)].join(', ')}\`'s command`
+        : 'the command';
+
+    const lines: string[] = [
+      'The following out-of-scope file(s) were modified to satisfy a validation command that was previously failing on their prior content.',
+      `Do not instruct reverting them. If you believe the change is unnecessary or wrong, you must say so explicitly and note that reverting requires re-running ${commandRef} to confirm it still passes — do not silently recommend restoring the file to its prior state.`,
+      '',
+      'Validation-critical modified files:',
+    ];
+    for (const item of critical) {
+      const diag = getDiagnostic(item.path);
+      const detail =
+        diag && item.reason && diag !== item.reason
+          ? `${diag} (${item.reason})`
+          : diag || item.reason;
+      lines.push(`- ${item.path}: ${detail}`);
+    }
+    blocks.push(lines.join('\n'));
+  }
+
+  if (uncritical.length > 0 || critical.length === 0) {
+    const lines: string[] = [
+      'Warning: The previous fix attempt modified files outside the scope of the reported findings.',
+      'The reviewer should accept legitimate adjacent changes (such as tests or call sites) but raise a high-severity finding for unrelated edits.',
+      '',
+      'Out-of-scope modified files:',
+    ];
+    for (const item of uncritical) {
+      lines.push(`- ${item.path}: ${item.reason}`);
+    }
+    blocks.push(lines.join('\n'));
+  }
+
+  return blocks.join('\n\n');
 }
 
 /**

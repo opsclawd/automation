@@ -343,4 +343,61 @@ describe('QualityReviewHandler', () => {
     const headSha = await artifacts.read(ctx.runUuid, 'review-head-sha.txt');
     expect(headSha.trim()).toBe('new-head-sha');
   });
+
+  it('injects validation_critical_files into prompt vars when validate/critical-files.json is present', async () => {
+    const { ctx, artifacts, agent, handler } = setup();
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 1150',
+    });
+    await recordValidationEvidence(ctx, 'validate');
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'validate/critical-files.json',
+      contents: JSON.stringify([
+        {
+          path: 'packages/api/src/whisperx.ts',
+          beforeHash: 'hash-1',
+          afterHash: 'hash-2',
+          diagnostic: 'pnpm test:whisperx timed out',
+        },
+      ]),
+    });
+
+    agent.enqueue('quality-review', async () => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          findings: [],
+          summary: 'Approved',
+        }),
+      });
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const res = await handler.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    expect(mockRenderPrompt).toHaveBeenCalled();
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    expect(promptCtx?.vars.validation_critical_files).toContain('packages/api/src/whisperx.ts');
+    expect(promptCtx?.vars.validation_critical_files).toContain('pnpm test:whisperx timed out');
+  });
 });

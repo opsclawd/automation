@@ -201,6 +201,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(template).toContain('{{var:complete_diff}}');
       expect(template).toContain('{{var:validation_evidence}}');
       expect(template).toContain('{{var:requirements_ledger}}');
+      expect(template).toContain('{{var:validation_critical_files}}');
       expect(template).toContain('{{artifact:design.md}}');
 
       // Hard gates and falsification
@@ -232,6 +233,8 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
           complete_diff: 'diff --git a/app.ts b/app.ts',
           validation_evidence: 'All tests passed',
           requirements_ledger: '- [AC-1] Check hash',
+          validation_critical_files:
+            '### Validation-Critical Files\n- `src/critical.ts`: timed out',
           orchestrator_bookkeeping_files: '- `review-head-sha.txt`',
         },
         artifacts,
@@ -239,6 +242,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(rendered).toContain('diff --git a/app.ts b/app.ts');
       expect(rendered).toContain('- [AC-1] Check hash');
       expect(rendered).toContain('review-head-sha.txt');
+      expect(rendered).toContain('src/critical.ts');
       expect(rendered).toContain('Hard Gates & Adversarial Falsification');
     });
   });
@@ -252,6 +256,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(template).toContain('{{var:complete_diff}}');
       expect(template).toContain('{{var:validation_evidence}}');
       expect(template).toContain('{{var:spec_review_summary}}');
+      expect(template).toContain('{{var:validation_critical_files}}');
 
       // Architecture & Layer Boundaries
       expect(template).toMatch(/Architecture & Layer Boundaries/i);
@@ -284,6 +289,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
           complete_diff: 'diff --git a/app.ts b/app.ts',
           validation_evidence: 'All tests passed',
           spec_review_summary: 'Spec review passed all checks',
+          validation_critical_files: '',
           orchestrator_bookkeeping_files: '- `review-head-sha.txt`',
         },
         artifacts,
@@ -304,6 +310,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(template).toContain('{{var:complete_diff}}');
       expect(template).toContain('{{var:fix_diff}}');
       expect(template).toContain('{{var:validation_evidence}}');
+      expect(template).toContain('{{var:validation_critical_files}}');
 
       // Causal-chain requirements (#1117)
       expect(template).toMatch(
@@ -369,6 +376,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
           complete_diff: 'diff --git a/app.ts b/app.ts',
           fix_diff: 'diff --git a/app.ts b/app.ts (fix)',
           validation_evidence: 'All tests passed',
+          validation_critical_files: '',
           orchestrator_bookkeeping_files: '- `review-head-sha.txt`',
         },
         artifacts,
@@ -385,6 +393,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
 
       // Grounding
       expect(template).toContain('{{var:review_findings}}');
+      expect(template).toContain('{{var:validation_critical_files}}');
       expect(template).toContain('{{artifact?:issue.md}}');
       expect(template).toContain('{{artifact:design.md}}');
       expect(template).toContain('{{artifact:plan.md}}');
@@ -422,6 +431,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
           issue_number: '1103',
           cwd: '/tmp/wt',
           review_findings: '1. Broken null check in foo.ts',
+          validation_critical_files: '',
         },
         artifacts,
       });

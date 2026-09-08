@@ -213,4 +213,207 @@ describe('FixReviewHandler', () => {
 
     expect(result.outcome).toBe('passed');
   });
+
+  it('injects validation_critical_files warning into targeted-fix prompt vars', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(createFindingLedger([])),
+    });
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'validate/critical-files.json',
+      contents: JSON.stringify([
+        {
+          path: 'packages/api/src/whisperx.ts',
+          beforeHash: 'hash-before',
+          afterHash: 'hash-after',
+          diagnostic: 'pnpm test:whisperx timed out',
+        },
+      ]),
+    });
+
+    // File remains in afterHash state
+    git.worktreeFileContents.set('packages/api/src/whisperx.ts', 'after content');
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(mockRenderPrompt).toHaveBeenCalled();
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    expect(promptCtx?.vars.validation_critical_files).toContain('packages/api/src/whisperx.ts');
+    expect(promptCtx?.vars.validation_critical_files).toContain('pnpm test:whisperx timed out');
+  });
+
+  it('halts with needs_human_review when fixer reverts a validation-critical file to pre-fix state', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(createFindingLedger([])),
+    });
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    // hashContent of 'timeout=10'
+    const crypto = await import('node:crypto');
+    const beforeContent = 'timeout=10';
+    const beforeHash = crypto.createHash('sha256').update(beforeContent).digest('hex');
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'validate/critical-files.json',
+      contents: JSON.stringify([
+        {
+          path: 'packages/api/src/whisperx.ts',
+          beforeHash,
+          afterHash: 'sha256-after',
+          diagnostic: 'pnpm test:whisperx timed out',
+        },
+      ]),
+    });
+
+    // Worktree content matches beforeContent (reverted!)
+    git.worktreeFileContents.set('packages/api/src/whisperx.ts', beforeContent);
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.message).toContain(
+        'Validation-critical file "packages/api/src/whisperx.ts" was reverted',
+      );
+    }
+
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const revertEvents = publishedEvents.filter(
+      (call) =>
+        (call[1] as { type?: string })?.type === 'review_fix.validation_critical_file_reverted',
+    );
+    expect(revertEvents).toHaveLength(1);
+    expect((revertEvents[0][1] as { metadata?: { path?: string } }).metadata?.path).toBe(
+      'packages/api/src/whisperx.ts',
+    );
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.artifacts).toEqual([
+        'code-review.md',
+        'finding-ledger.json',
+        'validate/critical-files.json',
+      ]);
+    }
+  });
+
+  it('emits review_fix.validation_critical_file_read_failed on non-ENOENT read error when file was deleted before', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(createFindingLedger([])),
+    });
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'validate/critical-files.json',
+      contents: JSON.stringify([
+        {
+          path: 'packages/api/src/deleted.ts',
+          beforeHash: '__DELETED__',
+          afterHash: 'sha256-after',
+          diagnostic: 'pnpm test failed',
+        },
+      ]),
+    });
+
+    // File content cannot be read, but git status reports it is present (modified, not deleted)
+    git.defaultWorktreeFileContent = () => undefined;
+    git.statusByCwd.set('/test/repo', ' M packages/api/src/deleted.ts');
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const readFailedEvents = publishedEvents.filter(
+      (call) =>
+        (call[1] as { type?: string })?.type === 'review_fix.validation_critical_file_read_failed',
+    );
+    expect(readFailedEvents).toHaveLength(1);
+    expect((readFailedEvents[0][1] as { metadata?: { path?: string } }).metadata?.path).toBe(
+      'packages/api/src/deleted.ts',
+    );
+  });
 });

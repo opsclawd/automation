@@ -29,6 +29,8 @@ Deterministic validation evidence:
 {{var:validation_evidence}}
 ```
 
+{{var:validation_critical_files}}
+
 Complete branch diff against base:
 ```diff
 {{var:complete_diff}}

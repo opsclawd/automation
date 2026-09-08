@@ -20,6 +20,10 @@ import {
   listOrchestratorOwnedUntrackedPaths,
 } from '../validation-evidence.js';
 import { formatOrchestratorOwnedUntrackedPathsForPrompt } from '../../artifacts/orchestrator-artifacts.js';
+import {
+  formatValidationCriticalFilesWarning,
+  type ValidationCriticalFile,
+} from '../../review-fix/validation-critical-files.js';
 
 export interface QualityReviewHandlerOpts {
   profileName?: string;
@@ -140,6 +144,16 @@ export class QualityReviewHandler implements PhaseHandler {
 
     const orchestratorOwnedPaths = await listOrchestratorOwnedUntrackedPaths(ctx);
 
+    let criticalFiles: ValidationCriticalFile[] = [];
+    try {
+      const raw = await ctx.artifacts.read(ctx.runUuid, 'validate/critical-files.json');
+      const parsed = JSON.parse(raw);
+      criticalFiles = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      criticalFiles = [];
+    }
+    const validationCriticalWarning = formatValidationCriticalFilesWarning(criticalFiles);
+
     // 8. Invoke single-shot reviewer agent
     const runResult = await runSingleShotAgentPhase(ctx, {
       phase: 'quality-review',
@@ -152,6 +166,7 @@ export class QualityReviewHandler implements PhaseHandler {
         complete_diff: completeDiff || '(no diff)',
         validation_evidence: validationEvidence,
         spec_review_summary: specReviewSummary,
+        validation_critical_files: validationCriticalWarning,
         orchestrator_bookkeeping_files:
           formatOrchestratorOwnedUntrackedPathsForPrompt(orchestratorOwnedPaths),
       },

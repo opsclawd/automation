@@ -16,6 +16,10 @@ import {
   listOrchestratorOwnedUntrackedPaths,
 } from '../validation-evidence.js';
 import { formatOrchestratorOwnedUntrackedPathsForPrompt } from '../../artifacts/orchestrator-artifacts.js';
+import {
+  formatValidationCriticalFilesWarning,
+  type ValidationCriticalFile,
+} from '../../review-fix/validation-critical-files.js';
 
 export interface FollowUpReviewHandlerOpts {
   profileName?: string;
@@ -124,6 +128,16 @@ export class FollowUpReviewHandler implements PhaseHandler {
 
     const orchestratorOwnedPaths = await listOrchestratorOwnedUntrackedPaths(ctx);
 
+    let criticalFiles: ValidationCriticalFile[] = [];
+    try {
+      const raw = await ctx.artifacts.read(ctx.runUuid, 'validate/critical-files.json');
+      const parsed = JSON.parse(raw);
+      criticalFiles = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      criticalFiles = [];
+    }
+    const validationCriticalWarning = formatValidationCriticalFilesWarning(criticalFiles);
+
     // 7. Invoke single-shot follow-up reviewer agent (read-only)
     const runResult = await runSingleShotAgentPhase(ctx, {
       phase: 'follow-up-review',
@@ -137,6 +151,7 @@ export class FollowUpReviewHandler implements PhaseHandler {
         validation_evidence: validationEvidence,
         complete_diff: completeDiff || '(no diff)',
         fix_diff: fixDiff || '(no diff)',
+        validation_critical_files: validationCriticalWarning,
         orchestrator_bookkeeping_files:
           formatOrchestratorOwnedUntrackedPathsForPrompt(orchestratorOwnedPaths),
       },

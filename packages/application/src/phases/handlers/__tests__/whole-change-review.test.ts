@@ -752,6 +752,61 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
     expect(completedEvents[0]?.message).toContain('reusing existing verification');
   });
 
+  it('injects validation_critical_files warning into targeted-fix prompt vars', async () => {
+    const fakeAgent = ctx.agent as FakeAgentPort;
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          findings_evaluations: [{ finding: 'Finding', resolved: true, evidence: 'Fixed' }],
+        }),
+      });
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'REQUEST_CHANGES',
+        findings: [
+          {
+            severity: 'high',
+            evidence: 'Finding evidence',
+            rationale: 'Finding rationale',
+            minimal_correction: 'Finding correction',
+          },
+        ],
+      }),
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'validate/critical-files.json',
+      contents: JSON.stringify([
+        {
+          path: 'src/critical-util.ts',
+          diagnostic: 'pnpm test failed with exit code 1',
+          beforeHash: 'abc',
+        },
+      ]),
+    });
+
+    const handler = new ReviewFixHandler({ runLoop: legacyRunLoopMock });
+    await handler.run(ctx);
+
+    expect(mockRenderPrompt).toHaveBeenCalledTimes(3);
+    const targetedFixCall = mockRenderPrompt.mock.calls[1];
+    expect(targetedFixCall?.[1].vars.validation_critical_files).toContain('src/critical-util.ts');
+    expect(targetedFixCall?.[1].vars.validation_critical_files).toContain(
+      'pnpm test failed with exit code 1',
+    );
+  });
+
   it('delegates to legacy runLoop when executionPolicy is legacy', async () => {
     ctx = makeCtx({ executionPolicy: 'legacy' });
     legacyRunLoopMock.mockResolvedValue({

@@ -29,6 +29,8 @@ Deterministic validation evidence:
 {{var:validation_evidence}}
 ```
 
+{{var:validation_critical_files}}
+
 Complete branch diff against base:
 ```diff
 {{var:complete_diff}}
@@ -71,6 +73,7 @@ Evaluate whether the implementation is technically sound across the following di
    - Unjustified scope expansion beyond the issue.
    - Unintended or breaking changes to public/frozen contracts.
    - Committed scratch files, debug logs, or generated artifacts that should not ship.
+   - Do NOT instruct reverting or removing changes to validation-critical files (listed under Validation-Critical Files above) when they were required for deterministic validation to pass.
 8. **Test Quality & Coverage**:
    - Flaky tests, tautological assertions, missing edge cases, or tests that prove only a weaker interpretation of intended behavior.
 9. **Production-Artifact Fidelity**:

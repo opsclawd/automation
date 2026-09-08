@@ -63,7 +63,13 @@ import {
   assessChangedFiles,
   formatScopeWarning,
   buildFindingCommitMessage,
+  type ScopeAssessment,
 } from './review-fix-scope.js';
+import {
+  recordValidationCriticalFilesFromCommits,
+  checkValidationCriticalRevert,
+  type ValidationCriticalFile,
+} from './validation-critical-files.js';
 import {
   recordResolvedFindings,
   detectFindingRecurrence,
@@ -251,6 +257,8 @@ export class ReviewFixLoop {
     let pendingReconciliationContext: string | undefined;
     let lastReviewResult: ReviewStepResult | undefined;
     let arbiterAlreadyRuledValid = false;
+    let pendingScopeAssessment: ScopeAssessment | undefined;
+    let pendingScopeWarning: string | undefined;
     let pendingScopeReviewContext: string | undefined;
     let pendingDeterministicDiagnostic: string | undefined;
     const findingArrayHistory: Array<
@@ -259,6 +267,7 @@ export class ReviewFixLoop {
     const unfoundedPingPongHistory: FindingHistoryEntry[] = [];
     let headRevalidated = true;
     const resolvedFindingFingerprints = new Map<string, ResolvedFindingFingerprint>();
+    const validationCriticalFiles = new Map<string, ValidationCriticalFile>();
     let currentFixChangedFiles: string[] = [];
     const fileStateHistory: FileStateHistory = new Map();
 
@@ -545,8 +554,25 @@ export class ReviewFixLoop {
                 ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
               });
               currentFixChangedFiles = scopeResult.changedFiles;
-              if (scopeResult.pendingScopeWarning) {
-                pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+              lastFixHeadRange.after = scopeResult.headAfterFix;
+              const pendingScope = this.updatePendingScope(scopeResult);
+              pendingScopeAssessment = pendingScope.pendingScopeAssessment;
+              pendingScopeWarning = pendingScope.pendingScopeWarning;
+
+              const revertHalt = await this.checkValidationCriticalRevertAndHalt({
+                ctx,
+                loopInput: input,
+                changedFiles: currentFixChangedFiles,
+                critical: validationCriticalFiles,
+                headAfterFix: scopeResult.headAfterFix,
+                iterationIndex,
+                fix,
+                review: {},
+                lastOffendingFindings,
+                thisLoop,
+              });
+              if (revertHalt.handled) {
+                return revertHalt.result;
               }
 
               const oscillation = await this.checkFileOscillation({
@@ -644,8 +670,28 @@ export class ReviewFixLoop {
                     ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
                   });
                   currentFixChangedFiles = scopeResult.changedFiles;
-                  if (scopeResult.pendingScopeWarning) {
-                    pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+                  lastFixHeadRange = {
+                    before: fix.headBeforeFix,
+                    after: scopeResult.headAfterFix,
+                  };
+                  const pendingScope = this.updatePendingScope(scopeResult);
+                  pendingScopeAssessment = pendingScope.pendingScopeAssessment;
+                  pendingScopeWarning = pendingScope.pendingScopeWarning;
+
+                  const revertHalt = await this.checkValidationCriticalRevertAndHalt({
+                    ctx,
+                    loopInput: input,
+                    changedFiles: currentFixChangedFiles,
+                    critical: validationCriticalFiles,
+                    headAfterFix: scopeResult.headAfterFix,
+                    iterationIndex,
+                    fix,
+                    review: {},
+                    lastOffendingFindings,
+                    thisLoop,
+                  });
+                  if (revertHalt.handled) {
+                    return revertHalt.result;
                   }
 
                   const oscillation = await this.checkFileOscillation({
@@ -685,6 +731,25 @@ export class ReviewFixLoop {
                     iterationIndex,
                     cwd: ctx.cwd,
                   });
+
+                  if (this.deps.git && fix.headBeforeFix) {
+                    const diagnostic =
+                      (gateResult?.output || 'deterministic gate failure')
+                        .split('\n')[0]
+                        ?.slice(0, 200) || 'deterministic gate failure';
+                    const criticalFiles = await recordValidationCriticalFilesFromCommits({
+                      git: this.deps.git,
+                      cwd: ctx.cwd,
+                      headBeforeFix: fix.headBeforeFix,
+                      headAfterFix: scopeResult.headAfterFix,
+                      changedFiles: currentFixChangedFiles,
+                      diagnostic,
+                      recordedAtIteration: iterationIndex,
+                    });
+                    for (const cf of criticalFiles) {
+                      validationCriticalFiles.set(cf.path, cf);
+                    }
+                  }
 
                   thisLoop = completeIteration(thisLoop, {
                     outcome: 'fixed',
@@ -793,6 +858,26 @@ export class ReviewFixLoop {
 
         const iterationOutcome = !lastPostFixGateFailed && reval?.passed ? 'fixed' : 'unresolved';
         if (iterationOutcome === 'fixed') {
+          if (this.deps.git && fix.headBeforeFix) {
+            const diagnostic =
+              (gateResult?.output || nextGateResult.output || 'deterministic gate failure')
+                .split('\n')[0]
+                ?.slice(0, 200) || 'deterministic gate failure';
+            const resolvedSha = lastFixHeadRange?.after ?? fix.headBeforeFix;
+            const criticalFiles = await recordValidationCriticalFilesFromCommits({
+              git: this.deps.git,
+              cwd: ctx.cwd,
+              headBeforeFix: fix.headBeforeFix,
+              headAfterFix: resolvedSha,
+              changedFiles: currentFixChangedFiles,
+              diagnostic,
+              recordedAtIteration: iterationIndex,
+            });
+            for (const cf of criticalFiles) {
+              validationCriticalFiles.set(cf.path, cf);
+            }
+          }
+
           await recordResolvedFindings({
             resolvedMap: resolvedFindingFingerprints,
             findings: lastOffendingFindings,
@@ -800,6 +885,16 @@ export class ReviewFixLoop {
             iterationIndex,
             cwd: ctx.cwd,
           });
+        }
+
+        if (pendingScopeAssessment || pendingScopeWarning) {
+          pendingScopeReviewContext = this.resolvePendingScopeReviewContext(
+            pendingScopeAssessment,
+            pendingScopeWarning,
+            validationCriticalFiles,
+          );
+          pendingScopeAssessment = undefined;
+          pendingScopeWarning = undefined;
         }
         thisLoop = completeIteration(thisLoop, {
           outcome: iterationOutcome,
@@ -887,6 +982,15 @@ export class ReviewFixLoop {
         },
       );
       const historyContext = await this.readHistoryContext(ctx, 'reviewer', input);
+      if (pendingScopeAssessment || pendingScopeWarning) {
+        pendingScopeReviewContext = this.resolvePendingScopeReviewContext(
+          pendingScopeAssessment,
+          pendingScopeWarning,
+          validationCriticalFiles,
+        );
+        pendingScopeAssessment = undefined;
+        pendingScopeWarning = undefined;
+      }
       let combinedHistoryContext = historyContext;
       if (pendingScopeReviewContext) {
         combinedHistoryContext = historyContext
@@ -1616,6 +1720,10 @@ export class ReviewFixLoop {
               continue;
             }
 
+            lastFixHeadRange = {
+              before: fix.headBeforeFix,
+              after: headAfterFix,
+            };
             const scopeResult = await this.finalizeScopeAndCommitMessage({
               ctx,
               loopInput: input,
@@ -1625,8 +1733,25 @@ export class ReviewFixLoop {
               ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
             });
             currentFixChangedFiles = scopeResult.changedFiles;
-            if (scopeResult.pendingScopeWarning) {
-              pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+            lastFixHeadRange.after = scopeResult.headAfterFix;
+            const pendingScope = this.updatePendingScope(scopeResult);
+            pendingScopeAssessment = pendingScope.pendingScopeAssessment;
+            pendingScopeWarning = pendingScope.pendingScopeWarning;
+
+            const revertHalt = await this.checkValidationCriticalRevertAndHalt({
+              ctx,
+              loopInput: input,
+              changedFiles: currentFixChangedFiles,
+              critical: validationCriticalFiles,
+              headAfterFix: scopeResult.headAfterFix,
+              iterationIndex,
+              fix,
+              review,
+              lastOffendingFindings,
+              thisLoop,
+            });
+            if (revertHalt.handled) {
+              return revertHalt.result;
             }
 
             const oscillation = await this.checkFileOscillation({
@@ -1744,6 +1869,10 @@ export class ReviewFixLoop {
                   continue;
                 }
 
+                lastFixHeadRange = {
+                  before: fix.headBeforeFix,
+                  after: committedSha,
+                };
                 const scopeResult = await this.finalizeScopeAndCommitMessage({
                   ctx,
                   loopInput: input,
@@ -1753,8 +1882,25 @@ export class ReviewFixLoop {
                   ...(fix.outOfScopeReasons ? { reasons: fix.outOfScopeReasons } : {}),
                 });
                 currentFixChangedFiles = scopeResult.changedFiles;
-                if (scopeResult.pendingScopeWarning) {
-                  pendingScopeReviewContext = scopeResult.pendingScopeWarning;
+                lastFixHeadRange.after = scopeResult.headAfterFix;
+                const pendingScope = this.updatePendingScope(scopeResult);
+                pendingScopeAssessment = pendingScope.pendingScopeAssessment;
+                pendingScopeWarning = pendingScope.pendingScopeWarning;
+
+                const revertHalt = await this.checkValidationCriticalRevertAndHalt({
+                  ctx,
+                  loopInput: input,
+                  changedFiles: currentFixChangedFiles,
+                  critical: validationCriticalFiles,
+                  headAfterFix: scopeResult.headAfterFix,
+                  iterationIndex,
+                  fix,
+                  review,
+                  lastOffendingFindings,
+                  thisLoop,
+                });
+                if (revertHalt.handled) {
+                  return revertHalt.result;
                 }
 
                 const oscillation = await this.checkFileOscillation({
@@ -1805,6 +1951,22 @@ export class ReviewFixLoop {
                   iterationIndex,
                   cwd: ctx.cwd,
                 });
+
+                if (this.deps.git && fix.headBeforeFix) {
+                  const diagnostic = firstFinding.slice(0, 200) || 'validation failure';
+                  const criticalFiles = await recordValidationCriticalFilesFromCommits({
+                    git: this.deps.git,
+                    cwd: ctx.cwd,
+                    headBeforeFix: fix.headBeforeFix,
+                    headAfterFix: scopeResult.headAfterFix,
+                    changedFiles: currentFixChangedFiles,
+                    diagnostic,
+                    recordedAtIteration: iterationIndex,
+                  });
+                  for (const cf of criticalFiles) {
+                    validationCriticalFiles.set(cf.path, cf);
+                  }
+                }
 
                 thisLoop = completeIteration(thisLoop, {
                   outcome: 'fixed',
@@ -2536,12 +2698,18 @@ export class ReviewFixLoop {
     headAfterFix: string;
     findings: Array<{ summary: string; severity?: string; files?: string[] }>;
     reasons?: Record<string, string>;
-  }): Promise<{ headAfterFix: string; changedFiles: string[]; pendingScopeWarning?: string }> {
+  }): Promise<{
+    headAfterFix: string;
+    changedFiles: string[];
+    pendingScopeAssessment?: ScopeAssessment;
+    pendingScopeWarning?: string;
+  }> {
     if (!this.deps.git) {
       return { headAfterFix: inputData.headAfterFix, changedFiles: [] };
     }
 
     let headAfterFix = inputData.headAfterFix;
+    let pendingAssessment: ScopeAssessment | undefined;
     let pendingWarning: string | undefined;
     let normalizedChangedFiles: string[] = [];
 
@@ -2575,7 +2743,7 @@ export class ReviewFixLoop {
             outOfScopeFiles: assessment.outOfScopeFiles,
           },
         );
-        pendingWarning = formatScopeWarning(assessment);
+        pendingAssessment = assessment;
       }
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -2633,7 +2801,114 @@ export class ReviewFixLoop {
     return {
       headAfterFix,
       changedFiles: normalizedChangedFiles,
+      ...(pendingAssessment ? { pendingScopeAssessment: pendingAssessment } : {}),
       ...(pendingWarning ? { pendingScopeWarning: pendingWarning } : {}),
+    };
+  }
+
+  private updatePendingScope(scopeResult: {
+    pendingScopeAssessment?: ScopeAssessment;
+    pendingScopeWarning?: string;
+  }): {
+    pendingScopeAssessment: ScopeAssessment | undefined;
+    pendingScopeWarning: string | undefined;
+  } {
+    if (scopeResult.pendingScopeAssessment) {
+      return {
+        pendingScopeAssessment: scopeResult.pendingScopeAssessment,
+        pendingScopeWarning: undefined,
+      };
+    }
+    if (scopeResult.pendingScopeWarning) {
+      return {
+        pendingScopeAssessment: undefined,
+        pendingScopeWarning: scopeResult.pendingScopeWarning,
+      };
+    }
+    return { pendingScopeAssessment: undefined, pendingScopeWarning: undefined };
+  }
+
+  private resolvePendingScopeReviewContext(
+    scopeAssessment: ScopeAssessment | undefined,
+    scopeWarning: string | undefined,
+    criticalFiles: ReadonlyMap<string, ValidationCriticalFile>,
+  ): string | undefined {
+    if (scopeAssessment) {
+      return formatScopeWarning(scopeAssessment, criticalFiles);
+    }
+    if (scopeWarning) {
+      return scopeWarning;
+    }
+    return undefined;
+  }
+
+  private async checkValidationCriticalRevertAndHalt(inputData: {
+    ctx: StepContext;
+    loopInput: ReviewFixLoopInput;
+    changedFiles: readonly string[];
+    critical: ReadonlyMap<string, ValidationCriticalFile>;
+    headAfterFix: string;
+    iterationIndex: number;
+    fix: FixStepResult;
+    review: Partial<ReviewStepResult>;
+    lastOffendingFindings: readonly unknown[];
+    thisLoop: Loop;
+  }): Promise<{ handled: true; result: ReviewFixLoopResult } | { handled: false }> {
+    if (!this.deps.git || inputData.critical.size === 0 || inputData.changedFiles.length === 0) {
+      return { handled: false };
+    }
+
+    const revertCheck = await checkValidationCriticalRevert({
+      git: this.deps.git,
+      cwd: inputData.ctx.cwd,
+      changedFiles: inputData.changedFiles,
+      critical: inputData.critical,
+      headAfterFix: inputData.headAfterFix,
+    });
+
+    if (!revertCheck.reverted || !revertCheck.path) {
+      return { handled: false };
+    }
+
+    this.emit(
+      inputData.loopInput,
+      'review_fix.validation_critical_file_reverted',
+      'error',
+      `validation-critical file "${revertCheck.path}" was reverted to pre-fix state: ${revertCheck.diagnostic}`,
+      {
+        path: revertCheck.path,
+        diagnostic: revertCheck.diagnostic,
+        iterationIndex: inputData.iterationIndex,
+      },
+    );
+
+    let thisLoop = completeIteration(inputData.thisLoop, {
+      outcome: 'failed',
+      now: this.deps.now(),
+    });
+    this.deps.loops.update(thisLoop);
+    this.emitIterationCompleted(inputData.loopInput, inputData.iterationIndex, 'failed');
+    await this.appendHistoryEntry(
+      inputData.ctx,
+      inputData.review,
+      inputData.fix,
+      undefined,
+      'failed',
+      inputData.loopInput,
+    );
+    await this.runCleanArtifacts(inputData.ctx);
+
+    const humanReviewReason = `Validation-critical file "${revertCheck.path}" was reverted to pre-fix state where validation previously failed: ${revertCheck.diagnostic}`;
+    return {
+      handled: true,
+      result: {
+        loop: thisLoop,
+        phaseOutcome: 'failed',
+        loopStatus: 'failed',
+        needsHumanReview: true,
+        humanReviewReason,
+        residualFindingsCount: inputData.lastOffendingFindings.length,
+      },
     };
   }
 

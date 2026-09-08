@@ -5,6 +5,14 @@ import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import { formatLedgerForFixPrompt, type FindingLedger } from '../../review-fix/finding-ledger.js';
 import { invalidateValidationEvidence } from '../validation-evidence.js';
+import {
+  DELETED_SENTINEL,
+  formatValidationCriticalFilesWarning,
+  hashContent,
+  wasRevertedToBeforeState,
+  type ValidationCriticalFile,
+} from '../../review-fix/validation-critical-files.js';
+import { parseGitStatusLine, unquoteGitPath } from '../../artifacts/orchestrator-artifacts.js';
 
 export interface FixReviewHandlerOpts {
   profileName?: string;
@@ -54,6 +62,17 @@ export class FixReviewHandler implements PhaseHandler {
       }
     }
 
+    // Read validation-critical files if recorded by fix-validate
+    let criticalFiles: ValidationCriticalFile[] = [];
+    try {
+      const raw = await ctx.artifacts.read(ctx.runUuid, 'validate/critical-files.json');
+      const parsed = JSON.parse(raw);
+      criticalFiles = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      criticalFiles = [];
+    }
+    const validationCriticalWarning = formatValidationCriticalFilesWarning(criticalFiles);
+
     // 4. Run fixer agent invocation
     const fixRunResult = await runSingleShotAgentPhase(ctx, {
       phase: 'fix-review',
@@ -64,6 +83,7 @@ export class FixReviewHandler implements PhaseHandler {
         issue_number: String(ctx.issueNumber),
         cwd: ctx.cwd,
         review_findings: formattedFindings,
+        validation_critical_files: validationCriticalWarning,
       },
       agentContract: {
         requiredArtifacts: [],
@@ -95,6 +115,101 @@ export class FixReviewHandler implements PhaseHandler {
           detectedAt: ctx.now(),
         },
       };
+    }
+
+    // 6. Check whether fixer reverted any validation-critical files
+    if (criticalFiles.length > 0 && ctx.git) {
+      for (const cf of criticalFiles) {
+        let currentContent: string | undefined;
+        let isNonEnoentReadFailure = false;
+        let readFailureReason: string | undefined;
+        try {
+          currentContent = await ctx.git.worktreeFileContent(ctx.cwd, cf.path);
+        } catch (err) {
+          currentContent = undefined;
+          isNonEnoentReadFailure = true;
+          readFailureReason = err instanceof Error ? err.message : String(err);
+        }
+
+        if (currentContent === undefined && cf.beforeHash === DELETED_SENTINEL) {
+          // Confirm actual absence before declaring a revert when beforeHash === DELETED_SENTINEL
+          let confirmedAbsent = false;
+          let nonEnoentError: string | undefined = readFailureReason;
+
+          try {
+            const statusOutput = await ctx.git.status(ctx.cwd);
+            const lines = statusOutput.split(/\r?\n/).filter(Boolean);
+            const matchingLine = lines.find((l) => {
+              const paths = parseGitStatusLine(l.replace(/\r$/, ''));
+              return paths.some((p) => unquoteGitPath(p) === cf.path);
+            });
+            if (matchingLine) {
+              const statusXY = matchingLine.slice(0, 2);
+              if (statusXY.includes('D')) {
+                confirmedAbsent = true;
+                nonEnoentError = undefined;
+              } else {
+                confirmedAbsent = false;
+                nonEnoentError = `file is reported present in git status (${statusXY.trim()}) but could not be read`;
+              }
+            } else {
+              // Not in git status. Check whether it exists in HEAD:
+              try {
+                await ctx.git.fileContent(ctx.cwd, 'HEAD', cf.path);
+                // Exists in HEAD and git status is clean => file exists on disk matching HEAD!
+                confirmedAbsent = false;
+                nonEnoentError =
+                  'file is present in HEAD and clean in worktree but could not be read';
+              } catch {
+                // Not in git status and not in HEAD => genuinely absent!
+                confirmedAbsent = true;
+                nonEnoentError = undefined;
+              }
+            }
+          } catch {
+            confirmedAbsent = !isNonEnoentReadFailure;
+          }
+
+          if (!confirmedAbsent) {
+            emit(
+              'review_fix.validation_critical_file_read_failed',
+              'warn',
+              `could not read validation-critical file "${cf.path}": ${nonEnoentError ?? 'non-ENOENT error'}`,
+              {
+                path: cf.path,
+                diagnostic: cf.diagnostic,
+                error: nonEnoentError,
+              },
+            );
+            continue;
+          }
+        }
+
+        const currentHash = hashContent(currentContent);
+        if (wasRevertedToBeforeState({ currentHash, critical: cf })) {
+          const revertMsg = `validation-critical file "${cf.path}" was reverted to pre-fix state: ${cf.diagnostic}`;
+          emit('review_fix.validation_critical_file_reverted', 'error', revertMsg, {
+            path: cf.path,
+            diagnostic: cf.diagnostic,
+          });
+          const message = `Validation-critical file "${cf.path}" was reverted to pre-fix state where validation previously failed: ${cf.diagnostic}`;
+          emit('fix_review.failed', 'error', message);
+          return {
+            outcome: 'needs_human_review',
+            failure: {
+              runUuid: ctx.runUuid,
+              phase: this.phase,
+              kind: 'needs_human_review',
+              message,
+              canRetry: true,
+              suggestedAction:
+                'Review the reverted validation-critical file and ensure validation fixes are preserved.',
+              artifacts: ['code-review.md', 'finding-ledger.json', 'validate/critical-files.json'],
+              detectedAt: ctx.now(),
+            },
+          };
+        }
+      }
     }
 
     await invalidateValidationEvidence(ctx, this.phase);

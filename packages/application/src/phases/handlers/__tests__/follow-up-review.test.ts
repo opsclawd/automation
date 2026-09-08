@@ -430,4 +430,77 @@ describe('FollowUpReviewHandler', () => {
     }
     expect(agent.invocations).toHaveLength(0);
   });
+
+  it('injects validation_critical_files into prompt vars when validate/critical-files.json is present', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('read_issue'),
+      relativePath: 'issue.md',
+      contents: '# Issue 1150',
+    });
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('plan_design'),
+      relativePath: 'design.md',
+      contents: '# Design 1150',
+    });
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(createFindingLedger([])),
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'validate/critical-files.json',
+      contents: JSON.stringify([
+        {
+          path: 'packages/api/src/whisperx.ts',
+          beforeHash: 'hash-1',
+          afterHash: 'hash-2',
+          diagnostic: 'pnpm test:whisperx timed out',
+        },
+      ]),
+    });
+
+    agent.enqueue('follow-up-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        evaluations: [],
+        new_findings: [],
+        summary: 'All clear',
+      }),
+    });
+
+    const handler = new FollowUpReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(mockRenderPrompt).toHaveBeenCalled();
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    expect(promptCtx?.vars.validation_critical_files).toContain('packages/api/src/whisperx.ts');
+    expect(promptCtx?.vars.validation_critical_files).toContain('pnpm test:whisperx timed out');
+  });
 });

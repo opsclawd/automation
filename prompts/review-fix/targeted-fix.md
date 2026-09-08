@@ -23,6 +23,8 @@ Review findings to fix:
 {{var:review_findings}}
 ```
 
+{{var:validation_critical_files}}
+
 ## TASK
 
 Read the review findings and failed acceptance criteria carefully.
@@ -31,6 +33,7 @@ Implement the necessary fixes in the repository worktree to resolve all blocking
 1. **Targeted Scope**:
    - Fix ONLY what the review findings report. Do not expand scope or refactor unrelated code.
    - Respect repository architectural boundaries (inward dependencies only; do not import `@ai-sdlc/infrastructure` in `packages/application`).
+   - Do NOT revert or undo changes in validation-critical files (listed under Validation-Critical Files above) unless you are providing an alternative fix that still passes validation.
 
 2. **Worktree State**:
    - Make the required file modifications and leave the worktree in a finished state for deterministic validation.
