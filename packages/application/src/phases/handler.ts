@@ -108,6 +108,7 @@ export type PhaseHandlerContextFactory = (
     | 'approvedInboundPaths'
     | 'repair'
     | 'priorPhaseName'
+    | 'selfVerifyCommands'
   >,
   opts?: Partial<
     Pick<
@@ -127,6 +128,7 @@ export type PhaseHandlerContextFactory = (
       | 'approvedInboundPaths'
       | 'repair'
       | 'priorPhaseName'
+      | 'selfVerifyCommands'
     >
   >,
 ) => PhaseHandlerContext;
