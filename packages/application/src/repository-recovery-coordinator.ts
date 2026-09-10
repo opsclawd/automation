@@ -173,25 +173,33 @@ export class RepositoryRecoveryCoordinator {
     repoId: RepositoryId,
     state: RepoState,
   ): Promise<RepositoryRecoveryAction> {
-    const hasStaleLeaseWithRecoverableRun =
-      state.isLeaseExpired && state.isWorkerStale && state.run && this.isRecoverable(state.run);
+    const isStaleLease = state.isLeaseExpired && state.isWorkerStale;
+    if (!isStaleLease) {
+      return { action: 'leave' };
+    }
+
+    const candidateRun = this.resolveCandidateRun(repoId, state);
+    const hasRecoverableRun = candidateRun && this.isRecoverable(candidateRun);
 
     if (state.activeNonExpiredJobs.length > 0) {
-      if (hasStaleLeaseWithRecoverableRun) {
-        await this.executeReclaim(repoId, state);
+      if (hasRecoverableRun) {
+        await this.executeReclaim(repoId, state, candidateRun);
         return { action: 'reclaim' };
       }
       return { action: 'leave' };
     }
 
-    if (hasStaleLeaseWithRecoverableRun) {
+    if (hasRecoverableRun) {
       if (!state.repoEnabled) {
-        await this.executeReclaim(repoId, state);
+        await this.executeReclaim(repoId, state, candidateRun);
         return { action: 'reclaim' };
+      }
+      if (candidateRun.uuid !== state.lease!.runId) {
+        this.rebindLease(repoId, state, candidateRun);
       }
       this.deps.onOrphan({
         repoId,
-        runId: state.run!.uuid as RunId,
+        runId: candidateRun.uuid as RunId,
         previousWorkerId: state.lease!.workerId,
         reason: 'stale lease with no active jobs',
       });
@@ -201,15 +209,59 @@ export class RepositoryRecoveryCoordinator {
     return { action: 'leave' };
   }
 
-  private async executeReclaim(repoId: RepositoryId, state: RepoState): Promise<void> {
+  private resolveCandidateRun(repoId: RepositoryId, state: RepoState): Run | undefined {
+    const firstJob = state.activeNonExpiredJobs[0];
+    if (firstJob) {
+      const jobRun = this.deps.findRun(firstJob.runId);
+      if (jobRun) return jobRun;
+    }
+
+    if (state.run && this.isRecoverable(state.run)) {
+      return state.run;
+    }
+
+    if (this.deps.listRunsForRepo) {
+      const runs = this.deps.listRunsForRepo(repoId);
+      const runningRun = runs.find((r) => r.status === 'running');
+      if (runningRun) return runningRun;
+    }
+
+    return state.run;
+  }
+
+  private rebindLease(repoId: RepositoryId, state: RepoState, candidateRun: Run): void {
+    if (typeof this.deps.leases?.acquire === 'function') {
+      const ttlMs = state.lease
+        ? Math.max(30_000, state.lease.expiresAt.getTime() - state.lease.acquiredAt.getTime())
+        : 30_000;
+      const workerId =
+        state.activeNonExpiredJobs[0]?.claimedBy ??
+        state.lease?.workerId ??
+        WorkerId('recovery-coordinator');
+      this.deps.leases.acquire({
+        repoId,
+        workerId,
+        runId: candidateRun.uuid as RunId,
+        now: this.deps.now(),
+        ttlMs,
+      });
+    }
+  }
+
+  private async executeReclaim(
+    repoId: RepositoryId,
+    state: RepoState,
+    candidateRun?: Run,
+  ): Promise<void> {
+    const runForWorktree = candidateRun ?? state.run;
     const worktreePath = this.deps.getWorktreePath?.(repoId) ?? '';
     const quarantineRoot = this.deps.getQuarantineRoot?.(repoId) ?? '';
-    const baseRef = state.run?.baseBranch ?? 'HEAD';
+    const baseRef = runForWorktree?.baseBranch ?? 'HEAD';
 
-    if (this.deps.worktreeRecovery && worktreePath) {
+    if (this.deps.worktreeRecovery && worktreePath && runForWorktree) {
       const outcome = await this.deps.worktreeRecovery.prepare({
         repoId,
-        runId: state.run!.uuid as RunId,
+        runId: runForWorktree.uuid as RunId,
         worktreePath,
         baseRef,
         quarantineRoot,
@@ -234,6 +286,15 @@ export class RepositoryRecoveryCoordinator {
         },
         auditReason: 'stale lease recovery',
       });
+    }
+
+    if (
+      candidateRun &&
+      state.repoEnabled &&
+      state.lease &&
+      candidateRun.uuid !== state.lease.runId
+    ) {
+      this.rebindLease(repoId, state, candidateRun);
     }
   }
 

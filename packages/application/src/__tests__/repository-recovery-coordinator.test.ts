@@ -64,6 +64,24 @@ function createCoordinatorDeps(state: TestState): RepositoryRecoveryCoordinatorD
     checkActiveLease: vi.fn((repoId: RepositoryId, now: Date) => {
       return state.leases.some((l) => l.repoId === repoId && l.expiresAt.getTime() > now.getTime());
     }),
+    acquire: vi.fn((input: import('../ports.js').AcquireLeaseInput) => {
+      const idx = state.leases.findIndex((l) => l.repoId === input.repoId);
+      const newLease: WorkerLease = {
+        repoId: input.repoId,
+        workerId: input.workerId,
+        runId: input.runId,
+        acquiredAt: input.now,
+        heartbeatAt: input.now,
+        expiresAt: new Date(input.now.getTime() + input.ttlMs),
+        leaseToken: `tok-${Date.now()}` as never,
+      };
+      if (idx >= 0) {
+        state.leases[idx] = newLease;
+      } else {
+        state.leases.push(newLease);
+      }
+      return newLease;
+    }),
   };
 
   const mockQueue: Partial<JobQueuePort> & { state: Job[] } = {
@@ -652,6 +670,100 @@ describe('RepositoryRecoveryCoordinator', () => {
 
       expect(result.action).toBe('reclaim');
       expect(deps.onOrphan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('lease reclaim and orphan recovery rebind lease row atomically', () => {
+    it('stale lease exists for run A, orphan recovery admits run B, resulting lease row has run_id set to B', async () => {
+      const expiredTime = Date.now() - 120_000;
+      const RUN_ID_A = RunId('run-A');
+      const RUN_ID_B = RunId('run-B');
+
+      const state: TestState = {
+        leases: [
+          {
+            repoId: REPO_ID,
+            workerId: WorkerId('dead-worker'),
+            runId: RUN_ID_A,
+            acquiredAt: new Date(expiredTime - 60_000),
+            heartbeatAt: new Date(expiredTime),
+            expiresAt: new Date(expiredTime),
+            leaseToken: 'tok-A' as never,
+          },
+        ],
+        jobs: [],
+        runRecords: [
+          { ...makeRun('run-A'), status: 'cancelled' as const },
+          { ...makeRun('run-B'), status: 'running' as const },
+        ],
+        workerStatuses: new Map([[`${WorkerId('dead-worker')}:${REPO_ID}`, 'stopping']]),
+        repoEnabled: true,
+        worktreePrepareResult: { safe: true, action: 'reset' },
+      };
+
+      const deps = createCoordinatorDeps(state);
+      const coord = new RepositoryRecoveryCoordinator(deps);
+      const result = await coord.execute({ repoId: REPO_ID });
+
+      expect(result.action).toBe('orphan-enqueue');
+      expect(deps.onOrphan).toHaveBeenCalledTimes(1);
+      expect(deps.onOrphan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoId: REPO_ID,
+          runId: RUN_ID_B,
+        }),
+      );
+      const currentLease = deps.leases.current(REPO_ID);
+      expect(currentLease).toBeDefined();
+      expect(currentLease?.runId).toBe(RUN_ID_B);
+      expect(currentLease?.runId).not.toBe(RUN_ID_A);
+    });
+
+    it('stale lease exists for run A, active job exists for run B, reclaim admits run B and updates lease row to B', async () => {
+      const expiredTime = Date.now() - 120_000;
+      const RUN_ID_A = RunId('run-A');
+      const RUN_ID_B = RunId('run-B');
+      const JOB_ID_B = JobId('job-B');
+
+      const state: TestState = {
+        leases: [
+          {
+            repoId: REPO_ID,
+            workerId: WorkerId('dead-worker'),
+            runId: RUN_ID_A,
+            acquiredAt: new Date(expiredTime - 60_000),
+            heartbeatAt: new Date(expiredTime),
+            expiresAt: new Date(expiredTime),
+            leaseToken: 'tok-A' as never,
+          },
+        ],
+        jobs: [
+          {
+            ...makeJob(JOB_ID_B, RUN_ID_B),
+            status: 'running' as const,
+            claimedBy: WorkerId('new-worker'),
+            claimToken: 'ctok-B' as never,
+            claimExpiresAt: new Date(Date.now() + 60_000),
+          },
+        ],
+        runRecords: [
+          { ...makeRun('run-A'), status: 'cancelled' as const },
+          { ...makeRun('run-B'), status: 'running' as const },
+        ],
+        workerStatuses: new Map([[`${WorkerId('dead-worker')}:${REPO_ID}`, 'stopping']]),
+        repoEnabled: true,
+        worktreePrepareResult: { safe: true, action: 'reset' },
+      };
+
+      const deps = createCoordinatorDeps(state);
+      const coord = new RepositoryRecoveryCoordinator(deps);
+      const result = await coord.execute({ repoId: REPO_ID });
+
+      expect(result.action).toBe('reclaim');
+      const currentLease = deps.leases.current(REPO_ID);
+      expect(currentLease).toBeDefined();
+      expect(currentLease?.runId).toBe(RUN_ID_B);
+      expect(currentLease?.runId).not.toBe(RUN_ID_A);
     });
   });
 });
