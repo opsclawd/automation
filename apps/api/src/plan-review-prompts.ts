@@ -7,6 +7,7 @@ import {
   ArtifactNotFoundError,
   WORKSPACE_CONSTRAINTS,
   SCRATCH_FILE_POLICY,
+  JSON_ESCAPING,
 } from '@ai-sdlc/application';
 import type {
   PlanReviewFinding,
@@ -215,6 +216,8 @@ export function buildPlanReviewArbiterPrompt(
     '- **insufficient_evidence** — the artifacts are unreadable or absent. Cite what is missing.',
     '',
     '## OUTPUT',
+    JSON_ESCAPING,
+    '',
     'Write a single file named `result.json` at the working-directory root with this exact shape (no extra keys, no comments):',
     '```json',
     '{',
@@ -301,6 +304,8 @@ export function buildPlanReviewFinalReviewArbiterPrompt(
     '- **insufficient_evidence** — the artifacts are unreadable or absent. Cite what is missing.',
     '',
     '## OUTPUT',
+    JSON_ESCAPING,
+    '',
     'Write a single file named `result.json` at the working-directory root with this exact shape (no extra keys, no comments):',
     '```json',
     '{',

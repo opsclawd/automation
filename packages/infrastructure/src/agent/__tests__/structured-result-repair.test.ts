@@ -308,3 +308,17 @@ describe('StructuredResultRepair', () => {
     expect(env.agent.invocations).toHaveLength(1);
   });
 });
+
+describe('buildStructuredResultRepairPrompt', () => {
+  it('includes JSON escaping instructions in the prompt', () => {
+    const prompt = buildStructuredResultRepairPrompt({
+      destination: 'result.json',
+      schemaContractText: '{"type":"object"}',
+      cappedRawArtifact: '{"broken": true}',
+      stdoutTail: 'stdout tail',
+    });
+
+    expect(prompt).toContain('Escape every literal `"` as `\\"` and every backslash as `\\\\`');
+    expect(prompt).toContain('do not emit a raw, unescaped `"` or `\\` inside a string');
+  });
+});

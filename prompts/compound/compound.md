@@ -15,6 +15,8 @@ Write your findings to `{{var:cwd}}/compound.md`.
 
 Output format:
 
+{{var:JSON_ESCAPING}}
+
 - `{{var:cwd}}/compound.md`: A markdown document explaining what worked, what didn't, and what to do differently next time.
 - `result.json`: exactly this shape (fill in `summary` with one sentence describing the document):
   ```json

@@ -27,6 +27,21 @@ describe('plan-tasks parsing and validation', () => {
       }
     });
 
+    it('tolerates unescaped quotes in task title via parseAgentResultJson', () => {
+      const raw = `{
+        "version": 1,
+        "task_count": 1,
+        "tasks": [
+          { "n": 1, "title": "Implement "quoted feature" support" }
+        ]
+      }`;
+      const result = parseTaskManifest(raw);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.manifest.tasks[0]?.title).toBe('Implement "quoted feature" support');
+      }
+    });
+
     it('malformed JSON', () => {
       const result = parseTaskManifest('{ version: 1, ');
       expect(result.success).toBe(false);

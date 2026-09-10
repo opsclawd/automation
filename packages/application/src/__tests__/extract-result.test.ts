@@ -373,6 +373,74 @@ describe('extractResult coordinator', () => {
     expect(repair.calls).toHaveLength(1);
     expect(revalidateCalls).toBe(1);
   });
+
+  describe('StructuredResultRepair invocation on JSON.parse SyntaxError (#1156, AC-3)', () => {
+    const syntaxErrorJson =
+      '{\n  "result": "success",\n  "changedFiles": [\n    "src/foo.ts",\n    "file with "unescaped quotes" in broken syntax\n';
+    const validJson = { result: 'success', changedFiles: ['src/foo.ts'] };
+
+    it('invokes repair and recovers when result.json has a real JSON.parse SyntaxError and stdout has evidence', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'r1',
+        relativePath: 'result.json',
+        contents: syntaxErrorJson,
+      });
+
+      const repair = new FakeStructuredResultRepair();
+      repair.response = async () => {
+        await artifacts.write({
+          runId: 'r1',
+          relativePath: 'result.json',
+          contents: JSON.stringify(validJson),
+        });
+        return { outcome: 'repaired', repairInvocationId: AgentInvocationId('rep-1156') };
+      };
+
+      const outcome = await extractResult({
+        invocation: makeInvocation({ phaseId: PhaseName('implement'), stdoutPath }),
+        ports: { artifacts, repair },
+        cwd: '/cwd',
+      });
+
+      expect(outcome).toEqual({
+        ok: true,
+        result: validJson,
+        repairInvocationId: AgentInvocationId('rep-1156'),
+      });
+      expect(repair.calls).toHaveLength(1);
+    });
+
+    it('does not invoke repair and classifies as unrecoverable_artifact when stdout has no evidence', async () => {
+      const emptyStdoutPath = join(tempDir, 'empty-stdout.log');
+      writeFileSync(emptyStdoutPath, '');
+
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'r1',
+        relativePath: 'result.json',
+        contents: syntaxErrorJson,
+      });
+
+      const repair = new FakeStructuredResultRepair();
+
+      const outcome = await extractResult({
+        invocation: makeInvocation({
+          phaseId: PhaseName('implement'),
+          stdoutPath: emptyStdoutPath,
+        }),
+        ports: { artifacts, repair },
+      });
+
+      expect(outcome).toMatchObject({
+        ok: false,
+        classification: 'unrecoverable_artifact',
+        reason: 'invalid',
+      });
+      expect(outcome.detail).toContain('JSON.parse failed');
+      expect(repair.calls).toHaveLength(0);
+    });
+  });
 });
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

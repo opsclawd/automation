@@ -8,6 +8,7 @@ import type { ReadWorktreeFilePort } from '../ports/read-worktree-file-port.js';
 import type { DeleteWorktreeFilePort } from '../ports/delete-worktree-file-port.js';
 import type { WorktreeLifecyclePort } from '../ports/worktree-lifecycle-port.js';
 import type { EventRepositoryPort } from '../ports/event-repository-port.js';
+import type { StructuredResultRepairPort } from '../ports/structured-result-repair-port.js';
 
 export interface PhaseHandlerContext {
   runId: string;
@@ -39,6 +40,7 @@ export interface PhaseHandlerContext {
   eventRepository?: EventRepositoryPort | undefined;
   inboundPreserveAllowance?: string[] | undefined;
   approvedInboundPaths?: string[] | undefined;
+  repair?: StructuredResultRepairPort | undefined;
   /**
    * Name of the phase that completed immediately before this one. Used by
    * phase boundary checks to attribute dirty-worktree failures to the phase
@@ -103,6 +105,7 @@ export type PhaseHandlerContextFactory = (
     | 'eventRepository'
     | 'inboundPreserveAllowance'
     | 'approvedInboundPaths'
+    | 'repair'
     | 'priorPhaseName'
   >,
   opts?: Partial<
@@ -121,6 +124,7 @@ export type PhaseHandlerContextFactory = (
       | 'eventRepository'
       | 'inboundPreserveAllowance'
       | 'approvedInboundPaths'
+      | 'repair'
       | 'priorPhaseName'
     >
   >,
@@ -142,6 +146,7 @@ export function buildPhaseHandlerContext(
     | 'eventRepository'
     | 'inboundPreserveAllowance'
     | 'approvedInboundPaths'
+    | 'repair'
     | 'priorPhaseName'
   >,
   opts?: Partial<
@@ -160,6 +165,7 @@ export function buildPhaseHandlerContext(
       | 'eventRepository'
       | 'inboundPreserveAllowance'
       | 'approvedInboundPaths'
+      | 'repair'
       | 'priorPhaseName'
     >
   >,

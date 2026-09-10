@@ -39,6 +39,8 @@ scope evidence:
 
 ## OUTPUT
 
+{{var:JSON_ESCAPING}}
+
 Write a single file named `plan-fix-result.json` at the working-directory
 root with this exact shape:
 

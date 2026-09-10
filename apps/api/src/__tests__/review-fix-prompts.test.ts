@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from '../review-fix-prompts.js';
-import { type ArchitectPlan, getGitCommitExcludePathspecs } from '@ai-sdlc/application';
+import {
+  type ArchitectPlan,
+  getGitCommitExcludePathspecs,
+  JSON_ESCAPING,
+} from '@ai-sdlc/application';
 
 describe('review-fix prompts builders', () => {
   describe('buildReviewFixReviewPrompt', () => {
@@ -29,6 +33,20 @@ describe('review-fix prompts builders', () => {
 
       expect(result).toContain('Run: git diff origin/main...HEAD');
       expect(result).toContain('## WORKSPACE CONSTRAINTS');
+    });
+
+    it('includes JSON_ESCAPING guidance', () => {
+      const result = buildReviewFixReviewPrompt({
+        cwd: '/test/cwd',
+        repoId: 'test-repo',
+        defaultBranch: 'main',
+      });
+
+      expect(result).toContain(JSON_ESCAPING);
+      expect(result).toMatch(
+        /All string values in the JSON output must be valid JSON string literals/i,
+      );
+      expect(result).toMatch(/escape every `"` as `\\"` and every backslash as `\\\\`/i);
     });
   });
 
@@ -220,6 +238,25 @@ describe('buildWholePrArbiterPrompt', () => {
     expect(prompt).toContain('## RELEVANT EXCERPTS');
     expect(prompt).toContain('Line 10: bad wiring');
     expect(prompt).toContain('## FIX DELTA');
+  });
+
+  it('includes JSON_ESCAPING guidance in whole-PR arbiter prompt', async () => {
+    const { buildWholePrArbiterPrompt } = await import('../review-fix-prompts.js');
+    const prompt = buildWholePrArbiterPrompt({
+      cwd: '/wt',
+      repoId: 'owner/repo',
+      disputedFindings: [],
+      dispositionHistory: [],
+      relevantExcerpts: [],
+      fixDelta: '',
+      fixRebuttal: '',
+    });
+
+    expect(prompt).toContain(JSON_ESCAPING);
+    expect(prompt).toMatch(
+      /All string values in the JSON output must be valid JSON string literals/i,
+    );
+    expect(prompt).toMatch(/escape every `"` as `\\"` and every backslash as `\\\\`/i);
   });
 });
 

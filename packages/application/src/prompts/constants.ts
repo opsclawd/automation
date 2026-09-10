@@ -8,6 +8,8 @@ Your working directory is a dedicated git worktree with the repository's complet
 
 export const SCRATCH_FILE_POLICY = `Transient working files and scratch scripts MUST be written inside \`.ai-tmp/\`. \`.ai-tmp/\` is already gitignored. Nothing may be written to the worktree root unless it is a declared deliverable.`;
 
+export const JSON_ESCAPING = `All string values in the JSON output must be valid JSON string literals. If evidence, rationale, summary, or other freeform text (including embedded Markdown such as design_md/plan_md) quotes a code identifier, file path, backslash-containing path, or literal string, escape every \`"\` as \`\\"\` and every backslash as \`\\\\\` inside that value. Do not emit a raw, unescaped \`"\` or \`\\\` inside a JSON string.`;
+
 export function getPostPrReviewCommitPolicy(isBatch: boolean): string {
   const subject = isBatch ? 'these comments' : 'this comment';
   const verb = isBatch ? 'are' : 'is';

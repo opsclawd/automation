@@ -50,6 +50,9 @@ scratch. For example:
 - `task-manifest.json` must remain valid per its schema: `version: 2`, `task_count` equal to
   `tasks.length`, each task with a numeric `n` and non-empty string `title`. Preserve any existing
   `permitted_areas`, `may_extend`, `non_goals`, `reference_files`, `signature_changes`, `task_type`, and `paired_with_task` fields — do not remove valid declarations or convert them to V1 format.
+
+{{var:JSON_ESCAPING}}
+
 - Scope preservation and narrowing: Preserve valid scope declarations. Fix collisions with the narrowest permission instead of widening obligations or repository scope. Never declare or widen permissions to the repository root `""` or `.`.
 - When showing example task headers for illustration only (not real task headings), indent them by
   at least 2 spaces or wrap in inline code — a real task heading always starts at column 0.
@@ -80,7 +83,7 @@ scratch. For example:
   - Constructing an expected value or call argument as a fresh literal with fields the current type
     lacks (excess-property check) — route it through an explicitly-typed local variable or interface
     instead of assigning the literal directly into a contextually-typed position.
-  RED tasks asserting on output most often need the first guard, not the second.
+    RED tasks asserting on output most often need the first guard, not the second.
   - Finalizing a deferred signature: The task that declares a deferred `signature_changes` entry must
     include `may_extend` (not `reference_files`) for any file where an earlier task used a
     local-cast/widened-type workaround anticipating that same signature, so it has permission to replace

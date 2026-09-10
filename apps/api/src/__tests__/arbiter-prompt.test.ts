@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { JSON_ESCAPING } from '@ai-sdlc/application';
 import {
   buildArbiterPrompt,
   buildImplementStepFinalReviewArbiterPrompt,
@@ -171,6 +172,21 @@ describe('buildArbiterPrompt', () => {
     expect(prompt).toContain('Result: PASS');
     expect(prompt).not.toContain('TS2304');
   });
+
+  it('includes JSON_ESCAPING guidance in OUTPUT section', () => {
+    const prompt = buildArbiterPrompt(ctx, {
+      tcResult: { outcome: 'pass', output: '' },
+      disputedFinding: { fingerprint: 'fp1', severity: 'P1', summary: 'Test' },
+      dispositionHistory: [],
+      fixRebuttal: '',
+      taskBody: 'stub',
+    });
+    expect(prompt).toContain(JSON_ESCAPING);
+    expect(prompt).toMatch(
+      /All string values in the JSON output must be valid JSON string literals/i,
+    );
+    expect(prompt).toMatch(/escape every `"` as `\\"` and every backslash as `\\\\`/i);
+  });
 });
 
 describe('buildImplementStepFinalReviewArbiterPrompt', () => {
@@ -217,5 +233,18 @@ describe('buildImplementStepFinalReviewArbiterPrompt', () => {
     });
     expect(prompt).toContain('READ-ONLY');
     expect(prompt).toContain('MUST NOT modify any code');
+  });
+
+  it('includes JSON_ESCAPING guidance in OUTPUT section', () => {
+    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
+      specExcerpt: '',
+      qualityExcerpt: '',
+      taskBody: '',
+    });
+    expect(prompt).toContain(JSON_ESCAPING);
+    expect(prompt).toMatch(
+      /All string values in the JSON output must be valid JSON string literals/i,
+    );
+    expect(prompt).toMatch(/escape every `"` as `\\"` and every backslash as `\\\\`/i);
   });
 });

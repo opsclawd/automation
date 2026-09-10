@@ -1,5 +1,5 @@
 import type { TypecheckResult } from '@ai-sdlc/application';
-import { WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
+import { WORKSPACE_CONSTRAINTS, JSON_ESCAPING } from '@ai-sdlc/application';
 
 export interface BuildArbiterPromptContext {
   stepIndex: number;
@@ -138,6 +138,8 @@ export function buildArbiterPrompt(
     '- Findings that match the verbatim plan task body verbatim and the fix ignored them → finding_valid.',
     '',
     '## OUTPUT',
+    JSON_ESCAPING,
+    '',
     'Write a single file named `result.json` at the working-directory root with this exact shape (no extra keys, no comments):',
     '```json',
     '{',
@@ -229,6 +231,8 @@ export function buildImplementStepFinalReviewArbiterPrompt(
     '- Findings that match the verbatim plan task body verbatim → finding_valid.',
     '',
     '## OUTPUT',
+    JSON_ESCAPING,
+    '',
     'Write a single file named `result.json` at the working-directory root with this exact shape (no extra keys, no comments):',
     '```json',
     '{',

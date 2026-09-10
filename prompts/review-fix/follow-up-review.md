@@ -20,11 +20,13 @@ Implementation plan:
 {{artifact:plan.md}}
 
 Accumulated review findings ledger:
+
 ```
 {{var:finding_ledger}}
 ```
 
 Deterministic validation evidence:
+
 ```
 {{var:validation_evidence}}
 ```
@@ -32,11 +34,13 @@ Deterministic validation evidence:
 {{var:validation_critical_files}}
 
 Complete branch diff against base:
+
 ```diff
 {{var:complete_diff}}
 ```
 
 Fix diff since previous review:
+
 ```diff
 {{var:fix_diff}}
 ```
@@ -46,12 +50,13 @@ Fix diff since previous review:
 Perform a focused follow-up review grounded in the issue, acceptance criteria, design, accumulated finding ledger, and diffs above.
 
 Your responsibilities:
+
 1. **Evaluate Prior Findings**:
    - For every unresolved finding in the accumulated finding ledger, evaluate whether it is now `resolved: true` or `resolved: false`.
    - Do not evaluate resolution solely from the fix diff or from new/changed tests near the finding's originally cited files. A fix diff shows what changed; it does not show what the finding actually required to be true. Independently trace the finding's full causal chain — from the root symptom described in its `rationale` through to the actual runtime behavior it concerns — even when that chain passes through files the fix diff did not touch.
    - When proving a prior finding resolved, trace that finding through any authoritative production artifacts (e.g. repository-owned runtime configuration, templates, profiles, schemas, workflows, migrations, contracts) that materially participate in its causal chain. Inspect only the production artifacts materially required by those causal chains to keep the follow-up review focused.
    - Synthetic tests or constructed fixtures are supporting evidence only and cannot establish resolution when they materially differ from authoritative production artifacts or construct configurations absent from production.
-   - A finding is not resolved merely because validation now accepts the input, a type now allows the field, or a new test asserts an intermediate value (e.g. a value is recorded in an output object). Confirm the underlying guarantee stated in the finding's rationale actually holds at the point where it matters (e.g. if the finding is about a value being *used*, not just accepted or recorded, verify the code path that consumes it was actually changed).
+   - A finding is not resolved merely because validation now accepts the input, a type now allows the field, or a new test asserts an intermediate value (e.g. a value is recorded in an output object). Confirm the underlying guarantee stated in the finding's rationale actually holds at the point where it matters (e.g. if the finding is about a value being _used_, not just accepted or recorded, verify the code path that consumes it was actually changed).
    - A finding resolution is not correct if it merely changes the failure mode or converts one failure into an unavoidable downstream failure, leaving the supported production configuration internally unsatisfiable. Confirm that at least one valid end-to-end success path exists under the actual supported production configuration for the corrected behavior.
    - For capability-dependent behavior touched by the finding, confirm consistency among declared capabilities, validation rules, runtime behavior, and output/provenance contracts when materially relevant.
    - Cite the exact file/line(s) that establish the full chain is closed — not just the file/line(s) the fix diff touched — as your evidence.
@@ -72,6 +77,8 @@ If you inspect `git status` or the worktree directly, you will see untracked fil
 This exemption is narrow: it applies only to the exact untracked paths listed, as they exist right now. It does not extend to tracked files (even ones with the same name), to any content or behavior change in the branch diff, or to `.gitignore`/`.prettierignore` modifications — an implementation change that widens an ignore file to hide unrelated untracked output is still a real finding and must be evaluated normally. A prior finding about scope/hygiene is resolved on this basis only when its own cited evidence was solely the presence of these exact listed paths.
 
 ## OUTPUT FORMAT
+
+{{var:JSON_ESCAPING}}
 
 Write your review to `./result.json`:
 

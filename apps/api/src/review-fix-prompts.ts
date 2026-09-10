@@ -6,6 +6,7 @@ import {
   type ReviewFindingRecord,
   type DispositionHistoryEntry,
   getGitCommitExcludePathspecsString,
+  JSON_ESCAPING,
 } from '@ai-sdlc/application';
 
 export interface BuildReviewPromptInput {
@@ -76,6 +77,7 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
     '- high: correct behavior violation, significant bugs',
     '- medium: suboptimal patterns, missing tests',
     '- low: style, formatting, minor improvements',
+    JSON_ESCAPING,
     '',
     'After writing the review, write a result.json file with:',
     '{\n  "result": "pass" | "fail",\n  "findings": [\n    {\n      "severity": "high",\n      "summary": "Missing guard",\n      "files": ["packages/application/src/example.ts"]\n    }\n  ]\n}',
@@ -413,6 +415,7 @@ export function buildWholePrArbiterPrompt(input: BuildWholePrArbiterPromptInput)
     '- finding_invalid: all findings are incorrect or the fixer is right to rebut them',
     '- ambiguous: the issues are unclear from the evidence',
     '- insufficient_evidence: you lack the evidence to decide',
+    JSON_ESCAPING,
     '',
     'After arbitrating, write a result.json file with:',
     '{ "outcome": "finding_valid" | "finding_invalid" | "ambiguous" | "insufficient_evidence", "evidence": "your detailed observations", "rationale": "your detailed reasoning" }',
