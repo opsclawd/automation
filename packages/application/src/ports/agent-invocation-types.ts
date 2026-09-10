@@ -44,6 +44,7 @@ export interface AgentInvocationRequest {
   fallbackOfInvocationId?: AgentInvocationId;
   fallbackReason?: string;
   timeoutMs?: number;
+  resultJsonPath?: string;
   metadata?: Record<string, unknown>;
   retryIntent?: SemanticRetryIntent;
 }

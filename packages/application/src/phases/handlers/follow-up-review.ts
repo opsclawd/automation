@@ -143,6 +143,7 @@ export class FollowUpReviewHandler implements PhaseHandler {
       phase: 'follow-up-review',
       profile,
       step: 'follow-up-review',
+      resultJsonPath: 'follow-up-review-result.json',
       ...(template ? { template } : {}),
       vars: {
         issue_number: String(ctx.issueNumber),

@@ -90,6 +90,7 @@ export class FixReviewHandler implements PhaseHandler {
         mustNotChangeBranch: true,
         mustNotCreateCommit: true,
       },
+      resultJsonPath: 'fix-review-result.json',
       skipCompletedEmit: true,
     });
 

@@ -86,6 +86,7 @@ export class CodexAgentAdapter implements AgentPort {
       ...(request.abortSignal ? { abortSignal: request.abortSignal } : {}),
       startCommitSha: request.startCommitSha,
       expectedArtifacts: request.expectedArtifacts,
+      ...(request.resultJsonPath ? { resultJsonPath: request.resultJsonPath } : {}),
       skipErrorScanning: true,
     });
 

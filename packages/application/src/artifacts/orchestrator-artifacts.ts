@@ -306,6 +306,9 @@ export const PROMPT_ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'quality-review-result*.json',
   'spec-review-result*.json',
   'fix-result*.json',
+  'follow-up-review-result*.json',
+  'fix-review-result*.json',
+  'fix-validate-result*.json',
   'prompt.md',
   'implementation-log*.md',
 ] as const);

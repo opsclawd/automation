@@ -73,7 +73,7 @@ describe('FixReviewHandler', () => {
 
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'fix-review-result.json',
       contents: JSON.stringify({ result: 'done_with_fixes' }),
     });
 
@@ -85,7 +85,7 @@ describe('FixReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'fix-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));
@@ -132,7 +132,7 @@ describe('FixReviewHandler', () => {
 
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'fix-review-result.json',
       contents: JSON.stringify({ result: 'cannot_fix' }),
     });
 
@@ -144,7 +144,7 @@ describe('FixReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'fix-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));
@@ -165,7 +165,7 @@ describe('FixReviewHandler', () => {
     }
   });
 
-  it('tolerates control characters in result.json via centralized ingestion', async () => {
+  it('tolerates control characters in fix-review-result.json via centralized ingestion', async () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();
     const git = new FakeGitPort();
@@ -191,7 +191,7 @@ describe('FixReviewHandler', () => {
     // Contains raw newline inside rebuttal string literal (defect from #1127)
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'fix-review-result.json',
       contents: '{\n  "result": "done_no_fixes_needed",\n  "rebuttal": "Fixed already.\nLine 2"\n}',
     });
 
@@ -203,7 +203,7 @@ describe('FixReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'fix-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));
@@ -228,7 +228,7 @@ describe('FixReviewHandler', () => {
     });
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'fix-review-result.json',
       contents: JSON.stringify({ result: 'done_with_fixes' }),
     });
 
@@ -256,7 +256,7 @@ describe('FixReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'fix-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));
@@ -286,7 +286,7 @@ describe('FixReviewHandler', () => {
     });
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'fix-review-result.json',
       contents: JSON.stringify({ result: 'done_with_fixes' }),
     });
 
@@ -319,7 +319,7 @@ describe('FixReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'fix-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));
@@ -367,7 +367,7 @@ describe('FixReviewHandler', () => {
     });
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'fix-review-result.json',
       contents: JSON.stringify({ result: 'done_with_fixes' }),
     });
 
@@ -396,7 +396,7 @@ describe('FixReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'fix-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));

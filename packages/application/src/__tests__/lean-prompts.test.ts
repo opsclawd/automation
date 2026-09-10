@@ -352,7 +352,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(template).not.toMatch(/RenderProfile/i);
 
       // Schema output
-      expect(template).toContain('result.json');
+      expect(template).toContain('follow-up-review-result.json');
       expect(template).toContain('"verdict"');
       expect(template).toContain('"evaluations"');
       expect(template).toContain('"new_findings"');
@@ -405,7 +405,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       );
 
       // Output contract
-      expect(template).toContain('result.json');
+      expect(template).toContain('fix-review-result.json');
       expect(template).toContain('"result": "done_with_fixes"');
 
       // Critical rules & No git staging/commit choreography

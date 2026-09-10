@@ -40,7 +40,7 @@ Implement the necessary fixes in the repository worktree to resolve all blocking
 
 ## FINAL ACTION
 
-Write `./result.json` with:
+Write `./fix-review-result.json` with:
 ```json
 {
   "result": "done_with_fixes"
@@ -52,5 +52,5 @@ Write `./result.json` with:
 - Do not ask questions.
 - Do not switch git branches.
 - Do not create commits.
-- Write `./result.json` before stopping.
-- If `./result.json` already exists and needs revision (e.g. a second pass over your own review found something new), rewrite the entire file from scratch. Do not patch/diff-edit it — context-based patch tools are unreliable against large JSON arrays, since they require reproducing exact surrounding text; a failed or partial patch application can silently corrupt the file.
+- Write `./fix-review-result.json` before stopping.
+- If `./fix-review-result.json` already exists and needs revision (e.g. a second pass over your own review found something new), rewrite the entire file from scratch. Do not patch/diff-edit it — context-based patch tools are unreliable against large JSON arrays, since they require reproducing exact surrounding text; a failed or partial patch application can silently corrupt the file.

@@ -37,7 +37,7 @@ Implement the minimal necessary fixes in the repository worktree to resolve the 
 
 ## FINAL ACTION
 
-Write `./result.json` with:
+Write `./fix-validate-result.json` with:
 ```json
 {
   "result": "fixed"
@@ -49,4 +49,4 @@ Write `./result.json` with:
 - Do not ask questions.
 - Do not switch git branches.
 - Do not create commits.
-- Write `./result.json` before stopping.
+- Write `./fix-validate-result.json` before stopping.

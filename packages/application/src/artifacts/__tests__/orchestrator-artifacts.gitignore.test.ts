@@ -17,6 +17,9 @@ const newlyAddedRootArtifactPatterns = [
   'quality-review-result*.json',
   'spec-review-result*.json',
   'fix-result*.json',
+  'follow-up-review-result*.json',
+  'fix-review-result*.json',
+  'fix-validate-result*.json',
   'pr-summary.md',
   'pr-url.txt',
 ] as const;
@@ -54,6 +57,9 @@ describe('repository orchestrator artifact pattern matching', () => {
         'quality-review-result*.json',
         'spec-review-result*.json',
         'fix-result*.json',
+        'follow-up-review-result*.json',
+        'fix-review-result*.json',
+        'fix-validate-result*.json',
       ],
       { cwd: repositoryRoot, encoding: 'utf8' },
     )

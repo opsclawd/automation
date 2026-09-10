@@ -478,6 +478,7 @@ export class AntigravityAgentAdapter implements AgentPort {
       ...(request.abortSignal ? { abortSignal: request.abortSignal } : {}),
       startCommitSha: request.startCommitSha,
       expectedArtifacts: request.expectedArtifacts,
+      ...(request.resultJsonPath ? { resultJsonPath: request.resultJsonPath } : {}),
     });
 
     applyAntigravityJsonUsage(result, request);

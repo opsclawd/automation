@@ -203,6 +203,7 @@ export class FixValidateHandler implements PhaseHandler {
         mustNotChangeBranch: true,
         mustNotCreateCommit: true,
       },
+      resultJsonPath: 'fix-validate-result.json',
       skipResultExtraction: true,
     });
 

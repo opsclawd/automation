@@ -441,11 +441,14 @@ export class OpenCodeAgentAdapter implements AgentPort {
     if (request.stepId) ret.stepId = request.stepId;
     if (remediatedArtifacts) ret.remediatedArtifacts = remediatedArtifacts;
     // Set resultJsonPath so downstream extraction uses the explicit path rather
-    // than falling back to a hardcoded 'result.json' (#311).
-    if (ret.outcome === 'success' && request.expectedArtifacts.includes('result.json')) {
-      const artifactPath = join(request.cwd, 'result.json');
+    // than falling back to a hardcoded 'result.json' (#311, #1158).
+    const targetResultPath =
+      request.resultJsonPath ??
+      (request.expectedArtifacts.includes('result.json') ? 'result.json' : undefined);
+    if (ret.outcome === 'success' && targetResultPath) {
+      const artifactPath = join(request.cwd, targetResultPath);
       if (existsSync(artifactPath)) {
-        ret.resultJsonPath = 'result.json';
+        ret.resultJsonPath = targetResultPath;
       }
     }
     return ret;
