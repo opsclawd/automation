@@ -140,6 +140,73 @@ describe('AgentRuntimeRouter', () => {
     expect(row?.id).toBe(callerId);
   });
 
+  it('mints a fresh id for a fallback dispatch instead of reusing the primary invocation id', async () => {
+    const cfgWithFallback: AgentConfig = {
+      defaultProfile: 'primary',
+      profiles: {
+        primary: {
+          runtime: 'opencode',
+          provider: 'gemini',
+          model: 'gemini-pro',
+          timeoutMinutes: 1,
+        },
+        fallback: { runtime: 'opencode', provider: 'openai', model: 'codex', timeoutMinutes: 1 },
+      },
+      phaseProfiles: {
+        'plan-design': {
+          profile: 'primary',
+          fallbackProfile: 'fallback',
+          fallbackTriggers: ['contract_violation'],
+        },
+      },
+    };
+    const inv = new FakeAgentInvocationPort();
+    let callCount = 0;
+    const switchingAdapter: AgentPort = {
+      async invoke(): Promise<AgentInvocationResult> {
+        callCount += 1;
+        return {
+          runtime: 'opencode',
+          provider: callCount === 1 ? 'gemini' : 'openai',
+          model: callCount === 1 ? 'gemini-pro' : 'codex',
+          exitCode: callCount === 1 ? 1 : 0,
+          durationMs: 1,
+          stdoutPath: '/tmp/stdout.log',
+          stderrPath: '/tmp/stderr.log',
+          contractViolations: callCount === 1 ? ['quota_exceeded'] : [],
+          outcome: callCount === 1 ? 'contract_violation' : 'success',
+        };
+      },
+    };
+    const router = new AgentRuntimeRouter({
+      agent: cfgWithFallback,
+      adapters: { opencode: switchingAdapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      // A caller (e.g. run-single-shot-agent-phase.ts) supplying an explicit
+      // request.id for the primary attempt is exactly the scenario that
+      // regressed: idFactory must never be consulted for the primary here,
+      // only for the fallback's own fresh id.
+      idFactory: () => AgentInvocationId(`inv-fallback-generated-${callCount}`),
+      readPromptChars: () => 0,
+    });
+    const primaryId = AgentInvocationId('inv-caller-provided-primary');
+
+    const result = await router.invoke(
+      req({ profile: AgentProfileName('primary'), id: primaryId }),
+    );
+
+    expect(result.outcome).toBe('success');
+    expect(result.invocationId).not.toBe(primaryId);
+    const primaryRow = inv.findById(primaryId);
+    expect(primaryRow).toBeDefined();
+    expect(primaryRow?.outcome).toBe('contract_violation');
+    const fallbackRow = inv.findById(result.invocationId!);
+    expect(fallbackRow).toBeDefined();
+    expect(fallbackRow?.outcome).toBe('success');
+    expect(fallbackRow?.fallbackOfInvocationId).toBe(primaryId);
+  });
+
   it('throws ConfigError on unknown profile', async () => {
     const router = new AgentRuntimeRouter({
       agent: cfg(),
