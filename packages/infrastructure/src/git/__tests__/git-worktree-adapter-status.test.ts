@@ -22,4 +22,21 @@ describe('GitWorktreeAdapter status untracked-path enumeration', () => {
     expect(result.split('\n')).toContain(`?? ${relativePath}`);
     expect(result.split('\n')).not.toContain('?? docs/adr/');
   });
+
+  it('reports ignored files when includeIgnored option is enabled', async () => {
+    const repo = await makeTempRepo();
+    await writeFile(join(repo, '.gitignore'), '*.json\nnode_modules/\n');
+    await writeFile(join(repo, 'fix-review-result.json'), '{"result":"done_with_fixes"}\n');
+    await mkdir(join(repo, 'node_modules', 'foo'), { recursive: true });
+    await writeFile(join(repo, 'node_modules', 'foo', 'index.js'), 'module.exports = 1;\n');
+
+    const adapter = new GitWorktreeAdapter();
+    const withoutIgnored = await adapter.status(repo);
+    expect(withoutIgnored).not.toContain('fix-review-result.json');
+
+    const withIgnored = await adapter.status(repo, { includeIgnored: true });
+    const lines = withIgnored.split('\n');
+    expect(lines).toContain('!! fix-review-result.json');
+    expect(lines).toContain('!! node_modules/');
+  });
 });

@@ -49,7 +49,7 @@ export interface GitPort {
    * working tree is clean (no staged/unstaged changes, no untracked files).
    * Used by the implement-artifact-guard to verify the no-op invariant.
    */
-  status(cwd: string): Promise<string>;
+  status(cwd: string, opts?: { includeIgnored?: boolean }): Promise<string>;
   /**
    * Check for tracked-file modifications (untracked files are tolerated) and,
    * when clean, perform a hard reset to `baseBranch`.

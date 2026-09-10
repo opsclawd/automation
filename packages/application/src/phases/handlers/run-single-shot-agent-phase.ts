@@ -297,8 +297,8 @@ export async function runSingleShotAgentPhase(
   };
 
   // Pre-cleanup stale result files from previous phases or iterations to avoid
-  // model schema anchoring or stale result extraction (#1158).
-  if (resolvedResultJsonPath !== 'result.json') {
+  // model schema anchoring or stale result extraction (#1158, #1162).
+  if (!config.skipResultExtraction && resolvedResultJsonPath !== 'result.json') {
     try {
       const targetsToClean = new Set<string>([resolvedResultJsonPath, 'result.json']);
       for (const target of targetsToClean) {

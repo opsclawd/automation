@@ -101,6 +101,63 @@ describe('extractResult coordinator', () => {
     expect(repair.calls[0]?.transcriptEvidence).toBe('bounded reviewer findings');
   });
 
+  it('passes candidateDestinations to structured-result repair when destination is phase-specific (#1162)', async () => {
+    const artifacts = new FakeArtifactStore();
+    const repair = new FakeStructuredResultRepair();
+    repair.response = { outcome: 'failed' };
+
+    await extractResult({
+      invocation: makeInvocation({
+        phaseId: PhaseName('fix-review'),
+        resultJsonPath: 'fix-review-result.json',
+        stdoutPath,
+      }),
+      ports: { artifacts, repair },
+      cwd: '/worktree',
+    });
+
+    expect(repair.calls[0]?.destination).toBe('fix-review-result.json');
+    expect(repair.calls[0]?.candidateDestinations).toEqual(['result.json']);
+  });
+
+  it('passes phase-specific defaultResultPath as candidateDestination when destination is result.json (#1162)', async () => {
+    const artifacts = new FakeArtifactStore();
+    const repair = new FakeStructuredResultRepair();
+    repair.response = { outcome: 'failed' };
+
+    await extractResult({
+      invocation: makeInvocation({
+        phaseId: PhaseName('fix-review'),
+        resultJsonPath: 'result.json',
+        stdoutPath,
+      }),
+      ports: { artifacts, repair },
+      cwd: '/worktree',
+    });
+
+    expect(repair.calls[0]?.destination).toBe('result.json');
+    expect(repair.calls[0]?.candidateDestinations).toEqual(['fix-review-result.json']);
+  });
+
+  it('omits candidateDestinations when defaultResultPath matches destination (#1162)', async () => {
+    const artifacts = new FakeArtifactStore();
+    const repair = new FakeStructuredResultRepair();
+    repair.response = { outcome: 'failed' };
+
+    await extractResult({
+      invocation: makeInvocation({
+        phaseId: PhaseName('implement'),
+        resultJsonPath: 'result.json',
+        stdoutPath,
+      }),
+      ports: { artifacts, repair },
+      cwd: '/worktree',
+    });
+
+    expect(repair.calls[0]?.destination).toBe('result.json');
+    expect(repair.calls[0]?.candidateDestinations).toBeUndefined();
+  });
+
   it('preserves serialization_artifact when transcript-backed repair fails', async () => {
     const artifacts = new FakeArtifactStore();
     const repair = new FakeStructuredResultRepair();
