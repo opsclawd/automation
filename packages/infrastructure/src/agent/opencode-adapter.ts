@@ -341,8 +341,14 @@ export class OpenCodeAgentAdapter implements AgentPort {
       }
     }
     let remediatedArtifacts: { src: string; artifact: string }[] | undefined;
-    if (outcome === 'success' && request.expectedArtifacts?.length) {
-      for (const artifact of request.expectedArtifacts) {
+    const effectiveExpectedArtifacts = [
+      ...(request.expectedArtifacts ?? []),
+      ...(request.resultJsonPath && !request.expectedArtifacts?.includes(request.resultJsonPath)
+        ? [request.resultJsonPath]
+        : []),
+    ];
+    if (outcome === 'success' && effectiveExpectedArtifacts.length) {
+      for (const artifact of effectiveExpectedArtifacts) {
         const artifactPath = join(request.cwd, artifact);
         if (!existsSync(artifactPath)) {
           outcome = 'contract_violation';
@@ -361,7 +367,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
         const remediateOpts = {
           cwd: request.cwd,
           startMs: start,
-          expectedArtifacts: request.expectedArtifacts,
+          expectedArtifacts: effectiveExpectedArtifacts,
           stderrForLog,
         };
         const resultCwd = remediateMissingArtifacts(remediateOpts);
@@ -444,7 +450,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     // than falling back to a hardcoded 'result.json' (#311, #1158).
     const targetResultPath =
       request.resultJsonPath ??
-      (request.expectedArtifacts.includes('result.json') ? 'result.json' : undefined);
+      (effectiveExpectedArtifacts.includes('result.json') ? 'result.json' : undefined);
     if (ret.outcome === 'success' && targetResultPath) {
       const artifactPath = join(request.cwd, targetResultPath);
       if (existsSync(artifactPath)) {

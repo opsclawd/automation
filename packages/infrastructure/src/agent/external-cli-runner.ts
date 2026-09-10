@@ -174,6 +174,13 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
 
   let remediatedArtifacts: { src: string; artifact: string }[] | undefined;
 
+  const effectiveExpectedArtifacts = [
+    ...(input.expectedArtifacts ?? []),
+    ...(input.resultJsonPath && !input.expectedArtifacts?.includes(input.resultJsonPath)
+      ? [input.resultJsonPath]
+      : []),
+  ];
+
   if (
     outcome === 'success' &&
     !contractViolations.length &&
@@ -181,7 +188,7 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     endCommitSha === input.startCommitSha &&
     !stdout.trim() &&
     !stderr.trim() &&
-    !input.expectedArtifacts?.length
+    !effectiveExpectedArtifacts.length
   ) {
     outcome = 'contract_violation';
     contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
@@ -189,8 +196,8 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     writeFileSync(stderrPath, stderrForLog);
   }
 
-  if (outcome === 'success' && input.expectedArtifacts?.length) {
-    for (const artifact of input.expectedArtifacts) {
+  if (outcome === 'success' && effectiveExpectedArtifacts.length) {
+    for (const artifact of effectiveExpectedArtifacts) {
       const artifactPath = join(input.cwd, artifact);
       if (!existsSync(artifactPath)) {
         outcome = 'contract_violation';
@@ -210,13 +217,13 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   if (
     outcome === 'contract_violation' &&
     contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT) &&
-    input.expectedArtifacts?.length
+    effectiveExpectedArtifacts.length
   ) {
     const { remediatedArtifacts: recovered, missingArtifacts: missing } = remediateMissingArtifacts(
       {
         cwd: input.cwd,
         startMs: start,
-        expectedArtifacts: input.expectedArtifacts,
+        expectedArtifacts: effectiveExpectedArtifacts,
         stderrForLog,
       },
     );
@@ -250,8 +257,8 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   if (remediatedArtifacts) ret.remediatedArtifacts = remediatedArtifacts;
   const targetResultPath =
     input.resultJsonPath ??
-    (input.expectedArtifacts?.includes('result.json') ? 'result.json' : undefined);
-  if (outcome === 'success' && targetResultPath) {
+    (effectiveExpectedArtifacts.includes('result.json') ? 'result.json' : undefined);
+  if (outcome === 'success' && targetResultPath && existsSync(join(input.cwd, targetResultPath))) {
     ret.resultJsonPath = targetResultPath;
   }
   return ret;

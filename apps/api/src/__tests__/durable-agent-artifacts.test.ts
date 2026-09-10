@@ -236,4 +236,34 @@ describe('createArtifactCapturingAgent', () => {
     );
     expect(writes).toEqual([]);
   });
+
+  it('captures request.resultJsonPath and result.resultJsonPath (#1162)', async () => {
+    const cwd = makeWorktree();
+    writeTextFile(cwd, 'fix-review-result.json', '{"result":"done_with_fixes"}');
+
+    const writes: WriteArtifactInput[] = [];
+    const wrapped = createArtifactCapturingAgent({
+      agent: {
+        async invoke(): Promise<AgentInvocationResult> {
+          return {
+            ...makeResult(),
+            resultJsonPath: 'fix-review-result.json',
+          };
+        },
+      },
+      artifactStoreForRequest: () => makeStore(writes),
+    });
+
+    const request = {
+      ...makeRequest(cwd),
+      expectedArtifacts: [],
+      resultJsonPath: 'fix-review-result.json',
+    };
+    await wrapped.invoke(request);
+
+    expect(writes.map((w) => w.relativePath)).toContain('fix-review-result.json');
+    expect(writes.find((w) => w.relativePath === 'fix-review-result.json')?.contents).toBe(
+      '{"result":"done_with_fixes"}',
+    );
+  });
 });

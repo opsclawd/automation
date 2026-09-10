@@ -89,6 +89,12 @@ export function createArtifactCapturingAgent({
       for (const relativePath of optionalArtifacts) {
         capturePaths.add(relativePath);
       }
+      if (request.resultJsonPath) {
+        capturePaths.add(request.resultJsonPath);
+      }
+      if (result.resultJsonPath) {
+        capturePaths.add(result.resultJsonPath);
+      }
 
       await Promise.all(
         Array.from(capturePaths).map((relativePath) =>
