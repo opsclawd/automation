@@ -314,6 +314,59 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.exitCode).toBe(1);
   });
 
+  it('does not misclassify HTTP 429 / HTTP 500 test names inside manage_task tool output as provider error (issue #1172)', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-stream-json-tool-429.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('success');
+    expect(r.contractViolations).not.toContain('provider_error');
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(r.stdoutPath, 'utf-8')).toBe('All tests passing.\n');
+    expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('QUOTA_EXCEEDED');
+    expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('PROVIDER_ERROR');
+  });
+
+  it('detects genuine quota error from stream-json ERROR result event', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-stream-json-provider-error.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('failed');
+    expect(r.contractViolations).toContain('provider_error');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+  });
+
+  it('does not flag provider error when agent response text discusses HTTP 429 handling with status SUCCESS', async () => {
+    const cwd = makeWorktree();
+    const fakeScript = join(cwd, 'fake-agy-discuss-429.sh');
+    writeFileSync(
+      fakeScript,
+      [
+        '#!/usr/bin/env bash',
+        'cat > /dev/null',
+        "cat << 'JSON'",
+        '{"event":"result","result":{"status":"SUCCESS","response":"I updated the client to handle HTTP 429 and HTTP 500 properly.\\n","usage":{"input_tokens":100,"output_tokens":20}}}',
+        'JSON',
+        'exit 0',
+      ].join('\n'),
+    );
+    execSync(`chmod +x ${fakeScript}`);
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: fakeScript,
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('success');
+    expect(r.contractViolations).not.toContain('provider_error');
+    expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('QUOTA_EXCEEDED');
+    expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('PROVIDER_ERROR');
+  });
+
   it('detects silent zero-exit as contract_violation with no_output', async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
@@ -1277,6 +1330,7 @@ describe('parseAntigravityJsonResponse unit tests', () => {
 
     const parsed = parseAntigravityJsonResponse(raw);
     expect(parsed).toEqual({
+      status: 'SUCCESS',
       response: 'final hello',
       usage: {
         input_tokens: 123,
@@ -1284,6 +1338,20 @@ describe('parseAntigravityJsonResponse unit tests', () => {
         thinking_tokens: 10,
         cache_read_tokens: 20,
       },
+    });
+  });
+
+  it('parses status and error when result status is ERROR', () => {
+    const raw = [
+      '{"event":"init","init":{"tools":[]}}',
+      '{"event":"result","result":{"status":"ERROR","error":"API call failed: HTTP 429: Rate limit exceeded","response":""}}',
+    ].join('\n');
+    const parsed = parseAntigravityJsonResponse(raw);
+    expect(parsed).toEqual({
+      status: 'ERROR',
+      error: 'API call failed: HTTP 429: Rate limit exceeded',
+      response: '',
+      usage: {},
     });
   });
 

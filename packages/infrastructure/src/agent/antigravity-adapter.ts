@@ -18,10 +18,13 @@ import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { runExternalCli } from './external-cli-runner.js';
+import { testProviderErrorPatterns, testQuotaPatterns } from './error-patterns.js';
 
 export interface AntigravityParsedResult {
   response: string;
   usage: Record<string, unknown>;
+  status?: string;
+  error?: string;
 }
 
 // Parses the NDJSON stream produced by --output-format stream-json (and legacy
@@ -48,13 +51,30 @@ export function parseAntigravityJsonResponse(raw: string): AntigravityParsedResu
           typeof parsed.result === 'object' &&
           parsed.result !== null
         ) {
-          const res = parsed.result as { response?: unknown; usage?: unknown };
-          if (typeof res.response === 'string') {
+          const res = parsed.result as {
+            response?: unknown;
+            usage?: unknown;
+            status?: unknown;
+            error?: unknown;
+          };
+          if (
+            typeof res.response === 'string' ||
+            typeof res.error === 'string' ||
+            typeof res.status === 'string'
+          ) {
             const usage =
               typeof res.usage === 'object' && res.usage !== null
                 ? (res.usage as Record<string, unknown>)
                 : {};
-            return { response: res.response, usage };
+            const response = typeof res.response === 'string' ? res.response : '';
+            const status = typeof res.status === 'string' ? res.status : undefined;
+            const error = typeof res.error === 'string' ? res.error : undefined;
+            return {
+              response,
+              usage,
+              ...(status !== undefined ? { status } : {}),
+              ...(error !== undefined ? { error } : {}),
+            };
           }
         }
         // Legacy single-line JSON format: {"response":"...","usage":{...}}
@@ -63,7 +83,20 @@ export function parseAntigravityJsonResponse(raw: string): AntigravityParsedResu
             typeof parsed.usage === 'object' && parsed.usage !== null
               ? (parsed.usage as Record<string, unknown>)
               : {};
-          return { response: parsed.response, usage };
+          const status =
+            typeof (parsed as Record<string, unknown>).status === 'string'
+              ? ((parsed as Record<string, unknown>).status as string)
+              : undefined;
+          const error =
+            typeof (parsed as Record<string, unknown>).error === 'string'
+              ? ((parsed as Record<string, unknown>).error as string)
+              : undefined;
+          return {
+            response: parsed.response,
+            usage,
+            ...(status !== undefined ? { status } : {}),
+            ...(error !== undefined ? { error } : {}),
+          };
         }
       }
     } catch {
@@ -82,13 +115,30 @@ export function parseAntigravityJsonResponse(raw: string): AntigravityParsedResu
         typeof parsed.result === 'object' &&
         parsed.result !== null
       ) {
-        const res = parsed.result as { response?: unknown; usage?: unknown };
-        if (typeof res.response === 'string') {
+        const res = parsed.result as {
+          response?: unknown;
+          usage?: unknown;
+          status?: unknown;
+          error?: unknown;
+        };
+        if (
+          typeof res.response === 'string' ||
+          typeof res.error === 'string' ||
+          typeof res.status === 'string'
+        ) {
           const usage =
             typeof res.usage === 'object' && res.usage !== null
               ? (res.usage as Record<string, unknown>)
               : {};
-          return { response: res.response, usage };
+          const response = typeof res.response === 'string' ? res.response : '';
+          const status = typeof res.status === 'string' ? res.status : undefined;
+          const error = typeof res.error === 'string' ? res.error : undefined;
+          return {
+            response,
+            usage,
+            ...(status !== undefined ? { status } : {}),
+            ...(error !== undefined ? { error } : {}),
+          };
         }
       }
       if ('response' in parsed && typeof parsed.response === 'string') {
@@ -96,7 +146,20 @@ export function parseAntigravityJsonResponse(raw: string): AntigravityParsedResu
           typeof parsed.usage === 'object' && parsed.usage !== null
             ? (parsed.usage as Record<string, unknown>)
             : {};
-        return { response: parsed.response, usage };
+        const status =
+          typeof (parsed as Record<string, unknown>).status === 'string'
+            ? ((parsed as Record<string, unknown>).status as string)
+            : undefined;
+        const error =
+          typeof (parsed as Record<string, unknown>).error === 'string'
+            ? ((parsed as Record<string, unknown>).error as string)
+            : undefined;
+        return {
+          response: parsed.response,
+          usage,
+          ...(status !== undefined ? { status } : {}),
+          ...(error !== undefined ? { error } : {}),
+        };
       }
     }
   } catch {
@@ -106,16 +169,53 @@ export function parseAntigravityJsonResponse(raw: string): AntigravityParsedResu
   return undefined;
 }
 
-// Mutates `result` in place: attaches usage parsed from the --output-format
-// stream-json envelope, and corrects a false negative that switching to structured mode
-// introduces in runExternalCli's own NO_OUTPUT check. That check tests raw
-// stdout for emptiness, but raw stdout is now the JSON envelope, which is
-// never empty even when the model's actual response text is — so a
-// genuinely empty response would otherwise silently pass as a success.
+// Mutates `result` in place:
+// 1. Inspects CLI process stderr for genuine provider/quota errors (which never
+//    contain echoed agent tool outputs).
+// 2. Parses the --output-format stream-json envelope from stdout, extracting usage,
+//    structured ERROR signals, and the plain model response.
+// 3. Rewrites stdoutPath to the plain response text.
+// 4. Corrects NO_OUTPUT when response is empty with no git changes.
+// 5. Degrades to legacy plain-text scanning when stdout is not JSON.
 function applyAntigravityJsonUsage(
   result: AgentInvocationResult,
   request: AgentInvocationRequest,
 ): void {
+  // 1. Check CLI process stderr for genuine provider/quota errors.
+  // agy never writes agent tool execution output to its own stderr (tool output
+  // is encapsulated inside stream-json step_update events on stdout), so stderr
+  // is clean of echoed HTTP status codes and test names.
+  let stderrContent = '';
+  try {
+    stderrContent = existsSync(result.stderrPath) ? readFileSync(result.stderrPath, 'utf-8') : '';
+  } catch {
+    // best-effort read
+  }
+
+  const stderrProviderMatch = testProviderErrorPatterns(stderrContent, { maxLines: 2000 });
+  if (stderrProviderMatch) {
+    result.outcome = 'failed';
+    if (!result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)) {
+      result.contractViolations.push(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR);
+    }
+    const quotaLine = testQuotaPatterns(stderrContent, { maxLines: 2000 });
+    const marker = quotaLine
+      ? `QUOTA_EXCEEDED: ${quotaLine}`
+      : `PROVIDER_ERROR: ${stderrProviderMatch}`;
+    if (
+      !stderrContent.startsWith('QUOTA_EXCEEDED:') &&
+      !stderrContent.startsWith('PROVIDER_ERROR:')
+    ) {
+      stderrContent = `${marker}\n${stderrContent}`;
+      try {
+        writeFileSync(result.stderrPath, stderrContent);
+      } catch {
+        // best-effort write
+      }
+    }
+  }
+
+  // 2. Read and parse stdout
   let rawStdout: string;
   try {
     rawStdout = existsSync(result.stdoutPath) ? readFileSync(result.stdoutPath, 'utf-8') : '';
@@ -123,9 +223,38 @@ function applyAntigravityJsonUsage(
     return;
   }
   const parsed = parseAntigravityJsonResponse(rawStdout);
-  if (!parsed) return;
+  if (!parsed) {
+    // Fallback for legacy plain-text output (e.g. mock fixtures that don't emit JSON).
+    // In legacy plain-text mode, a 0-exit child may have written a provider failure
+    // directly to stdout (fake-agy-provider-error-stdout-only.sh).
+    if (result.outcome === 'success') {
+      const stdoutProviderMatch = testProviderErrorPatterns(rawStdout, { maxLines: 2000 });
+      if (stdoutProviderMatch) {
+        result.outcome = 'failed';
+        if (!result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)) {
+          result.contractViolations.push(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR);
+        }
+        const quotaLine = testQuotaPatterns(rawStdout, { maxLines: 2000 });
+        const marker = quotaLine
+          ? `QUOTA_EXCEEDED: ${quotaLine}`
+          : `PROVIDER_ERROR: ${stdoutProviderMatch}`;
+        if (
+          !stderrContent.startsWith('QUOTA_EXCEEDED:') &&
+          !stderrContent.startsWith('PROVIDER_ERROR:')
+        ) {
+          stderrContent = `${marker}\n${stderrContent}`;
+          try {
+            writeFileSync(result.stderrPath, stderrContent);
+          } catch {
+            // best-effort write
+          }
+        }
+      }
+    }
+    return;
+  }
 
-  const { response, usage: u } = parsed;
+  const { response, usage: u, status, error: resultError } = parsed;
 
   // Every other runtime's stdoutPath holds the plain model response, and it's
   // read generically downstream (repair-loop transcript evidence, failure
@@ -152,7 +281,43 @@ function applyAntigravityJsonUsage(
     result.usageSourcePaths = [result.stdoutPath];
   }
 
-  if (
+  // Structured error signals from stream-json:
+  // When status === 'ERROR' or error is present, classify genuine provider/quota failures.
+  // Crucially, when status === 'SUCCESS', intermediate step_update tool outputs (e.g.
+  // manage_task echoing vitest logs that mention HTTP 429/500) and model response text
+  // are NOT regex-scanned, eliminating false-positive provider errors (#1172).
+  if (status === 'ERROR' || (resultError && resultError.trim().length > 0)) {
+    result.outcome = 'failed';
+    const errText = (resultError ?? response).trim();
+    const quotaMatch = testQuotaPatterns(errText, { maxLines: 2000 });
+    const providerMatch = testProviderErrorPatterns(errText, { maxLines: 2000 });
+    if (providerMatch || quotaMatch) {
+      if (!result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)) {
+        result.contractViolations.push(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR);
+      }
+      const marker = quotaMatch
+        ? `QUOTA_EXCEEDED: ${quotaMatch}`
+        : `PROVIDER_ERROR: ${providerMatch}`;
+      if (
+        !stderrContent.startsWith('QUOTA_EXCEEDED:') &&
+        !stderrContent.startsWith('PROVIDER_ERROR:')
+      ) {
+        stderrContent = `${marker}\n${stderrContent}`;
+        try {
+          writeFileSync(result.stderrPath, stderrContent);
+        } catch {
+          // best-effort write
+        }
+      }
+    } else if (errText && !stderrContent.includes(errText)) {
+      stderrContent = `ERROR: ${errText}\n${stderrContent}`;
+      try {
+        writeFileSync(result.stderrPath, stderrContent);
+      } catch {
+        // best-effort write
+      }
+    }
+  } else if (
     result.outcome === 'success' &&
     result.contractViolations.length === 0 &&
     request.startCommitSha &&
@@ -160,12 +325,6 @@ function applyAntigravityJsonUsage(
     !response.trim() &&
     !(request.expectedArtifacts ?? []).length
   ) {
-    let stderrContent = '';
-    try {
-      stderrContent = existsSync(result.stderrPath) ? readFileSync(result.stderrPath, 'utf-8') : '';
-    } catch {
-      // best-effort read
-    }
     if (!stderrContent.trim()) {
       result.outcome = 'contract_violation';
       result.contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
@@ -479,6 +638,7 @@ export class AntigravityAgentAdapter implements AgentPort {
       startCommitSha: request.startCommitSha,
       expectedArtifacts: request.expectedArtifacts,
       ...(request.resultJsonPath ? { resultJsonPath: request.resultJsonPath } : {}),
+      skipErrorScanning: true,
     });
 
     applyAntigravityJsonUsage(result, request);
