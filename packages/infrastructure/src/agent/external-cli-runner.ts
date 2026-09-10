@@ -24,6 +24,7 @@ export interface ExternalCliRunInput {
   detached?: boolean;
   startCommitSha?: string;
   expectedArtifacts?: string[];
+  resultJsonPath?: string;
   skipErrorScanning?: boolean;
 }
 
@@ -247,8 +248,11 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   };
   if (endCommitSha) ret.endCommitSha = endCommitSha;
   if (remediatedArtifacts) ret.remediatedArtifacts = remediatedArtifacts;
-  if (outcome === 'success' && input.expectedArtifacts?.includes('result.json')) {
-    ret.resultJsonPath = 'result.json';
+  const targetResultPath =
+    input.resultJsonPath ??
+    (input.expectedArtifacts?.includes('result.json') ? 'result.json' : undefined);
+  if (outcome === 'success' && targetResultPath) {
+    ret.resultJsonPath = targetResultPath;
   }
   return ret;
 }

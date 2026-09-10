@@ -33,6 +33,7 @@ export interface PhaseResultMeta<T = any> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   schema: ZodType<T, any, any>;
   schemaContractText: string;
+  defaultResultPath?: string;
 }
 
 export interface PhaseResultRegistryMap {
@@ -103,6 +104,7 @@ export const PHASE_RESULT_REGISTRY: {
   // These are NOT reachable via PHASE_NAME_MIGRATION_MAP for result.json production.
   'fix-review': {
     schema: fixReviewResultSchema,
+    defaultResultPath: 'fix-review-result.json',
     schemaContractText:
       '{\n  "result": "done_with_fixes" | "cannot_fix"\n} | {\n  "result": "done_no_fixes_needed",\n  "rebuttal": string\n}',
   },
@@ -137,6 +139,7 @@ export const PHASE_RESULT_REGISTRY: {
   },
   'follow-up-review': {
     schema: followUpReviewResultSchema,
+    defaultResultPath: 'follow-up-review-result.json',
     schemaContractText:
       '{\n  "verdict": "APPROVE" | "REQUEST_CHANGES",\n  "evaluations": Array<{\n    "finding_id": string,\n    "resolved": boolean,\n    "evidence": string,\n    "rationale"?: string\n  }>,\n  "new_findings"?: Array<{\n    "severity": "critical" | "high" | "medium" | "low",\n    "files"?: string[],\n    "evidence": string,\n    "rationale": string,\n    "minimal_correction": string\n  }>,\n  "summary"?: string\n}',
   },
@@ -151,6 +154,7 @@ export const PHASE_RESULT_REGISTRY: {
   },
   'fix-validate': {
     schema: fixValidateResultSchema,
+    defaultResultPath: 'fix-validate-result.json',
     schemaContractText: '{\n  "result": "fixed" | "cannot_fix"\n}',
   },
   arbiter: {
@@ -170,6 +174,7 @@ export const PHASE_RESULT_REGISTRY: {
   },
   'plan-fix': {
     schema: planFixResultSchema,
+    defaultResultPath: 'plan-fix-result.json',
     schemaContractText:
       '{\n  "verdict": "done_with_fixes" | "done_no_fixes_needed" | "cannot_fix",\n  "summary": string,\n  "rebuttal"?: string\n}',
   },

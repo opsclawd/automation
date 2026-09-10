@@ -87,14 +87,14 @@ describe('FollowUpReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'follow-up-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));
 
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'follow-up-review-result.json',
       contents: JSON.stringify({
         verdict: 'APPROVE',
         evaluations: [
@@ -168,14 +168,14 @@ describe('FollowUpReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'follow-up-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));
 
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'follow-up-review-result.json',
       contents: JSON.stringify({
         verdict: 'REQUEST_CHANGES',
         evaluations: [
@@ -254,7 +254,7 @@ describe('FollowUpReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'follow-up-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));
@@ -262,7 +262,7 @@ describe('FollowUpReviewHandler', () => {
     // Agent attempts to return APPROVE despite resolved: false
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'follow-up-review-result.json',
       contents: JSON.stringify({
         verdict: 'APPROVE',
         evaluations: [
@@ -348,14 +348,14 @@ describe('FollowUpReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'follow-up-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));
 
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'follow-up-review-result.json',
       contents: JSON.stringify({
         verdict: 'APPROVE',
         evaluations: [
@@ -477,14 +477,14 @@ describe('FollowUpReviewHandler', () => {
       durationMs: 1000,
       stdoutPath: '/tmp/stdout',
       stderrPath: '/tmp/stderr',
-      resultJsonPath: 'result.json',
+      resultJsonPath: 'follow-up-review-result.json',
       contractViolations: [],
       outcome: 'success',
     }));
 
     await artifacts.write({
       runId: 'run-1',
-      relativePath: 'result.json',
+      relativePath: 'follow-up-review-result.json',
       contents: JSON.stringify({
         verdict: 'APPROVE',
         evaluations: [],

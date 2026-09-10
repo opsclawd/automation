@@ -1233,6 +1233,30 @@ describe('OpenCodeAgentAdapter', () => {
     expect(stderrLog).not.toMatch(/MISPLACED_ARTIFACT|STEM_PREFIX_REMEDIATED/);
   });
 
+  it('resultJsonPath is set on success when request.resultJsonPath is explicitly configured (#1158)', async () => {
+    const cwd = makeWorktree();
+    writeFileSync(join(cwd, 'fix-review-result.json'), '{"result":"done_with_fixes"}');
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      resultJsonPath: 'fix-review-result.json',
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'fix-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('success');
+    expect(r.resultJsonPath).toBe('fix-review-result.json');
+  });
+
   it('resultJsonPath is absent on contract_violation when artifact is missing', async () => {
     const cwd = makeWorktree();
     // No result.json written anywhere — not in cwd, not passed repoRoot

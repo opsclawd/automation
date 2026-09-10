@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   PhaseName,
@@ -20,10 +20,11 @@ import { validateAgentContract } from '../../agent/validate-agent-contract.js';
 import { extractResult } from '../../results/extract-result.js';
 import { AgentInvocationId, type AgentInvocation } from '@ai-sdlc/domain';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
-import type {
-  PhaseResultMeta,
-  PhaseResultRegistryMap,
-  RegisteredPhase,
+import {
+  getPhaseResultMeta,
+  type PhaseResultMeta,
+  type PhaseResultRegistryMap,
+  type RegisteredPhase,
 } from '../../results/phase-registry.js';
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
 
@@ -37,6 +38,7 @@ export interface SingleShotConfigBase {
   cleanArtifacts?: boolean;
   /** Skip emitting <phase>.completed when caller handles completion emission after deterministic post-processing. */
   skipCompletedEmit?: boolean;
+  resultJsonPath?: string;
 }
 
 export interface SingleShotConfigSkipExtraction extends SingleShotConfigBase {
@@ -101,6 +103,7 @@ function buildAgentInvocation(
   promptChars: number,
   startedAt: Date,
   id: AgentInvocationId,
+  resolvedResultJsonPath: string,
 ): AgentInvocation {
   const endedAt = ctx.now();
 
@@ -125,7 +128,7 @@ function buildAgentInvocation(
     timeoutMs: request.timeoutMs ?? 0,
     outcome: result.outcome,
     contractViolations: result.contractViolations,
-    resultJsonPath: result.resultJsonPath ?? 'result.json',
+    resultJsonPath: result.resultJsonPath ?? resolvedResultJsonPath,
   };
 }
 
@@ -273,6 +276,11 @@ export async function runSingleShotAgentPhase(
   });
 
   // 5. Build AgentInvocationRequest
+  const resolvedResultJsonPath =
+    config.resultJsonPath ??
+    getPhaseResultMeta(config.phase as string)?.defaultResultPath ??
+    'result.json';
+
   const request: AgentInvocationRequest = {
     profile: config.profile,
     promptPath: promptAbsolutePath,
@@ -282,10 +290,27 @@ export async function runSingleShotAgentPhase(
     repoId: ctx.repoFullName,
     phaseId: config.phase as string,
     startCommitSha,
+    resultJsonPath: resolvedResultJsonPath,
     metadata: {
       invocation_type: 'initial',
     },
   };
+
+  // Pre-cleanup stale result files from previous phases or iterations to avoid
+  // model schema anchoring or stale result extraction (#1158).
+  if (resolvedResultJsonPath !== 'result.json') {
+    try {
+      const targetsToClean = new Set<string>([resolvedResultJsonPath, 'result.json']);
+      for (const target of targetsToClean) {
+        const fullPath = join(ctx.cwd, target);
+        if (existsSync(fullPath)) {
+          unlinkSync(fullPath);
+        }
+      }
+    } catch {
+      // Best-effort cleanup
+    }
+  }
 
   // 6. Invoke agent
   const startedAt = ctx.now();
@@ -347,6 +372,7 @@ export async function runSingleShotAgentPhase(
     renderedPrompt.length,
     startedAt,
     invocationId,
+    resolvedResultJsonPath,
   );
 
   // 8. Validate contract

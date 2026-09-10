@@ -80,7 +80,7 @@ This exemption is narrow: it applies only to the exact untracked paths listed, a
 
 {{var:JSON_ESCAPING}}
 
-Write your review to `./result.json`:
+Write your review to `./follow-up-review-result.json`:
 
 ```json
 {
@@ -111,5 +111,5 @@ Write your review to `./result.json`:
 - This is a read-only review. Do not modify source code or create scratch files in the worktree.
 - Do not switch git branches.
 - Do not ask questions.
-- Write `./result.json` before stopping.
-- If `./result.json` already exists and needs revision (e.g. a second pass over your own review found something new), rewrite the entire file from scratch. Do not patch/diff-edit it — context-based patch tools are unreliable against large JSON arrays, since they require reproducing exact surrounding text; a failed or partial patch application can silently corrupt the file.
+- Write `./follow-up-review-result.json` before stopping.
+- If `./follow-up-review-result.json` already exists and needs revision (e.g. a second pass over your own review found something new), rewrite the entire file from scratch. Do not patch/diff-edit it — context-based patch tools are unreliable against large JSON arrays, since they require reproducing exact surrounding text; a failed or partial patch application can silently corrupt the file.

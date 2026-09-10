@@ -1045,5 +1045,26 @@ describe('runExternalCli', () => {
         rmSync(artifactsDir, { recursive: true, force: true });
       }
     });
+
+    it('sets resultJsonPath when explicit resultJsonPath is specified (#1158)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        const result = await runExternalCli({
+          runtime: 'codex',
+          bin: 'bash',
+          args: ['-c', 'echo "hello"'],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          resultJsonPath: 'fix-review-result.json',
+        });
+        expect(result.outcome).toBe('success');
+        expect(result.resultJsonPath).toBe('fix-review-result.json');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
   });
 });

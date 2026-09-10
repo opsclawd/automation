@@ -141,6 +141,7 @@ export class ClaudeCodeAgentAdapter implements AgentPort {
       ...(request.abortSignal ? { abortSignal: request.abortSignal } : {}),
       startCommitSha: request.startCommitSha,
       expectedArtifacts: request.expectedArtifacts,
+      ...(request.resultJsonPath ? { resultJsonPath: request.resultJsonPath } : {}),
     });
 
     const transcriptPaths = newTranscriptFiles(projectDir, preexisting);

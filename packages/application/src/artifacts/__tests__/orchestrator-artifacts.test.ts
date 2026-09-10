@@ -306,6 +306,9 @@ describe('isOrchestratorArtifactPattern', () => {
     expect(isOrchestratorArtifactPattern('quality-review-result-1.json')).toBe(true);
     expect(isOrchestratorArtifactPattern('spec-review-result-2.json')).toBe(true);
     expect(isOrchestratorArtifactPattern('fix-result-1.json')).toBe(true);
+    expect(isOrchestratorArtifactPattern('follow-up-review-result-1.json')).toBe(true);
+    expect(isOrchestratorArtifactPattern('fix-review-result-1.json')).toBe(true);
+    expect(isOrchestratorArtifactPattern('fix-validate-result-1.json')).toBe(true);
     expect(isOrchestratorArtifactPattern('implementation-log-task-1.md')).toBe(true);
     expect(isOrchestratorArtifactPattern('foo.patch')).toBe(true);
     expect(isOrchestratorArtifactPattern('bar.diff')).toBe(true);
