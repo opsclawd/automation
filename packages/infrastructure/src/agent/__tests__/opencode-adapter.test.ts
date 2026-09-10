@@ -1257,6 +1257,31 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.resultJsonPath).toBe('fix-review-result.json');
   });
 
+  it('reports contract_violation when request.resultJsonPath is configured but missing (#1162)', async () => {
+    const cwd = makeWorktree();
+    // No fix-review-result.json written
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      resultJsonPath: 'fix-review-result.json',
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'fix-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+    expect(r.resultJsonPath).toBeUndefined();
+  });
+
   it('resultJsonPath is absent on contract_violation when artifact is missing', async () => {
     const cwd = makeWorktree();
     // No result.json written anywhere — not in cwd, not passed repoRoot

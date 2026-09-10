@@ -156,7 +156,18 @@ export async function extractResult(
     return initial as ExtractResultOutcome<unknown>;
   }
 
-  const hasEv = hasEvidence(invocation.stdoutPath);
+  const cwd = input.cwd ?? input.rerunContext?.cwd ?? '';
+  const destination = invocation.resultJsonPath || 'result.json';
+  const candidateDestinations = [meta.defaultResultPath, 'result.json'].filter(
+    (p): p is string => Boolean(p) && p !== destination,
+  );
+
+  const hasEv =
+    Boolean(input.transcriptEvidence?.trim()) ||
+    hasEvidence(invocation.stdoutPath, {
+      candidatePaths: candidateDestinations,
+      cwd,
+    });
   const initialClassification = hasEv ? 'serialization_artifact' : 'unrecoverable_artifact';
 
   if (initialClassification === 'unrecoverable_artifact' || !ports.repair) {
@@ -176,11 +187,6 @@ export async function extractResult(
     }
   }
 
-  const cwd = input.cwd ?? input.rerunContext?.cwd ?? '';
-  const destination = invocation.resultJsonPath || 'result.json';
-  const candidateDestinations = [meta.defaultResultPath, 'result.json'].filter(
-    (p): p is string => Boolean(p) && p !== destination,
-  );
   const repairResult = await ports.repair.repairStructuredResult({
     runId,
     cwd,

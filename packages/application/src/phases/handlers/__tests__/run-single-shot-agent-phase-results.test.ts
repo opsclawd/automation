@@ -472,4 +472,129 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('enforces resolvedResultJsonPath and request.id in expectedArtifacts passed to agent invocation (#1162)', async () => {
+    await artifacts.write({
+      runId: 'run-1128',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({
+        result: 'done_with_fixes',
+      }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const result = await runSingleShotAgentPhase(ctx, {
+      phase: PhaseName('fix-review'),
+      profile: AgentProfileName('fix-review'),
+      step: 'fix-review',
+      vars: { cwd: ctx.cwd },
+      resultJsonPath: 'fix-review-result.json',
+      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+    });
+
+    expect(result.outcome).toBe('passed');
+    expect(agent.invocations).toHaveLength(1);
+    const invokedReq = agent.invocations[0]!;
+    expect(invokedReq.expectedArtifacts).toContain('fix-review-result.json');
+    expect(invokedReq.id).toBeDefined();
+    expect(invokedReq.resultJsonPath).toBe('fix-review-result.json');
+  });
+
+  it('fails with agent_contract_violation when agent returns contract_violation for missing result deliverable (#1162)', async () => {
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      contractViolations: ['missing_required_artifact'],
+      outcome: 'contract_violation',
+    }));
+
+    const result = await runSingleShotAgentPhase(ctx, {
+      phase: PhaseName('fix-review'),
+      profile: AgentProfileName('fix-review'),
+      step: 'fix-review',
+      vars: { cwd: ctx.cwd },
+      resultJsonPath: 'fix-review-result.json',
+      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+    });
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('agent_contract_violation');
+      expect(result.failure.message).toContain('missing_required_artifact');
+    }
+  });
+
+  it('allows extractResult rescue when result deliverable was missing but candidate exists on disk and repair port recovers it (#1162)', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'rescue-test-'));
+    const stdoutPath = join(tempDir, 'stdout.log');
+    writeFileSync(stdoutPath, 'evidence with {"result":"done_with_fixes"}\n');
+    ctx.cwd = tempDir;
+
+    try {
+      const repairPort: StructuredResultRepairPort = {
+        repairStructuredResult: async (
+          params: StructuredResultRepairInput,
+        ): Promise<StructuredResultRepairResult> => {
+          await artifacts.write({
+            runId: params.runId,
+            relativePath: params.destination,
+            contents: JSON.stringify({
+              result: 'done_with_fixes',
+            }),
+          });
+          return {
+            outcome: 'repaired',
+            repairInvocationId: 'inv-repair-rescue' as AgentInvocationId,
+          };
+        },
+      };
+
+      ctx.repair = repairPort;
+
+      agent.enqueue('fix-review', () => {
+        writeFileSync(join(tempDir, 'result.json'), '{"result":"done_with_fixes"}');
+        return {
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-20250514',
+          exitCode: 0,
+          durationMs: 1000,
+          stdoutPath,
+          stderrPath: '/tmp/stderr',
+          contractViolations: ['missing_required_artifact'],
+          outcome: 'contract_violation',
+        };
+      });
+
+      const result = await runSingleShotAgentPhase(ctx, {
+        phase: PhaseName('fix-review'),
+        profile: AgentProfileName('fix-review'),
+        step: 'fix-review',
+        vars: { cwd: ctx.cwd },
+        resultJsonPath: 'fix-review-result.json',
+        agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+      });
+
+      expect(result.outcome).toBe('passed');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
