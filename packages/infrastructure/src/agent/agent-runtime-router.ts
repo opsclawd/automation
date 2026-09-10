@@ -615,6 +615,13 @@ export class AgentRuntimeRouter implements AgentPort {
             const { abortSignal: _abortSignal, ...rest } = request;
             const fallbackRequest: AgentInvocationRequest = {
               ...rest,
+              // Must be a fresh id, not the primary's: `rest` still carries
+              // request.id (if the caller set one), and dispatch() below
+              // uses `request.id ?? mint-a-new-one` - reusing the primary's
+              // id here makes this fallback's own agent_invocations INSERT
+              // collide with the primary's already-persisted row (UNIQUE
+              // constraint failed: agent_invocations.id).
+              id: AgentInvocationId(this.idFactory()),
               profile: AgentProfileName(fallbackProfileName),
               fallbackOfInvocationId: id,
               fallbackReason: triggerReason,
