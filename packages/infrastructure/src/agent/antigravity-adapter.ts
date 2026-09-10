@@ -18,13 +18,83 @@ import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { runExternalCli } from './external-cli-runner.js';
-import { testProviderErrorPatterns, testQuotaPatterns } from './error-patterns.js';
+import {
+  testProviderErrorPatterns,
+  testQuotaPatterns,
+  testTokenLimitPatterns,
+} from './error-patterns.js';
 
 export interface AntigravityParsedResult {
   response: string;
   usage: Record<string, unknown>;
   status?: string;
   error?: string;
+}
+
+function extractErrorText(err: unknown): string | undefined {
+  if (typeof err === 'string') return err;
+  if (typeof err === 'object' && err !== null) {
+    const errObj = err as Record<string, unknown>;
+    if (typeof errObj.message === 'string') return errObj.message;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function extractResultFromObject(
+  parsed: Record<string, unknown>,
+): AntigravityParsedResult | undefined {
+  // Stream-json result event: {"event":"result","result":{"response":"...","usage":{...}}}
+  if (parsed.event === 'result' && typeof parsed.result === 'object' && parsed.result !== null) {
+    const res = parsed.result as {
+      response?: unknown;
+      usage?: unknown;
+      status?: unknown;
+      error?: unknown;
+    };
+    if (
+      typeof res.response === 'string' ||
+      typeof res.error === 'string' ||
+      (typeof res.error === 'object' && res.error !== null) ||
+      typeof res.status === 'string'
+    ) {
+      const usage =
+        typeof res.usage === 'object' && res.usage !== null
+          ? (res.usage as Record<string, unknown>)
+          : {};
+      const response = typeof res.response === 'string' ? res.response : '';
+      const status = typeof res.status === 'string' ? res.status : undefined;
+      const error = extractErrorText(res.error);
+      return {
+        response,
+        usage,
+        ...(status !== undefined ? { status } : {}),
+        ...(error !== undefined ? { error } : {}),
+      };
+    }
+  }
+
+  // Legacy single-line JSON format: {"response":"...","usage":{...}}
+  if ('response' in parsed && typeof parsed.response === 'string') {
+    const usage =
+      typeof parsed.usage === 'object' && parsed.usage !== null
+        ? (parsed.usage as Record<string, unknown>)
+        : {};
+    const status = typeof parsed.status === 'string' ? parsed.status : undefined;
+    const error = extractErrorText(parsed.error);
+    return {
+      response: parsed.response,
+      usage,
+      ...(status !== undefined ? { status } : {}),
+      ...(error !== undefined ? { error } : {}),
+    };
+  }
+
+  return undefined;
 }
 
 // Parses the NDJSON stream produced by --output-format stream-json (and legacy
@@ -43,61 +113,8 @@ export function parseAntigravityJsonResponse(raw: string): AntigravityParsedResu
     try {
       const parsed = JSON.parse(line);
       if (typeof parsed === 'object' && parsed !== null) {
-        // Stream-json result event: {"event":"result","result":{"response":"...","usage":{...}}}
-        if (
-          'event' in parsed &&
-          parsed.event === 'result' &&
-          'result' in parsed &&
-          typeof parsed.result === 'object' &&
-          parsed.result !== null
-        ) {
-          const res = parsed.result as {
-            response?: unknown;
-            usage?: unknown;
-            status?: unknown;
-            error?: unknown;
-          };
-          if (
-            typeof res.response === 'string' ||
-            typeof res.error === 'string' ||
-            typeof res.status === 'string'
-          ) {
-            const usage =
-              typeof res.usage === 'object' && res.usage !== null
-                ? (res.usage as Record<string, unknown>)
-                : {};
-            const response = typeof res.response === 'string' ? res.response : '';
-            const status = typeof res.status === 'string' ? res.status : undefined;
-            const error = typeof res.error === 'string' ? res.error : undefined;
-            return {
-              response,
-              usage,
-              ...(status !== undefined ? { status } : {}),
-              ...(error !== undefined ? { error } : {}),
-            };
-          }
-        }
-        // Legacy single-line JSON format: {"response":"...","usage":{...}}
-        if ('response' in parsed && typeof parsed.response === 'string') {
-          const usage =
-            typeof parsed.usage === 'object' && parsed.usage !== null
-              ? (parsed.usage as Record<string, unknown>)
-              : {};
-          const status =
-            typeof (parsed as Record<string, unknown>).status === 'string'
-              ? ((parsed as Record<string, unknown>).status as string)
-              : undefined;
-          const error =
-            typeof (parsed as Record<string, unknown>).error === 'string'
-              ? ((parsed as Record<string, unknown>).error as string)
-              : undefined;
-          return {
-            response: parsed.response,
-            usage,
-            ...(status !== undefined ? { status } : {}),
-            ...(error !== undefined ? { error } : {}),
-          };
-        }
+        const res = extractResultFromObject(parsed as Record<string, unknown>);
+        if (res) return res;
       }
     } catch {
       // Ignore unparseable lines (e.g. intermediate logs)
@@ -108,59 +125,7 @@ export function parseAntigravityJsonResponse(raw: string): AntigravityParsedResu
   try {
     const parsed = JSON.parse(raw);
     if (typeof parsed === 'object' && parsed !== null) {
-      if (
-        'event' in parsed &&
-        parsed.event === 'result' &&
-        'result' in parsed &&
-        typeof parsed.result === 'object' &&
-        parsed.result !== null
-      ) {
-        const res = parsed.result as {
-          response?: unknown;
-          usage?: unknown;
-          status?: unknown;
-          error?: unknown;
-        };
-        if (
-          typeof res.response === 'string' ||
-          typeof res.error === 'string' ||
-          typeof res.status === 'string'
-        ) {
-          const usage =
-            typeof res.usage === 'object' && res.usage !== null
-              ? (res.usage as Record<string, unknown>)
-              : {};
-          const response = typeof res.response === 'string' ? res.response : '';
-          const status = typeof res.status === 'string' ? res.status : undefined;
-          const error = typeof res.error === 'string' ? res.error : undefined;
-          return {
-            response,
-            usage,
-            ...(status !== undefined ? { status } : {}),
-            ...(error !== undefined ? { error } : {}),
-          };
-        }
-      }
-      if ('response' in parsed && typeof parsed.response === 'string') {
-        const usage =
-          typeof parsed.usage === 'object' && parsed.usage !== null
-            ? (parsed.usage as Record<string, unknown>)
-            : {};
-        const status =
-          typeof (parsed as Record<string, unknown>).status === 'string'
-            ? ((parsed as Record<string, unknown>).status as string)
-            : undefined;
-        const error =
-          typeof (parsed as Record<string, unknown>).error === 'string'
-            ? ((parsed as Record<string, unknown>).error as string)
-            : undefined;
-        return {
-          response: parsed.response,
-          usage,
-          ...(status !== undefined ? { status } : {}),
-          ...(error !== undefined ? { error } : {}),
-        };
-      }
+      return extractResultFromObject(parsed as Record<string, unknown>);
     }
   } catch {
     // Plain text or unparseable JSON
@@ -289,16 +254,22 @@ function applyAntigravityJsonUsage(
   if (status === 'ERROR' || (resultError && resultError.trim().length > 0)) {
     result.outcome = 'failed';
     const errText = (resultError ?? response).trim();
+    const tokenLimitMatch = testTokenLimitPatterns(errText, { maxLines: 2000 });
     const quotaMatch = testQuotaPatterns(errText, { maxLines: 2000 });
     const providerMatch = testProviderErrorPatterns(errText, { maxLines: 2000 });
-    if (providerMatch || quotaMatch) {
-      if (!result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)) {
-        result.contractViolations.push(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR);
+    if (tokenLimitMatch || quotaMatch || providerMatch) {
+      if (quotaMatch || providerMatch) {
+        if (!result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)) {
+          result.contractViolations.push(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR);
+        }
       }
-      const marker = quotaMatch
-        ? `QUOTA_EXCEEDED: ${quotaMatch}`
-        : `PROVIDER_ERROR: ${providerMatch}`;
+      const marker = tokenLimitMatch
+        ? `TOKEN_LIMIT_EXCEEDED: ${tokenLimitMatch}`
+        : quotaMatch
+          ? `QUOTA_EXCEEDED: ${quotaMatch}`
+          : `PROVIDER_ERROR: ${providerMatch}`;
       if (
+        !stderrContent.startsWith('TOKEN_LIMIT_EXCEEDED:') &&
         !stderrContent.startsWith('QUOTA_EXCEEDED:') &&
         !stderrContent.startsWith('PROVIDER_ERROR:')
       ) {
@@ -309,12 +280,15 @@ function applyAntigravityJsonUsage(
           // best-effort write
         }
       }
-    } else if (errText && !stderrContent.includes(errText)) {
-      stderrContent = `ERROR: ${errText}\n${stderrContent}`;
-      try {
-        writeFileSync(result.stderrPath, stderrContent);
-      } catch {
-        // best-effort write
+    } else {
+      const msg = errText || 'Antigravity execution finished with status ERROR';
+      if (!stderrContent.includes(msg)) {
+        stderrContent = `ERROR: ${msg}\n${stderrContent}`;
+        try {
+          writeFileSync(result.stderrPath, stderrContent);
+        } catch {
+          // best-effort write
+        }
       }
     }
   } else if (

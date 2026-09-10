@@ -367,6 +367,56 @@ describe('AntigravityAgentAdapter', () => {
     expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('PROVIDER_ERROR');
   });
 
+  it('detects token limit error from stream-json ERROR result event', async () => {
+    const cwd = makeWorktree();
+    const fakeScript = join(cwd, 'fake-agy-token-limit.sh');
+    writeFileSync(
+      fakeScript,
+      [
+        '#!/usr/bin/env bash',
+        'cat > /dev/null',
+        "cat << 'JSON'",
+        '{"event":"result","result":{"status":"ERROR","error":"prompt is too long: context_length_exceeded"}}',
+        'JSON',
+        'exit 0',
+      ].join('\n'),
+    );
+    execSync(`chmod +x ${fakeScript}`);
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: fakeScript,
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('failed');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('TOKEN_LIMIT_EXCEEDED');
+  });
+
+  it('records fallback ERROR diagnostic in stderr when result status is ERROR without error text', async () => {
+    const cwd = makeWorktree();
+    const fakeScript = join(cwd, 'fake-agy-status-error-empty.sh');
+    writeFileSync(
+      fakeScript,
+      [
+        '#!/usr/bin/env bash',
+        'cat > /dev/null',
+        "cat << 'JSON'",
+        '{"event":"result","result":{"status":"ERROR"}}',
+        'JSON',
+        'exit 0',
+      ].join('\n'),
+    );
+    execSync(`chmod +x ${fakeScript}`);
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: fakeScript,
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('failed');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain(
+      'Antigravity execution finished with status ERROR',
+    );
+  });
+
   it('detects silent zero-exit as contract_violation with no_output', async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
@@ -1345,6 +1395,20 @@ describe('parseAntigravityJsonResponse unit tests', () => {
     const raw = [
       '{"event":"init","init":{"tools":[]}}',
       '{"event":"result","result":{"status":"ERROR","error":"API call failed: HTTP 429: Rate limit exceeded","response":""}}',
+    ].join('\n');
+    const parsed = parseAntigravityJsonResponse(raw);
+    expect(parsed).toEqual({
+      status: 'ERROR',
+      error: 'API call failed: HTTP 429: Rate limit exceeded',
+      response: '',
+      usage: {},
+    });
+  });
+
+  it('parses error when result error is an object with message', () => {
+    const raw = [
+      '{"event":"init","init":{"tools":[]}}',
+      '{"event":"result","result":{"status":"ERROR","error":{"message":"API call failed: HTTP 429: Rate limit exceeded"}}}',
     ].join('\n');
     const parsed = parseAntigravityJsonResponse(raw);
     expect(parsed).toEqual({
