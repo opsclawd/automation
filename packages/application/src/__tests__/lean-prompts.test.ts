@@ -415,6 +415,19 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(template).toMatch(/Do not switch git branches/i);
       expect(template).toMatch(/Do not ask questions/i);
 
+      // Validation scope constraints (#1164)
+      expect(template).toMatch(/## VALIDATION SCOPE/);
+      expect(template).toMatch(/Do not re-run the full repository validation suite yourself/i);
+      expect(template).toMatch(
+        /A dedicated\s+validate\/fix-validate phase runs the complete suite immediately after you\s+finish/i,
+      );
+      expect(template).toMatch(
+        /Limit your own verification to: typecheck and lint for the files you\s+changed, plus only the specific unit test\(s\) that directly cover them/i,
+      );
+      expect(template).toMatch(
+        /Do not run integration suites, Testcontainers-based tests, or\s+hardware\/model-dependent suites/i,
+      );
+
       // Render verification
       const artifacts = new FakeArtifactStore();
       await artifacts.write({
@@ -437,6 +450,9 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       });
       expect(rendered).toContain('1. Broken null check in foo.ts');
       expect(rendered).toContain('done_with_fixes');
+      expect(rendered).toContain('VALIDATION SCOPE');
+      expect(rendered).toContain('Do not re-run the full repository validation suite yourself');
+      expect(rendered).toContain('Testcontainers-based tests');
     });
   });
 

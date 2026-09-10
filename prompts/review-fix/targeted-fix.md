@@ -38,6 +38,22 @@ Implement the necessary fixes in the repository worktree to resolve all blocking
 2. **Worktree State**:
    - Make the required file modifications and leave the worktree in a finished state for deterministic validation.
 
+## VALIDATION SCOPE
+
+Do not re-run the full repository validation suite yourself. A dedicated
+validate/fix-validate phase runs the complete suite immediately after you
+finish, with its own properly-sized per-command timeout - separate from
+your invocation budget. Re-running it yourself risks exceeding your time
+budget before you can write any result at all, which is worse than a
+validation failure: it loses the entire turn, including your fix.
+
+Limit your own verification to: typecheck and lint for the files you
+changed, plus only the specific unit test(s) that directly cover them.
+Do not run integration suites, Testcontainers-based tests, or
+hardware/model-dependent suites (database integration tests, media
+encoding/ML inference suites, GPU-dependent render tests, or any
+repo-specific equivalent) yourself.
+
 ## FINAL ACTION
 
 Write `./fix-review-result.json` with:
