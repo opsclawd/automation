@@ -13,7 +13,11 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { AgentProfileName } from '@ai-sdlc/domain';
-import { AntigravityAgentAdapter, validateScratchDir } from '../antigravity-adapter.js';
+import {
+  AntigravityAgentAdapter,
+  validateScratchDir,
+  parseAntigravityJsonResponse,
+} from '../antigravity-adapter.js';
 
 const dirs: string[] = [];
 
@@ -93,30 +97,36 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.exitCode).toBe(5);
   });
 
-  it('rejects an oversized prompt as PROMPT_BUDGET_EXCEEDED before ever spawning agy', async () => {
+  it('successfully spawns with large prompts (>131072 bytes) via stdin stream-json without argv limits', async () => {
     const cwd = makeWorktree();
-    const promptPath = join(cwd, 'prompt.md');
-    // Linux's hard MAX_ARG_STRLEN kernel limit for a single argv element is
-    // 131072 bytes; agy only accepts the prompt as a positional CLI
-    // argument (stdin is a broken substitute, see #709), so any prompt at
-    // or above this size can never be spawned successfully. binaryPath
-    // points at a nonexistent binary: if the pre-flight guard failed to
-    // short-circuit, invoke() would try to actually spawn it and this test
-    // would fail with an ENOENT-style 'failed' outcome instead.
-    writeFileSync(promptPath, 'A'.repeat(150_000));
-    const adapter = new AntigravityAgentAdapter({
-      binaryPath: join(FIXTURES, 'does-not-exist.sh'),
-      artifactsDir: cwd,
-    });
-    const r = await adapter.invoke(req(cwd, { promptPath }));
-    expect(r.outcome).toBe('contract_violation');
-    expect(r.contractViolations).toContain('prompt_budget_exceeded');
-    expect(r.exitCode).not.toBe(0);
-    const stderrText = readFileSync(r.stderrPath, 'utf-8');
-    expect(stderrText).toContain('PROMPT_BUDGET_EXCEEDED');
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-large-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      const promptPath = join(cwd, 'prompt.md');
+      // Create a 315KB prompt (larger than Linux's MAX_ARG_STRLEN 131,072 bytes and the ~309KB prompt from #223)
+      const largePrompt = 'A'.repeat(315_000);
+      writeFileSync(promptPath, largePrompt);
+      const r = await adapter.invoke(req(cwd, { promptPath }));
+      expect(r.outcome).toBe('success');
+      expect(r.contractViolations).toEqual([]);
+      const stdin = readFileSync(join(logDir, 'agy-last-stdin.txt'), 'utf-8');
+      const parsedStdin = JSON.parse(stdin);
+      expect(parsedStdin.event).toBe('user');
+      expect(parsedStdin.message.content[0].text).toBe(largePrompt);
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      expect(args).not.toContain(largePrompt);
+      expect(args).toContain('--output-format stream-json');
+      expect(args).toContain('--input-format stream-json');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
   });
 
-  it('passes the prompt via --print as a positional argument', async () => {
+  it('passes the prompt via stdin as an NDJSON stream-json message and passes empty string to --print', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
     try {
@@ -131,8 +141,18 @@ describe('AntigravityAgentAdapter', () => {
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       const stdin = readFileSync(join(logDir, 'agy-last-stdin.txt'), 'utf-8');
       expect(args).toContain('--print');
-      expect(args).toContain('REVIEW THIS PR DIFF');
-      expect(stdin).toBe('');
+      expect(args).not.toContain('REVIEW THIS PR DIFF');
+      expect(args).toContain('--output-format stream-json');
+      expect(args).toContain('--input-format stream-json');
+
+      const parsedStdin = JSON.parse(stdin);
+      expect(parsedStdin).toEqual({
+        event: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'REVIEW THIS PR DIFF' }],
+        },
+      });
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
@@ -1107,19 +1127,25 @@ exit 0
       const p1 = join(cwd, 'p1.md');
       writeFileSync(p1, 'PROMPT 1');
       await adapter.invoke(req(cwd, { promptPath: p1 }));
-      expect(readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8')).toContain('PROMPT 1');
+      const stdin1 = readFileSync(join(logDir, 'agy-last-stdin.txt'), 'utf-8');
+      expect(stdin1).toContain('PROMPT 1');
+      expect(JSON.parse(stdin1).message.content[0].text).toBe('PROMPT 1');
+      expect(readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8')).not.toContain('PROMPT 1');
 
       // Second invocation (immediately after)
       const p2 = join(cwd, 'p2.md');
       writeFileSync(p2, 'PROMPT 2');
       await adapter.invoke(req(cwd, { promptPath: p2 }));
-      expect(readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8')).toContain('PROMPT 2');
+      const stdin2 = readFileSync(join(logDir, 'agy-last-stdin.txt'), 'utf-8');
+      expect(stdin2).toContain('PROMPT 2');
+      expect(JSON.parse(stdin2).message.content[0].text).toBe('PROMPT 2');
+      expect(readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8')).not.toContain('PROMPT 2');
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
   });
 
-  it('passes --output-format json so usage data is available in the response', async () => {
+  it('passes --output-format stream-json and --input-format stream-json so usage data is available and stdin streaming is enabled', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
     try {
@@ -1130,16 +1156,36 @@ exit 0
       });
       await adapter.invoke(req(cwd));
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
-      expect(args).toContain('--output-format');
-      expect(args).toContain('json');
+      expect(args).toContain('--output-format stream-json');
+      expect(args).toContain('--input-format stream-json');
+      expect(args).toContain('--print ');
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
   });
 });
 
-describe('AntigravityAgentAdapter usage capture (--output-format json)', () => {
-  it('extracts usage from the {"response","usage"} envelope', async () => {
+describe('AntigravityAgentAdapter usage capture (--output-format stream-json)', () => {
+  it('extracts usage from multi-line stream-json envelope, ignoring intermediate step_update events', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-stream-json-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('success');
+    expect(r.usage).toEqual({
+      inputTokens: 14633,
+      outputTokens: 55,
+      reasoningTokens: 53,
+      cachedTokens: 7,
+    });
+    expect(r.usageSourcePaths).toEqual([r.stdoutPath]);
+    // Verifies stdout was rewritten from multi-line NDJSON to plain text response
+    expect(readFileSync(r.stdoutPath, 'utf-8')).toBe('PONG\n');
+  });
+
+  it('extracts usage from legacy single-line {"response","usage"} envelope', async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-agy-json-success.sh'),
@@ -1183,10 +1229,19 @@ describe('AntigravityAgentAdapter usage capture (--output-format json)', () => {
     expect(r.usageSourcePaths).toBeUndefined();
   });
 
-  it('corrects the NO_OUTPUT false negative that json mode introduces (empty response, no artifacts, no git changes)', async () => {
-    // runExternalCli's own NO_OUTPUT check tests raw stdout, which is the JSON
-    // envelope and therefore never empty. Without this correction, a
-    // genuinely empty model response would silently pass as success.
+  it('corrects the NO_OUTPUT false negative that stream-json mode introduces (empty response, no artifacts, no git changes)', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-stream-json-empty-response.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain('no_output');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('NO_OUTPUT');
+  });
+
+  it('corrects the NO_OUTPUT false negative with legacy single-line json empty response', async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-agy-json-empty-response.sh'),
@@ -1202,11 +1257,52 @@ describe('AntigravityAgentAdapter usage capture (--output-format json)', () => {
     const cwd = makeWorktree();
     writeFileSync(join(cwd, 'result.md'), 'ok');
     const adapter = new AntigravityAgentAdapter({
-      binaryPath: join(FIXTURES, 'fake-agy-json-empty-response.sh'),
+      binaryPath: join(FIXTURES, 'fake-agy-stream-json-empty-response.sh'),
       artifactsDir: cwd,
     });
     const r = await adapter.invoke(req(cwd, { expectedArtifacts: ['result.md'] }));
     expect(r.outcome).toBe('success');
     expect(r.contractViolations).not.toContain('no_output');
+  });
+});
+
+describe('parseAntigravityJsonResponse unit tests', () => {
+  it('parses multi-line NDJSON stream-json output and extracts response and usage from final result', () => {
+    const raw = [
+      '{"event":"init","init":{"tools":[]}}',
+      '{"event":"step_update","step_update":{"step_index":0,"state":"DONE","usage":{"input_tokens":50,"output_tokens":5}}}',
+      '{"event":"step_update","step_update":{"step_index":1,"state":"DONE","text_delta":"hello"}}',
+      '{"event":"result","result":{"status":"SUCCESS","response":"final hello","usage":{"input_tokens":123,"output_tokens":45,"thinking_tokens":10,"cache_read_tokens":20}}}',
+    ].join('\n');
+
+    const parsed = parseAntigravityJsonResponse(raw);
+    expect(parsed).toEqual({
+      response: 'final hello',
+      usage: {
+        input_tokens: 123,
+        output_tokens: 45,
+        thinking_tokens: 10,
+        cache_read_tokens: 20,
+      },
+    });
+  });
+
+  it('parses legacy single-line JSON format', () => {
+    const raw = JSON.stringify({
+      response: 'legacy response',
+      usage: { input_tokens: 200, output_tokens: 30 },
+    });
+    const parsed = parseAntigravityJsonResponse(raw);
+    expect(parsed).toEqual({
+      response: 'legacy response',
+      usage: { input_tokens: 200, output_tokens: 30 },
+    });
+  });
+
+  it('returns undefined for plain text or malformed JSON', () => {
+    expect(parseAntigravityJsonResponse('')).toBeUndefined();
+    expect(parseAntigravityJsonResponse('   \n  \n')).toBeUndefined();
+    expect(parseAntigravityJsonResponse('some arbitrary stdout without json')).toBeUndefined();
+    expect(parseAntigravityJsonResponse('{"event":"init"}')).toBeUndefined();
   });
 });

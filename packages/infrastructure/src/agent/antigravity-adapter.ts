@@ -19,33 +19,95 @@ import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { runExternalCli } from './external-cli-runner.js';
 
-interface AntigravityJsonResponse {
-  response?: unknown;
-  usage?: unknown;
+export interface AntigravityParsedResult {
+  response: string;
+  usage: Record<string, unknown>;
 }
 
-// Parses the {"response","usage",...} envelope produced by --output-format
-// json (verified live against agy 1.0.3). Returns undefined for anything that
-// isn't that exact shape — including plain-text stdout from fixtures/mocks
-// that don't model the JSON contract, and any future agy version that changes
-// it — so callers degrade to "no usage data" rather than crash.
-function parseAntigravityJsonResponse(
-  raw: string,
-): { response: string; usage: Record<string, unknown> } | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
+// Parses the NDJSON stream produced by --output-format stream-json (and legacy
+// json envelope). Extracts response and usage from the final {"event":"result","result":{...}}
+// line, ignoring intermediate step_update / tool-call events.
+// Returns undefined for anything that isn't that shape — including plain-text
+// stdout from fixtures/mocks that don't model the JSON contract, and any future
+// agy version that changes it — so callers degrade to "no usage data" rather than crash.
+export function parseAntigravityJsonResponse(raw: string): AntigravityParsedResult | undefined {
+  if (!raw.trim()) return undefined;
+
+  const lines = raw.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (typeof parsed === 'object' && parsed !== null) {
+        // Stream-json result event: {"event":"result","result":{"response":"...","usage":{...}}}
+        if (
+          'event' in parsed &&
+          parsed.event === 'result' &&
+          'result' in parsed &&
+          typeof parsed.result === 'object' &&
+          parsed.result !== null
+        ) {
+          const res = parsed.result as { response?: unknown; usage?: unknown };
+          if (typeof res.response === 'string') {
+            const usage =
+              typeof res.usage === 'object' && res.usage !== null
+                ? (res.usage as Record<string, unknown>)
+                : {};
+            return { response: res.response, usage };
+          }
+        }
+        // Legacy single-line JSON format: {"response":"...","usage":{...}}
+        if ('response' in parsed && typeof parsed.response === 'string') {
+          const usage =
+            typeof parsed.usage === 'object' && parsed.usage !== null
+              ? (parsed.usage as Record<string, unknown>)
+              : {};
+          return { response: parsed.response, usage };
+        }
+      }
+    } catch {
+      // Ignore unparseable lines (e.g. intermediate logs)
+    }
   }
-  if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const { response, usage } = parsed as AntigravityJsonResponse;
-  if (typeof response !== 'string' || typeof usage !== 'object' || usage === null) return undefined;
-  return { response, usage: usage as Record<string, unknown> };
+
+  // Fallback for pretty-printed single JSON object across multiple lines
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null) {
+      if (
+        'event' in parsed &&
+        parsed.event === 'result' &&
+        'result' in parsed &&
+        typeof parsed.result === 'object' &&
+        parsed.result !== null
+      ) {
+        const res = parsed.result as { response?: unknown; usage?: unknown };
+        if (typeof res.response === 'string') {
+          const usage =
+            typeof res.usage === 'object' && res.usage !== null
+              ? (res.usage as Record<string, unknown>)
+              : {};
+          return { response: res.response, usage };
+        }
+      }
+      if ('response' in parsed && typeof parsed.response === 'string') {
+        const usage =
+          typeof parsed.usage === 'object' && parsed.usage !== null
+            ? (parsed.usage as Record<string, unknown>)
+            : {};
+        return { response: parsed.response, usage };
+      }
+    }
+  } catch {
+    // Plain text or unparseable JSON
+  }
+
+  return undefined;
 }
 
 // Mutates `result` in place: attaches usage parsed from the --output-format
-// json envelope, and corrects a false negative that switching to json mode
+// stream-json envelope, and corrects a false negative that switching to structured mode
 // introduces in runExternalCli's own NO_OUTPUT check. That check tests raw
 // stdout for emptiness, but raw stdout is now the JSON envelope, which is
 // never empty even when the model's actual response text is — so a
@@ -116,23 +178,6 @@ function applyAntigravityJsonUsage(
     }
   }
 }
-
-// Linux caps any single argv element at MAX_ARG_STRLEN = 32 pages (verified
-// live: 32 * 4096 = 131072 bytes exactly — spawn() throws E2BIG at 131072
-// bytes, succeeds at 131071). This is independent of the aggregate ARG_MAX
-// (env + all args combined, normally ~2MB) and is not configurable at
-// runtime. Since the prompt is necessarily passed as a single positional
-// argv element (see the comment below on why stdin isn't viable), any
-// prompt at or above this size can never be spawned successfully — with
-// execa's `reject: false`, that failure resolves silently (no throw, no
-// stdout, no stderr, no real exit code) rather than raising an error,
-// which without this guard was previously misreported as an empty
-// "success" in ~20ms (issue: agy fallback invocations for prompt-heavy
-// review phases silently discarding the review). Reject up front, well
-// under the hard limit, so this becomes a fast, correctly-classified
-// PROMPT_BUDGET_EXCEEDED the router already knows how to fall back on,
-// instead of a doomed spawn attempt.
-const AGY_MAX_PROMPT_BYTES = 120_000;
 
 const AGY_MODEL_LABEL_EXCEPTIONS: Readonly<Record<string, string>> = Object.freeze({
   'gpt-oss-120b-medium': 'GPT-OSS 120B (Medium)',
@@ -347,39 +392,6 @@ export class AntigravityAgentAdapter implements AgentPort {
     const bin = this.opts.binaryPath ?? 'agy';
     const prompt = readFileSync(request.promptPath, 'utf-8');
 
-    const promptBytes = Buffer.byteLength(prompt, 'utf-8');
-    if (promptBytes >= AGY_MAX_PROMPT_BYTES) {
-      const invocationDir = join(
-        this.opts.artifactsDir,
-        `inv-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      );
-      mkdirSync(invocationDir, { recursive: true });
-      const stdoutPath = join(invocationDir, 'stdout.log');
-      const stderrPath = join(invocationDir, 'stderr.log');
-      writeFileSync(stdoutPath, '');
-      writeFileSync(
-        stderrPath,
-        `PROMPT_BUDGET_EXCEEDED: prompt is ${promptBytes} bytes, which meets or exceeds the ` +
-          `${AGY_MAX_PROMPT_BYTES}-byte safety threshold below Linux's hard 131072-byte ` +
-          `single-argv-element limit (agy accepts the prompt only as a positional CLI ` +
-          `argument; piped stdin is not a working substitute — see #709). This prompt can ` +
-          `never be spawned successfully via agy; fall back to a different profile instead ` +
-          `of attempting it.`,
-      );
-      return {
-        runtime: 'antigravity',
-        provider: request.provider ?? '',
-        model: request.model ?? '',
-        exitCode: 1,
-        durationMs: 0,
-        stdoutPath,
-        stderrPath,
-        contractViolations: [CONTRACT_VIOLATION_CODES.PROMPT_BUDGET_EXCEEDED],
-        outcome: 'contract_violation',
-        endCommitSha: request.startCommitSha,
-      };
-    }
-
     const scratchDir =
       this.opts.scratchDir ?? resolve(homedir(), '.gemini/antigravity-cli/scratch');
 
@@ -404,16 +416,16 @@ export class AntigravityAgentAdapter implements AgentPort {
     const printTimeoutMins = Math.max(1, Math.floor(printTimeoutMs / 60_000) - 1);
     const modelLabel = resolveAgyModelLabel(request.model);
 
-    // Verified headless contract (agy 1.0.3, re-verified live against 1.1.22):
-    // passing the prompt as a positional argument after --print is the only
-    // verified stable contract. Deviation to '-' + stdin (added in a prior
-    // iteration) caused the CLI to ignore the prompt and return a generic
-    // greeting instead — still reproduces on 1.1.22 (#709).
+    // Headless stream-json contract (verified against agy >= 1.1.28, #1157):
+    // passing the prompt via stdin with --input-format stream-json and
+    // --output-format stream-json allows arbitrary-size prompts without hitting
+    // Linux's single argv element kernel limit (MAX_ARG_STRLEN = 131,072 bytes).
+    // Positional --print requires a value, passed as '' (empty string), while
+    // the turn arrives as an NDJSON user event message on stdin.
     //
-    // This makes the argv element the only viable prompt transport, which
-    // risks E2BIG for large prompts — handled above by the pre-flight
-    // AGY_MAX_PROMPT_BYTES guard, which rejects oversized prompts as
-    // PROMPT_BUDGET_EXCEEDED before ever attempting to spawn.
+    // Note: plain positional '-' raw text stdin remains broken in agy (#709,
+    // causes generic greeting failure); --input-format stream-json is a
+    // distinct, verified structured protocol that avoids that bug.
     //
     // --dangerously-skip-permissions and detached:true are load-bearing, not
     // incidental — verified directly against the live binary: without
@@ -423,12 +435,11 @@ export class AntigravityAgentAdapter implements AgentPort {
     // context, and the process hangs until the external timeout kills it
     // (confirmed: `agy --print "<tool-using prompt>" </dev/null` times out;
     // the identical invocation with --dangerously-skip-permissions completes
-    // normally). Removing it trades a fast, wrong response (#709's symptom)
-    // for a slow hang on nearly every invocation — strictly worse.
-    // --output-format json (verified live against agy 1.0.3, #943) wraps the
-    // plain response in {"response","usage",...}; `usage` carries real
-    // input/output/thinking/cache_read token counts, unlike default text mode
-    // which has no usage signal at all. This is read back below.
+    // normally).
+    //
+    // --output-format stream-json produces NDJSON events ending in
+    // {"event":"result","result":{"response","usage",...}}; `usage` carries
+    // real input/output/thinking/cache_read token counts.
     const args = [
       '--dangerously-skip-permissions',
       '--add-dir',
@@ -437,15 +448,24 @@ export class AntigravityAgentAdapter implements AgentPort {
       `${printTimeoutMins}m`,
       ...(modelLabel !== null ? ['--model', modelLabel] : []),
       '--output-format',
-      'json',
+      'stream-json',
+      '--input-format',
+      'stream-json',
       '--print',
-      prompt,
+      '',
     ];
     const result = await runExternalCli({
       runtime: 'antigravity',
       bin,
       args,
-      input: '', // prompt is passed as a positional arg above; stdin unused
+      input:
+        JSON.stringify({
+          event: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: prompt }],
+          },
+        }) + '\n',
       detached: true,
       cwd: request.cwd,
       artifactsDir: this.opts.artifactsDir,
