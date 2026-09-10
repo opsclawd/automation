@@ -164,7 +164,7 @@ export class AgentRuntimeRouter implements AgentPort {
 
     const effectiveTimeoutMs = request.timeoutMs ?? profile.timeoutMinutes * 60_000;
 
-    const id = AgentInvocationId(this.idFactory());
+    const id = request.id ?? AgentInvocationId(this.idFactory());
     const startedAt = this.clock();
     const promptContent = this.readPromptContent(request.promptPath);
     const promptChars = promptContent.length;
@@ -251,6 +251,7 @@ export class AgentRuntimeRouter implements AgentPort {
           stderrPath: '',
           contractViolations: [],
           outcome: 'duplicate_retry_suppressed',
+          invocationId: id,
         };
       } else {
         if (this.opts.eventBus) {
@@ -635,6 +636,7 @@ export class AgentRuntimeRouter implements AgentPort {
             const fallbackResult = await this.dispatch(fallbackRequest, true);
             return {
               ...fallbackResult,
+              invocationId: fallbackResult.invocationId ?? id,
               provider: fbEffectiveProvider,
               model: fbEffectiveModel,
             };
@@ -643,7 +645,7 @@ export class AgentRuntimeRouter implements AgentPort {
       }
     }
 
-    return { ...result, provider: effectiveProvider, model: effectiveModel };
+    return { ...result, invocationId: id, provider: effectiveProvider, model: effectiveModel };
   }
 
   private shouldFallback(result: AgentInvocationResult, phaseId: string): boolean {

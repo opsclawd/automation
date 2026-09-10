@@ -1046,14 +1046,14 @@ describe('runExternalCli', () => {
       }
     });
 
-    it('sets resultJsonPath when explicit resultJsonPath is specified (#1158)', async () => {
+    it('sets resultJsonPath when explicit resultJsonPath is specified and created (#1158)', async () => {
       const cwd = makeTmpDir();
       const artifactsDir = makeTmpDir();
       try {
         const result = await runExternalCli({
           runtime: 'codex',
           bin: 'bash',
-          args: ['-c', 'echo "hello"'],
+          args: ['-c', 'echo "hello" && echo "{}" > fix-review-result.json'],
           cwd,
           artifactsDir,
           model: 'test',
@@ -1061,6 +1061,28 @@ describe('runExternalCli', () => {
         });
         expect(result.outcome).toBe('success');
         expect(result.resultJsonPath).toBe('fix-review-result.json');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('reports contract_violation when resultJsonPath is specified but never created (#1162)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        const result = await runExternalCli({
+          runtime: 'codex',
+          bin: 'bash',
+          args: ['-c', 'echo "hello without writing result"'],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          resultJsonPath: 'fix-review-result.json',
+        });
+        expect(result.outcome).toBe('contract_violation');
+        expect(result.contractViolations).toContain('missing_required_artifact');
+        expect(result.resultJsonPath).toBeUndefined();
       } finally {
         rmSync(cwd, { recursive: true, force: true });
         rmSync(artifactsDir, { recursive: true, force: true });

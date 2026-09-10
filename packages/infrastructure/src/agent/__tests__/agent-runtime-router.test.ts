@@ -102,11 +102,42 @@ describe('AgentRuntimeRouter', () => {
     });
     const result = await router.invoke(req());
     expect(result.outcome).toBe('success');
+    expect(result.invocationId).toBe(AgentInvocationId('inv-fixed'));
     const row = inv.findById(AgentInvocationId('inv-fixed'));
     expect(row).toBeDefined();
     expect(row?.outcome).toBe('success');
     expect(row?.promptChars).toBe(100);
     expect(row?.runtime).toBe('opencode');
+  });
+
+  it('preserves caller-provided request.id as invocationId and records in repository (#1162)', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'm',
+      exitCode: 0,
+      durationMs: 1234,
+      stdoutPath: '/tmp/stdout.log',
+      stderrPath: '/tmp/stderr.log',
+      contractViolations: [],
+      outcome: 'success',
+    });
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-fallback-generated',
+      readPromptContent: () => 'x'.repeat(100),
+    });
+    const callerId = AgentInvocationId('inv-caller-provided-1162');
+    const result = await router.invoke(req({ id: callerId }));
+    expect(result.outcome).toBe('success');
+    expect(result.invocationId).toBe(callerId);
+    const row = inv.findById(callerId);
+    expect(row).toBeDefined();
+    expect(row?.id).toBe(callerId);
   });
 
   it('throws ConfigError on unknown profile', async () => {

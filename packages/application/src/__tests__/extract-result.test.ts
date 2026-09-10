@@ -51,7 +51,7 @@ describe('extractResult coordinator', () => {
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'extract-result-test-'));
     stdoutPath = join(tempDir, 'stdout.log');
-    writeFileSync(stdoutPath, 'some logs representing evidence\n');
+    writeFileSync(stdoutPath, 'some logs representing evidence\n{"result":"pass"}\n');
   });
 
   afterEach(() => {

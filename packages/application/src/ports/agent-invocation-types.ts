@@ -45,6 +45,7 @@ export interface AgentInvocationRequest {
   fallbackReason?: string;
   timeoutMs?: number;
   resultJsonPath?: string;
+  id?: AgentInvocationId;
   metadata?: Record<string, unknown>;
   retryIntent?: SemanticRetryIntent;
 }
@@ -60,6 +61,7 @@ export interface AgentInvocationResult {
   resultJsonPath?: string;
   contractViolations: string[];
   outcome: AgentInvocationOutcome;
+  invocationId?: AgentInvocationId;
   endCommitSha?: string;
   stepId?: string;
   usage?: {

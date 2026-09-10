@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   PhaseName,
@@ -20,6 +20,7 @@ import { validateAgentContract } from '../../agent/validate-agent-contract.js';
 import { extractResult } from '../../results/extract-result.js';
 import { AgentInvocationId, type AgentInvocation } from '@ai-sdlc/domain';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
+import { CONTRACT_VIOLATION_CODES } from '../../ports/contract-violation-codes.js';
 import {
   getPhaseResultMeta,
   type PhaseResultMeta,
@@ -108,7 +109,7 @@ function buildAgentInvocation(
   const endedAt = ctx.now();
 
   return {
-    id,
+    id: result.invocationId ?? id,
     runId: ctx.runUuid as AgentInvocation['runId'],
     phaseId: PhaseName(config.phase as string),
     profile: config.profile,
@@ -281,16 +282,26 @@ export async function runSingleShotAgentPhase(
     getPhaseResultMeta(config.phase as string)?.defaultResultPath ??
     'result.json';
 
+  const expectedArtifacts = Array.from(
+    new Set([
+      ...(config.agentContract.requiredArtifacts ?? []),
+      ...(!config.skipResultExtraction && resolvedResultJsonPath ? [resolvedResultJsonPath] : []),
+    ]),
+  );
+
+  const invocationId = AgentInvocationId(ctx.idFactory?.() || randomUUID());
+
   const request: AgentInvocationRequest = {
     profile: config.profile,
     promptPath: promptAbsolutePath,
-    expectedArtifacts: config.agentContract.requiredArtifacts ?? [],
+    expectedArtifacts,
     cwd: ctx.cwd,
     runId: ctx.runUuid,
     repoId: ctx.repoFullName,
     phaseId: config.phase as string,
     startCommitSha,
     resultJsonPath: resolvedResultJsonPath,
+    id: invocationId,
     metadata: {
       invocation_type: 'initial',
     },
@@ -314,7 +325,6 @@ export async function runSingleShotAgentPhase(
 
   // 6. Invoke agent
   const startedAt = ctx.now();
-  const invocationId = AgentInvocationId(ctx.idFactory?.() || randomUUID());
   emit('agent.invoking', 'info', `invoking agent for ${config.phase}`, {
     profile: config.profile,
   });
@@ -350,20 +360,60 @@ export async function runSingleShotAgentPhase(
     }
   }
 
-  if (agentResult.outcome !== 'success') {
+  const candidateDestinations = resolvedResultJsonPath
+    ? [
+        'result.json',
+        'fix-review-result.json',
+        'fix-validate-result.json',
+        'follow-up-review-result.json',
+      ].filter((p) => p !== resolvedResultJsonPath)
+    : [];
+  const hasCandidateOnDisk = candidateDestinations.some((p) => {
+    try {
+      const full = join(ctx.cwd, p);
+      return existsSync(full) && statSync(full).size > 0;
+    } catch {
+      return false;
+    }
+  });
+
+  const canAttemptExtractionRescue =
+    !config.skipResultExtraction &&
+    agentResult.outcome === 'contract_violation' &&
+    agentResult.contractViolations.length > 0 &&
+    agentResult.contractViolations.every(
+      (v) => v === CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+    ) &&
+    ctx.repair !== undefined &&
+    hasCandidateOnDisk;
+
+  if (agentResult.outcome !== 'success' && !canAttemptExtractionRescue) {
+    const kind: Failure['kind'] =
+      agentResult.outcome === 'timeout'
+        ? 'timeout'
+        : agentResult.outcome === 'contract_violation'
+          ? 'agent_contract_violation'
+          : 'command_failed';
+    const violationDetail =
+      agentResult.contractViolations?.length > 0
+        ? `: ${agentResult.contractViolations.join(', ')}`
+        : '';
     const failure = buildFailure(
       ctx,
       config.phase as string,
-      agentResult.outcome === 'timeout' ? 'timeout' : 'command_failed',
-      `Agent invocation [${invocationId}] failed with outcome '${agentResult.outcome}' (exit code ${agentResult.exitCode})`,
-      true,
-      'Check agent infrastructure and timeout settings, then retry.',
+      kind,
+      `Agent invocation [${invocationId}] failed with outcome '${agentResult.outcome}' (exit code ${agentResult.exitCode})${violationDetail}`,
+      kind !== 'agent_contract_violation',
+      kind === 'agent_contract_violation'
+        ? 'Review agent contract requirements and produced deliverables.'
+        : 'Check agent infrastructure and timeout settings, then retry.',
     );
     emit(`${String(config.phase)}.failed`, 'error', failure.message);
     return { outcome: 'failed', failure };
   }
 
   // 7. Build AgentInvocation domain object
+  const effectiveInvocationId = agentResult.invocationId ?? invocationId;
   let invocation = buildAgentInvocation(
     ctx,
     config,
@@ -371,35 +421,37 @@ export async function runSingleShotAgentPhase(
     agentResult,
     renderedPrompt.length,
     startedAt,
-    invocationId,
+    effectiveInvocationId,
     resolvedResultJsonPath,
   );
 
   // 8. Validate contract
-  const violations = await validateAgentContract({
-    contract: config.agentContract,
-    invocation,
-    ports: {
-      artifacts: ctx.artifacts,
-      git: ctx.git,
-      github: ctx.github,
-    },
-    cwd: ctx.cwd,
-    expectedBranch,
-    repoFullName: ctx.repoFullName,
-  });
+  if (agentResult.outcome === 'success') {
+    const violations = await validateAgentContract({
+      contract: config.agentContract,
+      invocation,
+      ports: {
+        artifacts: ctx.artifacts,
+        git: ctx.git,
+        github: ctx.github,
+      },
+      cwd: ctx.cwd,
+      expectedBranch,
+      repoFullName: ctx.repoFullName,
+    });
 
-  if (violations.length > 0) {
-    const failure = buildFailure(
-      ctx,
-      config.phase as string,
-      'agent_contract_violation',
-      `Agent contract violations: ${violations.join(', ')}`,
-      false,
-      'Review agent output and contract requirements. The agent violated its instructions.',
-    );
-    emit(`${String(config.phase)}.blocked`, 'error', failure.message, { violations });
-    return { outcome: 'blocked', failure };
+    if (violations.length > 0) {
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        'agent_contract_violation',
+        `Agent contract violations: ${violations.join(', ')}`,
+        false,
+        'Review agent output and contract requirements. The agent violated its instructions.',
+      );
+      emit(`${String(config.phase)}.blocked`, 'error', failure.message, { violations });
+      return { outcome: 'blocked', failure };
+    }
   }
 
   // 9. Worktree artifact verification and recovery
@@ -462,7 +514,9 @@ export async function runSingleShotAgentPhase(
       const failure = buildFailure(
         ctx,
         config.phase as string,
-        'invalid_result',
+        agentResult.outcome === 'contract_violation'
+          ? 'agent_contract_violation'
+          : 'invalid_result',
         `Result extraction failed: ${extracted.detail}`,
         false,
         'Review the agent output and result schema. The agent produced an invalid result.',
