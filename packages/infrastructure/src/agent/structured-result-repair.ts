@@ -131,7 +131,11 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
       return { outcome: 'not_attempted' };
     }
 
-    const preSnapshot = await this.snapshotChangedPaths(input.cwd, destinationAbs);
+    const preSnapshot = await this.snapshotChangedPaths(
+      input.cwd,
+      destinationAbs,
+      input.candidateDestinations,
+    );
     const prompt = this.promptBuilder({
       destination: input.destination,
       schemaContractText: input.schemaContractText,
@@ -183,7 +187,45 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
       };
     }
 
-    if (this.matchesRawArtifact(destinationAbs, input.cappedRawArtifact)) {
+    // If destination was not modified, check if an allowed candidate destination was written instead.
+    const destinationUntouched = destinationSnapshot.existed
+      ? this.matchesRawArtifact(destinationAbs, input.cappedRawArtifact)
+      : !existsSync(destinationAbs);
+
+    if (
+      destinationUntouched &&
+      input.candidateDestinations &&
+      input.candidateDestinations.length > 0
+    ) {
+      for (const candidateRel of input.candidateDestinations) {
+        const candidateAbs = resolvePathWithinCwd(input.cwd, candidateRel);
+        if (!candidateAbs || !existsSync(candidateAbs)) continue;
+        const normalizedRel = relative(input.cwd, candidateAbs).replace(/\\/g, '/');
+        try {
+          const currentCandidateContent = readFileSync(candidateAbs, 'utf-8');
+          const preCand = preSnapshot.get(normalizedRel);
+          const wasModified = !preCand || preCand.contents !== currentCandidateContent;
+          if (wasModified) {
+            JSON.parse(currentCandidateContent);
+            writeFileSync(destinationAbs, currentCandidateContent);
+            if (preCand) {
+              writeFileSync(candidateAbs, preCand.contents);
+            } else {
+              rmSync(candidateAbs, { force: true });
+            }
+            break;
+          }
+        } catch {
+          // If candidate is not valid JSON or unreadable, continue to other candidates
+        }
+      }
+    }
+
+    const destinationStillUnchanged = destinationSnapshot.existed
+      ? this.matchesRawArtifact(destinationAbs, input.cappedRawArtifact)
+      : !existsSync(destinationAbs);
+
+    if (destinationStillUnchanged) {
       await this.cleanupFailedRepair(input, destinationAbs, preSnapshot, destinationSnapshot);
       return {
         outcome: 'failed',
@@ -230,9 +272,10 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
       // Best-effort cleanup; the other snapshot restores still matter.
     }
 
+    const destRel = relative(input.cwd, destinationAbs).replace(/\\/g, '/');
     const postStatus = await this.safeStatusPaths(input.cwd);
     for (const [relPath, snapshot] of preSnapshot) {
-      if (relPath === input.destination) continue;
+      if (relPath === destRel || relPath === input.destination) continue;
       try {
         writeFileSync(join(input.cwd, relPath), snapshot.contents);
       } catch {
@@ -241,7 +284,7 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
     }
 
     for (const relPath of postStatus) {
-      if (preSnapshot.has(relPath) || relPath === input.destination) {
+      if (preSnapshot.has(relPath) || relPath === destRel || relPath === input.destination) {
         continue;
       }
       const abs = join(input.cwd, relPath);
@@ -290,9 +333,16 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
   private async snapshotChangedPaths(
     cwd: string,
     destinationAbs: string,
+    candidateDestinations: string[] = [],
   ): Promise<Map<string, FileSnapshot>> {
     const snapshot = new Map<string, FileSnapshot>();
     const paths = new Set<string>([relative(cwd, destinationAbs).replace(/\\/g, '/')]);
+    for (const candidate of candidateDestinations) {
+      const candidateAbs = resolvePathWithinCwd(cwd, candidate);
+      if (candidateAbs) {
+        paths.add(relative(cwd, candidateAbs).replace(/\\/g, '/'));
+      }
+    }
     for (const relPath of await this.safeStatusPaths(cwd)) {
       paths.add(relPath);
     }
@@ -321,8 +371,8 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
 
   private async safeStatusPaths(cwd: string): Promise<Set<string>> {
     try {
-      const status = await this.git.status(cwd);
-      return parseStatusPaths(status);
+      const status = await this.git.status(cwd, { includeIgnored: true });
+      return parseStatusPaths(status, cwd);
     } catch {
       return new Set();
     }
@@ -354,14 +404,18 @@ export class StructuredResultRepair implements StructuredResultRepairPort {
 
   private readTrackedHeadFile(cwd: string, relPath: string): string | undefined {
     try {
-      return execFileSync('git', ['show', `HEAD:${relPath}`], { cwd, encoding: 'utf-8' });
+      return execFileSync('git', ['show', `HEAD:${relPath}`], {
+        cwd,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
     } catch {
       return undefined;
     }
   }
 }
 
-function parseStatusPaths(status: string): Set<string> {
+function parseStatusPaths(status: string, cwd?: string): Set<string> {
   const paths = new Set<string>();
   for (const line of status.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -371,7 +425,16 @@ function parseStatusPaths(status: string): Set<string> {
     if (renameIdx !== -1) {
       path = path.slice(renameIdx + 4);
     }
-    paths.add(path.replace(/\\/g, '/'));
+    const normalized = path.replace(/\\/g, '/');
+    if (normalized.endsWith('/')) {
+      continue;
+    }
+    if (cwd && (line.startsWith('??') || line.startsWith('!!'))) {
+      if (!existsSync(join(cwd, normalized))) {
+        continue;
+      }
+    }
+    paths.add(normalized);
   }
   return paths;
 }

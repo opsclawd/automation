@@ -177,11 +177,16 @@ export async function extractResult(
   }
 
   const cwd = input.cwd ?? input.rerunContext?.cwd ?? '';
+  const destination = invocation.resultJsonPath || 'result.json';
+  const candidateDestinations = [meta.defaultResultPath, 'result.json'].filter(
+    (p): p is string => Boolean(p) && p !== destination,
+  );
   const repairResult = await ports.repair.repairStructuredResult({
     runId,
     cwd,
     normalizedPhase: phase,
-    destination: invocation.resultJsonPath || 'result.json',
+    destination,
+    ...(candidateDestinations.length > 0 ? { candidateDestinations } : {}),
     schemaContractText: meta.schemaContractText,
     cappedRawArtifact: rawText,
     transcriptEvidence: input.transcriptEvidence ?? '',

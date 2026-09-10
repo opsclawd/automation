@@ -11,6 +11,7 @@ export interface StructuredResultRepairInput {
   cwd: string;
   normalizedPhase: string;
   destination: string;
+  candidateDestinations?: string[];
   schemaContractText: string;
   cappedRawArtifact: string;
   transcriptEvidence: string;

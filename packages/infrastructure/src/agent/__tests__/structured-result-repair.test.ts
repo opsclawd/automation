@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentInvocationId, AgentProfileName } from '@ai-sdlc/domain';
 import { FakeAgentPort, FakeGitPort } from '@ai-sdlc/application/test-doubles';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
+import { GitWorktreeAdapter } from '../../git/git-worktree-adapter.js';
 import {
   StructuredResultRepair,
   buildStructuredResultRepairPrompt,
@@ -306,6 +308,173 @@ describe('StructuredResultRepair', () => {
     const second = await env.repair.repairStructuredResult(env.input);
     expect(second.outcome).toBe('not_attempted');
     expect(env.agent.invocations).toHaveLength(1);
+  });
+
+  it('rolls back an unexpected result file written to the wrong path and reports failed (#1162)', async () => {
+    let gitRef: FakeGitPort | undefined;
+    const env = setup({
+      writer: (cwd) => async () => {
+        const wrongPath = join(cwd, 'fix-review-result.json');
+        writeFileSync(wrongPath, '{"result":"done_with_fixes"}\n');
+        gitRef?.statusByCwd.set(cwd, ' M src/app.ts\n M result.json\n!! fix-review-result.json\n');
+        return SUCCESS_RESULT;
+      },
+    });
+    gitRef = env.git;
+    dirs.push(env.cwd);
+
+    const result = await env.repair.repairStructuredResult({
+      ...env.input,
+      destination: 'result.json',
+      // No candidateDestinations allowing fix-review-result.json
+    });
+
+    expect(result.outcome).toBe('failed');
+    // The unexpected file must be rolled back / deleted by cleanupFailedRepair
+    expect(existsSync(join(env.cwd, 'fix-review-result.json'))).toBe(false);
+    expect(readFileSync(join(env.cwd, 'result.json'), 'utf-8')).toBe(env.destBefore);
+    expect(readFileSync(join(env.cwd, 'src', 'app.ts'), 'utf-8')).toBe(env.sourceBefore);
+  });
+
+  it('redirects candidate destination to destination when repair agent writes to allowed candidate (#1162)', async () => {
+    let gitRef: FakeGitPort | undefined;
+    const env = setup({
+      writer: (cwd) => async () => {
+        const candPath = join(cwd, 'fix-review-result.json');
+        writeFileSync(candPath, '{"result":"done_with_fixes"}\n');
+        gitRef?.statusByCwd.set(cwd, ' M src/app.ts\n M result.json\n!! fix-review-result.json\n');
+        return SUCCESS_RESULT;
+      },
+    });
+    gitRef = env.git;
+    dirs.push(env.cwd);
+
+    const result = await env.repair.repairStructuredResult({
+      ...env.input,
+      destination: 'result.json',
+      candidateDestinations: ['fix-review-result.json'],
+    });
+
+    expect(result.outcome).toBe('repaired');
+    // Destination was updated with the candidate's valid JSON
+    expect(readFileSync(join(env.cwd, 'result.json'), 'utf-8')).toBe(
+      '{"result":"done_with_fixes"}\n',
+    );
+    // Candidate file was cleaned up from the worktree
+    expect(existsSync(join(env.cwd, 'fix-review-result.json'))).toBe(false);
+  });
+
+  it('cleans up ignored unexpected files using real GitWorktreeAdapter (#1162)', async () => {
+    const cwd = makeWorkspace();
+    dirs.push(cwd);
+    execFileSync('git', ['init'], { cwd });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd });
+    writeFileSync(join(cwd, '.gitignore'), '*.json\n');
+    writeFileSync(join(cwd, 'src', 'app.ts'), 'export const app = 1;\n');
+    execFileSync('git', ['add', '.gitignore', 'src/app.ts'], { cwd });
+    execFileSync('git', ['commit', '-m', 'init'], { cwd });
+
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf-8' }).trim();
+    writeFileSync(join(cwd, 'result.json'), '{\n  "status": "broken"\n}\n');
+
+    const git = new GitWorktreeAdapter();
+    const stdoutPath = join(cwd, 'stdout');
+    writeFileSync(stdoutPath, 'evidence\n');
+
+    const agent = new FakeAgentPort({
+      [DEFAULT_PROFILE]: [
+        async () => {
+          // Agent writes to fix-review-result.json instead of result.json
+          writeFileSync(join(cwd, 'fix-review-result.json'), '{"result":"done_with_fixes"}\n');
+          return SUCCESS_RESULT;
+        },
+      ],
+    });
+
+    const repair = new StructuredResultRepair({
+      git,
+      agent,
+      repairProfile: DEFAULT_PROFILE,
+    });
+
+    const result = await repair.repairStructuredResult({
+      runId: RUN_ID,
+      cwd,
+      normalizedPhase: 'quality-review',
+      destination: 'result.json',
+      schemaContractText: '{"type":"object"}',
+      cappedRawArtifact: '{\n  "status": "broken"\n}\n',
+      transcriptEvidence: 'evidence',
+      expectedHead: head,
+      classification: 'invalid_result_json',
+      primaryInvocation: {
+        id: PRIMARY_ID,
+        stdoutPath,
+        stderrPath: join(cwd, 'stderr'),
+      },
+    });
+
+    expect(result.outcome).toBe('failed');
+    // The ignored file fix-review-result.json MUST be rolled back / deleted
+    expect(existsSync(join(cwd, 'fix-review-result.json'))).toBe(false);
+    expect(readFileSync(join(cwd, 'result.json'), 'utf-8')).toBe('{\n  "status": "broken"\n}\n');
+  });
+
+  it('redirects candidate destination to destination using real GitWorktreeAdapter (#1162)', async () => {
+    const cwd = makeWorkspace();
+    dirs.push(cwd);
+    execFileSync('git', ['init'], { cwd });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd });
+    writeFileSync(join(cwd, '.gitignore'), '*.json\n');
+    writeFileSync(join(cwd, 'src', 'app.ts'), 'export const app = 1;\n');
+    execFileSync('git', ['add', '.gitignore', 'src/app.ts'], { cwd });
+    execFileSync('git', ['commit', '-m', 'init'], { cwd });
+
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf-8' }).trim();
+    writeFileSync(join(cwd, 'result.json'), '{\n  "status": "broken"\n}\n');
+
+    const git = new GitWorktreeAdapter();
+    const stdoutPath = join(cwd, 'stdout');
+    writeFileSync(stdoutPath, 'evidence\n');
+
+    const agent = new FakeAgentPort({
+      [DEFAULT_PROFILE]: [
+        async () => {
+          writeFileSync(join(cwd, 'fix-review-result.json'), '{"result":"done_with_fixes"}\n');
+          return SUCCESS_RESULT;
+        },
+      ],
+    });
+
+    const repair = new StructuredResultRepair({
+      git,
+      agent,
+      repairProfile: DEFAULT_PROFILE,
+    });
+
+    const result = await repair.repairStructuredResult({
+      runId: RUN_ID,
+      cwd,
+      normalizedPhase: 'fix-review',
+      destination: 'result.json',
+      candidateDestinations: ['fix-review-result.json'],
+      schemaContractText: '{"type":"object"}',
+      cappedRawArtifact: '{\n  "status": "broken"\n}\n',
+      transcriptEvidence: 'evidence',
+      expectedHead: head,
+      classification: 'invalid_result_json',
+      primaryInvocation: {
+        id: PRIMARY_ID,
+        stdoutPath,
+        stderrPath: join(cwd, 'stderr'),
+      },
+    });
+
+    expect(result.outcome).toBe('repaired');
+    expect(readFileSync(join(cwd, 'result.json'), 'utf-8')).toBe('{"result":"done_with_fixes"}\n');
+    expect(existsSync(join(cwd, 'fix-review-result.json'))).toBe(false);
   });
 });
 

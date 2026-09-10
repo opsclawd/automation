@@ -147,7 +147,7 @@ export class FakeGitPort implements GitPort {
     return this.headCommitShaOfResults.get(cwd);
   }
 
-  async status(cwd: string): Promise<string> {
+  async status(cwd: string, _opts?: { includeIgnored?: boolean }): Promise<string> {
     this.statusCalls.push(cwd);
     return this.statusByCwd.get(cwd) ?? '';
   }
