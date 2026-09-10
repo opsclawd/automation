@@ -1,7 +1,12 @@
 import { TemplateError } from './errors.js';
 import { ArtifactNotFoundError } from '../ports/artifact-store.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
-import { WORKSPACE_CONSTRAINTS, SCRATCH_FILE_POLICY, JSON_ESCAPING } from './constants.js';
+import {
+  WORKSPACE_CONSTRAINTS,
+  SCRATCH_FILE_POLICY,
+  JSON_ESCAPING,
+  DEFAULT_SELF_VERIFY_INSTRUCTIONS,
+} from './constants.js';
 
 export interface PromptContext {
   runId: string;
@@ -41,6 +46,9 @@ export async function renderPrompt(template: string, ctx: PromptContext): Promis
       }
       if (v === undefined && trimmedKey === 'JSON_ESCAPING') {
         v = JSON_ESCAPING;
+      }
+      if (v === undefined && trimmedKey === 'SELF_VERIFY_INSTRUCTIONS') {
+        v = DEFAULT_SELF_VERIFY_INSTRUCTIONS;
       }
       if (v === undefined) {
         throw new TemplateError(`unknown var: ${trimmedKey}`, trimmedKey);

@@ -212,3 +212,27 @@ assert_output() {
   assert_failure 2
   assert_output --partial "target"
 }
+
+@test "selfVerifyCommands: target replaces base selfVerifyCommands without index merging" {
+  setup_repo_root '.ai-orchestrator.json' '{"validation":{"commands":["a"],"selfVerifyCommands":["pnpm typecheck","pnpm lint","pnpm extra"]}}'
+  REPO_TARGET="$(setup_target_root '.ai-orchestrator.json' '{"validation":{"selfVerifyCommands":["pnpm test:unit"]}}')"
+
+  run load_layered_config_with_target "$REPO_ROOT" "$REPO_TARGET"
+
+  assert_success
+  assert_equal "$(jq -r '.validation.selfVerifyCommands | length' "$_ACTIVE_CONFIG")" "1"
+  assert_equal "$(jq -r '.validation.selfVerifyCommands[0]' "$_ACTIVE_CONFIG")" "pnpm test:unit"
+}
+
+@test "selfVerifyCommands: target without selfVerifyCommands inherits base selfVerifyCommands" {
+  setup_repo_root '.ai-orchestrator.json' '{"validation":{"commands":["a"],"selfVerifyCommands":["pnpm typecheck","pnpm lint"]}}'
+  REPO_TARGET="$(setup_target_root '.ai-orchestrator.json' '{"validation":{"commands":["t"]}}')"
+
+  run load_layered_config_with_target "$REPO_ROOT" "$REPO_TARGET"
+
+  assert_success
+  assert_equal "$(jq -r '.validation.selfVerifyCommands | length' "$_ACTIVE_CONFIG")" "2"
+  assert_equal "$(jq -r '.validation.selfVerifyCommands[0]' "$_ACTIVE_CONFIG")" "pnpm typecheck"
+  assert_equal "$(jq -r '.validation.selfVerifyCommands[1]' "$_ACTIVE_CONFIG")" "pnpm lint"
+}
+

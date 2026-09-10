@@ -807,6 +807,53 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
     );
   });
 
+  it('injects SELF_VERIFY_INSTRUCTIONS into targeted-fix prompt vars in lean policy', async () => {
+    const fakeAgent = ctx.agent as FakeAgentPort;
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', successResult());
+    fakeAgent.enqueue('opencode-frontier', async () => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          findings_evaluations: [{ finding: 'Finding', resolved: true, evidence: 'Fixed' }],
+        }),
+      });
+      return successResult();
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'REQUEST_CHANGES',
+        findings: [
+          {
+            severity: 'high',
+            evidence: 'Finding evidence',
+            rationale: 'Finding rationale',
+            minimal_correction: 'Finding correction',
+          },
+        ],
+      }),
+    });
+
+    const handler = new ReviewFixHandler({
+      runLoop: legacyRunLoopMock,
+      selfVerifyCommands: ['pnpm typecheck', 'pnpm lint'],
+    });
+    await handler.run(ctx);
+
+    expect(mockRenderPrompt).toHaveBeenCalledTimes(3);
+    const targetedFixCall = mockRenderPrompt.mock.calls[1];
+    expect(targetedFixCall?.[1].vars.SELF_VERIFY_INSTRUCTIONS).toContain(
+      'Limit your own verification to:',
+    );
+    expect(targetedFixCall?.[1].vars.SELF_VERIFY_INSTRUCTIONS).toContain('- `pnpm typecheck`');
+    expect(targetedFixCall?.[1].vars.SELF_VERIFY_INSTRUCTIONS).toContain('- `pnpm lint`');
+  });
+
   it('delegates to legacy runLoop when executionPolicy is legacy', async () => {
     ctx = makeCtx({ executionPolicy: 'legacy' });
     legacyRunLoopMock.mockResolvedValue({

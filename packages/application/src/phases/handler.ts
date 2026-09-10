@@ -48,6 +48,7 @@ export interface PhaseHandlerContext {
    * Optional: handlers that don't need it see `undefined` and skip the check.
    */
   priorPhaseName?: string;
+  selfVerifyCommands?: string[] | undefined;
 }
 
 export type PhaseOutcome =
@@ -148,6 +149,7 @@ export function buildPhaseHandlerContext(
     | 'approvedInboundPaths'
     | 'repair'
     | 'priorPhaseName'
+    | 'selfVerifyCommands'
   >,
   opts?: Partial<
     Pick<
@@ -167,6 +169,7 @@ export function buildPhaseHandlerContext(
       | 'approvedInboundPaths'
       | 'repair'
       | 'priorPhaseName'
+      | 'selfVerifyCommands'
     >
   >,
 ): PhaseHandlerContext {

@@ -272,6 +272,95 @@ describe('FixReviewHandler', () => {
     expect(promptCtx?.vars.validation_critical_files).toContain('pnpm test:whisperx timed out');
   });
 
+  it('injects SELF_VERIFY_INSTRUCTIONS into targeted-fix prompt vars based on selfVerifyCommands', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(createFindingLedger([])),
+    });
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler({
+      selfVerifyCommands: ['pnpm typecheck', 'pnpm lint'],
+    });
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toContain('Limit your own verification to:');
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toContain('- `pnpm typecheck`');
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toContain('- `pnpm lint`');
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toContain(
+      'plus only the specific unit test(s) that directly cover your changes.',
+    );
+  });
+
+  it('falls back to default generic SELF_VERIFY_INSTRUCTIONS when selfVerifyCommands is not configured', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(createFindingLedger([])),
+    });
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toBe(
+      'Limit your own verification to: typecheck and lint for the files you changed, plus only the specific unit test(s) that directly cover them.',
+    );
+  });
+
   it('halts with needs_human_review when fixer reverts a validation-critical file to pre-fix state', async () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();
