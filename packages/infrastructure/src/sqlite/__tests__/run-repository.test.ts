@@ -655,12 +655,12 @@ describe('SqliteRunRepository.list filtering', () => {
 });
 
 describe('SqliteRunRepository executionPolicy persistence', () => {
-  it('persists executionPolicy on insert and defaults to legacy when omitted', () => {
+  it('persists executionPolicy on insert and defaults to standard when omitted', () => {
     const db = freshDb();
     const repo = new RunRepository(db);
 
     repo.insert({
-      uuid: 'run-legacy-default',
+      uuid: 'run-standard-default',
       displayId: 'issue-1-20260513-000000',
       repoId: RepositoryId('owner/repo'),
       issueNumber: 1,
@@ -671,10 +671,22 @@ describe('SqliteRunRepository executionPolicy persistence', () => {
     });
 
     repo.insert({
-      uuid: 'run-standard',
+      uuid: 'run-historical-legacy',
       displayId: 'issue-2-20260513-000000',
       repoId: RepositoryId('owner/repo'),
       issueNumber: 2,
+      type: 'issue_to_pr',
+      executionPolicy: 'legacy',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+
+    repo.insert({
+      uuid: 'run-standard',
+      displayId: 'issue-3-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 3,
       type: 'issue_to_pr',
       executionPolicy: 'standard',
       status: 'running',
@@ -684,9 +696,9 @@ describe('SqliteRunRepository executionPolicy persistence', () => {
 
     repo.insert({
       uuid: 'run-strict',
-      displayId: 'issue-3-20260513-000000',
+      displayId: 'issue-4-20260513-000000',
       repoId: RepositoryId('owner/repo'),
-      issueNumber: 3,
+      issueNumber: 4,
       type: 'issue_to_pr',
       executionPolicy: 'strict',
       status: 'running',
@@ -694,7 +706,8 @@ describe('SqliteRunRepository executionPolicy persistence', () => {
       startedAt: new Date('2026-05-13T00:00:00Z'),
     });
 
-    expect(repo.findByUuid('run-legacy-default')?.executionPolicy).toBe('legacy');
+    expect(repo.findByUuid('run-standard-default')?.executionPolicy).toBe('standard');
+    expect(repo.findByUuid('run-historical-legacy')?.executionPolicy).toBe('legacy');
     expect(repo.findByUuid('run-standard')?.executionPolicy).toBe('standard');
     expect(repo.findByUuid('run-strict')?.executionPolicy).toBe('strict');
 

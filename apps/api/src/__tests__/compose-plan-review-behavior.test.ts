@@ -26,6 +26,7 @@ function createHarness(opts: Parameters<typeof createComposedOrchestrationHarnes
     validationCommands: opts.validationCommands ?? ['echo ok'],
     scripts: opts.scripts,
     agentConfig: opts.agentConfig,
+    executionPolicy: opts.executionPolicy,
   });
   harnessCleanup.push(h);
   return h;
@@ -142,6 +143,7 @@ p1_found
         validationCommands: ['echo ok'],
         scripts: [semanticReviewScript, ordinaryFixScript, terminalFixScript],
         agentConfig: customAgentConfig,
+        executionPolicy: 'legacy',
       });
 
       const worktreeDir = path.join(harness.targetRoot, '.ai-worktrees', 'issue-1');

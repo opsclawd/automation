@@ -113,7 +113,10 @@ export class ValidateHandler implements PhaseHandler {
       return { outcome: 'failed', failure };
     }
 
-    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    const isLeanPolicy =
+      ctx.executionPolicy === 'standard' ||
+      ctx.executionPolicy === 'strict' ||
+      ctx.executionPolicy === 'legacy';
     const dirtyPaths = uncommittedSourcePaths(statusOutput);
     if (!isLeanPolicy && dirtyPaths.length > 0) {
       let scratchReport:

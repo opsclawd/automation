@@ -884,7 +884,7 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     expect(handlers['create-pr']?.runCalls).toHaveLength(0);
   });
 
-  it('executes legacy canonical phases when executionPolicy is legacy', async () => {
+  it('routes historical legacy executionPolicy to standard lean phases without legacy loops', async () => {
     const { run, handlers, executor } = setupExecutor('legacy');
 
     const result = await executor.execute({
@@ -894,12 +894,14 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
     });
 
     expect(result.run.status).toBe('passed');
-    // Legacy runs execute canonical phase order
-    expect(handlers['plan-write']?.runCalls).toHaveLength(1);
-    expect(handlers['plan-review']?.runCalls).toHaveLength(1);
-    expect(handlers['compound']?.runCalls).toHaveLength(1);
-    expect(handlers['post-pr-review']?.runCalls).toHaveLength(1);
+    // Legacy runs route to lean phases and do NOT execute legacy loops
+    expect(handlers['plan-write']?.runCalls).toHaveLength(0);
+    expect(handlers['plan-review']?.runCalls).toHaveLength(0);
+    expect(handlers['compound']?.runCalls).toHaveLength(0);
+    expect(handlers['post-pr-review']?.runCalls).toHaveLength(0);
     expect(handlers['architecture-review']?.runCalls).toHaveLength(0);
+    expect(handlers['plan-design']?.runCalls).toHaveLength(1);
+    expect(handlers['implement']?.runCalls).toHaveLength(1);
   });
 
   it('standard execution policy omits architecture-review', async () => {

@@ -24,7 +24,10 @@ export class FixValidateHandler implements PhaseHandler {
   constructor(private readonly opts: FixValidateHandlerOpts = {}) {}
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
-    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    const isLeanPolicy =
+      ctx.executionPolicy === 'standard' ||
+      ctx.executionPolicy === 'strict' ||
+      ctx.executionPolicy === 'legacy';
     if (isLeanPolicy || !this.opts.runLoop) {
       return this.runLean(ctx);
     }

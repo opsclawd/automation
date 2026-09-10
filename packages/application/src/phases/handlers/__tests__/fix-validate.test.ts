@@ -743,29 +743,23 @@ describe('ValidateHandler -> FixValidateHandler end-to-end integration', () => {
       expect(critical).toEqual([]);
     });
 
-    it('records validation-critical files in legacy execution policy mode', async () => {
-      const { ctx, artifacts } = makeCtx({ withFailureJson: true });
-      const git = new FakeGitPort();
-      ctx.git = git;
-      ctx.executionPolicy = 'legacy';
-      git.fileContentResults.set('HEAD:packages/api/src/whisperx.ts', 'timeout=10');
-      git.statusByCwd.set('/tmp/wt', '');
-
-      const runLoop = vi.fn(async () => {
-        git.worktreeFileContents.set('packages/api/src/whisperx.ts', 'timeout=120');
-        git.statusByCwd.set('/tmp/wt', ' M packages/api/src/whisperx.ts\n');
-        return { phaseOutcome: 'passed' as const, loopStatus: 'converged' as const };
+    it('does not invoke legacy runLoop in legacy execution policy mode', async () => {
+      const { ctx } = await setupLeanCtx({
+        failure: {
+          kind: 'test_failure',
+          phase: 'validate',
+          message: 'tests failed',
+          artifacts: [],
+        },
       });
+      ctx.executionPolicy = 'legacy';
+      const runLoop = vi.fn();
 
       const handler = new FixValidateHandler({ runLoop });
       const result = await handler.run(ctx);
 
       expect(result.outcome).toBe('passed');
-      expect(runLoop).toHaveBeenCalled();
-      const criticalRaw = await artifacts.read(RUN_UUID, 'validate/critical-files.json');
-      const critical = JSON.parse(criticalRaw);
-      expect(critical).toHaveLength(1);
-      expect(critical[0].path).toBe('packages/api/src/whisperx.ts');
+      expect(runLoop).not.toHaveBeenCalled();
     });
   });
 });

@@ -12,7 +12,10 @@ export class PlanDesignHandler extends SingleShotAgentHandler {
   }
 
   override async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
-    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    const isLeanPolicy =
+      ctx.executionPolicy === 'standard' ||
+      ctx.executionPolicy === 'strict' ||
+      ctx.executionPolicy === 'legacy';
     if (!isLeanPolicy) {
       return super.run(ctx);
     }

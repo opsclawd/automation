@@ -332,6 +332,7 @@ pass
       issueNumber: 1,
       scripts: [mutatingReviewScript],
       agentConfig: planReviewAgentConfig,
+      executionPolicy: 'legacy',
     });
 
     try {
@@ -418,6 +419,7 @@ pass
       issueNumber: 1,
       scripts: [mutatingReviewScript],
       agentConfig: planReviewAgentConfig,
+      executionPolicy: 'legacy',
     });
 
     try {
@@ -500,6 +502,7 @@ pass
       issueNumber: 1,
       scripts: [mutatingReviewScript],
       agentConfig: planReviewAgentConfig,
+      executionPolicy: 'legacy',
     });
 
     try {
