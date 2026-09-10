@@ -20,6 +20,7 @@ Implementation plan (supporting context only, not authority):
 {{artifact?:plan.md}}
 
 Deterministic validation evidence:
+
 ```
 {{var:validation_evidence}}
 ```
@@ -27,6 +28,7 @@ Deterministic validation evidence:
 {{var:validation_critical_files}}
 
 Complete branch diff against base:
+
 ```diff
 {{var:complete_diff}}
 ```
@@ -43,6 +45,7 @@ Perform an independent post-implementation spec review to answer one question:
 Use the issue, comments, design document, branch diff, validation evidence, and requirements ledger provided above as your primary review inputs.
 
 Also read:
+
 - `AGENTS.md`
 - `CONTEXT.md`
 - relevant ADRs and repository documentation
@@ -54,6 +57,7 @@ Also read:
 Before deciding the verdict, evaluate EVERY item from the requirements ledger above. You must explicitly disposition each item by its exact `requirement_id`.
 
 For each requirement check, provide:
+
 - `requirement_id`: Exact ID from the ledger (e.g. `AC-1`, `REQ-DESIGN-1`, `CONSUMER-128-AC-1`)
 - `requirement`: The requirement text
 - `result`: `PASS` or `FAIL`
@@ -66,6 +70,7 @@ For each requirement check, provide:
 For hard gates, safety properties, integrity/provenance requirements, ordering requirements, error semantics, and other invariants, attempt to **falsify** compliance using adversarial counterexamples rather than merely finding confirming evidence.
 
 Examples:
+
 1. **Ordering / Fail-Early Invariants**: A requirement like "hash mismatch prevents FFmpeg dispatch" must consider a bad hash on a later input after earlier valid inputs, not only a trivial one-input case.
 2. **Provenance & Layering**: Provenance requirements must trace transformations and verify that recorded provenance describes what the authoritative consumer actually consumed, rather than substituting configuration or profile identity for measured behavior.
 3. **Capability / Preflight Constraints**: Capability requirements must enumerate every materially required capability rather than checking only one representative dependency.
@@ -93,6 +98,8 @@ This exemption is narrow: it applies only to the exact untracked paths listed, a
 - Finish with `FAIL` if any requirement check fails or blocking findings are identified.
 
 ## OUTPUT FORMAT
+
+{{var:JSON_ESCAPING}}
 
 Write your review to `./result.json`:
 

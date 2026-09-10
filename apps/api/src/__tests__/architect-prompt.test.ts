@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { JSON_ESCAPING } from '@ai-sdlc/application';
 import { buildArchitectPrompt } from '../architect-prompt.js';
 
 describe('buildArchitectPrompt', () => {
@@ -74,5 +75,17 @@ describe('buildArchitectPrompt', () => {
       { manifest: '{}', reviewMd: '', triageMd: '' },
     );
     expect(prompt).toMatch(/STOP RULE[\s\S]*$/i);
+  });
+
+  it('includes JSON_ESCAPING guidance in OUTPUT section', () => {
+    const prompt = buildArchitectPrompt(
+      { cwd: '/tmp', repoId: 'r' },
+      { manifest: '{}', reviewMd: '', triageMd: '' },
+    );
+    expect(prompt).toContain(JSON_ESCAPING);
+    expect(prompt).toMatch(
+      /All string values in the JSON output must be valid JSON string literals/i,
+    );
+    expect(prompt).toMatch(/escape every `"` as `\\"` and every backslash as `\\\\`/i);
   });
 });

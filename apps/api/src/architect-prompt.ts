@@ -15,7 +15,7 @@
  *   - Output ONLY `review-fix-plan.json`.
  *   - Stop after writing the file.
  */
-import { WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
+import { WORKSPACE_CONSTRAINTS, JSON_ESCAPING } from '@ai-sdlc/application';
 
 export interface BuildArchitectPromptContext {
   cwd: string;
@@ -98,6 +98,8 @@ export function buildArchitectPrompt(
     '4. Note which other tasks this depends on (informational)',
     '',
     '## OUTPUT',
+    JSON_ESCAPING,
+    '',
     'Write a single file named `review-fix-plan.json` at the working-directory root with this exact shape (no extra keys, no comments):',
     '```json',
     '{',

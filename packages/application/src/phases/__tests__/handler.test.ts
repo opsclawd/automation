@@ -124,6 +124,9 @@ describe('buildPhaseHandlerContext', () => {
     const idFactory = () => 'custom-id';
     const readWorktreeFile = async () => 'content';
     const deleteWorktreeFile = async () => true;
+    const fakeRepair = {
+      repairStructuredResult: async () => ({ outcome: 'not_attempted' as const }),
+    };
     const ctx = buildPhaseHandlerContext(base, {
       promptsRoot: '/prompts',
       startCommitSha: 'abc123',
@@ -132,6 +135,7 @@ describe('buildPhaseHandlerContext', () => {
       idFactory,
       readWorktreeFile,
       deleteWorktreeFile,
+      repair: fakeRepair,
     });
     expect(ctx.promptsRoot).toBe('/prompts');
     expect(ctx.startCommitSha).toBe('abc123');
@@ -142,6 +146,7 @@ describe('buildPhaseHandlerContext', () => {
     expect(ctx.idFactory?.()).toBe('custom-id');
     expect(ctx.readWorktreeFile).toBe(readWorktreeFile);
     expect(ctx.deleteWorktreeFile).toBe(deleteWorktreeFile);
+    expect(ctx.repair).toBe(fakeRepair);
   });
 
   it('populates a subset of optional fields', () => {

@@ -60,6 +60,7 @@ export function buildStructuredResultRepairPrompt(
     '',
     '## Instruction',
     `Write valid JSON only to ${input.destination}.`,
+    'Escape every literal `"` as `\\"` and every backslash as `\\\\` inside JSON string values — do not emit a raw, unescaped `"` or `\\` inside a string, including inside embedded Markdown content.',
     'Do not emit prose.',
   ].join('\n');
 }

@@ -144,6 +144,59 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
     }
   });
 
+  it('tolerates an unescaped inner quote in an evidence field (#1156)', async () => {
+    // Contains unescaped inner quote around a code identifier on line 7 of result.json
+    const rawWithUnescapedQuote = [
+      '{',
+      '  "verdict": "APPROVE",',
+      '  "evaluations": [',
+      '    {',
+      '      "finding_id": "Finding 1",',
+      '      "resolved": true,',
+      '      "evidence": "Cites "resolvedApprovedCandidateMedia.media.key" in schema as resolved"',
+      '    }',
+      '  ],',
+      '  "summary": "Verified resolution."',
+      '}',
+    ].join('\n');
+
+    await artifacts.write({
+      runId: 'run-1128',
+      relativePath: 'result.json',
+      contents: rawWithUnescapedQuote,
+    });
+
+    agent.enqueue('follow-up-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const result = await runSingleShotAgentPhase<FollowUpReviewResult>(ctx, {
+      phase: PhaseName('follow-up-review'),
+      profile: AgentProfileName('follow-up-review'),
+      step: 'follow-up-review',
+      vars: { cwd: ctx.cwd },
+      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+    });
+
+    expect(result.outcome).toBe('passed');
+    if (result.outcome === 'passed') {
+      expect(result.result.verdict).toBe('APPROVE');
+      expect(result.result.evaluations).toHaveLength(1);
+      expect(result.result.evaluations[0]?.evidence).toBe(
+        'Cites "resolvedApprovedCandidateMedia.media.key" in schema as resolved',
+      );
+    }
+  });
+
   it('fails with invalid_result when agent output is schema-invalid', async () => {
     // Invalid verdict value and invalid evaluation shape
     await artifacts.write({
@@ -387,7 +440,7 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
         },
       };
 
-      (ctx as unknown as { repair: StructuredResultRepairPort }).repair = repairPort;
+      ctx.repair = repairPort;
 
       agent.enqueue('follow-up-review', () => ({
         runtime: 'opencode',

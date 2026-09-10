@@ -26,7 +26,6 @@ import type {
   RegisteredPhase,
 } from '../../results/phase-registry.js';
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
-import type { StructuredResultRepairPort } from '../../ports.js';
 
 export interface SingleShotConfigBase {
   profile: AgentProfileName;
@@ -419,7 +418,7 @@ export async function runSingleShotAgentPhase(
           invocation,
           ports: {
             artifacts: ctx.artifacts,
-            repair: (ctx as unknown as { repair?: StructuredResultRepairPort }).repair,
+            repair: ctx.repair,
           },
           cwd: ctx.cwd,
           resultMeta: config.resultMeta,
@@ -428,7 +427,7 @@ export async function runSingleShotAgentPhase(
           invocation,
           ports: {
             artifacts: ctx.artifacts,
-            repair: (ctx as unknown as { repair?: StructuredResultRepairPort }).repair,
+            repair: ctx.repair,
           },
           cwd: ctx.cwd,
         });

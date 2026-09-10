@@ -1,6 +1,11 @@
 import type { EventBusPort } from '../ports.js';
 import { taskManifestV1Schema, taskManifestV2Schema } from '../results/schemas/task-manifest.js';
-import type { TaskManifest, TaskManifestEntry, TaskManifestEntryV2 } from '../results/schemas/task-manifest.js';
+import type {
+  TaskManifest,
+  TaskManifestEntry,
+  TaskManifestEntryV2,
+} from '../results/schemas/task-manifest.js';
+import { parseAgentResultJson } from '../results/parse-agent-json.js';
 
 export type { TaskManifest, TaskManifestEntry, TaskManifestEntryV2 };
 
@@ -268,7 +273,7 @@ function extractBodyFromLine(lines: string[], startLineIdx: number, _totalFences
 export function parseTaskManifest(json: string): TaskManifestValidationResult {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(json);
+    parsed = parseAgentResultJson(json);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return { success: false, error: `manifest is not valid JSON: ${msg}` };

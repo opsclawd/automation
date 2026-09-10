@@ -19,16 +19,19 @@ Implementation plan:
 {{artifact:plan.md}}
 
 Original review findings to verify:
+
 ```
 {{var:review_findings}}
 ```
 
 Deterministic validation evidence:
+
 ```
 {{var:validation_evidence}}
 ```
 
 Fix diff:
+
 ```diff
 {{var:fix_diff}}
 ```
@@ -36,6 +39,7 @@ Fix diff:
 ## TASK
 
 Your ONLY questions are:
+
 1. **Is each original blocking finding resolved?** Evaluate whether the fix correctly addresses each reported issue.
 2. **Did the fix introduce an obvious regression in the touched area?** Check if the edits broke existing functionality, introduced syntax/type errors, or broke related callers in the touched scope.
 
@@ -43,7 +47,10 @@ Do NOT perform a broad re-review or raise new unrelated stylistic findings.
 
 ## OUTPUT FORMAT
 
+{{var:JSON_ESCAPING}}
+
 Write `./result.json` with:
+
 ```json
 {
   "verdict": "PASS" | "FAIL",

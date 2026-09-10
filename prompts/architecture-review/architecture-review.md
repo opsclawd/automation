@@ -28,6 +28,7 @@ Perform an independent architectural evaluation of `design.md` and `plan.md` bef
 
 You MUST NOT modify source code or implement the issue.
 You MUST read:
+
 - `AGENTS.md`
 - `CONTEXT.md`
 - relevant ADRs and repository design documentation
@@ -38,45 +39,53 @@ Treat the issue's Goal, Anchored Design, Explicit Traps / Non-goals, Acceptance 
 Specifically evaluate the proposed design and plan against these core architectural dimensions:
 
 ### 1. Requirements Reconciliation & Deterministic Ledger Disposition
+
 - You MUST disposition EVERY item from `architecture-requirements.json` in `requirements_checks`, referencing its exact `requirement_id`.
 - Map every anchored and narrative requirement from the issue (not just checkbox criteria) to the proposed design and plan.
 - Verify whether requirements are missing, weakened, or merely assumed.
 - Ensure Non-goals and Explicit Traps are strictly respected and not violated by the proposed design.
 
 ### 2. Representational Completeness
+
 - For any schemas, APIs, configurations, contracts, or data models:
   - Verify whether every material downstream behavior can be represented without invention, information loss, or ambiguous reconstruction.
   - Do NOT treat "a related field exists" or "the schema is internally consistent" as sufficient proof.
   - Ask explicitly:
-    * Can every required trim/loop/range behavior be encoded by the proposed fields?
-    * Can requested values be distinguished from actual execution decisions?
-    * Can measured/verified output state be distinguished from configured expectations?
-    * Can a downstream consumer reconstruct the semantically relevant result without relying on undocumented inference?
+    - Can every required trim/loop/range behavior be encoded by the proposed fields?
+    - Can requested values be distinguished from actual execution decisions?
+    - Can measured/verified output state be distinguished from configured expectations?
+    - Can a downstream consumer reconstruct the semantically relevant result without relying on undocumented inference?
 
 ### 3. Bounded Consumer Witness & Counterexample Scenarios
+
 - For each material direct-consumer behavior that stresses a proposed contract, construct a concrete witness scenario demonstrating how the design represents it.
 - Where edge cases materially change semantics (e.g. source < target duration looping, tail trimming, partial segments), evaluate a bounded counterexample set in `witness_scenarios`.
 - If any required scenario cannot be represented unambiguously, you MUST flag it and request changes.
 
 ### 4. Provenance-Layer Classification
+
 - When the issue concerns provenance, manifests, execution records, audit state, or similar contracts, classify relevant data into its semantic layer:
-  * **requested / declared** (e.g. assemblyProfile, target duration, requested codec)
-  * **configured / executed** (e.g. resolved encoder parameters, actual filter graph, executed process args)
-  * **measured / verified** (e.g. probe stream metadata, measured duration, verified sample rate, actual bit rate)
+  - **requested / declared** (e.g. assemblyProfile, target duration, requested codec)
+  - **configured / executed** (e.g. resolved encoder parameters, actual filter graph, executed process args)
+  - **measured / verified** (e.g. probe stream metadata, measured duration, verified sample rate, actual bit rate)
 - You MUST flag cases where one layer is incorrectly used as evidence for another (e.g., treating a profile/version identifier as proof of executed configuration or measured stream metadata).
 
 ### 5. Conditional-Invariant Analysis
+
 - Identify feature-presence implications and conditional requirements across related fields.
 - Inspect optional fields whose validity or necessity depends on related state (e.g. `subtitleCues.length > 0 => subtitleStyleProfile must be present`, `soundbed present => executed transformation provenance must be present`).
 - Flag conditionally required fields that remain optional without an enforcing invariant.
 
 ### 6. Information-Flow & Contract Conservation
+
 - Trace critical state and properties across producer/consumer boundaries.
 - Detect required information that disappears or degrades between representations.
 - Require an explicit architectural rationale for any intentionally non-persisted or non-propagated state.
 
 ### 7. Downstream Consumer Compatibility (Mandatory Bounded Discovery)
+
 For contract, schema, API, configuration, persistence, or foundation work:
+
 1. **Read directly referenced issues:** Read every issue directly referenced in the issue body or comments using `gh issue view <issue>`.
 2. **Discover direct dependents:** Search GitHub issues for direct dependents that reference the current issue using `gh issue list --search "Depends on #{{var:issue_number}}" --json number,title,body` or `gh issue list --search "#{{var:issue_number}}" --json number,title,body`.
 3. **Read direct consumer issues:** Read the bodies of those direct consumer issues to identify unstated downstream contract assumptions or required fields before approving.
@@ -84,7 +93,9 @@ For contract, schema, API, configuration, persistence, or foundation work:
 5. **Strict bounding:** Stop strictly at direct consumers — do NOT recursively crawl entire issue trees.
 
 ### 8. Upstream Dependency Verification (Mandatory Bounded Discovery)
+
 The mirror image of Section 7: that section verifies the design provides what later work will need FROM it; this section verifies the design's own assumed inputs actually exist FOR it, right now — not by the time some later sprint issue lands.
+
 1. **Enumerate assumed upstream dependencies:** From the design and plan, list every external read, lookup, or capability the proposed work assumes is already available — data it reads but does not itself create (e.g. "resolve X from Y's governance provenance", "look up the record referenced by this ID", "the guard must evaluate Z's stored identity").
 2. **Search for a concrete, current mechanism:** For each one, actually search the existing codebase (grep for the relevant port/repository interfaces, read schema/migration files, read the modules that would produce or store this data) for a real, presently-reachable mechanism providing it. "Presumably exists" or "can be added later" is not verification — cite the actual file/interface/table, or its absence.
 3. **Distinguish "exists and reachable" from "exists but unreachable":** Data sitting in a table or object store is NOT sufficient on its own if no application-layer port/repository actually exposes it to the code being designed. Both the underlying data AND a concrete access path must exist, or the plan must explicitly build the access path as part of this issue's own scope.
@@ -101,7 +112,7 @@ The mirror image of Section 7: that section verifies the design provides what la
   2. Every consumer requirement item (`CONSUMER-...`) in the ledger is covered by at least one passing scenario in `witness_scenarios` with `requirement_ids: ["CONSUMER-..."]`.
   3. All `witness_scenarios` evaluate to `PASS` with non-empty evidence.
   4. There are 0 blocking or high-severity findings (`critical`, `high`, `P0`, `P1`, or `blocking: true`).
-  If ANY requirement fails, any ledger item is omitted, any consumer requirement lacks witness coverage, any witness scenario fails, or any blocking finding exists, you MUST use `REQUEST_CHANGES`.
+     If ANY requirement fails, any ledger item is omitted, any consumer requirement lacks witness coverage, any witness scenario fails, or any blocking finding exists, you MUST use `REQUEST_CHANGES`.
 
 - For every blocking gap, provide:
   - `category`: `requirements_reconciliation` | `contract_conservation` | `invariant_completeness` | `downstream_compatibility` | `upstream_dependency_verification` | `representational_completeness` | `provenance_layering` | `conditional_invariants` | `witness_scenarios` | `other`
@@ -113,6 +124,8 @@ The mirror image of Section 7: that section verifies the design provides what la
   - `blocking`: true
 
 ## OUTPUT FORMAT
+
+{{var:JSON_ESCAPING}}
 
 Write your structured review to `./result.json`:
 
@@ -156,4 +169,3 @@ Write your structured review to `./result.json`:
 - Do not modify source code or create git commits.
 - Do not switch git branches.
 - Write `./result.json` before stopping.
-

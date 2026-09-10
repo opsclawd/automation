@@ -20,11 +20,13 @@ Implementation plan:
 {{artifact:plan.md}}
 
 Deterministic validation evidence:
+
 ```
 {{var:validation_evidence}}
 ```
 
 Complete branch diff against base:
+
 ```diff
 {{var:complete_diff}}
 ```
@@ -36,12 +38,14 @@ Perform an independent final review of the completed implementation to determine
 Use the issue, comments, design, plan, branch diff, and validation evidence provided above as your primary review inputs.
 
 Also read:
+
 - `AGENTS.md`
 - `CONTEXT.md`
 - relevant ADRs and repository documentation
 - the affected implementation and tests
 
 Review the change as a whole. Look for material problems including:
+
 - missing or incorrect issue requirements
 - deviations from Anchored Design
 - correctness defects or regressions
@@ -70,6 +74,7 @@ Do not manufacture findings merely to have findings. Do not block on stylistic p
 Explicitly verify every Acceptance Criterion from the issue as PASS or FAIL with supporting evidence.
 
 For each blocking finding, provide:
+
 - severity
 - file/location
 - concrete evidence
@@ -77,10 +82,13 @@ For each blocking finding, provide:
 - the smallest appropriate correction
 
 Finish with:
+
 - `APPROVE` if no merge-blocking defects remain
 - `REQUEST_CHANGES` if correction is required
 
 ## OUTPUT FORMAT
+
+{{var:JSON_ESCAPING}}
 
 Write your review to `./result.json`:
 

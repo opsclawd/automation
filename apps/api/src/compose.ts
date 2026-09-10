@@ -2864,6 +2864,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let agentRuntime: AgentRuntimeRouter | undefined;
   let capturingAgent: import('@ai-sdlc/application').AgentPort | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
+  let phaseContextRepair: import('@ai-sdlc/application').StructuredResultRepairPort | undefined;
   let reviewFixLoop: ReviewFixLoop | undefined;
   let validateFixLoop: ValidateFixLoop | undefined;
   let implementStepLoop: ImplementStepLoopType | undefined;
@@ -3012,6 +3013,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         agent: artifactAgent,
         ...(resultWriterProfile ? { repairProfile: resultWriterProfile } : {}),
       });
+      phaseContextRepair = structuredResultRepair;
       const reviewProfileName: string =
         config.agent.phaseProfiles['whole-pr-review']?.profile ?? 'opencode-frontier';
       const fixProfileName: string =
@@ -7680,6 +7682,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       deleteWorktreeFile,
       worktreeLifecycle: worktreeLifecycleAdapter,
       eventRepository,
+      repair: phaseContextRepair,
       ...opts,
     };
   };

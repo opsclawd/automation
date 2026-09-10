@@ -4,6 +4,7 @@ import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FakeArtifactStore } from '@ai-sdlc/application/test-doubles';
+import { JSON_ESCAPING } from '@ai-sdlc/application';
 import {
   buildPlanReviewArbiterPrompt,
   buildPlanReviewFinalReviewArbiterPrompt,
@@ -108,6 +109,23 @@ describe('buildPlanReviewArbiterPrompt', () => {
     );
     expect(prompt).toContain('### issue.md (excerpt)');
     expect(prompt).toContain('(empty)');
+  });
+
+  it('includes JSON_ESCAPING guidance in OUTPUT section', () => {
+    const prompt = buildPlanReviewArbiterPrompt(
+      { cwd: '/wt', runId: 'run-1' },
+      {
+        planExcerpt: '',
+        findingsExcerpt: '',
+        fixExcerpt: '',
+        fixRebuttal: '',
+      },
+    );
+    expect(prompt).toContain(JSON_ESCAPING);
+    expect(prompt).toMatch(
+      /All string values in the JSON output must be valid JSON string literals/i,
+    );
+    expect(prompt).toMatch(/escape every `"` as `\\"` and every backslash as `\\\\`/i);
   });
 });
 
@@ -214,6 +232,21 @@ describe('buildPlanReviewFinalReviewArbiterPrompt', () => {
     );
     expect(prompt).toContain('### issue.md (excerpt)');
     expect(prompt).toContain('(empty)');
+  });
+
+  it('includes JSON_ESCAPING guidance in OUTPUT section', () => {
+    const prompt = buildPlanReviewFinalReviewArbiterPrompt(
+      { cwd: '/wt', runId: 'run-1' },
+      {
+        planExcerpt: '',
+        findingsExcerpt: '',
+      },
+    );
+    expect(prompt).toContain(JSON_ESCAPING);
+    expect(prompt).toMatch(
+      /All string values in the JSON output must be valid JSON string literals/i,
+    );
+    expect(prompt).toMatch(/escape every `"` as `\\"` and every backslash as `\\\\`/i);
   });
 });
 

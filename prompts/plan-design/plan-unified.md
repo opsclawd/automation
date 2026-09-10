@@ -18,6 +18,7 @@ Issue comments:
 Use the issue and comments provided above as the authoritative requirements.
 
 Also read:
+
 - `AGENTS.md`
 - `CONTEXT.md`
 - relevant ADRs and design documentation
@@ -30,10 +31,13 @@ Treat the issue's Anchored Design, Non-goals, and Acceptance Criteria as authori
 Make reasonable engineering decisions. Do not try to predict or restrict every file the implementation may need to touch.
 
 Return:
+
 - `design_md`: the important design decisions, rationale, assumptions, and risks
 - `plan_md`: the implementation approach, important changes, testing strategy, and validation approach
 
 ## OUTPUT FORMAT
+
+{{var:JSON_ESCAPING}}
 
 Write your structured planning package to `./result.json`:
 

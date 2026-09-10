@@ -1,10 +1,21 @@
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot, type ComposeOptions } from '../compose.js';
-import { ValidateFixLoop, ReviewFixLoop, ImplementStepLoop } from '@ai-sdlc/application';
-import { RepositoryId } from '@ai-sdlc/domain';
+import {
+  ValidateFixLoop,
+  ReviewFixLoop,
+  ImplementStepLoop,
+  extractResult,
+} from '@ai-sdlc/application';
+import {
+  RepositoryId,
+  AgentInvocationId,
+  PhaseName,
+  RunId,
+  AgentProfileName,
+} from '@ai-sdlc/domain';
 
 const tempDirs: string[] = [];
 
@@ -339,5 +350,186 @@ describe('ValidateFixLoop and ReviewFixLoop wiring in composeRoot', () => {
     expect(container.resumeRun.deps.worktreeLifecycle).toBeDefined();
     expect(typeof container.resumeRun.deps.worktreeLifecycle?.inspect).toBe('function');
     expect(typeof container.resumeRun.deps.worktreeLifecycle?.execute).toBe('function');
+  });
+
+  it('wires repair into buildPhaseHandlerContext', () => {
+    const root = trackDir(() =>
+      mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-repairwire-')),
+    );
+    const scriptPath = fakeScript(0);
+    writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(makeAgentConfig()));
+
+    const container = composeRoot({
+      repoRoot: root,
+      scriptPath,
+      metadataResolver: FAKE_METADATA_RESOLVER,
+    });
+
+    const ctx = container.buildPhaseHandlerContext({
+      runId: 'run-1',
+      runUuid: '550e8400-e29b-41d4-a716-446655440000',
+      repoFullName: 'owner/repo',
+      issueNumber: 1,
+      cwd: root,
+      artifacts: container.artifactRepository,
+      github: {} as unknown as import('@ai-sdlc/application').GitHubPort,
+      git: container.git,
+      agent: {} as unknown as import('@ai-sdlc/application').AgentPort,
+      events: container.eventBus,
+      now: () => new Date(),
+    });
+
+    expect(ctx.repair).toBeDefined();
+    expect(typeof ctx.repair?.repairStructuredResult).toBe('function');
+  });
+
+  it('wires repair from compose context and successfully recovers an unescaped-quote artifact', async () => {
+    const root = trackDir(() =>
+      mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-repair-root-')),
+    );
+    const validJson = JSON.stringify({
+      verdict: 'APPROVE',
+      evaluations: [{ finding_id: 'f1', resolved: true, evidence: 'repaired successfully' }],
+      new_findings: [],
+      summary: 'All findings verified',
+    });
+    const scriptDir = trackDir(() =>
+      mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-script-')),
+    );
+    const scriptPath = path.join(scriptDir, 'run.sh');
+    writeFileSync(scriptPath, `#!/usr/bin/env bash\necho '${validJson}' > result.json\nexit 0\n`, {
+      mode: 0o755,
+    });
+
+    const agentConfig = makeAgentConfig();
+    (agentConfig as Record<string, unknown>).agent = {
+      defaultProfile: 'test',
+      profiles: {
+        test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+      },
+      phaseProfiles: {
+        'result-writer': { profile: 'test' },
+        'follow-up-review': { profile: 'test' },
+      },
+    };
+    writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(agentConfig));
+
+    const fakeAgent: import('@ai-sdlc/application').AgentPort = {
+      invoke: async (req) => {
+        writeFileSync(path.join(req.cwd, 'result.json'), validJson);
+        const outLog = path.join(req.cwd, 'repair-stdout.log');
+        writeFileSync(outLog, 'repaired successfully');
+        return {
+          runtime: 'opencode',
+          provider: 'test',
+          model: 'test',
+          exitCode: 0,
+          durationMs: 10,
+          stdoutPath: outLog,
+          stderrPath: path.join(req.cwd, 'repair-stderr.log'),
+          contractViolations: [],
+          outcome: 'success',
+        };
+      },
+    };
+
+    const container = composeRoot({
+      repoRoot: root,
+      scriptPath,
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      agentAdapterOverrides: { opencode: fakeAgent },
+    });
+
+    const runUuid = '550e8400-e29b-41d4-a716-446655440000';
+    container.runRepository.insertIfNoActive({
+      uuid: runUuid,
+      displayId: 'issue-1-20260622-120000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 1,
+      type: 'issue_to_pr' as const,
+      status: 'running' as const,
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    });
+
+    const worktreeDir = trackDir(() =>
+      mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-worktree-')),
+    );
+    const unescapedQuoteArtifact =
+      '{\n  "verdict": "APPROVE",\n  "evaluations": [\n    {\n      "finding_id": "f1",\n      "resolved": true,\n      "evidence": "cites "unrepaired.key" identifier"\n    }\n  ],\n  "new_findings": [\n  malformed syntax that fails parse completely\n';
+    writeFileSync(path.join(worktreeDir, 'result.json'), unescapedQuoteArtifact);
+
+    const stdoutPath = path.join(worktreeDir, 'stdout.log');
+    writeFileSync(stdoutPath, 'agent stdout with evidence showing work performed');
+
+    container.agentInvocationRepository.insert({
+      id: AgentInvocationId('inv-1'),
+      runId: RunId(runUuid),
+      phaseId: PhaseName('follow-up-review'),
+      profile: AgentProfileName('test'),
+      runtime: 'opencode',
+      provider: 'test',
+      model: 'test',
+      promptPath: path.join(worktreeDir, 'prompt.md'),
+      promptChars: 10,
+      stdoutPath,
+      stderrPath: path.join(worktreeDir, 'stderr.log'),
+      startedAt: new Date(),
+      startCommitSha: 'a'.repeat(40),
+      timeoutMs: 60000,
+    });
+
+    const artifactsStore: import('@ai-sdlc/application').ArtifactStore = {
+      read: async (_runId, rel) => readFileSync(path.join(worktreeDir, rel), 'utf-8'),
+      write: async ({ relativePath, contents }) =>
+        writeFileSync(path.join(worktreeDir, relativePath), contents),
+      list: async () => [],
+      hydrateWorktree: async () => {},
+    };
+
+    const ctx = container.buildPhaseHandlerContext({
+      runId: 'run-1',
+      runUuid: '550e8400-e29b-41d4-a716-446655440000',
+      repoFullName: 'owner/repo',
+      issueNumber: 1,
+      cwd: worktreeDir,
+      artifacts: artifactsStore,
+      github: {} as unknown as import('@ai-sdlc/application').GitHubPort,
+      git: container.git,
+      agent: {} as unknown as import('@ai-sdlc/application').AgentPort,
+      events: container.eventBus,
+      now: () => new Date(),
+    });
+
+    expect(ctx.repair).toBeDefined();
+
+    const outcome = await extractResult({
+      invocation: {
+        id: AgentInvocationId('inv-1'),
+        runId: '550e8400-e29b-41d4-a716-446655440000',
+        phaseId: PhaseName('follow-up-review'),
+        attempt: 1,
+        profile: AgentProfileName('test'),
+        cwd: worktreeDir,
+        startedAt: new Date(),
+        completedAt: new Date(),
+        exitCode: 0,
+        status: 'completed',
+        stdoutPath,
+        stderrPath: path.join(worktreeDir, 'stderr.log'),
+        resultJsonPath: 'result.json',
+        startCommitSha: 'a'.repeat(40),
+      },
+      ports: {
+        artifacts: ctx.artifacts,
+        repair: ctx.repair,
+      },
+      cwd: worktreeDir,
+    });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toMatchObject({ verdict: 'APPROVE' });
+    }
   });
 });

@@ -20,11 +20,13 @@ Implementation plan:
 {{artifact?:plan.md}}
 
 Spec review status:
+
 ```
 {{var:spec_review_summary}}
 ```
 
 Deterministic validation evidence:
+
 ```
 {{var:validation_evidence}}
 ```
@@ -32,6 +34,7 @@ Deterministic validation evidence:
 {{var:validation_critical_files}}
 
 Complete branch diff against base:
+
 ```diff
 {{var:complete_diff}}
 ```
@@ -45,6 +48,7 @@ Perform an independent technical quality review to answer:
 Use the issue, design, plan, branch diff, validation evidence, and spec review summary above as your primary context.
 
 Also read:
+
 - `AGENTS.md` (specifically the Layer Boundaries and mandatory CI rules)
 - `CONTEXT.md`
 - relevant ADRs and repository documentation
@@ -98,6 +102,8 @@ This exemption is narrow: it applies only to the exact untracked paths listed, a
 - Finish with `REQUEST_CHANGES` if any material blocking defects are identified.
 
 ## OUTPUT FORMAT
+
+{{var:JSON_ESCAPING}}
 
 Write your review to `./result.json`:
 
