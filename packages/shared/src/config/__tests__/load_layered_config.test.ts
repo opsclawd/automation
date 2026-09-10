@@ -176,6 +176,76 @@ describe('loadLayeredConfig', () => {
     expect(result.config.validation.commands).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
   });
 
+  it('target selfVerifyCommands overrides base selfVerifyCommands without index merging', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: {
+          commands: ['pnpm build'],
+          selfVerifyCommands: ['pnpm typecheck', 'pnpm lint', 'pnpm extra'],
+        },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: {
+          selfVerifyCommands: ['pnpm test:unit'],
+        },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.selfVerifyCommands).toEqual(['pnpm test:unit']);
+  });
+
+  it('target local selfVerifyCommands overrides target base selfVerifyCommands', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: {
+          commands: ['pnpm build'],
+        },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: {
+          selfVerifyCommands: ['pnpm base-verify'],
+        },
+      }),
+      '.ai-orchestrator.local.json': JSON.stringify({
+        validation: {
+          selfVerifyCommands: ['pnpm local-verify'],
+        },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.selfVerifyCommands).toEqual(['pnpm local-verify']);
+  });
+
+  it('inherits automation selfVerifyCommands when target omits it', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: {
+          commands: ['pnpm build'],
+          selfVerifyCommands: ['pnpm typecheck', 'pnpm lint'],
+        },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: {
+          commands: ['pnpm custom-build'],
+        },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.selfVerifyCommands).toEqual(['pnpm typecheck', 'pnpm lint']);
+  });
+
   it('target local commands replace target base commands', () => {
     const automationRoot = makeRepo({
       '.ai-orchestrator.json': validConfig({

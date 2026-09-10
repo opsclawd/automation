@@ -284,12 +284,22 @@ function mergeValidationPolicy(
 
   // Generic merge non-policy validation properties (e.g. timeout, narrowByChangedFiles)
   for (const [k, v] of Object.entries(baseValObj)) {
-    if (k !== 'commands' && k !== 'additionalCommands' && k !== 'tiers') {
+    if (
+      k !== 'commands' &&
+      k !== 'additionalCommands' &&
+      k !== 'selfVerifyCommands' &&
+      k !== 'tiers'
+    ) {
       outValidation[k] = v;
     }
   }
   for (const [k, v] of Object.entries(overrideValidation)) {
-    if (k !== 'commands' && k !== 'additionalCommands' && k !== 'tiers') {
+    if (
+      k !== 'commands' &&
+      k !== 'additionalCommands' &&
+      k !== 'selfVerifyCommands' &&
+      k !== 'tiers'
+    ) {
       outValidation[k] = genericMerge(outValidation[k], v);
     }
   }
@@ -298,6 +308,12 @@ function mergeValidationPolicy(
     outValidation.additionalCommands = overrideValidation.additionalCommands;
   } else if (baseValObj.additionalCommands !== undefined) {
     outValidation.additionalCommands = baseValObj.additionalCommands;
+  }
+
+  if (overrideValidation.selfVerifyCommands !== undefined) {
+    outValidation.selfVerifyCommands = overrideValidation.selfVerifyCommands;
+  } else if (baseValObj.selfVerifyCommands !== undefined) {
+    outValidation.selfVerifyCommands = baseValObj.selfVerifyCommands;
   }
 
   if (resolvedCommands !== undefined) {

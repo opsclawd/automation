@@ -116,6 +116,8 @@ if [[ -f "$_ORCHESTRATOR_LOCAL_CONFIG" ]] || [[ -f "${_TARGET_ORCHESTRATOR_CONFI
       if (a | type == "array") and (b | type == "array") then
         if key == "commands" then
           a + b
+        elif key == "selfVerifyCommands" or key == "additionalCommands" then
+          b
         else
           reduce range(0; [a|length, b|length] | max) as $i ([];
             .[$i] = deep_merge(a[$i]; b[$i]; null)

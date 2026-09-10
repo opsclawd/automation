@@ -532,4 +532,36 @@ describe('ValidateFixLoop and ReviewFixLoop wiring in composeRoot', () => {
       expect(outcome.result).toMatchObject({ verdict: 'APPROVE' });
     }
   });
+
+  it('wires selfVerifyCommands into buildPhaseHandlerContext when defined in config', () => {
+    const root = trackDir(() =>
+      mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-self-verify-')),
+    );
+    const scriptPath = fakeScript(0);
+    const cfg = makeAgentConfig();
+    cfg.validation.selfVerifyCommands = ['pnpm typecheck', 'pnpm lint'];
+    writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(cfg));
+
+    const container = composeRoot({
+      repoRoot: root,
+      scriptPath,
+      metadataResolver: FAKE_METADATA_RESOLVER,
+    });
+
+    const ctx = container.buildPhaseHandlerContext({
+      runId: 'run-1',
+      runUuid: '550e8400-e29b-41d4-a716-446655440000',
+      repoFullName: 'owner/repo',
+      issueNumber: 1,
+      cwd: root,
+      artifacts: container.artifactRepository,
+      github: {} as unknown as import('@ai-sdlc/application').GitHubPort,
+      git: container.git,
+      agent: {} as unknown as import('@ai-sdlc/application').AgentPort,
+      events: container.eventBus,
+      now: () => new Date(),
+    });
+
+    expect(ctx.selfVerifyCommands).toEqual(['pnpm typecheck', 'pnpm lint']);
+  });
 });

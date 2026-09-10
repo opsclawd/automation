@@ -13,9 +13,11 @@ import {
   type ValidationCriticalFile,
 } from '../../review-fix/validation-critical-files.js';
 import { parseGitStatusLine, unquoteGitPath } from '../../artifacts/orchestrator-artifacts.js';
+import { formatSelfVerifyInstructions } from '../../prompts/constants.js';
 
 export interface FixReviewHandlerOpts {
   profileName?: string;
+  selfVerifyCommands?: string[] | undefined;
 }
 
 export class FixReviewHandler implements PhaseHandler {
@@ -72,6 +74,7 @@ export class FixReviewHandler implements PhaseHandler {
       criticalFiles = [];
     }
     const validationCriticalWarning = formatValidationCriticalFilesWarning(criticalFiles);
+    const selfVerifyCommands = this.opts.selfVerifyCommands ?? ctx.selfVerifyCommands;
 
     // 4. Run fixer agent invocation
     const fixRunResult = await runSingleShotAgentPhase(ctx, {
@@ -84,6 +87,7 @@ export class FixReviewHandler implements PhaseHandler {
         cwd: ctx.cwd,
         review_findings: formattedFindings,
         validation_critical_files: validationCriticalWarning,
+        SELF_VERIFY_INSTRUCTIONS: formatSelfVerifyInstructions(selfVerifyCommands),
       },
       agentContract: {
         requiredArtifacts: [],

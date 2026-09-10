@@ -240,6 +240,63 @@ describe('validation additionalCommands', () => {
     });
     expect(result.success).toBe(false);
   });
+});
+
+describe('validation selfVerifyCommands', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: {
+      skip: [],
+      reviewFix: { maxIterations: 5 },
+      implement: { maxIterations: 1 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
+
+  it('accepts non-empty validation.selfVerifyCommands entries', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      validation: {
+        ...baseConfig.validation,
+        selfVerifyCommands: ['pnpm typecheck', 'pnpm lint'],
+      },
+    });
+    expect(parsed.validation.selfVerifyCommands).toEqual(['pnpm typecheck', 'pnpm lint']);
+  });
+
+  it('accepts an empty validation.selfVerifyCommands list', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      validation: {
+        ...baseConfig.validation,
+        selfVerifyCommands: [],
+      },
+    });
+    expect(parsed.validation.selfVerifyCommands).toEqual([]);
+  });
+
+  it('rejects blank validation.selfVerifyCommands entries', () => {
+    const result = orchestratorConfigSchema.safeParse({
+      ...baseConfig,
+      validation: {
+        ...baseConfig.validation,
+        selfVerifyCommands: ['   '],
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('validation commands', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: {
+      skip: [],
+      reviewFix: { maxIterations: 5 },
+      implement: { maxIterations: 1 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
 
   it('continues to reject an empty validation.commands list', () => {
     const result = orchestratorConfigSchema.safeParse({

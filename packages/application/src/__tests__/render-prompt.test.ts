@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { renderPrompt } from '../prompts/render-prompt.js';
 import { TemplateError } from '../prompts/errors.js';
-import { WORKSPACE_CONSTRAINTS, SCRATCH_FILE_POLICY, JSON_ESCAPING } from '../prompts/constants.js';
+import {
+  WORKSPACE_CONSTRAINTS,
+  SCRATCH_FILE_POLICY,
+  JSON_ESCAPING,
+  DEFAULT_SELF_VERIFY_INSTRUCTIONS,
+} from '../prompts/constants.js';
 import { ArtifactNotFoundError } from '../ports/artifact-store.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 
@@ -63,6 +68,24 @@ describe('renderPrompt', () => {
       artifacts: fakeArtifacts({}),
     });
     expect(out).toBe(`escaping:\n${JSON_ESCAPING}`);
+  });
+
+  it('substitutes SELF_VERIFY_INSTRUCTIONS automatically', async () => {
+    const out = await renderPrompt('self-verify:\n{{var:SELF_VERIFY_INSTRUCTIONS}}', {
+      runId: 'run-1',
+      vars: {},
+      artifacts: fakeArtifacts({}),
+    });
+    expect(out).toBe(`self-verify:\n${DEFAULT_SELF_VERIFY_INSTRUCTIONS}`);
+  });
+
+  it('uses explicit SELF_VERIFY_INSTRUCTIONS when provided in vars', async () => {
+    const out = await renderPrompt('self-verify:\n{{var:SELF_VERIFY_INSTRUCTIONS}}', {
+      runId: 'run-1',
+      vars: { SELF_VERIFY_INSTRUCTIONS: 'custom self verify' },
+      artifacts: fakeArtifacts({}),
+    });
+    expect(out).toBe('self-verify:\ncustom self verify');
   });
 
   it('throws TemplateError on unknown var', async () => {

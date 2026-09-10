@@ -2871,6 +2871,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let runStep: Container['runStep'] | undefined;
   let runExecutor: RunExecutor | undefined;
   let buildRunContext: ((run: Run) => PhaseHandlerContext) | undefined;
+  let loadedSelfVerifyCommands: string[] | undefined;
   const reviewStateRepository = new ReviewStateRepository(db);
 
   const readWorktreeFile: ReadWorktreeFilePort = async (cwd, relativePath) => {
@@ -2904,6 +2905,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       layeredConfigCache.set(cacheKey, layered);
     }
     let config = applyCliOverrides(layered.config, opts);
+    loadedSelfVerifyCommands = config.validation.selfVerifyCommands;
     const _fingerprint = layered.fingerprint;
     const _sources = layered.sources;
     if (config.agent && config.agent.profiles) {
@@ -6784,6 +6786,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       phaseRegistry.register(
         new ReviewFixHandler({
+          selfVerifyCommands: config.validation.selfVerifyCommands,
           runLoop: async (ctx) => {
             const architectPlan = await maybeRunArchitect(ctx, baseTmpDir);
             const result = await reviewFixLoopInstance.execute({
@@ -6857,6 +6860,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(
         new FixReviewHandler({
           profileName: config.agent.phaseProfiles?.['fix-review']?.profile ?? 'opencode-frontier',
+          selfVerifyCommands: config.validation.selfVerifyCommands,
         }),
       );
 
@@ -7687,6 +7691,9 @@ export function composeRoot(opts: ComposeOptions): Container {
       worktreeLifecycle: worktreeLifecycleAdapter,
       eventRepository,
       repair: phaseContextRepair,
+      ...(loadedSelfVerifyCommands !== undefined
+        ? { selfVerifyCommands: loadedSelfVerifyCommands }
+        : {}),
       ...opts,
     };
   };

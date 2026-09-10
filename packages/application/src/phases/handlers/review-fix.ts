@@ -25,6 +25,7 @@ import {
   formatValidationCriticalFilesWarning,
   type ValidationCriticalFile,
 } from '../../review-fix/validation-critical-files.js';
+import { formatSelfVerifyInstructions } from '../../prompts/constants.js';
 
 export interface ReviewFixHandlerOpts {
   /** Runs the legacy ReviewFixLoop and returns its terminal phase outcome.
@@ -47,6 +48,7 @@ export interface ReviewFixHandlerOpts {
   };
   validationPort?: ValidationPort;
   runWorkspaceTypecheck?: RunWorkspaceTypecheckPort;
+  selfVerifyCommands?: string[] | undefined;
 }
 
 export class ReviewFixHandler implements PhaseHandler {
@@ -355,6 +357,7 @@ export class ReviewFixHandler implements PhaseHandler {
       criticalFiles = [];
     }
     const validationCriticalWarning = formatValidationCriticalFilesWarning(criticalFiles);
+    const selfVerifyCommands = this.opts.selfVerifyCommands ?? ctx.selfVerifyCommands;
 
     // Run fixer agent invocation
     const fixRunResult = await runSingleShotAgentPhase(ctx, {
@@ -367,6 +370,7 @@ export class ReviewFixHandler implements PhaseHandler {
         cwd: ctx.cwd,
         review_findings: formattedFindings,
         validation_critical_files: validationCriticalWarning,
+        SELF_VERIFY_INSTRUCTIONS: formatSelfVerifyInstructions(selfVerifyCommands),
       },
       agentContract: {
         requiredArtifacts: [],

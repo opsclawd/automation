@@ -47,8 +47,8 @@ your invocation budget. Re-running it yourself risks exceeding your time
 budget before you can write any result at all, which is worse than a
 validation failure: it loses the entire turn, including your fix.
 
-Limit your own verification to: typecheck and lint for the files you
-changed, plus only the specific unit test(s) that directly cover them.
+{{var:SELF_VERIFY_INSTRUCTIONS}}
+
 Do not run integration suites, Testcontainers-based tests, or
 hardware/model-dependent suites (database integration tests, media
 encoding/ML inference suites, GPU-dependent render tests, or any
