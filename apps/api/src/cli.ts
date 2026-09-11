@@ -21,6 +21,7 @@ import {
   createJob,
   createWorker,
   generateJobOwnership,
+  runStatusToExecutionOutcome,
   type ResumeDisposition,
   type ExecutionPolicy,
 } from '@ai-sdlc/domain';
@@ -203,8 +204,15 @@ function startLeaseHeartbeat(
 
 const DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS = 30_000;
 
-function printRunFailureSummary(uuid: string, reason?: string): void {
-  const prefix = reason ? `Run failed: ${reason}` : 'Run failed.';
+function printRunFailureSummary(uuid: string, reason?: string, status?: RunStatus): void {
+  let prefix: string;
+  if (status === 'needs_human_review') {
+    prefix = reason ? `Run needs human review: ${reason}` : 'Run needs human review.';
+  } else if (status === 'blocked') {
+    prefix = reason ? `Run blocked: ${reason}` : 'Run blocked.';
+  } else {
+    prefix = reason ? `Run failed: ${reason}` : 'Run failed.';
+  }
   console.error(prefix);
   console.error(`Run UUID: ${uuid}`);
   // No --confirm in the hint: `runs resume` intentionally stops and warns
@@ -554,7 +562,7 @@ function buildSchedulerDeps(
             presentArtifacts: [],
             ...(resumeDisposition !== undefined ? { resumeDisposition } : {}),
           });
-          return { ok: result.run.status === 'passed' };
+          return { outcome: runStatusToExecutionOutcome(result.run.status) };
         } finally {
           doneResolve();
           c.runAbort.unregister(RunId(r.uuid));
@@ -1098,12 +1106,18 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             testWorkerReaper?.stop();
             unsubscribe?.();
             const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
+            const nonSuccessStatuses: RunStatus[] = [
+              'blocked',
+              'needs_human_review',
+              'failed',
+              'cancelled',
+            ];
             const isSuccess =
               finalRun.status === 'passed' ||
               pausedStatuses.includes(finalRun.status) ||
-              finalJob?.status === 'succeeded';
+              (finalJob?.status === 'succeeded' && !nonSuccessStatuses.includes(finalRun.status));
             if (!isSuccess) {
-              printRunFailureSummary(finalRun.uuid, finalRun.failureReason);
+              printRunFailureSummary(finalRun.uuid, finalRun.failureReason, finalRun.status);
             }
             await drainAndExit(c, isSuccess ? 0 : EXIT_USER_ERROR);
             return;
@@ -1121,7 +1135,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // Only suggest resuming if the run row actually exists —
             // insertIfNoActive may have thrown before inserting it.
             if (c.runRepository.findByUuid(run.uuid)) {
-              printRunFailureSummary(run.uuid, failureReason);
+              printRunFailureSummary(run.uuid, failureReason, run.status);
             } else {
               console.error(`Run failed: ${failureReason}`);
             }
@@ -1184,7 +1198,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               out.status === 'passed' || pausedStatuses.includes(out.status as RunStatus);
             if (!isSuccess) {
               const finalRun = c.runRepository.findByUuid(out.uuid);
-              printRunFailureSummary(out.uuid, finalRun?.failureReason);
+              printRunFailureSummary(
+                out.uuid,
+                finalRun?.failureReason,
+                finalRun?.status ?? (out.status as RunStatus),
+              );
             }
             await drainAndExit(c, isSuccess ? 0 : EXIT_USER_ERROR);
             return;

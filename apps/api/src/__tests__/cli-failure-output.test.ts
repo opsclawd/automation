@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram as originalBuildProgram } from '../cli.js';
 import { WorkerScheduler } from '../worker-scheduler.js';
-import { GitWorktreeAdapter, JobQueueRepository } from '@ai-sdlc/infrastructure';
+import { GitWorktreeAdapter, JobQueueRepository, RunRepository } from '@ai-sdlc/infrastructure';
 import { JobId, RepositoryId, RunId, IssueNumber } from '@ai-sdlc/domain';
 
 function buildProgram(opts?: Parameters<typeof originalBuildProgram>[0]) {
@@ -170,6 +170,282 @@ describe('CLI failure output', () => {
       expect(output).toContain('Run UUID:');
       expect(output).toContain('Resume with: orchestrator runs resume --uuid');
       expect(output).not.toContain('--confirm');
+    } finally {
+      process.chdir(savedCwd);
+    }
+  }, 20000);
+
+  it('reports blocked Run as requiring attention and exits with 1 even if Job succeeded', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cli-blocked-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: { read_issue: { profile: 'test' } },
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      vi.spyOn(WorkerScheduler.prototype, 'runUntilComplete').mockResolvedValue(undefined);
+      vi.spyOn(JobQueueRepository.prototype, 'findById').mockReturnValue({
+        id: JobId('mock-job'),
+        runId: RunId('mock-run-uuid'),
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: IssueNumber(1),
+        status: 'succeeded',
+        priority: 0,
+        attempts: 1,
+        createdAt: new Date(),
+      });
+      vi.spyOn(RunRepository.prototype, 'findByUuid').mockImplementation((uuid) => ({
+        uuid,
+        displayId: 'disp-1',
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: 1,
+        type: 'issue_to_pr',
+        status: 'blocked',
+        failureReason: 'operator gate blocked',
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      }));
+
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({
+        composeOverrides: {
+          repoRoot: root,
+          repoFullName: 'owner/repo',
+          runStartupSweeps: false,
+        },
+      });
+
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '1',
+        '--executor',
+        'ts',
+        '--script',
+        '/dev/null',
+      ]);
+
+      const output = consoleErrorSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      expect(output).toContain('Run blocked: operator gate blocked');
+      expect(output).toContain('Run UUID:');
+      expect(output).toContain('Resume with: orchestrator runs resume --uuid');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  }, 20000);
+
+  it('reports needs_human_review Run as requiring attention and exits with 1 even if Job succeeded', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cli-nhr-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: { read_issue: { profile: 'test' } },
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      vi.spyOn(WorkerScheduler.prototype, 'runUntilComplete').mockResolvedValue(undefined);
+      vi.spyOn(JobQueueRepository.prototype, 'findById').mockReturnValue({
+        id: JobId('mock-job'),
+        runId: RunId('mock-run-uuid'),
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: IssueNumber(1),
+        status: 'succeeded',
+        priority: 0,
+        attempts: 1,
+        createdAt: new Date(),
+      });
+      vi.spyOn(RunRepository.prototype, 'findByUuid').mockImplementation((uuid) => ({
+        uuid,
+        displayId: 'disp-1',
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: 1,
+        type: 'issue_to_pr',
+        status: 'needs_human_review',
+        failureReason: 'review policy exhausted',
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      }));
+
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({
+        composeOverrides: {
+          repoRoot: root,
+          repoFullName: 'owner/repo',
+          runStartupSweeps: false,
+        },
+      });
+
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '1',
+        '--executor',
+        'ts',
+        '--script',
+        '/dev/null',
+      ]);
+
+      const output = consoleErrorSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      expect(output).toContain('Run needs human review: review policy exhausted');
+      expect(output).toContain('Run UUID:');
+      expect(output).toContain('Resume with: orchestrator runs resume --uuid');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  }, 20000);
+
+  it('exits with 0 and no error banner on waiting Run when Job succeeded', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cli-waiting-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: { read_issue: { profile: 'test' } },
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      vi.spyOn(WorkerScheduler.prototype, 'runUntilComplete').mockResolvedValue(undefined);
+      vi.spyOn(JobQueueRepository.prototype, 'findById').mockReturnValue({
+        id: JobId('mock-job'),
+        runId: RunId('mock-run-uuid'),
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: IssueNumber(1),
+        status: 'succeeded',
+        priority: 0,
+        attempts: 1,
+        createdAt: new Date(),
+      });
+      vi.spyOn(RunRepository.prototype, 'findByUuid').mockImplementation((uuid) => ({
+        uuid,
+        displayId: 'disp-1',
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: 1,
+        type: 'issue_to_pr',
+        status: 'waiting',
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      }));
+
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({
+        composeOverrides: {
+          repoRoot: root,
+          repoFullName: 'owner/repo',
+          runStartupSweeps: false,
+        },
+      });
+
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '1',
+        '--executor',
+        'ts',
+        '--script',
+        '/dev/null',
+      ]);
+
+      const output = consoleErrorSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      expect(output).not.toContain('Run failed:');
+      expect(output).not.toContain('Run blocked:');
+      expect(output).not.toContain('Run needs human review:');
+      expect(output).not.toContain('Resume with:');
+      expect(exitSpy).toHaveBeenCalledWith(0);
     } finally {
       process.chdir(savedCwd);
     }

@@ -18,3 +18,4 @@ export * from './agent-usage.js';
 export * from './loop.js';
 export * from './step.js';
 export * from './incident.js';
+export * from './execution-outcome.js';
