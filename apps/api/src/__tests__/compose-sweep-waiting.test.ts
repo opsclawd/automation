@@ -6,7 +6,7 @@ import { writeFileSync } from 'node:fs';
 
 const createdDirs: string[] = [];
 
-function makeRepo(opts: { withPostPrReview?: boolean; readyMaxDays?: number } = {}): string {
+function makeRepo(opts: { readyMaxDays?: number } = {}): string {
   const dir = mkdtempSync(join(tmpdir(), 'ai-compose-sweep-'));
   createdDirs.push(dir);
   const config: Record<string, unknown> = {
@@ -18,13 +18,6 @@ function makeRepo(opts: { withPostPrReview?: boolean; readyMaxDays?: number } = 
     },
     timeouts: { readyMaxDays: opts.readyMaxDays ?? 7, invocationMaxMinutes: 30 },
   };
-  if (opts.withPostPrReview) {
-    (config.phases as Record<string, unknown>).postPrReview = {
-      maxPolls: 10,
-      pollIntervalSeconds: 60,
-      firstReviewGraceWindowSeconds: 1800,
-    };
-  }
   writeFileSync(join(dir, '.ai-orchestrator.json'), JSON.stringify(config));
   return dir;
 }
@@ -74,7 +67,7 @@ describe('composeRoot — SweepWaitingRuns wiring', () => {
 
   it('invokes SweepWaitingRuns when runStartupSweeps !== false', async () => {
     const { composeRoot } = await import('../compose.js');
-    const repoRoot = makeRepo({ withPostPrReview: true });
+    const repoRoot = makeRepo();
     const c = composeRoot({ repoRoot, scriptPath: '/dev/null' });
     expect(sweepsConstructed.count).toBe(1);
     await c.drainStartupSweeps?.();
@@ -82,7 +75,7 @@ describe('composeRoot — SweepWaitingRuns wiring', () => {
 
   it('does NOT invoke SweepWaitingRuns when runStartupSweeps === false', async () => {
     const { composeRoot } = await import('../compose.js');
-    const repoRoot = makeRepo({ withPostPrReview: true });
+    const repoRoot = makeRepo();
     const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
     expect(sweepsConstructed.count).toBe(0);
     await c.drainStartupSweeps?.();
@@ -90,7 +83,7 @@ describe('composeRoot — SweepWaitingRuns wiring', () => {
 
   it('passes configured readyMaxDays from config to SweepWaitingRuns', async () => {
     const { composeRoot } = await import('../compose.js');
-    const repoRoot = makeRepo({ withPostPrReview: true, readyMaxDays: 30 });
+    const repoRoot = makeRepo({ readyMaxDays: 30 });
     const c = composeRoot({ repoRoot, scriptPath: '/dev/null' });
     expect(sweepsConstructed.count).toBe(1);
     expect(lastReadyMaxDays.value).toBe(30);
@@ -99,7 +92,7 @@ describe('composeRoot — SweepWaitingRuns wiring', () => {
 
   it('passes runNotification to SweepWaitingRuns on startup and exposes drainStartupSweeps', async () => {
     const { composeRoot } = await import('../compose.js');
-    const repoRoot = makeRepo({ withPostPrReview: true });
+    const repoRoot = makeRepo();
     const c = composeRoot({ repoRoot, scriptPath: '/dev/null' });
     expect(sweepsConstructed.count).toBe(1);
     expect(lastRunNotification.value).toBe(c.runNotification);
@@ -111,14 +104,14 @@ describe('composeRoot — SweepWaitingRuns wiring', () => {
 describe('composeRoot — serve sweep wiring', () => {
   it('defaults serveSweepIntervalSeconds to 0 when config omits serve', async () => {
     const { composeRoot } = await import('../compose.js');
-    const repoRoot = makeRepo({ withPostPrReview: true });
+    const repoRoot = makeRepo();
     const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
     expect(c.serveSweepIntervalSeconds).toBe(0);
   });
 
   it('exposes buildWaitingRunsSweeper that constructs a working WaitingRunsSweeper', async () => {
     const { composeRoot } = await import('../compose.js');
-    const repoRoot = makeRepo({ withPostPrReview: true });
+    const repoRoot = makeRepo();
     const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
     expect(c.buildWaitingRunsSweeper).toBeTypeOf('function');
     const sweeper = c.buildWaitingRunsSweeper();
@@ -132,7 +125,7 @@ describe('composeRoot — serve sweep wiring', () => {
 describe('composeRoot — OrphanedRunsSweeper wiring', () => {
   it('exposes buildOrphanedRunsSweeper that constructs a working OrphanedRunsSweeper', async () => {
     const { composeRoot } = await import('../compose.js');
-    const repoRoot = makeRepo({ withPostPrReview: true });
+    const repoRoot = makeRepo();
     const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
     expect(c.buildOrphanedRunsSweeper).toBeTypeOf('function');
     const sweeper = c.buildOrphanedRunsSweeper();
