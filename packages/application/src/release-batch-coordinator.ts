@@ -36,7 +36,10 @@ import type {
   GitPort,
   GitHubPort,
   PrMergeReadiness,
+  ReleaseBatchNotificationPort,
+  ReleaseBatchNotificationType,
 } from './ports.js';
+import { safeDispatchReleaseBatchNotification } from './ports.js';
 import type { EventRepositoryFactory } from './start-issue-run.js';
 import type { InterItemMaintenanceService } from './inter-item-maintenance.js';
 
@@ -44,6 +47,7 @@ export type ReconciliationAction =
   | 'idle'
   | 'unblocked'
   | 'blocked'
+  | 'approval_invalidated'
   | 'successor_admitted'
   | 'pr_attached'
   | 'build_completed'
@@ -86,6 +90,7 @@ export interface ReleaseBatchCoordinatorDeps {
   maintenanceService?: InterItemMaintenanceService;
   resolvePrMetadata?: (run: Run) => Promise<{ prNumber: number } | undefined>;
   executionPolicy?: ExecutionPolicy | undefined;
+  releaseBatchNotification?: ReleaseBatchNotificationPort | undefined;
   now?: (() => Date) | undefined;
   logger?: {
     info?: (msg: string) => void;
@@ -96,6 +101,62 @@ export interface ReleaseBatchCoordinatorDeps {
 
 export class ReleaseBatchCoordinator {
   constructor(private readonly deps: ReleaseBatchCoordinatorDeps) {}
+
+  private dispatchNotification(
+    batch: ReleaseBatch,
+    type: ReleaseBatchNotificationType,
+    extra?: {
+      candidateSha?: string | undefined;
+      sourceBranch?: string | undefined;
+      promotionPrNumber?: number | undefined;
+      reason?: string | undefined;
+    },
+  ): void {
+    const candidateSha = extra?.candidateSha ?? batch.candidateSha;
+    const sourceBranch = extra?.sourceBranch ?? batch.sourceBranch;
+    const promotionPrNumber = extra?.promotionPrNumber ?? batch.promotionPrNumber;
+    const reason = extra?.reason ?? batch.blockedReason;
+
+    safeDispatchReleaseBatchNotification(
+      this.deps.releaseBatchNotification,
+      {
+        type,
+        batchId: batch.id,
+        repoId: batch.repoId,
+        releaseBranch: batch.releaseBranch,
+        ...(candidateSha !== undefined ? { candidateSha } : {}),
+        ...(sourceBranch !== undefined ? { sourceBranch } : {}),
+        ...(promotionPrNumber !== undefined ? { promotionPrNumber } : {}),
+        ...(reason !== undefined ? { reason } : {}),
+      },
+      this.deps.logger,
+    );
+  }
+
+  private blockBatchAndNotify(
+    batch: ReleaseBatch,
+    reason: string,
+    notificationType: ReleaseBatchNotificationType = 'blocked',
+  ): ReleaseBatch {
+    const prevBlocked = batch.status === 'blocked' && batch.blockedReason === reason;
+    const updated = markBatchBlocked(batch, reason);
+    if (!prevBlocked) {
+      this.dispatchNotification(updated, notificationType, { reason });
+    }
+    return updated;
+  }
+
+  private blockItemAndNotify(batch: ReleaseBatch, position: number, reason: string): ReleaseBatch {
+    const item = batch.items.find((i) => i.position === position);
+    const prevBlocked =
+      (batch.status === 'blocked' || item?.status === 'blocked') &&
+      (batch.blockedReason === reason || item?.blockedReason === reason);
+    const updated = markItemBlocked(batch, position, reason);
+    if (!prevBlocked) {
+      this.dispatchNotification(updated, 'blocked', { reason });
+    }
+    return updated;
+  }
 
   async reconcile(batchId: ReleaseBatchId): Promise<ReconcileBatchResult> {
     const now = (this.deps.now ?? (() => new Date()))();
@@ -149,7 +210,7 @@ export class ReleaseBatchCoordinator {
             });
             if (!mResult.success) {
               const reason = mResult.reason ?? 'environment_unhealthy';
-              batch = markBatchBlocked(batch, reason);
+              batch = this.blockBatchAndNotify(batch, reason);
               this.deps.releaseBatchRepository.update(batch);
               actions.push('blocked');
               return {
@@ -189,7 +250,7 @@ export class ReleaseBatchCoordinator {
 
               if (!isSourceContained) {
                 // Source branch has advanced beyond what the release branch contains!
-                batch = markBatchBlocked(batch, 'source_branch_advanced');
+                batch = this.blockBatchAndNotify(batch, 'source_branch_advanced');
                 this.deps.releaseBatchRepository.update(batch);
                 actions.push('blocked', 'source_drift_detected');
 
@@ -222,6 +283,9 @@ export class ReleaseBatchCoordinator {
               );
               batch = transitionToAwaitingManualTest(batch, remoteReleaseSha, candidateTreeSha);
               this.deps.releaseBatchRepository.update(batch);
+              this.dispatchNotification(batch, 'awaiting_manual_test', {
+                candidateSha: remoteReleaseSha,
+              });
               actions.push('candidate_captured');
 
               this.publishEvent(batch, {
@@ -305,8 +369,8 @@ export class ReleaseBatchCoordinator {
         }
       }
 
-      // If batch is awaiting_manual_test, check safety invariant (branch movement)
-      if (batch.status === 'awaiting_manual_test') {
+      // If batch is awaiting_manual_test or approved, check safety invariant (branch movement)
+      if (batch.status === 'awaiting_manual_test' || batch.status === 'approved') {
         const repo = this.deps.repositoryPort.findById(batch.repoId);
         if (this.deps.git && repo && batch.candidateSha) {
           try {
@@ -321,9 +385,17 @@ export class ReleaseBatchCoordinator {
               `origin/${batch.sourceBranch}`,
             );
 
+            const isApproved = batch.status === 'approved';
             if (remoteReleaseSha && remoteReleaseSha !== batch.candidateSha) {
-              batch = markBatchBlocked(batch, 'release_branch_drift');
+              batch = this.blockBatchAndNotify(
+                batch,
+                'release_branch_drift',
+                isApproved ? 'approval_stale' : 'blocked',
+              );
               this.deps.releaseBatchRepository.update(batch);
+              if (isApproved) {
+                actions.push('approval_invalidated');
+              }
               actions.push('blocked');
               return {
                 batchId: batch.id,
@@ -341,8 +413,15 @@ export class ReleaseBatchCoordinator {
                 batch.candidateSha,
               );
               if (!isContained) {
-                batch = markBatchBlocked(batch, 'source_branch_advanced');
+                batch = this.blockBatchAndNotify(
+                  batch,
+                  'source_branch_advanced',
+                  isApproved ? 'approval_stale' : 'blocked',
+                );
                 this.deps.releaseBatchRepository.update(batch);
+                if (isApproved) {
+                  actions.push('approval_invalidated');
+                }
                 actions.push('blocked', 'source_drift_detected');
                 return {
                   batchId: batch.id,
@@ -354,7 +433,7 @@ export class ReleaseBatchCoordinator {
               }
             }
           } catch (err) {
-            this.deps.logger?.warn?.(`Failed drift check in awaiting_manual_test: ${err}`);
+            this.deps.logger?.warn?.(`Failed drift check in ${batch.status}: ${err}`);
           }
         }
       }
@@ -391,7 +470,11 @@ export class ReleaseBatchCoordinator {
                       sourceSha,
                     );
                     if (sourceTreeSha !== batch.candidateTreeSha) {
-                      batch = markBatchBlocked(batch, 'promotion_tree_mismatch');
+                      batch = this.blockBatchAndNotify(
+                        batch,
+                        'promotion_tree_mismatch',
+                        'promotion_blocked',
+                      );
                       this.deps.releaseBatchRepository.update(batch);
                       actions.push('blocked');
                       return {
@@ -410,6 +493,12 @@ export class ReleaseBatchCoordinator {
               }
               batch = completeBatch(batch, now);
               this.deps.releaseBatchRepository.update(batch);
+              this.dispatchNotification(batch, 'completed', {
+                ...(promoSha !== undefined ? { candidateSha: promoSha } : {}),
+                ...(batch.promotionPrNumber !== undefined
+                  ? { promotionPrNumber: batch.promotionPrNumber }
+                  : {}),
+              });
               actions.push('promotion_completed');
 
               this.publishEvent(batch, {
@@ -433,7 +522,7 @@ export class ReleaseBatchCoordinator {
               };
             } else if (readiness.ciStatus === 'failed') {
               const reason = `promotion_ci_failed: PR #${batch.promotionPrNumber} CI checks failed`;
-              batch = markBatchBlocked(batch, reason);
+              batch = this.blockBatchAndNotify(batch, reason, 'promotion_blocked');
               this.deps.releaseBatchRepository.update(batch);
               actions.push('blocked');
               return {
@@ -566,7 +655,7 @@ export class ReleaseBatchCoordinator {
           });
           if (!mResult.success) {
             const reason = mResult.reason ?? 'environment_unhealthy';
-            batch = markBatchBlocked(batch, reason);
+            batch = this.blockBatchAndNotify(batch, reason);
             this.deps.releaseBatchRepository.update(batch);
             actions.push('blocked');
             this.publishEvent(batch, {
@@ -767,7 +856,7 @@ export class ReleaseBatchCoordinator {
 
       case 'failed': {
         if (currentItem.status !== 'blocked' || currentItem.blockedReason !== 'run_failed') {
-          batch = markItemBlocked(batch, currentItem.position, 'run_failed');
+          batch = this.blockItemAndNotify(batch, currentItem.position, 'run_failed');
           this.deps.releaseBatchRepository.update(batch);
           actions.push('blocked');
 
@@ -790,7 +879,7 @@ export class ReleaseBatchCoordinator {
 
       case 'blocked': {
         if (currentItem.status !== 'blocked' || currentItem.blockedReason !== 'run_blocked') {
-          batch = markItemBlocked(batch, currentItem.position, 'run_blocked');
+          batch = this.blockItemAndNotify(batch, currentItem.position, 'run_blocked');
           this.deps.releaseBatchRepository.update(batch);
           actions.push('blocked');
 
@@ -816,7 +905,7 @@ export class ReleaseBatchCoordinator {
           currentItem.status !== 'blocked' ||
           currentItem.blockedReason !== 'needs_human_review'
         ) {
-          batch = markItemBlocked(batch, currentItem.position, 'needs_human_review');
+          batch = this.blockItemAndNotify(batch, currentItem.position, 'needs_human_review');
           this.deps.releaseBatchRepository.update(batch);
           actions.push('blocked');
 
@@ -839,7 +928,7 @@ export class ReleaseBatchCoordinator {
 
       case 'cancelled': {
         if (currentItem.status !== 'blocked' || currentItem.blockedReason !== 'run_cancelled') {
-          batch = markItemBlocked(batch, currentItem.position, 'run_cancelled');
+          batch = this.blockItemAndNotify(batch, currentItem.position, 'run_cancelled');
           this.deps.releaseBatchRepository.update(batch);
           actions.push('blocked');
 
@@ -1167,7 +1256,7 @@ export class ReleaseBatchCoordinator {
     if (readiness.baseRefName && readiness.baseRefName !== batch.releaseBranch) {
       const reason = `pr_base_mismatch: PR #${prNumber} base is ${readiness.baseRefName}, expected ${batch.releaseBranch}`;
       if (currentItem.status !== 'blocked' || currentItem.blockedReason !== reason) {
-        batch = markItemBlocked(batch, position, reason);
+        batch = this.blockItemAndNotify(batch, position, reason);
         this.deps.releaseBatchRepository.update(batch);
         actions.push('blocked');
         this.publishEvent(batch, {
@@ -1192,7 +1281,7 @@ export class ReleaseBatchCoordinator {
     if (readiness.state === 'closed' && !readiness.isMerged) {
       const reason = `pr_closed_unmerged: PR #${prNumber} closed without merge`;
       if (currentItem.status !== 'blocked' || currentItem.blockedReason !== reason) {
-        batch = markItemBlocked(batch, position, reason);
+        batch = this.blockItemAndNotify(batch, position, reason);
         this.deps.releaseBatchRepository.update(batch);
         actions.push('blocked');
         this.publishEvent(batch, {
@@ -1221,7 +1310,7 @@ export class ReleaseBatchCoordinator {
     ) {
       const reason = `auto_merge_unavailable: PR #${prNumber} does not have auto-merge enabled`;
       if (currentItem.status !== 'blocked' || currentItem.blockedReason !== reason) {
-        batch = markItemBlocked(batch, position, reason);
+        batch = this.blockItemAndNotify(batch, position, reason);
         this.deps.releaseBatchRepository.update(batch);
         actions.push('blocked');
         this.publishEvent(batch, {
@@ -1246,7 +1335,7 @@ export class ReleaseBatchCoordinator {
     if (readiness.ciStatus === 'failed' && !readiness.isMerged && readiness.state !== 'merged') {
       const reason = `ci_failed: PR #${prNumber} CI checks failed`;
       if (currentItem.status !== 'blocked' || currentItem.blockedReason !== reason) {
-        batch = markItemBlocked(batch, position, reason);
+        batch = this.blockItemAndNotify(batch, position, reason);
         this.deps.releaseBatchRepository.update(batch);
         actions.push('blocked');
         this.publishEvent(batch, {

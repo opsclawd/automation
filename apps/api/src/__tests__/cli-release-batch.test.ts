@@ -350,4 +350,204 @@ describe('CLI release-batch command', () => {
     const fullStderr = stderrOutput.join('');
     expect(fullStderr).toContain('Error: --issues is required');
   });
+
+  it('registers releases alias for release-batch', () => {
+    const program = buildProgram({ isCliTestSuite: true });
+    const releasesCmd = program.commands.find(
+      (c) => c.name() === 'release-batch' && c.aliases().includes('releases'),
+    );
+    expect(releasesCmd).toBeDefined();
+  });
+
+  it('invokes getReleaseBatchStatus with -i flag and writes formatted lines', async () => {
+    const mockStatus = {
+      batchId: ReleaseBatchId('batch-001'),
+      status: 'building' as const,
+      currentPosition: 1,
+      itemCount: 2,
+      items: [
+        { position: 1, issueNumber: 101, status: 'active' as const, runUuid: 'uuid-101' },
+        { position: 2, issueNumber: 102, status: 'pending' as const },
+      ],
+      blocker: { owner: 'none' as const },
+      formattedLines: [
+        'Release Batch: batch-001 [building]',
+        '  Current Item: #101 (position 1/2)',
+        '  Blocker: none',
+      ],
+    };
+
+    const mockGetStatus = {
+      execute: vi.fn().mockResolvedValue(mockStatus),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        getReleaseBatchStatus:
+          mockGetStatus as unknown as import('@ai-sdlc/application').GetReleaseBatchStatus,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['status', '-i', 'batch-001'], { from: 'user' });
+
+    expect(mockGetStatus.execute).toHaveBeenCalledWith({
+      batchId: ReleaseBatchId('batch-001'),
+    });
+
+    const fullStdout = stdoutOutput.join('');
+    expect(fullStdout).toContain('Release Batch: batch-001 [building]');
+    expect(fullStdout).toContain('Current Item: #101 (position 1/2)');
+  });
+
+  it('invokes getReleaseBatchStatus with --json flag and writes formatted JSON', async () => {
+    const mockStatus = {
+      batchId: ReleaseBatchId('batch-001'),
+      status: 'building' as const,
+      currentPosition: 1,
+      itemCount: 1,
+      items: [{ position: 1, issueNumber: 101, status: 'active' as const }],
+      blocker: { owner: 'none' as const },
+      formattedLines: ['Release Batch: batch-001'],
+    };
+
+    const mockGetStatus = {
+      execute: vi.fn().mockResolvedValue(mockStatus),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        getReleaseBatchStatus:
+          mockGetStatus as unknown as import('@ai-sdlc/application').GetReleaseBatchStatus,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['status', '--batch-id', 'batch-001', '--json'], { from: 'user' });
+
+    expect(mockGetStatus.execute).toHaveBeenCalledWith({
+      batchId: ReleaseBatchId('batch-001'),
+    });
+
+    const fullStdout = stdoutOutput.join('');
+    const parsed = JSON.parse(fullStdout);
+    expect(parsed.batchId).toBe('batch-001');
+    expect(parsed.status).toBe('building');
+  });
+
+  it('invokes resumeReleaseBatch and writes status output on success', async () => {
+    const mockResume = {
+      execute: vi.fn().mockResolvedValue({
+        batchId: ReleaseBatchId('batch-001'),
+        batch: {
+          id: ReleaseBatchId('batch-001'),
+          status: 'building',
+        },
+        actions: ['source_drift_integrated', 'status_reconciled'],
+        blocker: { owner: 'none' },
+      }),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        resumeReleaseBatch:
+          mockResume as unknown as import('@ai-sdlc/application').ResumeReleaseBatch,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['resume', '-i', 'batch-001', '--confirm'], { from: 'user' });
+
+    expect(mockResume.execute).toHaveBeenCalledWith({
+      batchId: ReleaseBatchId('batch-001'),
+    });
+
+    const fullStdout = stdoutOutput.join('');
+    expect(fullStdout).toContain('Release batch batch-001 resumed:');
+    expect(fullStdout).toContain('Actions: source_drift_integrated, status_reconciled');
+  });
+
+  it('fails closed and directs operator to runs resume when resumeReleaseBatch encounters RunOwnedBlockerError', async () => {
+    const { RunOwnedBlockerError } = await import('@ai-sdlc/application');
+    const mockResume = {
+      execute: vi
+        .fn()
+        .mockRejectedValue(
+          new RunOwnedBlockerError(
+            'Release batch batch-001 item #102 is blocked by run run-uuid-456 (failed / validation).\nRun recovery must be performed via Run CLI:\n  runs resume --uuid run-uuid-456',
+            'batch-001',
+            'run-uuid-456',
+            102,
+            'failed',
+            'validation',
+          ),
+        ),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        resumeReleaseBatch:
+          mockResume as unknown as import('@ai-sdlc/application').ResumeReleaseBatch,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['resume', '-i', 'batch-001'], { from: 'user' });
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const fullStderr = stderrOutput.join('');
+    expect(fullStderr).toContain(
+      'Release batch batch-001 item #102 is blocked by run run-uuid-456 (failed / validation)',
+    );
+    expect(fullStderr).toContain('runs resume --uuid run-uuid-456');
+  });
+
+  it('supports add-issues alias for remediate subcommand', async () => {
+    const mockRemediate = {
+      execute: vi.fn().mockResolvedValue({
+        id: ReleaseBatchId('batch-001'),
+        status: 'building',
+        items: [{ position: 1, issueNumber: 106 }],
+      }),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        appendRemediationIssues:
+          mockRemediate as unknown as import('@ai-sdlc/application').AppendRemediationIssues,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['add-issues', '-i', 'batch-001', '--issues', '106'], {
+      from: 'user',
+    });
+
+    expect(mockRemediate.execute).toHaveBeenCalledWith({
+      batchId: ReleaseBatchId('batch-001'),
+      issueNumbers: [106],
+    });
+    const fullStdout = stdoutOutput.join('');
+    expect(fullStdout).toContain('Remediation issues appended to release batch batch-001:');
+  });
 });

@@ -281,6 +281,72 @@ The command fails for unknown Runs and for PRs with unverified or blocked review
 
 Use `pnpm --filter @ai-sdlc/api dev runs --help` and the individual subcommand help before scripting these interfaces.
 
+## Release batch orchestration
+
+Release batches coordinate sequential multi-issue execution on an isolated release branch (`release/<batchId>`), followed by candidate SHA locking, manual verification, and atomic promotion to the source branch (typically `main`).
+
+Operators can use either the `releases` alias or `release-batch`. Short flag `-i <batch-id>` is supported across all subcommands.
+
+### Common operator workflows
+
+#### 1. Start a release batch
+```bash
+pnpm --filter @ai-sdlc/api dev releases start \
+  --repo-id <repo-id> \
+  --issues 101,102,103 \
+  --source-branch main
+```
+
+#### 2. Inspect batch status and blocker diagnosis
+```bash
+# Formatted operator diagnostics
+pnpm --filter @ai-sdlc/api dev releases status -i <batch-id>
+
+# Machine-readable JSON output
+pnpm --filter @ai-sdlc/api dev releases status -i <batch-id> --json
+```
+
+`releases status` provides:
+- **Phase & progress**: Current item position, total items, and batch status.
+- **Blocker classification**: Root-cause categorization (`run`, `release`, `github`, `environment`, `none`), including active Run phase/status and required operator command.
+- **Candidate freshness**: Remote release branch vs candidate SHA match, and source branch containment check.
+
+#### 3. Strict recovery separation
+When an issue in a batch fails or requires human review:
+- **Run-owned blockers** (`run_failed`, `run_blocked`, `run_cancelled`, `needs_human_review`): The batch stops advancement while preserving the existing Run UUID. Operators **must** resume the Run directly:
+  ```bash
+  pnpm --filter @ai-sdlc/api dev runs resume --uuid <run-uuid>
+  ```
+  Attempting `releases resume` on a Run-owned blocker fails closed with an error directing the operator to `runs resume`.
+- **Batch-level blockers** (e.g., process restart, transient network, unhandled exceptions): Resume via the release batch command:
+  ```bash
+  pnpm --filter @ai-sdlc/api dev releases resume -i <batch-id> --confirm
+  ```
+
+#### 4. Source branch drift integration
+If `main` advances during batch construction or testing, integrate drift cleanly:
+```bash
+pnpm --filter @ai-sdlc/api dev releases integrate-source -i <batch-id>
+```
+
+#### 5. Candidate approval and promotion
+Once all batch items have merged into the release branch, the coordinator locks an exact `candidateSha` and enters `awaiting_manual_test`:
+```bash
+# Approve the tested candidate SHA
+pnpm --filter @ai-sdlc/api dev releases approve -i <batch-id> --candidate-sha <sha>
+
+# Or reject and remediate with follow-up issues
+pnpm --filter @ai-sdlc/api dev releases reject -i <batch-id> --reason "Flaky end-to-end smoke test"
+pnpm --filter @ai-sdlc/api dev releases add-issues -i <batch-id> --issues 104,105
+
+# Promote approved batch into source branch
+pnpm --filter @ai-sdlc/api dev releases promote -i <batch-id>
+```
+
+### Safety invariants
+- **Exact candidate SHA invariant**: Candidate approval is strictly bound to the exact commit SHA tested. Any remote push to the release branch or advancement of the source branch invalidates approval (`approval_stale` / blocked) and requires re-verification.
+- **Run UUID preservation**: Re-admitting or resuming a failed batch item always reuses the same Run record; new Runs are never spawned for an in-progress item.
+
 ## Dashboard and API context
 
 The dashboard provides:
