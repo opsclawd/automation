@@ -66,6 +66,12 @@ const timeoutsSchema = z.object({
   invocationMaxMinutes: z.number().int().positive(),
 });
 
+const governanceSchema = z
+  .object({
+    protectedPaths: z.array(z.string().trim().min(1)).default([]),
+  })
+  .default({ protectedPaths: [] });
+
 export const schedulerConfigSchema = z
   .strictObject({
     globalConcurrency: z.number().int().positive().default(1),
@@ -290,6 +296,7 @@ export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;
 export const orchestratorConfigSchema = z.strictObject({
   executionPolicy: executionPolicySchema,
   validation: validationSchema,
+  governance: governanceSchema.default({ protectedPaths: [] }),
   phases: phasesSchema,
   timeouts: timeoutsSchema,
   agent: agentSchema.optional(),

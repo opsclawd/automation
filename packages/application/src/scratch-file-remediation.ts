@@ -8,15 +8,76 @@ import {
 
 export const SCRATCH_FILES_ARTIFACT_PATH = '.ai-tmp/scratch-files.json';
 
-export function isProtectedFilePath(filePath: string): boolean {
+/**
+ * Detects governance-sensitive files (component license registries, compliance registries,
+ * security policy exception files) that must not be modified by automated agents to "resolve"
+ * a check or gate without external human authority.
+ *
+ * Test directories, fixture trees, and test helpers are explicitly excluded so legitimate
+ * test doubles/fixtures remain editable.
+ */
+export function isGovernanceFilePath(
+  filePath: string,
+  customProtectedPaths?: readonly string[],
+): boolean {
   const norm = normalizeTaskPath(filePath);
-  return (
+  if (!norm) return false;
+
+  // Custom repository-declared protected governance paths
+  if (customProtectedPaths && customProtectedPaths.length > 0) {
+    for (const p of customProtectedPaths) {
+      const normCustom = normalizeTaskPath(p);
+      if (norm === normCustom || norm.startsWith(`${normCustom}/`)) {
+        return true;
+      }
+    }
+  }
+
+  // Explicitly exclude test fixtures, test helpers, and test directories
+  if (
+    norm.includes('/__tests__/') ||
+    norm.startsWith('__tests__/') ||
+    norm.includes('/test-support/') ||
+    norm.startsWith('test-support/') ||
+    norm.includes('/fixtures/') ||
+    norm.startsWith('fixtures/') ||
+    norm.includes('/test/') ||
+    norm.startsWith('test/') ||
+    norm.includes('/tests/') ||
+    norm.startsWith('tests/')
+  ) {
+    return false;
+  }
+
+  // Convention: component license registries and compliance registries
+  if (
+    norm === 'config/component-license-registry.json' ||
+    norm.endsWith('/component-license-registry.json') ||
+    /(?:^|\/)[^/]*(?:component-license-registry|license-registry|compliance-registry)[^/]*\.json$/i.test(
+      norm,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+export function isProtectedFilePath(
+  filePath: string,
+  customProtectedPaths?: readonly string[],
+): boolean {
+  const norm = normalizeTaskPath(filePath);
+  if (
     norm === '.gitignore' ||
     norm.endsWith('/.gitignore') ||
     norm === '.ai-orchestrator.json' ||
     norm === '.github' ||
     norm.startsWith('.github/')
-  );
+  ) {
+    return true;
+  }
+  return isGovernanceFilePath(filePath, customProtectedPaths);
 }
 
 function isStringArray(value: unknown): value is string[] {

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   isProtectedFilePath,
+  isGovernanceFilePath,
   isAdditiveOrchestratorConfigChange,
   undeclaredUntrackedFiles,
   remediateScratchFiles,
@@ -13,14 +14,53 @@ import {
 import { FakeArtifactStore } from '../test-doubles/fake-artifact-store.js';
 
 describe('scratch-file-remediation', () => {
+  describe('isGovernanceFilePath (#1142)', () => {
+    it('identifies production component license and compliance registry paths', () => {
+      expect(isGovernanceFilePath('config/component-license-registry.json')).toBe(true);
+      expect(isGovernanceFilePath('foo/component-license-registry.json')).toBe(true);
+      expect(isGovernanceFilePath('compliance-registry.json')).toBe(true);
+      expect(isGovernanceFilePath('config/license-registry.json')).toBe(true);
+      expect(isGovernanceFilePath('services/api/data/compliance-registry.json')).toBe(true);
+    });
+
+    it('matches custom configured protected paths', () => {
+      const custom = ['governance/custom-policy.json', 'legal/licenses/'];
+      expect(isGovernanceFilePath('governance/custom-policy.json', custom)).toBe(true);
+      expect(isGovernanceFilePath('legal/licenses/components.json', custom)).toBe(true);
+      expect(isGovernanceFilePath('other/file.json', custom)).toBe(false);
+    });
+
+    it('excludes test fixtures, test helpers, and test directories', () => {
+      expect(
+        isGovernanceFilePath(
+          'packages/infrastructure/src/ffmpeg/test-support/component-license-registry-fixtures.ts',
+        ),
+      ).toBe(false);
+      expect(isGovernanceFilePath('test/fixtures/component-license-registry.json')).toBe(false);
+      expect(isGovernanceFilePath('packages/app/__tests__/component-license-registry.json')).toBe(
+        false,
+      );
+      expect(isGovernanceFilePath('test-support/license-registry.json')).toBe(false);
+      expect(isGovernanceFilePath('fixtures/compliance-registry.json')).toBe(false);
+      expect(isGovernanceFilePath('tests/compliance-registry.json')).toBe(false);
+    });
+
+    it('excludes ordinary source files', () => {
+      expect(isGovernanceFilePath('src/app.ts')).toBe(false);
+      expect(isGovernanceFilePath('packages/application/src/ports.ts')).toBe(false);
+      expect(isGovernanceFilePath('package.json')).toBe(false);
+    });
+  });
+
   describe('isProtectedFilePath', () => {
-    it('identifies protected files including nested .gitignore and .github files', () => {
+    it('identifies protected files including nested .gitignore, .github files, and governance files', () => {
       expect(isProtectedFilePath('.gitignore')).toBe(true);
       expect(isProtectedFilePath('nested/.gitignore')).toBe(true);
       expect(isProtectedFilePath('packages/app/src/.gitignore')).toBe(true);
       expect(isProtectedFilePath('.ai-orchestrator.json')).toBe(true);
       expect(isProtectedFilePath('.github')).toBe(true);
       expect(isProtectedFilePath('.github/workflows/ci.yml')).toBe(true);
+      expect(isProtectedFilePath('config/component-license-registry.json')).toBe(true);
       expect(isProtectedFilePath('src/app.ts')).toBe(false);
       expect(isProtectedFilePath('get_diff.sh')).toBe(false);
       expect(isProtectedFilePath('foo.gitignore')).toBe(false);

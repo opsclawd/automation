@@ -74,7 +74,9 @@ export class CreatePrHandler implements PhaseHandler {
       ctx.executionPolicy === 'legacy';
 
     if (isLeanPolicy && dirtyPaths.length > 0) {
-      const protectedPaths = dirtyPaths.filter((p) => isProtectedFilePath(p));
+      const protectedPaths = dirtyPaths.filter((p) =>
+        isProtectedFilePath(p, ctx.governanceProtectedPaths),
+      );
       const unapprovedProtected: string[] = [];
       for (const p of protectedPaths) {
         if (p === '.ai-orchestrator.json') {
@@ -385,6 +387,46 @@ export class CreatePrHandler implements PhaseHandler {
         'Add new commits to the head branch or stop the Run.',
         writtenArtifacts,
       );
+    }
+
+    // ── Stage 3b: Branch diff inspection — verify no unpermitted protected files were committed ──
+    if (typeof ctx.git.changedFiles === 'function') {
+      try {
+        const changedInBranch = await ctx.git.changedFiles(ctx.cwd, baseBranch);
+        const unapprovedCommittedProtected: string[] = [];
+        for (const p of changedInBranch) {
+          if (isProtectedFilePath(p, ctx.governanceProtectedPaths)) {
+            if (p === '.ai-orchestrator.json') {
+              const [baseContent, headContent] = await Promise.all([
+                ctx.git.fileContent(ctx.cwd, baseBranch, p).catch(() => undefined),
+                ctx.git.fileContent(ctx.cwd, 'HEAD', p).catch(() => undefined),
+              ]);
+              if (
+                baseContent !== undefined &&
+                headContent !== undefined &&
+                isAdditiveOrchestratorConfigChange(baseContent, headContent)
+              ) {
+                continue;
+              }
+            }
+            unapprovedCommittedProtected.push(p);
+          }
+        }
+        if (unapprovedCommittedProtected.length > 0) {
+          const msg = `PR creation blocked by unpermitted protected files committed in branch: ${unapprovedCommittedProtected.join(', ')}`;
+          emit('create_pr.blocked', 'error', msg, { paths: unapprovedCommittedProtected });
+          return this._fail(
+            ctx,
+            'git_failed',
+            msg,
+            false,
+            'Revert unpermitted changes to protected files before creating a PR.',
+            writtenArtifacts,
+          );
+        }
+      } catch {
+        // Non-fatal if changedFiles probe errors; branch ancestry check above guarantees validity
+      }
     }
 
     const title = _firstHeadingOrLine(summary, ctx.issueNumber);

@@ -7,7 +7,12 @@ const outOfScopeReasonsSchema = z
 
 export const fixReviewResultSchema = z.discriminatedUnion('result', [
   z.object({
-    result: z.enum(['done_with_fixes', 'cannot_fix']),
+    result: z.literal('done_with_fixes'),
+    out_of_scope_reasons: outOfScopeReasonsSchema,
+  }),
+  z.object({
+    result: z.literal('cannot_fix'),
+    reason: z.string().trim().optional(),
     out_of_scope_reasons: outOfScopeReasonsSchema,
   }),
   z.object({

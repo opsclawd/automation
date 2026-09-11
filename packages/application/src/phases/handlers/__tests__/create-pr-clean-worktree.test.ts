@@ -247,6 +247,26 @@ describe('CreatePrHandler clean-worktree gate', () => {
       expect(events.some((e) => e.type === 'create_pr.protected_file_permitted')).toBe(true);
     });
 
+    it('blocks PR creation under lean policy if dirty files include a governance file', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+      };
+      git.statusByCwd.set('/tmp/wt', ' M config/component-license-registry.json\n');
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.message).toContain('unpermitted protected files');
+        expect(result.failure.message).toContain('config/component-license-registry.json');
+      }
+      expect(git.commits).toEqual([]);
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+    });
+
     it('still blocks PR creation under lean policy when .ai-orchestrator.json changes something beyond an added validation command', async () => {
       ctx = {
         ...ctx,
@@ -276,6 +296,66 @@ describe('CreatePrHandler clean-worktree gate', () => {
       expect(git.commits).toEqual([]);
       expect(git.pushes).toEqual([]);
       expect(github.createdPrInputs).toEqual([]);
+    });
+  });
+
+  describe('Stage 3b: committed branch diff inspection', () => {
+    it('blocks PR creation when committed branch diff contains a built-in governance file', async () => {
+      git.statusByCwd.set('/tmp/wt', '');
+      git.changedFilesResults.set('main|HEAD', ['config/component-license-registry.json']);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.message).toContain(
+          'PR creation blocked by unpermitted protected files committed in branch: config/component-license-registry.json',
+        );
+      }
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+      expect(
+        events.some(
+          (e) =>
+            e.type === 'create_pr.blocked' &&
+            (e.metadata as { paths?: string[] })?.paths?.includes(
+              'config/component-license-registry.json',
+            ),
+        ),
+      ).toBe(true);
+    });
+
+    it('blocks PR creation when committed branch diff contains a custom governance protected file', async () => {
+      ctx = {
+        ...ctx,
+        governanceProtectedPaths: ['custom/governance/licenses.json'],
+      };
+      git.statusByCwd.set('/tmp/wt', '');
+      git.changedFilesResults.set('main|HEAD', ['custom/governance/licenses.json']);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.message).toContain('custom/governance/licenses.json');
+      }
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+    });
+
+    it('permits PR creation when committed branch diff contains a governance test fixture', async () => {
+      git.statusByCwd.set('/tmp/wt', '');
+      git.changedFilesResults.set('main|HEAD', [
+        'packages/infrastructure/src/ffmpeg/test-support/component-license-registry-fixtures.ts',
+      ]);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.pushes).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
     });
   });
 });
