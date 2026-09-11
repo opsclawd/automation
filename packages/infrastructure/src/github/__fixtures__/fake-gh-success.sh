@@ -7,6 +7,8 @@ set -uo pipefail
 case "$1 ${2:-}" in
   "issue view")
     echo '{"number":7,"title":"T","body":"B","labels":[{"name":"bug"}]}' ;;
+  "repo view")
+    echo '{"viewerPermission":"ADMIN"}' ;;
   "pr view")
     echo '{"number":5,"url":"https://x/pr/5","state":"OPEN","headRefName":"feat-x"}' ;;
   "api graphql")

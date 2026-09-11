@@ -36,6 +36,8 @@ export class FakeGitHubPort implements GitHubPort {
   autoMergeRequests: Array<{ repoFullName: string; prNumber: number; mergeMethod: MergeMethod }> =
     [];
   autoMergeResult: RequestAutoMergeResult = { requested: true };
+  viewerPermissionByRepo = new Map<string, string>();
+  verifyCapabilitiesCalls: string[] = [];
 
   async getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue> {
     const i = this.issues.get(`${repoFullName}/${issueNumber}`);
@@ -170,5 +172,19 @@ export class FakeGitHubPort implements GitHubPort {
       }
     }
     return results;
+  }
+
+  async verifyCapabilities(
+    repoFullName: string,
+  ): Promise<{ canWrite: boolean; permission: string }> {
+    this.verifyCapabilitiesCalls.push(repoFullName);
+    const permission = this.viewerPermissionByRepo.get(repoFullName) ?? 'ADMIN';
+    const writePermissions = new Set(['ADMIN', 'MAINTAIN', 'WRITE']);
+    if (!writePermissions.has(permission)) {
+      throw new Error(
+        `Insufficient GitHub permissions on ${repoFullName}: got '${permission}', required WRITE or ADMIN`,
+      );
+    }
+    return { canWrite: true, permission };
   }
 }

@@ -59,6 +59,7 @@ import {
 import {
   LoadRepositoryForRun,
   StartIssueRun,
+  StartReleaseBatch,
   CancelRun,
   ResumeRun,
   RetryFailedPhase,
@@ -659,6 +660,7 @@ export interface Container {
   targetRepoRoot: string;
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
+  startReleaseBatch: StartReleaseBatch;
   loadRepositoryForRun: LoadRepositoryForRun;
   runAbort: RunAbortPort;
   cancelRun: CancelRun;
@@ -738,6 +740,12 @@ export interface ComposeOptions {
   agentAdapterOverrides?: Partial<Record<import('@ai-sdlc/domain').AgentRuntimeKind, AgentPort>>;
   /** Use a custom validation adapter instead of ProcessValidationAdapter */
   validationPort?: ValidationPort;
+  /** Inject custom GitHubPort (for tests) */
+  githubPort?: import('@ai-sdlc/application/ports').GitHubPort;
+  /** Inject custom GitPort (for tests) */
+  gitPort?: import('@ai-sdlc/application/ports').GitPort;
+  /** Inject custom StartReleaseBatch (for tests) */
+  startReleaseBatch?: StartReleaseBatch;
 }
 
 class AbortRegistry implements RunAbortPort {
@@ -1710,7 +1718,21 @@ export function composeRoot(opts: ComposeOptions): Container {
   const checkMergeReadiness = new CheckMergeReadiness({ prReviewRepo: prReviewRepository });
 
   const abortRegistry = new AbortRegistry();
-  const gitAdapter = new GitWorktreeAdapter(orchestratorExcludePatterns());
+  const gitAdapter = opts.gitPort ?? new GitWorktreeAdapter(orchestratorExcludePatterns());
+  const ghPortForReleaseBatch = opts.githubPort ?? getGhAdapterForSweep();
+  const startReleaseBatch =
+    opts.startReleaseBatch ??
+    new StartReleaseBatch({
+      releaseBatchRepository,
+      runRepository,
+      jobQueue,
+      repositoryPort: registryBackedRepo,
+      git: gitAdapter,
+      github: ghPortForReleaseBatch,
+      eventBus: persistingEventBus,
+      eventRepository,
+      executionPolicy,
+    });
   const worktreeLifecycleAdapter = new WorktreeLifecycleAdapter({
     isPreserved: isProtectedFilePath,
   });
@@ -2724,7 +2746,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               baseBranch,
             });
             if ('seedArtifactExcludes' in gitAdapter) {
-              await (gitAdapter as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
+              await (gitAdapter as unknown as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
             }
             if (!r.startCommitSha) {
               const sha = await gitAdapter.headCommitSha(worktreePath);
@@ -3568,6 +3590,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     targetRepoRoot: targetRoot,
     runValidation,
     startIssueRun,
+    startReleaseBatch,
     loadRepositoryForRun,
     runAbort: abortRegistry,
     cancelRun,

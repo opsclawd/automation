@@ -987,3 +987,35 @@ describe('worktreeFileContent()', () => {
     expect(content).toBeUndefined();
   });
 });
+
+describe('fetch()', () => {
+  it('fetches remote ref without error', async () => {
+    const { repo } = await makeRepoWithRemote();
+    await expect(adapter.fetch(repo, 'origin', 'main')).resolves.toBeUndefined();
+  });
+});
+
+describe('resolveRef()', () => {
+  it('resolves valid ref to full 40-char SHA', async () => {
+    const repo = await makeTempRepo();
+    const headSha = await git(repo, ['rev-parse', 'HEAD']);
+    const resolved = await adapter.resolveRef(repo, 'HEAD');
+    expect(resolved).toBe(headSha);
+  });
+
+  it('returns undefined for non-existent ref', async () => {
+    const repo = await makeTempRepo();
+    const resolved = await adapter.resolveRef(repo, 'refs/heads/nonexistent-ref');
+    expect(resolved).toBeUndefined();
+  });
+});
+
+describe('createBranch()', () => {
+  it('creates local branch at specified startPoint', async () => {
+    const repo = await makeTempRepo();
+    const headSha = await git(repo, ['rev-parse', 'HEAD']);
+    await adapter.createBranch(repo, 'test-new-branch', headSha);
+    const branchSha = await git(repo, ['rev-parse', 'test-new-branch']);
+    expect(branchSha).toBe(headSha);
+  });
+});
