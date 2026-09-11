@@ -670,8 +670,6 @@ EOF
 
 # shellcheck source=lib/result-resolver.sh
 source "${REPO_ROOT}/scripts/lib/result-resolver.sh"
-# shellcheck source=lib/poll-config.sh
-source "${REPO_ROOT}/scripts/lib/poll-config.sh"
 
 # shellcheck source=lib/review-contract.sh
 source "${REPO_ROOT}/scripts/lib/review-contract.sh"
@@ -4936,10 +4934,9 @@ if [[ "$PHASE" == "done" ]]; then
   log "Starting PR review poll loop (background)..."
   PR_NUM_VALUE=$(cat "${ISSUES_DIR}/pr-number.txt" 2>/dev/null || echo "")
   if [[ -n "$PR_NUM_VALUE" && "$PR_NUM_VALUE" != "unknown" ]]; then
-    # Poll count + interval are configurable via phases.postPrReview
-    # (default 3 / 300s when unset or invalid).
-    read -r _PR_REVIEW_MAX_POLLS _PR_REVIEW_POLL_INTERVAL \
-      < <(resolve_pr_review_poll_settings "$_ACTIVE_CONFIG")
+    # Hardcoded legacy defaults (postPrReview config was pruned in #1188).
+    _PR_REVIEW_MAX_POLLS=3
+    _PR_REVIEW_POLL_INTERVAL=300
     log "PR review poll config: maxPolls=${_PR_REVIEW_MAX_POLLS}, intervalSeconds=${_PR_REVIEW_POLL_INTERVAL}"
     AI_RUN_EVENTS_FILE="${AI_RUN_EVENTS_FILE:-}" \
     AI_RUN_DISPLAY_ID="${AI_RUN_DISPLAY_ID:-}" \
