@@ -37,9 +37,25 @@ The GitHub issue remains authoritative. Do not silently violate its Anchored Des
 
 Follow repository architecture and engineering conventions. Avoid unrelated cleanup or refactoring that is not justified by the implementation.
 
-Add or update appropriate tests and run useful targeted validation while working.
+Add or update appropriate tests while working.
 
 Implement the change completely and leave the worktree in a finished state for deterministic validation and independent review.
+
+## VALIDATION SCOPE
+
+Do not re-run the full repository validation suite yourself. A dedicated
+validate/fix-validate phase runs the complete suite immediately after you
+finish, with its own properly-sized per-command timeout - separate from
+your invocation budget. Re-running it yourself risks exceeding your time
+budget before you can write any result at all, which is worse than a
+validation failure: it loses the entire turn, including your implementation.
+
+{{var:SELF_VERIFY_INSTRUCTIONS}}
+
+Do not run integration suites, Testcontainers-based tests, or
+hardware/model-dependent suites (database integration tests, media
+encoding/ML inference suites, GPU-dependent render tests, or any
+repo-specific equivalent) yourself.
 
 ## FINAL ACTION
 

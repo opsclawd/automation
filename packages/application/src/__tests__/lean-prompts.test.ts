@@ -110,6 +110,30 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(rendered).toContain('# Design');
       expect(rendered).toContain('# Plan');
       expect(rendered).toContain('implementation-log.md');
+      expect(rendered).toContain('VALIDATION SCOPE');
+      expect(rendered).toContain('Do not re-run the full repository validation suite yourself');
+      expect(rendered).toMatch(
+        /Limit your own verification to: typecheck and lint for the files you\s+changed, plus only the specific unit test\(s\) that directly cover them/i,
+      );
+      expect(rendered).toContain('Testcontainers-based tests');
+
+      // Render verification - explicit selfVerifyCommands allowlist (#1184)
+      const renderedWithCommands = await renderPrompt(template, {
+        runId: 'run-test',
+        vars: {
+          issue_number: '1103',
+          cwd: '/tmp/wt',
+          SELF_VERIFY_INSTRUCTIONS: formatSelfVerifyInstructions(['pnpm typecheck', 'pnpm lint']),
+        },
+        artifacts,
+      });
+      expect(renderedWithCommands).toContain('Limit your own verification to:');
+      expect(renderedWithCommands).toContain('- `pnpm typecheck`');
+      expect(renderedWithCommands).toContain('- `pnpm lint`');
+      expect(renderedWithCommands).toContain(
+        'plus only the specific unit test(s) that directly cover your changes.',
+      );
+      expect(renderedWithCommands).not.toContain('typecheck and lint for the files you changed');
     });
   });
 
