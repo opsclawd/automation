@@ -166,6 +166,12 @@ describe('ArchitectureReviewHandler', () => {
 
     const persistedReview = await ctx.artifacts.read(ctx.runUuid, 'architecture-review.json');
     expect(JSON.parse(persistedReview).verdict).toBe('APPROVE');
+
+    // architecture-review.md must always be written even when the reviewer
+    // omits the optional review_md field, since it is a declared phase output
+    // and resuming past a completed phase fails hard if it's missing.
+    const persistedReviewMd = await ctx.artifacts.read(ctx.runUuid, 'architecture-review.md');
+    expect(persistedReviewMd.length).toBeGreaterThan(0);
   });
 
   it('invokes targeted planner correction and passes when re-verification succeeds', async () => {

@@ -188,7 +188,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     const totalGapsCount = blockingFindings.length + failedReqs.length + failedWitnesses.length;
 
     if (isApproved && totalGapsCount === 0) {
-      await this.persistReviewArtifacts(ctx, emit, reviewData);
+      await this.persistReviewArtifacts(ctx, emit, reviewData, ledger);
       emit(
         'architecture_review.completed',
         'info',
@@ -202,7 +202,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     }
 
     // 7. Findings identified -> Targeted Planner Correction Pass(es)
-    await this.persistReviewArtifacts(ctx, emit, reviewData);
+    await this.persistReviewArtifacts(ctx, emit, reviewData, ledger);
 
     if (this.maxCorrections === 0) {
       const failureSummary = `Architecture review identified ${totalGapsCount} blocking gap(s) (${blockingFindings.length} finding(s), ${failedReqs.length} failed/omitted requirement(s), ${failedWitnesses.length} failed witness(es)) and maxCorrections is 0`;
@@ -429,7 +429,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
 
       const revalData: ArchitectureReviewResult = revalResult.result;
 
-      await this.persistReviewArtifacts(ctx, emit, revalData);
+      await this.persistReviewArtifacts(ctx, emit, revalData, ledger);
 
       const isRevalApproved = isApprovedArchitectureReview(revalData, ledger);
       const revalBlockingFindings = this.getBlockingFindings(revalData);
@@ -659,6 +659,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
     ctx: PhaseHandlerContext,
     emit: EventEmitter,
     reviewData: ArchitectureReviewResult,
+    ledger: ArchitectureRequirementsLedger,
   ): Promise<void> {
     await ctx.artifacts.write({
       runId: ctx.runUuid,
@@ -670,17 +671,28 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       relativePath: 'architecture-review.json',
     });
 
-    if (reviewData.review_md) {
-      await ctx.artifacts.write({
-        runId: ctx.runUuid,
-        phaseId: this.phase,
-        relativePath: 'architecture-review.md',
-        contents: reviewData.review_md,
-      });
-      emit('artifact.created', 'info', 'artifact created: architecture-review.md', {
-        relativePath: 'architecture-review.md',
-      });
-    }
+    // architecture-review.md is a declared phase output (phase-definitions.ts),
+    // so it must always be written even when the reviewer agent omits the
+    // optional `review_md` field -- otherwise resuming a run past an already
+    // completed architecture-review phase permanently fails with
+    // "output 'architecture-review.md' is missing from the artifact store".
+    const reviewMd =
+      reviewData.review_md ??
+      this.formatFindingsForPrompt(
+        reviewData,
+        this.getBlockingFindings(reviewData),
+        this.getFailedRequirementChecks(reviewData, ledger),
+        this.getFailedWitnessScenarios(reviewData, ledger),
+      );
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: this.phase,
+      relativePath: 'architecture-review.md',
+      contents: reviewMd,
+    });
+    emit('artifact.created', 'info', 'artifact created: architecture-review.md', {
+      relativePath: 'architecture-review.md',
+    });
   }
 
   private fail(
