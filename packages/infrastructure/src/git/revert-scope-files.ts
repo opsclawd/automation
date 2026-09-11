@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises';
 import { resolve, relative, isAbsolute } from 'node:path';
 import { normalizeTaskPath } from '@ai-sdlc/domain';
 import type { RevertScopeFilesInput, RevertScopeFilesResult } from '@ai-sdlc/application/ports';
-import { git } from './git-runner.js';
+import { git, toLiteralGitPathspec } from './git-runner.js';
 
 /**
  * Reverts undeclared scope files/directories to their pre-step baseline state,
@@ -66,7 +66,13 @@ export async function revertScopeFiles(
   const absentBaselinePaths: string[] = [];
 
   for (const path of scopePaths) {
-    const lsTreeOutput = await git(cwd, ['ls-tree', '-z', baseline, '--', path]);
+    const lsTreeOutput = await git(cwd, [
+      'ls-tree',
+      '-z',
+      baseline,
+      '--',
+      toLiteralGitPathspec(path),
+    ]);
     if (lsTreeOutput.length > 0) {
       existingBaselinePaths.push(path);
     } else {
@@ -76,21 +82,27 @@ export async function revertScopeFiles(
 
   // 3. Restore baseline blobs for existing scope paths
   if (existingBaselinePaths.length > 0) {
-    await git(cwd, ['rm', '-rf', '--ignore-unmatch', '--', ...existingBaselinePaths]);
+    await git(cwd, [
+      'rm',
+      '-rf',
+      '--ignore-unmatch',
+      '--',
+      ...existingBaselinePaths.map(toLiteralGitPathspec),
+    ]);
     await git(cwd, [
       'restore',
       `--source=${baseline}`,
       '--staged',
       '--worktree',
       '--',
-      ...existingBaselinePaths,
+      ...existingBaselinePaths.map(toLiteralGitPathspec),
     ]);
   }
 
   // 4. Remove Step-created scope files/directories that did not exist at baseline
   for (const path of absentBaselinePaths) {
     try {
-      await git(cwd, ['rm', '-rf', '--ignore-unmatch', '--', path]);
+      await git(cwd, ['rm', '-rf', '--ignore-unmatch', '--', toLiteralGitPathspec(path)]);
     } catch {
       // Ignore if git rm fails (e.g. not tracked)
     }
@@ -106,7 +118,7 @@ export async function revertScopeFiles(
   ).sort();
 
   if (newlyIgnoredToUntrack.length > 0) {
-    await git(cwd, ['rm', '--cached', '--', ...newlyIgnoredToUntrack]);
+    await git(cwd, ['rm', '--cached', '--', ...newlyIgnoredToUntrack.map(toLiteralGitPathspec)]);
   }
 
   // 6. Amend HEAD with --no-edit and return the amended SHA

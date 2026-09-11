@@ -8,7 +8,7 @@ import type {
   GitRenamePair,
 } from '@ai-sdlc/application/ports';
 import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
-import { git, GitFailedError } from './git-runner.js';
+import { git, GitFailedError, toLiteralGitPathspec } from './git-runner.js';
 
 export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
   private readonly excludePatterns: readonly string[];
@@ -108,7 +108,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
   }
 
   async add(cwd: string, files: string[]): Promise<void> {
-    await git(cwd, ['add', '--', ...files]);
+    await git(cwd, ['add', '--', ...files.map(toLiteralGitPathspec)]);
   }
 
   async addAll(cwd: string): Promise<void> {
@@ -118,7 +118,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
   async commit(cwd: string, message: string, files?: readonly string[]): Promise<string> {
     const args = ['commit', '-F', '-'];
     if (files && files.length > 0) {
-      args.push('--', ...files);
+      args.push('--', ...files.map(toLiteralGitPathspec));
     }
     try {
       await git(cwd, args, undefined, message);
@@ -397,7 +397,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
 
       if (baseBranch && committedSet.has(artifact)) {
         try {
-          await git(cwd, ['rm', '-rf', '--', artifact]);
+          await git(cwd, ['rm', '-rf', '--', toLiteralGitPathspec(artifact)]);
           removedCommittedArtifacts.push(artifact);
         } catch {
           // If git rm fails, ensure filesystem cleanup
@@ -405,7 +405,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
         }
       } else if (stagedSet.has(artifact)) {
         try {
-          await git(cwd, ['reset', 'HEAD', '--', artifact]);
+          await git(cwd, ['reset', 'HEAD', '--', toLiteralGitPathspec(artifact)]);
         } catch {
           // ignore
         }
@@ -429,7 +429,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
           '-m',
           'fix: remove orchestrator artifacts that were committed by agent',
           '--',
-          ...removedCommittedArtifacts,
+          ...removedCommittedArtifacts.map(toLiteralGitPathspec),
         ]);
       } catch (err) {
         console.warn(

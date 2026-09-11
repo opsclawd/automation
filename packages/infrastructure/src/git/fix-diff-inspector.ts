@@ -3,7 +3,7 @@ import type {
   FixDiffInspectorInput,
   FixDiffInspectorPort,
 } from '@ai-sdlc/application/ports';
-import { git } from './git-runner.js';
+import { git, toLiteralGitPathspec } from './git-runner.js';
 
 const DEFAULT_PROXIMITY_WINDOW = 5;
 
@@ -112,7 +112,7 @@ async function accumulatedLineDelta(
       '--no-color',
       `${original}..${running}`,
       '--',
-      path,
+      toLiteralGitPathspec(path),
     ]);
     const hunks = parseUnifiedDiff(out);
     for (const h of hunks) {
@@ -163,7 +163,7 @@ export function createFixDiffInspector(
         '--no-color',
         `${input.runningStartSha}..${input.fixCommitSha}`,
         '--',
-        input.path,
+        toLiteralGitPathspec(input.path),
       ]);
     } catch {
       // Path is not tracked in either side; treat as untouched.

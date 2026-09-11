@@ -2,7 +2,7 @@ import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
-import { git, GitFailedError } from '../git-runner.js';
+import { git, GitFailedError, toLiteralGitPathspec } from '../git-runner.js';
 import { getTempDirs, clearTempDirs, makeTempRepo } from './helpers.js';
 
 afterEach(async () => {
@@ -95,5 +95,46 @@ describe('helper functions', () => {
     expect(getTempDirs()).toContain(repoPath);
     clearTempDirs();
     expect(getTempDirs()).toEqual([]);
+  });
+});
+
+describe('toLiteralGitPathspec()', () => {
+  it('prefixes filenames starting with colon (:) with ./ to disable pathspec magic', () => {
+    expect(toLiteralGitPathspec(':memory:.ses')).toBe('./:memory:.ses');
+    expect(toLiteralGitPathspec(':!weird.txt')).toBe('./:!weird.txt');
+    expect(toLiteralGitPathspec(':(literal)file.txt')).toBe('./:(literal)file.txt');
+  });
+
+  it('prefixes paths starting with other magic characters (! and ^) with ./', () => {
+    expect(toLiteralGitPathspec('^caret.txt')).toBe('./^caret.txt');
+    expect(toLiteralGitPathspec('!exclude.txt')).toBe('./!exclude.txt');
+  });
+
+  it('prefixes standard relative file paths with ./', () => {
+    expect(toLiteralGitPathspec('src/index.ts')).toBe('./src/index.ts');
+    expect(toLiteralGitPathspec('README.md')).toBe('./README.md');
+    expect(toLiteralGitPathspec('nested/dir/sub/file.json')).toBe('./nested/dir/sub/file.json');
+    expect(toLiteralGitPathspec('nested/:memory:.ses')).toBe('./nested/:memory:.ses');
+  });
+
+  it('preserves paths that already start with ./ or ../', () => {
+    expect(toLiteralGitPathspec('./already/prefixed.ts')).toBe('./already/prefixed.ts');
+    expect(toLiteralGitPathspec('./:memory:.ses')).toBe('./:memory:.ses');
+    expect(toLiteralGitPathspec('../parent/file.ts')).toBe('../parent/file.ts');
+  });
+
+  it('preserves absolute paths starting with /', () => {
+    expect(toLiteralGitPathspec('/tmp/repo/file.txt')).toBe('/tmp/repo/file.txt');
+  });
+
+  it('preserves empty strings and single/double dot references', () => {
+    expect(toLiteralGitPathspec('')).toBe('');
+    expect(toLiteralGitPathspec('.')).toBe('.');
+    expect(toLiteralGitPathspec('..')).toBe('..');
+  });
+
+  it('preserves Windows-style relative prefixes', () => {
+    expect(toLiteralGitPathspec('.\\foo.ts')).toBe('.\\foo.ts');
+    expect(toLiteralGitPathspec('..\\parent.ts')).toBe('..\\parent.ts');
   });
 });

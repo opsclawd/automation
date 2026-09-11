@@ -27,6 +27,7 @@ import {
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { toLiteralGitPathspec } from '../git/git-runner.js';
 
 const NOISE_DIRS = new Set([
   'node_modules',
@@ -107,10 +108,14 @@ export function findMisplacedCandidate(
             // skip git-tracked files (only untracked/ignored files are candidates)
             try {
               const gitPath = relativePath.replace(/\\/g, '/');
-              execFileSync('git', ['ls-files', '--error-unmatch', '--', gitPath], {
-                cwd: searchRoot,
-                stdio: 'pipe',
-              });
+              execFileSync(
+                'git',
+                ['ls-files', '--error-unmatch', '--', toLiteralGitPathspec(gitPath)],
+                {
+                  cwd: searchRoot,
+                  stdio: 'pipe',
+                },
+              );
               // exit 0 means tracked → skip
               continue;
             } catch (err) {
@@ -259,10 +264,14 @@ export function remediateMissingArtifacts(opts: RemediateOptions): RemediateResu
       // Tracked files are left in place — they're already in git history.
       if (!copyOnly) {
         try {
-          execFileSync('git', ['ls-files', '--error-unmatch', '--', srcName], {
-            cwd: searchRoot,
-            stdio: 'pipe',
-          });
+          execFileSync(
+            'git',
+            ['ls-files', '--error-unmatch', '--', toLiteralGitPathspec(srcName)],
+            {
+              cwd: searchRoot,
+              stdio: 'pipe',
+            },
+          );
         } catch (gitErr) {
           if ((gitErr as { status?: number }).status === 1) {
             try {

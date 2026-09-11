@@ -8,7 +8,7 @@ import type {
   ExecuteWorktreeLifecyclePlanInput,
   WorktreeLifecycleExecutionResult,
 } from '@ai-sdlc/application/ports';
-import { git } from './git-runner.js';
+import { git, toLiteralGitPathspec } from './git-runner.js';
 
 function globPatternToRegExp(pattern: string): RegExp {
   const regexString =
@@ -64,7 +64,7 @@ async function checkoutFilesChunked(cwd: string, files: string[]): Promise<void>
   const uniqueCheckout = Array.from(new Set(files)).sort();
   for (let i = 0; i < uniqueCheckout.length; i += CHECKOUT_CHUNK_SIZE) {
     const chunk = uniqueCheckout.slice(i, i + CHECKOUT_CHUNK_SIZE);
-    await git(cwd, ['checkout', 'HEAD', '--', ...chunk]);
+    await git(cwd, ['checkout', 'HEAD', '--', ...chunk.map(toLiteralGitPathspec)]);
   }
 }
 

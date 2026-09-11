@@ -83,4 +83,17 @@ describe('GitWorktreeAdapter.commit() pathspec', () => {
 
     expect(sha).toBe(initialHead);
   });
+
+  it('commits a file whose name begins with pathspec-magic character colon (:)', async () => {
+    const repo = await makeTempRepo();
+    const adapter = new GitWorktreeAdapter();
+    await writeFile(join(repo, ':memory:.ses'), 'sqlite session litter\n');
+    await writeFile(join(repo, 'other.txt'), 'other content\n');
+    await adapter.add(repo, [':memory:.ses', 'other.txt']);
+
+    const sha = await commit(adapter, repo, [':memory:.ses']);
+
+    expect(await commitPaths(repo, sha)).toEqual([':memory:.ses']);
+    expect(await git(repo, ['diff', '--cached', '--name-only'])).toBe('other.txt');
+  });
 });
