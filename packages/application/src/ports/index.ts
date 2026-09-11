@@ -84,6 +84,7 @@ export type {
 export type { LoopRepositoryPort } from './loop-repository-port.js';
 export type { StepRepositoryPort } from './step-repository-port.js';
 export type { PhaseRepositoryPort } from './phase-repository-port.js';
+export type { ReleaseBatchRepositoryPort } from './release-batch-repository-port.js';
 
 // Run-repository port contract still lives in the legacy monolithic ports.ts.
 // Re-exported here so infrastructure can depend on it via the `ports/` barrel

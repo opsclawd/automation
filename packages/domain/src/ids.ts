@@ -48,3 +48,9 @@ export function IssueNumber(v: number): IssueNumber {
   }
   return v as IssueNumber;
 }
+
+export type ReleaseBatchId = string & { readonly __brand: 'ReleaseBatchId' };
+export function ReleaseBatchId(v: string): ReleaseBatchId {
+  nonEmpty('ReleaseBatchId', v);
+  return v as ReleaseBatchId;
+}

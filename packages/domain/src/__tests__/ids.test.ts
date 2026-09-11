@@ -7,6 +7,7 @@ import {
   JobId,
   WorkerId,
   AgentInvocationId,
+  ReleaseBatchId,
 } from '../ids.js';
 
 describe('branded ids', () => {
@@ -32,9 +33,11 @@ describe('branded ids', () => {
     expect(RepositoryId('r1')).toBe('r1');
     expect(JobId('j1')).toBe('j1');
     expect(WorkerId('w1')).toBe('w1');
+    expect(ReleaseBatchId('rb-1')).toBe('rb-1');
     expect(() => RepositoryId('')).toThrow();
     expect(() => JobId('')).toThrow();
     expect(() => WorkerId('')).toThrow();
+    expect(() => ReleaseBatchId('')).toThrow();
   });
 });
 
