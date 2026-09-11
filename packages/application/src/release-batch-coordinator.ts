@@ -15,11 +15,15 @@ import {
   createJob,
   admitItem,
   unblockItem,
+  unblockBatch,
   attachItemPr,
   markItemWaitingMerge,
   markItemMerged,
   markItemBlocked,
   markBatchBlocked,
+  transitionToAwaitingManualTest,
+  recordPromotionCommit,
+  completeBatch,
   ReleaseBatchStateError,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
@@ -46,7 +50,11 @@ export type ReconciliationAction =
   | 'job_recovered'
   | 'run_adopted'
   | 'item_merged'
-  | 'maintenance_run';
+  | 'maintenance_run'
+  | 'candidate_captured'
+  | 'source_drift_detected'
+  | 'source_drift_integrated'
+  | 'promotion_completed';
 
 export interface ReconcileBatchResult {
   batchId: ReleaseBatchId;
@@ -114,19 +122,333 @@ export class ReleaseBatchCoordinator {
     const unmergedItems = batch.items.filter((i) => i.status !== 'merged');
 
     if (unmergedItems.length === 0) {
-      // All items in the batch are merged: complete build-stage sequencing
-      actions.push('build_completed');
-      this.publishEvent(batch, {
-        type: 'release_batch.build_stage_completed',
-        level: 'info',
-        message: `release-batch ${batch.id} completed build stage: all ${batch.items.length} items merged`,
-        timestamp: now,
-        metadata: {
-          releaseBatchId: batch.id,
-          totalItems: batch.items.length,
-          positions: batch.items.map((i) => i.position),
-        },
-      });
+      // If batch is still in building status, complete build stage and attempt candidate capture
+      if (batch.status === 'building') {
+        actions.push('build_completed');
+        this.publishEvent(batch, {
+          type: 'release_batch.build_stage_completed',
+          level: 'info',
+          message: `release-batch ${batch.id} completed build stage: all ${batch.items.length} items merged`,
+          timestamp: now,
+          metadata: {
+            releaseBatchId: batch.id,
+            totalItems: batch.items.length,
+            positions: batch.items.map((i) => i.position),
+          },
+        });
+
+        // Run final item maintenance if maintenanceService is configured
+        if (this.deps.maintenanceService && batch.items.length > 0) {
+          const repo = this.deps.repositoryPort.findById(batch.repoId);
+          const finalItem = batch.items[batch.items.length - 1];
+          if (repo && finalItem) {
+            const mResult = await this.deps.maintenanceService.execute({
+              repoLocalBasePath: repo.localBasePath,
+              completedIssueNumber: finalItem.issueNumber,
+              completedRunUuid: finalItem.runUuid,
+            });
+            if (!mResult.success) {
+              const reason = mResult.reason ?? 'environment_unhealthy';
+              batch = markBatchBlocked(batch, reason);
+              this.deps.releaseBatchRepository.update(batch);
+              actions.push('blocked');
+              return {
+                batchId: batch.id,
+                batchStatus: batch.status,
+                currentPosition: batch.currentPosition,
+                actions,
+                batch,
+              };
+            }
+            actions.push('maintenance_run');
+          }
+        }
+
+        // Candidate capture: fetch origin/<releaseBranch> and origin/<sourceBranch>
+        const repo = this.deps.repositoryPort.findById(batch.repoId);
+        if (this.deps.git && repo) {
+          try {
+            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
+            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
+
+            const remoteReleaseSha = await this.deps.git.resolveRef(
+              repo.localBasePath,
+              `origin/${batch.releaseBranch}`,
+            );
+            const remoteSourceSha = await this.deps.git.resolveRef(
+              repo.localBasePath,
+              `origin/${batch.sourceBranch}`,
+            );
+
+            if (remoteReleaseSha && remoteSourceSha) {
+              const isSourceContained = await this.deps.git.isAncestor(
+                repo.localBasePath,
+                remoteSourceSha,
+                remoteReleaseSha,
+              );
+
+              if (!isSourceContained) {
+                // Source branch has advanced beyond what the release branch contains!
+                batch = markBatchBlocked(batch, 'source_branch_advanced');
+                this.deps.releaseBatchRepository.update(batch);
+                actions.push('blocked', 'source_drift_detected');
+
+                this.publishEvent(batch, {
+                  type: 'release_batch.source_drift_detected',
+                  level: 'warn',
+                  message: `release-batch ${batch.id} source branch ${batch.sourceBranch} advanced beyond release candidate`,
+                  timestamp: now,
+                  metadata: {
+                    releaseBatchId: batch.id,
+                    sourceBranch: batch.sourceBranch,
+                    remoteSourceSha,
+                    remoteReleaseSha,
+                  },
+                });
+
+                return {
+                  batchId: batch.id,
+                  batchStatus: batch.status,
+                  currentPosition: batch.currentPosition,
+                  actions,
+                  batch,
+                };
+              }
+
+              // Source is contained! Capture candidate
+              const candidateTreeSha = await this.deps.git.treeSha(
+                repo.localBasePath,
+                remoteReleaseSha,
+              );
+              batch = transitionToAwaitingManualTest(batch, remoteReleaseSha, candidateTreeSha);
+              this.deps.releaseBatchRepository.update(batch);
+              actions.push('candidate_captured');
+
+              this.publishEvent(batch, {
+                type: 'release_batch.candidate_captured',
+                level: 'info',
+                message: `release-batch ${batch.id} captured release candidate ${remoteReleaseSha}, awaiting manual test`,
+                timestamp: now,
+                metadata: {
+                  releaseBatchId: batch.id,
+                  candidateSha: remoteReleaseSha,
+                  candidateTreeSha,
+                },
+              });
+
+              return {
+                batchId: batch.id,
+                batchStatus: batch.status,
+                currentPosition: batch.currentPosition,
+                actions,
+                batch,
+              };
+            }
+          } catch (err) {
+            this.deps.logger?.warn?.(
+              `Failed during candidate capture for batch ${batch.id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
+        return {
+          batchId: batch.id,
+          batchStatus: batch.status,
+          currentPosition: batch.currentPosition,
+          actions,
+          batch,
+        };
+      }
+
+      // If batch is blocked on source_branch_advanced, check if it can be unblocked (source integrated)
+      if (batch.status === 'blocked' && batch.blockedReason === 'source_branch_advanced') {
+        const repo = this.deps.repositoryPort.findById(batch.repoId);
+        if (this.deps.git && repo) {
+          try {
+            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
+            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
+            const remoteReleaseSha = await this.deps.git.resolveRef(
+              repo.localBasePath,
+              `origin/${batch.releaseBranch}`,
+            );
+            const remoteSourceSha = await this.deps.git.resolveRef(
+              repo.localBasePath,
+              `origin/${batch.sourceBranch}`,
+            );
+            if (remoteReleaseSha && remoteSourceSha) {
+              const isSourceContained = await this.deps.git.isAncestor(
+                repo.localBasePath,
+                remoteSourceSha,
+                remoteReleaseSha,
+              );
+              if (isSourceContained) {
+                batch = unblockBatch(batch);
+                const candidateTreeSha = await this.deps.git.treeSha(
+                  repo.localBasePath,
+                  remoteReleaseSha,
+                );
+                batch = transitionToAwaitingManualTest(batch, remoteReleaseSha, candidateTreeSha);
+                this.deps.releaseBatchRepository.update(batch);
+                actions.push('unblocked', 'candidate_captured');
+                return {
+                  batchId: batch.id,
+                  batchStatus: batch.status,
+                  currentPosition: batch.currentPosition,
+                  actions,
+                  batch,
+                };
+              }
+            }
+          } catch (err) {
+            this.deps.logger?.warn?.(`Failed re-checking source drift: ${err}`);
+          }
+        }
+      }
+
+      // If batch is awaiting_manual_test, check safety invariant (branch movement)
+      if (batch.status === 'awaiting_manual_test') {
+        const repo = this.deps.repositoryPort.findById(batch.repoId);
+        if (this.deps.git && repo && batch.candidateSha) {
+          try {
+            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
+            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
+            const remoteReleaseSha = await this.deps.git.resolveRef(
+              repo.localBasePath,
+              `origin/${batch.releaseBranch}`,
+            );
+            const remoteSourceSha = await this.deps.git.resolveRef(
+              repo.localBasePath,
+              `origin/${batch.sourceBranch}`,
+            );
+
+            if (remoteReleaseSha && remoteReleaseSha !== batch.candidateSha) {
+              batch = markBatchBlocked(batch, 'release_branch_drift');
+              this.deps.releaseBatchRepository.update(batch);
+              actions.push('blocked');
+              return {
+                batchId: batch.id,
+                batchStatus: batch.status,
+                currentPosition: batch.currentPosition,
+                actions,
+                batch,
+              };
+            }
+
+            if (remoteSourceSha) {
+              const isContained = await this.deps.git.isAncestor(
+                repo.localBasePath,
+                remoteSourceSha,
+                batch.candidateSha,
+              );
+              if (!isContained) {
+                batch = markBatchBlocked(batch, 'source_branch_advanced');
+                this.deps.releaseBatchRepository.update(batch);
+                actions.push('blocked', 'source_drift_detected');
+                return {
+                  batchId: batch.id,
+                  batchStatus: batch.status,
+                  currentPosition: batch.currentPosition,
+                  actions,
+                  batch,
+                };
+              }
+            }
+          } catch (err) {
+            this.deps.logger?.warn?.(`Failed drift check in awaiting_manual_test: ${err}`);
+          }
+        }
+      }
+
+      // If batch is promoting, check promotion PR merge status
+      if (batch.status === 'promoting' && batch.promotionPrNumber && this.deps.github) {
+        const repo = this.deps.repositoryPort.findById(batch.repoId);
+        if (repo) {
+          try {
+            const readiness = await this.deps.github.getPrMergeReadiness(
+              repo.fullName,
+              batch.promotionPrNumber,
+            );
+            if (readiness.isMerged || readiness.state === 'merged') {
+              let promoSha = readiness.mergeCommitSha;
+              if (this.deps.git) {
+                await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
+                const sourceSha = await this.deps.git.resolveRef(
+                  repo.localBasePath,
+                  `origin/${batch.sourceBranch}`,
+                );
+                if (sourceSha) {
+                  if (!promoSha) promoSha = sourceSha;
+
+                  // Verify ancestry or tree equivalence
+                  const isAncestor = await this.deps.git.isAncestor(
+                    repo.localBasePath,
+                    batch.approvedCandidateSha!,
+                    sourceSha,
+                  );
+                  if (!isAncestor && batch.candidateTreeSha) {
+                    const sourceTreeSha = await this.deps.git.treeSha(
+                      repo.localBasePath,
+                      sourceSha,
+                    );
+                    if (sourceTreeSha !== batch.candidateTreeSha) {
+                      batch = markBatchBlocked(batch, 'promotion_tree_mismatch');
+                      this.deps.releaseBatchRepository.update(batch);
+                      actions.push('blocked');
+                      return {
+                        batchId: batch.id,
+                        batchStatus: batch.status,
+                        currentPosition: batch.currentPosition,
+                        actions,
+                        batch,
+                      };
+                    }
+                  }
+                }
+              }
+              if (promoSha) {
+                batch = recordPromotionCommit(batch, promoSha);
+              }
+              batch = completeBatch(batch, now);
+              this.deps.releaseBatchRepository.update(batch);
+              actions.push('promotion_completed');
+
+              this.publishEvent(batch, {
+                type: 'release_batch.completed',
+                level: 'info',
+                message: `release-batch ${batch.id} promoted and completed successfully (${promoSha ?? 'merged'})`,
+                timestamp: now,
+                metadata: {
+                  releaseBatchId: batch.id,
+                  promotionCommitSha: promoSha,
+                  promotionPrNumber: batch.promotionPrNumber,
+                },
+              });
+
+              return {
+                batchId: batch.id,
+                batchStatus: batch.status,
+                currentPosition: batch.currentPosition,
+                actions,
+                batch,
+              };
+            } else if (readiness.ciStatus === 'failed') {
+              const reason = `promotion_ci_failed: PR #${batch.promotionPrNumber} CI checks failed`;
+              batch = markBatchBlocked(batch, reason);
+              this.deps.releaseBatchRepository.update(batch);
+              actions.push('blocked');
+              return {
+                batchId: batch.id,
+                batchStatus: batch.status,
+                currentPosition: batch.currentPosition,
+                actions,
+                batch,
+              };
+            }
+          } catch (err) {
+            this.deps.logger?.warn?.(`Failed checking promotion PR merge status: ${err}`);
+          }
+        }
+      }
 
       return {
         batchId: batch.id,
@@ -1081,5 +1403,97 @@ export class ReleaseBatchCoordinator {
         this.deps.logger?.error?.(`Failed to record event for release batch ${batch.id}`, err);
       }
     }
+  }
+
+  async integrateSourceBranch(batchId: ReleaseBatchId): Promise<{
+    success: boolean;
+    newReleaseSha?: string;
+    error?: string;
+  }> {
+    const now = (this.deps.now ?? (() => new Date()))();
+    let batch = this.deps.releaseBatchRepository.findById(batchId);
+    if (!batch) {
+      throw new ReleaseBatchStateError(`ReleaseBatch ${batchId} not found`);
+    }
+
+    const repo = this.deps.repositoryPort.findById(batch.repoId);
+    if (!repo || !this.deps.git) {
+      return { success: false, error: 'Git or repository not available' };
+    }
+
+    await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
+    await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
+
+    const remoteSourceSha = await this.deps.git.resolveRef(
+      repo.localBasePath,
+      `origin/${batch.sourceBranch}`,
+    );
+    const remoteReleaseSha = await this.deps.git.resolveRef(
+      repo.localBasePath,
+      `origin/${batch.releaseBranch}`,
+    );
+
+    if (!remoteSourceSha || !remoteReleaseSha) {
+      return { success: false, error: 'Could not resolve source or release branch ref' };
+    }
+
+    const isContained = await this.deps.git.isAncestor(
+      repo.localBasePath,
+      remoteSourceSha,
+      remoteReleaseSha,
+    );
+
+    if (isContained) {
+      if (batch.status === 'blocked' && batch.blockedReason === 'source_branch_advanced') {
+        batch = unblockBatch(batch);
+        this.deps.releaseBatchRepository.update(batch);
+        await this.reconcile(batch.id);
+      }
+      return { success: true, newReleaseSha: remoteReleaseSha };
+    }
+
+    const mergeResult = await this.deps.git.mergeBranch(
+      repo.localBasePath,
+      `origin/${batch.sourceBranch}`,
+      `Merge remote-tracking branch 'origin/${batch.sourceBranch}' into ${batch.releaseBranch}`,
+    );
+
+    if (!mergeResult.success) {
+      return {
+        success: false,
+        error: mergeResult.error ?? 'Merge conflict integrating source branch into release branch',
+      };
+    }
+
+    await this.deps.git.push({
+      cwd: repo.localBasePath,
+      branch: batch.releaseBranch,
+      remote: 'origin',
+    });
+
+    const updatedReleaseSha =
+      (await this.deps.git.resolveRef(repo.localBasePath, `origin/${batch.releaseBranch}`)) ??
+      remoteReleaseSha;
+
+    this.publishEvent(batch, {
+      type: 'release_batch.source_drift_integrated',
+      level: 'info',
+      message: `release-batch ${batch.id} integrated source branch drift into ${batch.releaseBranch} (${updatedReleaseSha})`,
+      timestamp: now,
+      metadata: {
+        releaseBatchId: batch.id,
+        releaseBranch: batch.releaseBranch,
+        newReleaseSha: updatedReleaseSha,
+      },
+    });
+
+    if (batch.status === 'blocked' && batch.blockedReason === 'source_branch_advanced') {
+      batch = unblockBatch(batch);
+      this.deps.releaseBatchRepository.update(batch);
+    }
+
+    await this.reconcile(batch.id);
+
+    return { success: true, newReleaseSha: updatedReleaseSha };
   }
 }

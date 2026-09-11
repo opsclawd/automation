@@ -242,4 +242,27 @@ export class FakeGitPort implements GitPort {
     branches.add(branch);
     this.headByCwd.set(cwd, startPoint);
   }
+
+  treeShaResults = new Map<string, string>();
+  mergeBranchCalls: Array<{ cwd: string; sourceRef: string; message: string }> = [];
+  mergeBranchResults = new Map<string, { success: boolean; conflict?: boolean; error?: string }>();
+
+  async treeSha(cwd: string, ref: string): Promise<string | undefined> {
+    const key = `${cwd}:${ref}`;
+    if (this.treeShaResults.has(key)) return this.treeShaResults.get(key);
+    if (this.treeShaResults.has(ref)) return this.treeShaResults.get(ref);
+    return `tree-${ref}`;
+  }
+
+  async mergeBranch(
+    cwd: string,
+    sourceRef: string,
+    message: string,
+  ): Promise<{ success: boolean; conflict?: boolean; error?: string }> {
+    this.mergeBranchCalls.push({ cwd, sourceRef, message });
+    const key = `${cwd}:${sourceRef}`;
+    if (this.mergeBranchResults.has(key)) return this.mergeBranchResults.get(key)!;
+    if (this.mergeBranchResults.has(sourceRef)) return this.mergeBranchResults.get(sourceRef)!;
+    return { success: true };
+  }
 }

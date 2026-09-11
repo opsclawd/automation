@@ -23,6 +23,9 @@ interface ReleaseBatchRow {
   current_position: number;
   candidate_sha: string | null;
   approved_candidate_sha: string | null;
+  candidate_tree_sha: string | null;
+  promotion_commit_sha: string | null;
+  promotion_pr_number: number | null;
   blocked_reason: string | null;
   created_at: string;
   completed_at: string | null;
@@ -73,6 +76,9 @@ function rowToReleaseBatch(r: ReleaseBatchRow, items: ReleaseBatchItem[]): Relea
     ...(r.approved_candidate_sha !== null
       ? { approvedCandidateSha: r.approved_candidate_sha }
       : {}),
+    ...(r.candidate_tree_sha !== null ? { candidateTreeSha: r.candidate_tree_sha } : {}),
+    ...(r.promotion_commit_sha !== null ? { promotionCommitSha: r.promotion_commit_sha } : {}),
+    ...(r.promotion_pr_number !== null ? { promotionPrNumber: r.promotion_pr_number } : {}),
     ...(r.blocked_reason !== null
       ? { blockedReason: r.blocked_reason as ReleaseBatchBlockedReason }
       : {}),
@@ -91,10 +97,12 @@ export class ReleaseBatchRepository implements ReleaseBatchRepositoryPort {
         .prepare(
           `INSERT INTO release_batches
              (id, repo_id, source_branch, source_start_sha, release_branch, status, current_position,
-              candidate_sha, approved_candidate_sha, blocked_reason, created_at, completed_at)
+              candidate_sha, approved_candidate_sha, candidate_tree_sha, promotion_commit_sha, promotion_pr_number,
+              blocked_reason, created_at, completed_at)
            VALUES
              (@id, @repo_id, @source_branch, @source_start_sha, @release_branch, @status, @current_position,
-              @candidate_sha, @approved_candidate_sha, @blocked_reason, @created_at, @completed_at)`,
+              @candidate_sha, @approved_candidate_sha, @candidate_tree_sha, @promotion_commit_sha, @promotion_pr_number,
+              @blocked_reason, @created_at, @completed_at)`,
         )
         .run({
           id: b.id,
@@ -106,6 +114,9 @@ export class ReleaseBatchRepository implements ReleaseBatchRepositoryPort {
           current_position: b.currentPosition,
           candidate_sha: b.candidateSha ?? null,
           approved_candidate_sha: b.approvedCandidateSha ?? null,
+          candidate_tree_sha: b.candidateTreeSha ?? null,
+          promotion_commit_sha: b.promotionCommitSha ?? null,
+          promotion_pr_number: b.promotionPrNumber ?? null,
           blocked_reason: b.blockedReason ?? null,
           created_at: b.createdAt.toISOString(),
           completed_at: b.completedAt ? b.completedAt.toISOString() : null,
@@ -147,9 +158,9 @@ export class ReleaseBatchRepository implements ReleaseBatchRepositoryPort {
         throw new Error(`cannot update release batch ${b.id}: not found`);
       }
 
-      if (existing.items.length !== b.items.length) {
+      if (b.items.length < existing.items.length) {
         throw new ReleaseBatchStateError(
-          `cannot update release batch ${b.id}: item count cannot change (expected ${existing.items.length}, got ${b.items.length})`,
+          `cannot update release batch ${b.id}: item count cannot decrease (expected at least ${existing.items.length}, got ${b.items.length})`,
         );
       }
 
@@ -187,6 +198,9 @@ export class ReleaseBatchRepository implements ReleaseBatchRepositoryPort {
              current_position = @current_position,
              candidate_sha = @candidate_sha,
              approved_candidate_sha = @approved_candidate_sha,
+             candidate_tree_sha = @candidate_tree_sha,
+             promotion_commit_sha = @promotion_commit_sha,
+             promotion_pr_number = @promotion_pr_number,
              blocked_reason = @blocked_reason,
              completed_at = @completed_at
            WHERE id = @id`,
@@ -197,6 +211,9 @@ export class ReleaseBatchRepository implements ReleaseBatchRepositoryPort {
           current_position: b.currentPosition,
           candidate_sha: b.candidateSha ?? null,
           approved_candidate_sha: b.approvedCandidateSha ?? null,
+          candidate_tree_sha: b.candidateTreeSha ?? null,
+          promotion_commit_sha: b.promotionCommitSha ?? null,
+          promotion_pr_number: b.promotionPrNumber ?? null,
           blocked_reason: b.blockedReason ?? null,
           completed_at: b.completedAt ? b.completedAt.toISOString() : null,
         });
@@ -214,19 +231,45 @@ export class ReleaseBatchRepository implements ReleaseBatchRepositoryPort {
          WHERE release_batch_id = @release_batch_id AND position = @position`,
       );
 
-      for (const item of b.items) {
-        updateItem.run({
-          release_batch_id: b.id,
-          position: item.position,
-          status: item.status,
-          run_uuid: item.runUuid ?? null,
-          pr_number: item.prNumber ?? null,
-          base_sha: item.baseSha ?? null,
-          merged_commit_sha: item.mergedCommitSha ?? null,
-          blocked_reason: item.blockedReason ?? null,
-          started_at: item.startedAt ? item.startedAt.toISOString() : null,
-          completed_at: item.completedAt ? item.completedAt.toISOString() : null,
-        });
+      const insertItem = this.db.prepare(
+        `INSERT INTO release_batch_items
+           (release_batch_id, position, issue_number, status, run_uuid, pr_number, base_sha,
+            merged_commit_sha, blocked_reason, started_at, completed_at)
+         VALUES
+           (@release_batch_id, @position, @issue_number, @status, @run_uuid, @pr_number, @base_sha,
+            @merged_commit_sha, @blocked_reason, @started_at, @completed_at)`,
+      );
+
+      for (let i = 0; i < b.items.length; i++) {
+        const item = b.items[i]!;
+        if (i < existing.items.length) {
+          updateItem.run({
+            release_batch_id: b.id,
+            position: item.position,
+            status: item.status,
+            run_uuid: item.runUuid ?? null,
+            pr_number: item.prNumber ?? null,
+            base_sha: item.baseSha ?? null,
+            merged_commit_sha: item.mergedCommitSha ?? null,
+            blocked_reason: item.blockedReason ?? null,
+            started_at: item.startedAt ? item.startedAt.toISOString() : null,
+            completed_at: item.completedAt ? item.completedAt.toISOString() : null,
+          });
+        } else {
+          insertItem.run({
+            release_batch_id: b.id,
+            position: item.position,
+            issue_number: item.issueNumber,
+            status: item.status,
+            run_uuid: item.runUuid ?? null,
+            pr_number: item.prNumber ?? null,
+            base_sha: item.baseSha ?? null,
+            merged_commit_sha: item.mergedCommitSha ?? null,
+            blocked_reason: item.blockedReason ?? null,
+            started_at: item.startedAt ? item.startedAt.toISOString() : null,
+            completed_at: item.completedAt ? item.completedAt.toISOString() : null,
+          });
+        }
       }
     });
 

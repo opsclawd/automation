@@ -25,6 +25,9 @@ export interface ReleaseBatch {
   currentPosition: number;
   candidateSha?: string;
   approvedCandidateSha?: string;
+  candidateTreeSha?: string;
+  promotionCommitSha?: string;
+  promotionPrNumber?: number;
   blockedReason?: ReleaseBatchBlockedReason;
   createdAt: Date;
   completedAt?: Date;
@@ -133,6 +136,38 @@ export class TerminalBatchError extends ReleaseBatchStateError {
   }
 }
 
+export class SourceBranchDriftError extends ReleaseBatchStateError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SourceBranchDriftError';
+    Object.setPrototypeOf(this, SourceBranchDriftError.prototype);
+  }
+}
+
+export class ReleaseBranchDriftError extends ReleaseBatchStateError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReleaseBranchDriftError';
+    Object.setPrototypeOf(this, ReleaseBranchDriftError.prototype);
+  }
+}
+
+export class TreeEquivalenceError extends ReleaseBatchStateError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TreeEquivalenceError';
+    Object.setPrototypeOf(this, TreeEquivalenceError.prototype);
+  }
+}
+
+export class RemediationNotAllowedError extends ReleaseBatchStateError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RemediationNotAllowedError';
+    Object.setPrototypeOf(this, RemediationNotAllowedError.prototype);
+  }
+}
+
 const TERMINAL_STATUSES: ReadonlySet<ReleaseBatchStatus> = new Set(['completed', 'cancelled']);
 
 function assertNotTerminal(batch: ReleaseBatch, action: string): void {
@@ -183,6 +218,9 @@ export interface CreateReleaseBatchInput {
   currentPosition?: number;
   candidateSha?: string;
   approvedCandidateSha?: string;
+  candidateTreeSha?: string;
+  promotionCommitSha?: string;
+  promotionPrNumber?: number;
   blockedReason?: ReleaseBatchBlockedReason;
   createdAt: Date;
   completedAt?: Date;
@@ -300,6 +338,13 @@ export function createReleaseBatch(input: CreateReleaseBatchInput): ReleaseBatch
     ...(input.candidateSha !== undefined ? { candidateSha: input.candidateSha } : {}),
     ...(input.approvedCandidateSha !== undefined
       ? { approvedCandidateSha: input.approvedCandidateSha }
+      : {}),
+    ...(input.candidateTreeSha !== undefined ? { candidateTreeSha: input.candidateTreeSha } : {}),
+    ...(input.promotionCommitSha !== undefined
+      ? { promotionCommitSha: input.promotionCommitSha }
+      : {}),
+    ...(input.promotionPrNumber !== undefined
+      ? { promotionPrNumber: input.promotionPrNumber }
       : {}),
     ...(input.blockedReason !== undefined ? { blockedReason: input.blockedReason } : {}),
     createdAt: input.createdAt,
@@ -645,6 +690,7 @@ export function unblockItem(batch: ReleaseBatch, position: number): ReleaseBatch
 export function transitionToAwaitingManualTest(
   batch: ReleaseBatch,
   candidateSha: string,
+  candidateTreeSha?: string,
 ): ReleaseBatch {
   assertNotTerminal(batch, 'transition to awaiting manual test');
 
@@ -666,14 +712,23 @@ export function transitionToAwaitingManualTest(
     );
   }
 
-  const { blockedReason: _br, approvedCandidateSha: _ac, ...rest } = batch;
+  const {
+    blockedReason: _br,
+    approvedCandidateSha: _ac,
+    promotionCommitSha: _pc,
+    promotionPrNumber: _pp,
+    ...rest
+  } = batch;
   void _br;
   void _ac;
+  void _pc;
+  void _pp;
 
   return {
     ...rest,
     status: 'awaiting_manual_test',
     candidateSha,
+    ...(candidateTreeSha !== undefined ? { candidateTreeSha } : {}),
   };
 }
 
@@ -709,7 +764,8 @@ export function approveBatchCandidate(
 
 export function rejectBatchCandidate(
   batch: ReleaseBatch,
-  reason?: ReleaseBatchBlockedReason,
+  candidateShaOrOptions?: string | { candidateSha?: string; reason?: ReleaseBatchBlockedReason },
+  maybeReason?: ReleaseBatchBlockedReason,
 ): ReleaseBatch {
   assertNotTerminal(batch, 'reject candidate');
 
@@ -719,10 +775,142 @@ export function rejectBatchCandidate(
     );
   }
 
+  let candidateSha: string | undefined;
+  let reason: ReleaseBatchBlockedReason | undefined;
+
+  if (typeof candidateShaOrOptions === 'object' && candidateShaOrOptions !== null) {
+    candidateSha = candidateShaOrOptions.candidateSha;
+    reason = candidateShaOrOptions.reason;
+  } else if (arguments.length >= 3 || maybeReason !== undefined) {
+    candidateSha = candidateShaOrOptions;
+    reason = maybeReason;
+  } else if (candidateShaOrOptions !== undefined) {
+    if (batch.candidateSha && candidateShaOrOptions === batch.candidateSha) {
+      candidateSha = candidateShaOrOptions;
+      reason = undefined;
+    } else {
+      reason = candidateShaOrOptions;
+    }
+  }
+
+  if (candidateSha !== undefined && batch.candidateSha && candidateSha !== batch.candidateSha) {
+    throw new InvalidCandidateShaError(
+      `rejected candidate SHA (${candidateSha}) does not match candidate SHA (${batch.candidateSha})`,
+    );
+  }
+
   return {
     ...batch,
     status: 'test_failed',
     ...(reason !== undefined ? { blockedReason: reason } : {}),
+  };
+}
+
+export function appendRemediationItems(batch: ReleaseBatch, issueNumbers: number[]): ReleaseBatch {
+  assertNotTerminal(batch, 'append remediation items');
+
+  if (batch.status !== 'test_failed') {
+    throw new RemediationNotAllowedError(
+      `cannot append remediation items: batch status is '${batch.status}', expected 'test_failed'`,
+    );
+  }
+
+  if (!issueNumbers || issueNumbers.length === 0) {
+    throw new ReleaseBatchStateError('must provide at least one remediation issue number');
+  }
+
+  const existingIssues = new Set<number>(batch.items.map((i) => i.issueNumber));
+  const newIssues = new Set<number>();
+
+  for (const num of issueNumbers) {
+    if (!Number.isInteger(num) || num <= 0) {
+      throw new ReleaseBatchStateError(
+        `remediation issue number must be a positive integer, got ${num}`,
+      );
+    }
+    if (existingIssues.has(num)) {
+      throw new DuplicateIssueError(
+        `remediation issue number ${num} is already present in release batch ${batch.id}`,
+      );
+    }
+    if (newIssues.has(num)) {
+      throw new DuplicateIssueError(
+        `duplicate remediation issue number ${num} in append list for release batch ${batch.id}`,
+      );
+    }
+    newIssues.add(num);
+  }
+
+  let nextPos = batch.items.length + 1;
+  const newItems: ReleaseBatchItem[] = issueNumbers.map((issueNum) => ({
+    releaseBatchId: batch.id,
+    position: nextPos++,
+    issueNumber: issueNum,
+    status: 'pending',
+  }));
+
+  const allItems = [...batch.items, ...newItems];
+
+  const {
+    candidateSha: _cs,
+    approvedCandidateSha: _as,
+    candidateTreeSha: _cts,
+    promotionCommitSha: _pcs,
+    promotionPrNumber: _ppn,
+    blockedReason: _br,
+    ...rest
+  } = batch;
+  void _cs;
+  void _as;
+  void _cts;
+  void _pcs;
+  void _ppn;
+  void _br;
+
+  const firstUnmerged = allItems.find((i) => i.status !== 'merged');
+  const currentPosition = firstUnmerged ? firstUnmerged.position : batch.currentPosition;
+
+  return {
+    ...rest,
+    status: 'building',
+    currentPosition,
+    items: allItems,
+  };
+}
+
+export function attachPromotionPr(batch: ReleaseBatch, prNumber: number): ReleaseBatch {
+  assertNotTerminal(batch, 'attach promotion PR');
+
+  if (batch.status !== 'approved' && batch.status !== 'promoting') {
+    throw new ReleaseBatchStateError(
+      `cannot attach promotion PR: batch status is '${batch.status}', expected 'approved' or 'promoting'`,
+    );
+  }
+
+  if (!Number.isInteger(prNumber) || prNumber <= 0) {
+    throw new ReleaseBatchStateError(`prNumber must be a positive integer, got ${prNumber}`);
+  }
+
+  return {
+    ...batch,
+    status: 'promoting',
+    promotionPrNumber: prNumber,
+  };
+}
+
+export function recordPromotionCommit(
+  batch: ReleaseBatch,
+  promotionCommitSha: string,
+): ReleaseBatch {
+  assertNotTerminal(batch, 'record promotion commit');
+
+  if (!promotionCommitSha || promotionCommitSha.trim().length === 0) {
+    throw new ReleaseBatchStateError('promotionCommitSha must be a non-empty string');
+  }
+
+  return {
+    ...batch,
+    promotionCommitSha,
   };
 }
 

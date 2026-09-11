@@ -68,6 +68,12 @@ export interface GitPort {
   fetch(cwd: string, remote: string, ref?: string): Promise<void>;
   resolveRef(cwd: string, ref: string): Promise<string | undefined>;
   createBranch(cwd: string, branch: string, startPoint: string): Promise<void>;
+  treeSha(cwd: string, ref: string): Promise<string | undefined>;
+  mergeBranch(
+    cwd: string,
+    sourceRef: string,
+    message: string,
+  ): Promise<{ success: boolean; conflict?: boolean; error?: string }>;
 }
 
 export interface GitRenamePair {

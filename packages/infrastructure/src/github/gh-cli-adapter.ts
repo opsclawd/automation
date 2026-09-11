@@ -89,7 +89,7 @@ export class GhCliAdapter implements GitHubPort {
       '--repo',
       repoFullName,
       '--json',
-      'number,title,body,labels',
+      'number,title,body,labels,state',
     ]);
     const command = `gh issue view ${issueNumber} --repo ${repoFullName}`;
     const j = this.safeJsonParse<{
@@ -97,8 +97,15 @@ export class GhCliAdapter implements GitHubPort {
       title: string;
       body: string;
       labels: Array<{ name: string }>;
+      state?: string;
     }>(out, command);
-    return { number: j.number, title: j.title, body: j.body, labels: j.labels.map((l) => l.name) };
+    return {
+      number: j.number,
+      title: j.title,
+      body: j.body,
+      labels: j.labels.map((l) => l.name),
+      ...(j.state !== undefined ? { state: j.state } : {}),
+    };
   }
 
   async listIssueComments(

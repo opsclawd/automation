@@ -5,6 +5,9 @@ import {
   createReleaseBatch,
   admitItem,
   markItemMerged,
+  transitionToAwaitingManualTest,
+  rejectBatchCandidate,
+  appendRemediationItems,
   ReassignRunError,
   ImmutableItemMergedError,
   ReleaseBatchStateError,
@@ -268,6 +271,82 @@ describe('ReleaseBatchRepository (SQLite)', () => {
     const betaBatches = repo.listForRepo(RepositoryId('repo-beta'));
     expect(betaBatches).toHaveLength(1);
     expect(betaBatches[0]!.id).toBe('b3');
+
+    db.close();
+  });
+
+  it('round-trips promotion fields (candidateTreeSha, promotionCommitSha, promotionPrNumber)', () => {
+    const { repo, db } = setup();
+
+    const batch = createReleaseBatch({
+      id: ReleaseBatchId('batch-promo'),
+      repoId: RepositoryId('opsclawd/automation'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-source',
+      releaseBranch: 'release/promo',
+      status: 'promoting',
+      candidateSha: 'cand-sha-1',
+      approvedCandidateSha: 'cand-sha-1',
+      candidateTreeSha: 'tree-sha-1',
+      promotionCommitSha: 'promo-commit-sha',
+      promotionPrNumber: 777,
+      createdAt: t0,
+      items: [{ position: 1, issueNumber: 101, status: 'merged', mergedCommitSha: 'm-sha' }],
+    });
+
+    repo.insert(batch);
+
+    const retrieved = repo.findById(ReleaseBatchId('batch-promo'));
+    expect(retrieved).toBeDefined();
+    expect(retrieved?.candidateTreeSha).toBe('tree-sha-1');
+    expect(retrieved?.promotionCommitSha).toBe('promo-commit-sha');
+    expect(retrieved?.promotionPrNumber).toBe(777);
+
+    db.close();
+  });
+
+  it('updates batch with appended remediation items and round-trips correctly', () => {
+    const { repo, db } = setup();
+
+    let batch = createReleaseBatch({
+      id: ReleaseBatchId('batch-remed'),
+      repoId: RepositoryId('opsclawd/automation'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-source',
+      releaseBranch: 'release/remed',
+      status: 'building',
+      createdAt: t0,
+      items: [
+        { position: 1, issueNumber: 101, status: 'merged', mergedCommitSha: 'm-1' },
+        { position: 2, issueNumber: 102, status: 'merged', mergedCommitSha: 'm-2' },
+      ],
+    });
+
+    repo.insert(batch);
+
+    // Simulate rejection
+    batch = transitionToAwaitingManualTest(batch, 'cand-1', 'tree-1');
+    batch = rejectBatchCandidate(batch, 'cand-1', 'manual test failed');
+    repo.update(batch);
+
+    // Append remediation issues
+    const batchWithRemediation = appendRemediationItems(batch, [103, 104]);
+    expect(batchWithRemediation.items).toHaveLength(4);
+    repo.update(batchWithRemediation);
+
+    const retrieved = repo.findById(ReleaseBatchId('batch-remed'));
+    expect(retrieved).toBeDefined();
+    expect(retrieved?.status).toBe('building');
+    expect(retrieved?.items).toHaveLength(4);
+    expect(retrieved?.items.map((i) => i.issueNumber)).toEqual([101, 102, 103, 104]);
+    expect(retrieved?.items.map((i) => i.status)).toEqual([
+      'merged',
+      'merged',
+      'pending',
+      'pending',
+    ]);
+    expect(retrieved?.items[2]?.position).toBe(3);
+    expect(retrieved?.items[3]?.position).toBe(4);
 
     db.close();
   });

@@ -38,6 +38,7 @@ import * as addJobResumeDisposition from './migrations/0035-add-job-resume-dispo
 import * as agentUsageStatus from './migrations/0036-agent-usage-status.js';
 import * as addExecutionPolicy from './migrations/0037-add-execution-policy.js';
 import * as addReleaseBatches from './migrations/0038-add-release-batches.js';
+import * as addReleaseBatchPromotionFields from './migrations/0039-add-release-batch-promotion-fields.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -78,6 +79,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: agentUsageStatus.version, sql: agentUsageStatus.sql },
   { version: addExecutionPolicy.version, sql: addExecutionPolicy.sql },
   { version: addReleaseBatches.version, sql: addReleaseBatches.sql },
+  { version: addReleaseBatchPromotionFields.version, sql: addReleaseBatchPromotionFields.sql },
 ];
 
 export function registerCustomFunctions(db: Db): void {

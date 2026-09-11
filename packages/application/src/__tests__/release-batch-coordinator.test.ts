@@ -1006,4 +1006,167 @@ describe('ReleaseBatchCoordinator', () => {
       expect(results[0]?.batchId).toBe(batchId);
     });
   });
+
+  describe('candidate capture and promotion lifecycle', () => {
+    let fakeGit: FakeGitPort;
+    let fakeGitHub: FakeGitHubPort;
+
+    beforeEach(() => {
+      fakeGit = new FakeGitPort();
+      fakeGitHub = new FakeGitHubPort();
+      coordinator = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        jobQueue,
+        repositoryPort,
+        eventBus,
+        git: fakeGit,
+        github: fakeGitHub,
+        now: () => t1,
+      });
+    });
+
+    it('captures candidate SHA and tree SHA and transitions to awaiting_manual_test after final item merges', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const finalSha = 'sha-commit-105';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', finalSha);
+      fakeGit.remoteRefs.set('origin/main', 'sha-root-000');
+      fakeGit.treeShaResults.set(finalSha, 'tree-105');
+      fakeGit.ancestorResults.set(`sha-root-000|${finalSha}`, true);
+
+      let lastResult;
+      // Certify all 5 items merged
+      for (let pos = 1; pos <= 5; pos++) {
+        lastResult = await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t1,
+        });
+      }
+
+      expect(lastResult?.actions).toContain('candidate_captured');
+      expect(lastResult?.batchStatus).toBe('awaiting_manual_test');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('awaiting_manual_test');
+      expect(saved.candidateSha).toBe(finalSha);
+      expect(saved.candidateTreeSha).toBe('tree-105');
+    });
+
+    it('blocks candidate capture with source_branch_advanced when source branch drifted ahead', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const finalSha = 'sha-commit-105';
+      const driftedSourceSha = 'sha-main-drifted-999';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', finalSha);
+      fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
+      // origin/main is NOT an ancestor of release candidate
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${finalSha}`, false);
+
+      let lastResult;
+      for (let pos = 1; pos <= 5; pos++) {
+        lastResult = await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t1,
+        });
+      }
+
+      expect(lastResult?.actions).toContain('blocked');
+      expect(lastResult?.actions).toContain('source_drift_detected');
+      expect(lastResult?.batchStatus).toBe('blocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.blockedReason).toBe('source_branch_advanced');
+      expect(saved.candidateSha).toBeUndefined();
+    });
+
+    it('integrateSourceBranch merges source into release branch and enables candidate capture', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const finalSha = 'sha-commit-105';
+      const driftedSourceSha = 'sha-main-drifted-999';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', finalSha);
+      fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${finalSha}`, false);
+
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t1,
+        });
+      }
+
+      // Now prepare git for integrateSourceBranch:
+      const integratedSha = 'sha-commit-integrated-merge';
+      fakeGit.headByCwd.set(defaultRepo.localBasePath, integratedSha);
+      // Simulate remote updated on push
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', integratedSha);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${integratedSha}`, true);
+      fakeGit.treeShaResults.set(integratedSha, 'tree-integrated');
+
+      const integrated = await coordinator.integrateSourceBranch(batchId);
+      expect(integrated.success).toBe(true);
+      expect(integrated.newReleaseSha).toBe(integratedSha);
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('awaiting_manual_test');
+      expect(saved.candidateSha).toBe(integratedSha);
+      expect(saved.candidateTreeSha).toBe('tree-integrated');
+    });
+
+    it('reconciles promotion PR merge and marks batch completed', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+      const promotionSha = 'sha-promoted-commit-789';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      // Mark all items merged
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'promoting';
+      batch.promotionPrNumber = 42;
+      releaseBatchRepository.update(batch);
+
+      // Setup fake GitHub PR readiness
+      fakeGitHub.prs.set('test-org/test-repo/42', {
+        number: 42,
+        url: 'https://example/pr/42',
+        state: 'merged',
+        headRefName: batch.releaseBranch,
+        baseRefName: batch.sourceBranch,
+      });
+      fakeGitHub.mergeReadiness.set('test-org/test-repo/42', {
+        prNumber: 42,
+        state: 'merged',
+        isMerged: true,
+        ciStatus: 'passed',
+        mergeStateStatus: 'clean',
+        baseRefName: batch.sourceBranch,
+        autoMergeEnabled: true,
+        mergeCommitSha: promotionSha,
+      });
+
+      // Setup Git
+      fakeGit.remoteRefs.set('origin/' + batch.sourceBranch, promotionSha);
+      fakeGit.ancestorResults.set(`${candidateSha}|${promotionSha}`, true);
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('promotion_completed');
+      expect(result.batchStatus).toBe('completed');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('completed');
+      expect(saved.promotionCommitSha).toBe(promotionSha);
+      expect(saved.completedAt).toBeDefined();
+    });
+  });
 });

@@ -83,7 +83,7 @@ describe('migration 0038: add release batches', () => {
     const versionAfter = (
       db.prepare('SELECT MAX(version) as max_v FROM schema_version').get() as { max_v: number }
     ).max_v;
-    expect(versionAfter).toBe(38);
+    expect(versionAfter).toBeGreaterThanOrEqual(38);
 
     db.close();
   });

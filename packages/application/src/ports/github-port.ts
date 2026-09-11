@@ -3,6 +3,7 @@ export interface GitHubIssue {
   title: string;
   body: string;
   labels: string[];
+  state?: 'open' | 'closed' | string;
 }
 
 export interface GitHubIssueComment {
