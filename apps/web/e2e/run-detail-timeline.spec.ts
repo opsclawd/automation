@@ -5,16 +5,19 @@ const HEALTHY_1_ID = 'f18c6375af9525d8fd93f40691bdd554d74c6ad67630ecd87cdac6fb08
 const CANONICAL_PHASES: readonly string[] = [
   'read_issue',
   'plan-design',
-  'plan-write',
   'implement',
   'validate',
   'fix-validate',
-  'review-fix',
+  'spec-review',
+  'quality-review',
+  'fix-review',
+  'follow-up-review',
   'compound',
   'create-pr',
+  'wait-merge',
 ];
 
-test('Timeline tab renders all 9 canonical phases (M8-06)', async ({ page }) => {
+test('Timeline tab renders all 12 canonical phases (M8-06)', async ({ page }) => {
   const runId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
 
   // Intercept listRunEvents
@@ -89,7 +92,7 @@ test('Failed run shows failed phase with failure message (AC9)', async ({ page }
   await expect(page.getByTestId('timeline-loading')).toBeHidden();
   await expect(page.getByTestId('phase-validate')).toHaveAttribute('data-status', 'failed');
   await expect(page.getByTestId('phase-validate-failure')).toContainText('something went wrong');
-  for (const phase of ['review-fix', 'compound', 'create-pr']) {
+  for (const phase of ['spec-review', 'compound', 'create-pr']) {
     await expect(page.getByTestId(`phase-${phase}`)).toHaveAttribute('data-status', 'pending');
   }
 });

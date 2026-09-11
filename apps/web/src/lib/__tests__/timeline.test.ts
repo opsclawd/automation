@@ -37,12 +37,12 @@ describe('derivePhaseTimeline', () => {
     const timeline = derivePhaseTimeline([
       ev({
         id: 1,
-        phase: 'plan-write',
+        phase: 'implement',
         type: 'phase.started',
         timestamp: '2026-05-16T12:00:00.000Z',
       }),
     ]);
-    const pw = timeline.find((p) => p.name === 'plan-write')!;
+    const pw = timeline.find((p) => p.name === 'implement')!;
     expect(pw.status).toBe('running');
     expect(pw.startedAt).toBe('2026-05-16T12:00:00.000Z');
     expect(pw.durationMs).toBeNull();
@@ -52,18 +52,18 @@ describe('derivePhaseTimeline', () => {
     const timeline = derivePhaseTimeline([
       ev({
         id: 1,
-        phase: 'plan-write',
+        phase: 'implement',
         type: 'phase.started',
         timestamp: '2026-05-16T12:00:00.000Z',
       }),
       ev({
         id: 2,
-        phase: 'plan-write',
+        phase: 'implement',
         type: 'phase.completed',
         timestamp: '2026-05-16T12:00:03.000Z',
       }),
     ]);
-    const pw = timeline.find((p) => p.name === 'plan-write')!;
+    const pw = timeline.find((p) => p.name === 'implement')!;
     expect(pw.status).toBe('passed');
     expect(pw.completedAt).toBe('2026-05-16T12:00:03.000Z');
     expect(pw.durationMs).toBe(3000);
@@ -155,7 +155,7 @@ describe('derivePhaseTimeline', () => {
     const timeline = derivePhaseTimeline([
       ev({
         id: 1,
-        phase: 'review-fix',
+        phase: 'validate',
         type: 'phase.started',
         timestamp: '2026-05-16T12:00:01.000Z',
       }),
@@ -167,7 +167,7 @@ describe('derivePhaseTimeline', () => {
       }),
     ]);
     expect(timeline.map((p) => p.name)).toEqual([...CANONICAL_PHASES]);
-    expect(timeline.find((p) => p.name === 'review-fix')!.status).toBe('running');
+    expect(timeline.find((p) => p.name === 'validate')!.status).toBe('running');
     expect(timeline.find((p) => p.name === 'plan-design')!.status).toBe('running');
   });
 
@@ -232,9 +232,11 @@ describe('derivePhaseTimeline', () => {
     expect(v.completedAt).toBe('2026-05-16T12:00:05.000Z');
   });
 
-  it('does not include legacy split phase names (whole-pr-review, fix-review)', () => {
+  it('does not include legacy phase names (plan-write, review-fix, post-pr-review, whole-pr-review)', () => {
+    expect(CANONICAL_PHASES).not.toContain('plan-write');
+    expect(CANONICAL_PHASES).not.toContain('review-fix');
+    expect(CANONICAL_PHASES).not.toContain('post-pr-review');
     expect(CANONICAL_PHASES).not.toContain('whole-pr-review');
-    expect(CANONICAL_PHASES).not.toContain('fix-review');
   });
 
   it('does not overwrite failed status with late phase.completed (AC4 idempotency)', () => {

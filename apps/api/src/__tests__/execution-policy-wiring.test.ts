@@ -77,8 +77,6 @@ describe('Execution Policy API and Composition Wiring', () => {
         validation: { commands: ['pnpm build'], timeout: 300 },
         phases: {
           skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
       }),
@@ -151,8 +149,6 @@ describe('Execution Policy API and Composition Wiring', () => {
         validation: { commands: ['pnpm build'], timeout: 300 },
         phases: {
           skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -191,7 +187,7 @@ describe('Execution Policy API and Composition Wiring', () => {
     expect(ctx.executionPolicy).toBe('strict');
   });
 
-  it('registers ReviewFixHandler supporting lean policy in composeRoot', () => {
+  it('registers SpecReviewHandler supporting lean policy in composeRoot', () => {
     const dir = createTempDir();
     writeFileSync(
       path.join(dir, '.ai-orchestrator.json'),
@@ -200,10 +196,24 @@ describe('Execution Policy API and Composition Wiring', () => {
         validation: { commands: ['pnpm build'], timeout: 300 },
         phases: {
           skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'opencode-frontier',
+          profiles: {
+            'opencode-frontier': {
+              runtime: 'opencode',
+              provider: 'mock',
+              model: 'test',
+              timeoutMinutes: 10,
+            },
+          },
+          phaseProfiles: {
+            'spec-review': {
+              profile: 'opencode-frontier',
+            },
+          },
+        },
       }),
     );
 
@@ -214,8 +224,8 @@ describe('Execution Policy API and Composition Wiring', () => {
       runStartupSweeps: false,
     });
 
-    const handler = c.phaseRegistry.get('review-fix');
+    const handler = c.phaseRegistry.get('spec-review');
     expect(handler).toBeDefined();
-    expect(handler?.phase).toBe('review-fix');
+    expect(handler?.phase).toBe('spec-review');
   });
 });

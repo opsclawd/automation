@@ -14,19 +14,19 @@ import {
 } from '../phase-definitions.js';
 
 describe('phase definitions registry', () => {
-  it('exposes the target canonical order (11 phases, plan-review)', () => {
+  it('exposes the target canonical order (11 lean phases)', () => {
     expect(CANONICAL_PHASE_ORDER).toEqual([
       'read_issue',
       'plan-design',
-      'plan-write',
-      'plan-review',
       'implement',
       'validate',
       'fix-validate',
-      'review-fix',
-      'compound',
+      'spec-review',
+      'quality-review',
+      'fix-review',
+      'follow-up-review',
       'create-pr',
-      'post-pr-review',
+      'wait-merge',
     ]);
   });
 
@@ -37,8 +37,8 @@ describe('phase definitions registry', () => {
     }
   });
 
-  it('has exactly 17 definitions (no extras)', () => {
-    expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(17);
+  it('has exactly 13 definitions (no extras)', () => {
+    expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(13);
   });
 
   it('defines architecture-review with required inputs issue.md, design.md, plan.md', () => {
@@ -65,7 +65,7 @@ describe('phase definitions registry', () => {
   describe('getPhaseDefinition', () => {
     it('returns the definition for a known phase', () => {
       const def = getPhaseDefinition('plan-design' as PhaseName);
-      expect(def.outputs).toEqual(['design.md']);
+      expect(def.outputs).toEqual(['design.md', 'plan.md']);
       expect(def.name).toBe('plan-design');
     });
 
@@ -92,7 +92,7 @@ describe('phase definitions registry', () => {
       const names = orderedPhases(['compound' as PhaseName]).map((p) => p.name);
       expect(names).not.toContain('compound');
       expect(names).toContain('plan-design');
-      expect(names).toHaveLength(10);
+      expect(names).toHaveLength(11);
     });
 
     it('rejects skipping a non-skippable phase', () => {
@@ -111,9 +111,9 @@ describe('phase definitions registry', () => {
 
     it('rejects a skip that orphans a downstream required input', () => {
       const defs = clonePhaseDefinitions();
-      defs['plan-write'].skippable = true;
-      expect(() => orderedPhases(['plan-write' as PhaseName], defs)).toThrow(InvalidSkipListError);
-      expect(() => orderedPhases(['plan-write' as PhaseName], defs)).toThrow(
+      defs['plan-design'].skippable = true;
+      expect(() => orderedPhases(['plan-design' as PhaseName], defs)).toThrow(InvalidSkipListError);
+      expect(() => orderedPhases(['plan-design' as PhaseName], defs)).toThrow(
         /orphans required input/,
       );
     });
@@ -127,22 +127,22 @@ describe('phase definitions registry', () => {
     it('rejects multiple skips when any dependency is orphaned', () => {
       const defs = clonePhaseDefinitions();
       defs['plan-design'].skippable = true;
-      defs['plan-write'].skippable = true;
+      defs['implement'].skippable = true;
       expect(() =>
-        orderedPhases(['plan-design' as PhaseName, 'plan-write' as PhaseName], defs),
+        orderedPhases(['plan-design' as PhaseName, 'implement' as PhaseName], defs),
       ).toThrow(InvalidSkipListError);
     });
   });
 
   describe('nextPhase', () => {
     it('returns the following phase in canonical order', () => {
-      expect(nextPhase('plan-design' as PhaseName, [])).toBe('plan-write');
-      expect(nextPhase('plan-write' as PhaseName, [])).toBe('plan-review');
-      expect(nextPhase('plan-review' as PhaseName, [])).toBe('implement');
+      expect(nextPhase('read_issue' as PhaseName, [])).toBe('plan-design');
+      expect(nextPhase('plan-design' as PhaseName, [])).toBe('implement');
+      expect(nextPhase('implement' as PhaseName, [])).toBe('validate');
     });
 
     it('returns null for the last phase', () => {
-      expect(nextPhase('post-pr-review' as PhaseName, [])).toBeNull();
+      expect(nextPhase('wait-merge' as PhaseName, [])).toBeNull();
     });
 
     it('skips phases in the skip list', () => {
@@ -168,24 +168,24 @@ describe('phase definitions registry', () => {
   describe('assertInputsAvailable', () => {
     it('passes when all required inputs are present', () => {
       expect(() =>
-        assertInputsAvailable(getPhaseDefinition('plan-write' as PhaseName), ['design.md']),
+        assertInputsAvailable(getPhaseDefinition('implement' as PhaseName), ['plan.md']),
       ).not.toThrow();
     });
 
     it('throws MissingRequiredInputError naming missing required inputs', () => {
       expect(() =>
-        assertInputsAvailable(getPhaseDefinition('plan-write' as PhaseName), ['issue.md']),
+        assertInputsAvailable(getPhaseDefinition('implement' as PhaseName), ['issue.md']),
       ).toThrow(MissingRequiredInputError);
     });
 
     it('throws with the phase name and missing list', () => {
       expect.assertions(3);
       try {
-        assertInputsAvailable(getPhaseDefinition('plan-write' as PhaseName), []);
+        assertInputsAvailable(getPhaseDefinition('implement' as PhaseName), []);
       } catch (e) {
         expect(e).toBeInstanceOf(MissingRequiredInputError);
-        expect((e as MissingRequiredInputError).phase).toBe('plan-write');
-        expect((e as MissingRequiredInputError).missing).toEqual(['design.md']);
+        expect((e as MissingRequiredInputError).phase).toBe('implement');
+        expect((e as MissingRequiredInputError).missing).toEqual(['plan.md']);
       }
     });
 
@@ -203,8 +203,8 @@ describe('phase definitions registry', () => {
 
     it('passes when required inputs have extra files present', () => {
       expect(() =>
-        assertInputsAvailable(getPhaseDefinition('plan-write' as PhaseName), [
-          'design.md',
+        assertInputsAvailable(getPhaseDefinition('implement' as PhaseName), [
+          'plan.md',
           'extra-file.md',
         ]),
       ).not.toThrow();
@@ -235,15 +235,16 @@ describe('phase definitions registry', () => {
       }
     });
 
-    it('no two phases claim the same output', () => {
+    it('no two phases claim the same output except iterative review artifacts', () => {
       const allOutputs: string[] = [];
       for (const name of CANONICAL_PHASE_ORDER) {
         const def = PHASE_DEFINITIONS[name]!;
         allOutputs.push(...def.outputs);
       }
-      // plan.md is claimed by both plan-write and plan-review (skippable/in-place edit)
-      const duplicates = allOutputs.filter((item, index) => allOutputs.indexOf(item) !== index);
-      expect(duplicates).toEqual(['plan.md']);
+      const duplicates = Array.from(
+        new Set(allOutputs.filter((item, index) => allOutputs.indexOf(item) !== index)),
+      );
+      expect(duplicates).toEqual(['code-review.md', 'finding-ledger.json']);
     });
   });
 });

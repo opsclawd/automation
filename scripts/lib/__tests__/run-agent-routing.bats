@@ -140,15 +140,15 @@ _run_agent() {
   [[ "$output" != *"must pass --phase or --profile"* ]]
 }
 
-@test "run-agent.ts uses phaseProfiles for extract phase" {
+@test "run-agent.ts uses phaseProfiles for plan-design phase" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
   run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
-    --phase extract \
+    --phase plan-design \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
     --repo-id "test/repo" \
     --repo-root "$PWD" \
-    --phase-id "extract-test" \
+    --phase-id "plan-design-test" \
     --prompt-file "$TMPDIR_TEST/prompt.txt" \
     --start-sha "0000000000000000000000000000000000000000" \
     2>&1
@@ -434,15 +434,15 @@ print(f'OK: compound -> {prof}')
   [[ "$output" == *"OK: compound"* ]]
 }
 
-@test "run-agent.ts uses phaseProfiles for whole-pr-review phase" {
+@test "run-agent.ts uses phaseProfiles for follow-up-review phase" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
   run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
-    --phase whole-pr-review \
+    --phase follow-up-review \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
     --repo-id "test/repo" \
     --repo-root "$PWD" \
-    --phase-id "whole-pr-review-test" \
+    --phase-id "follow-up-review-test" \
     --prompt-file "$TMPDIR_TEST/prompt.txt" \
     --start-sha "0000000000000000000000000000000000000000" \
     2>&1

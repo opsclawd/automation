@@ -240,22 +240,23 @@ describe('planRunRecoveryAction', () => {
         completedPhases: [
           'read_issue',
           'plan-design',
-          'plan-write',
-          'plan-review',
           'implement',
           'validate',
           'fix-validate',
-          'review-fix',
+          'spec-review',
+          'quality-review',
+          'fix-review',
+          'follow-up-review',
           'compound',
           'create-pr',
-          'post-pr-review',
+          'wait-merge',
         ],
         skippedPhases: [],
-        currentPhase: 'post-pr-review',
+        currentPhase: 'wait-merge',
       });
       const plan = planRunRecoveryAction({ action: 'resume', run, phases: [] });
       expect(plan.allowed).toBe(true);
-      expect(plan.targetPhase).toBe('post-pr-review');
+      expect(plan.targetPhase).toBe('wait-merge');
     });
 
     it('default resume target falls back to latest failed phase when all complete and currentPhase is missing', () => {
@@ -264,15 +265,16 @@ describe('planRunRecoveryAction', () => {
         completedPhases: [
           'read_issue',
           'plan-design',
-          'plan-write',
-          'plan-review',
           'implement',
           'validate',
           'fix-validate',
-          'review-fix',
+          'spec-review',
+          'quality-review',
+          'fix-review',
+          'follow-up-review',
           'compound',
           'create-pr',
-          'post-pr-review',
+          'wait-merge',
         ],
         skippedPhases: [],
         currentPhase: undefined,
@@ -299,15 +301,16 @@ describe('planRunRecoveryAction', () => {
         completedPhases: [
           'read_issue',
           'plan-design',
-          'plan-write',
-          'plan-review',
           'implement',
           'validate',
           'fix-validate',
-          'review-fix',
+          'spec-review',
+          'quality-review',
+          'fix-review',
+          'follow-up-review',
           'compound',
           'create-pr',
-          'post-pr-review',
+          'wait-merge',
         ],
         skippedPhases: [],
         currentPhase: undefined,
@@ -332,7 +335,7 @@ describe('planRunRecoveryAction', () => {
       const run = makeRun({
         status: 'cancelled',
         currentPhase: undefined,
-        completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review'],
+        completedPhases: ['read_issue', 'plan-design'],
       });
       const phases: Phase[] = [
         {

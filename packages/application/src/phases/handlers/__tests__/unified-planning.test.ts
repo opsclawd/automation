@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { PlanDesignHandler } from '../plan-design.js';
-import { PlanWriteHandler } from '../plan-write.js';
 import { FakeAgentPort } from '../../../test-doubles/fake-agent-port.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
@@ -155,14 +154,7 @@ describe('Unified Planning (Issue #1092)', () => {
 
     expect(await ctx.artifacts.read(ctx.runUuid, 'design.md')).toBe(validPackage.design_md);
     expect(await ctx.artifacts.read(ctx.runUuid, 'plan.md')).toBe(validPackage.plan_md);
-
-    // 2. Plan-write runs: reuses existing artifacts and makes 0 agent calls
-    const writeHandler = new PlanWriteHandler();
-    const writeResult = await writeHandler.run(ctx);
-
-    expect(writeResult.outcome).toBe('passed');
-    expect(agent.invocations).toHaveLength(1); // Still exactly 1 invocation total!
-    expect(eventsOf(ctx, 'plan-write.completed')).toHaveLength(1);
+    expect(agent.invocations).toHaveLength(1);
   });
 
   it('deterministic checks reject malformed planning output without invoking reviewer or fixer agents', async () => {

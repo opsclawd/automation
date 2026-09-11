@@ -24,145 +24,20 @@ const phasesSchema = z.object({
       maxIterations: z.number().int().positive().default(4),
     })
     .optional(),
-  reviewFix: z.object({
-    maxIterations: z.number().int().positive(),
-    blockOnSeverity: z
-      .enum(['critical', 'high', 'medium', 'low', 'p0', 'p1', 'p2', 'p3'])
-      .optional()
-      .default('medium'),
-    /**
-     * Threshold for the `unfounded_pingpong` short-circuit (#623). When the
-     * last N iterations all have findings whose evidence fails the
-     * mechanical check AND the fixer returned `done_no_fixes_needed`, the
-     * loop short-circuits to `needs_human_review`. Defaults to 4 when
-     * omitted; set higher to be more tolerant of bursty reviewer models.
-     */
-    unfoundedPingPongLimit: z.number().int().positive().optional().default(4),
-    /**
-     * When true (default), the budget grants one trailing post-fix re-review
-     * whenever the last iteration ended with `outcome: 'fixed'`. Set to
-     * false to restore pre-#627 behavior bit-for-bit (#627).
-     */
-    endOnReview: z.boolean().default(true),
-    /**
-     * When true (default), iteration >= 2 scopes the reviewer to the diff
-     * since the previously reviewed commit. Set to false to disable (#627).
-     */
-    deltaScopedReReview: z.boolean().default(true),
-    /**
-     * Trend-aware exit (#627). When enabled (default true, strict mode,
-     * window 3), budget exhaustion with a converging severity-weighted
-     * finding trend exits as `converged_with_notes` (with
-     * `needsHumanReview: true`) instead of failing the run.
-     */
-    trendAwareExit: z
-      .object({
-        enabled: z.boolean().default(true),
-        mode: z.enum(['strict', 'lenient']).default('strict'),
-        window: z.number().int().min(2).max(10).default(3),
-      })
-      .default({}),
-    /**
-     * Cap on consecutive fixer failures (verdict !== 'done_with_fixes',
-     * including 'cannot_fix' and contract-violation outcomes). When the
-     * loop hits this many in a row, it exits early as `exhausted` with
-     * `needsHumanReview: true` rather than continuing to burn the
-     * `maxIterations` budget on a pathologically failing fixer.
-     * Replaces the legacy cap on retries per task (which was
-     * never enforced — see issue #667). Omit (or set to 0) to disable.
-     * Defaults to undefined (no cap beyond the existing heuristics).
-     */
-    maxConsecutiveFixFailures: z.number().int().nonnegative().optional(),
-    /**
-     * Cap on total fix invocations whose verdict was `done_with_fixes`
-     * (productive fix work). Bounded to prevent a runaway reviewer
-     * emitting unbounded findings from consuming unbounded fixer
-     * invocations. Replaces the legacy cap on total tasks
-     * (never enforced). Omit (or set to 0) to disable. Defaults to
-     * undefined (no cap).
-     */
-    maxTotalFixAttempts: z.number().int().nonnegative().optional(),
-    /**
-     * Architect pass (#668). When enabled, the executor invokes the
-     * `fix-review-architect` agent once before the review-fix loop begins
-     * and threads the produced `review-fix-plan.json` into the loop as
-     * `architectPlan`. When disabled (default), the loop runs without a
-     * plan and no architect invocation occurs. Mirrors the legacy
-     * `architectPass.enabled` flag in `scripts/legacy/ai-run-issue-v2:4394`.
-     */
-    architectPass: z
-      .object({
-        enabled: z.boolean().default(false),
-        /**
-         * Outer timeout for the architect invocation in minutes. The
-         * agent-level `timeoutMinutes` already bounds the runtime; this
-         * is an additional cap on how long the executor will wait for
-         * `review-fix-plan.json` to appear. Defaults to 10 (matches the
-         * legacy `TIMEOUT_FIX_REVIEW_ARCHITECT` default in the shell
-         * orchestrator).
-         */
-        timeoutMinutes: z.number().int().positive().default(10),
-      })
-      .default({ enabled: false, timeoutMinutes: 10 }),
-  }),
-  // implement.maxIterations bounds the inner review/fix loop.
-  // maxDeclaredFilesRetries provides an outer structural recovery budget.
-  implement: z.object({
-    maxIterations: z.number().int().positive().default(3),
-    /**
-     * The maximum number of typecheck retries during the implement phase.
-     * Must be a positive integer (>= 1) to retain proper observability and error logging.
-     * Defaults to 5 when read via configuration. Programmatic API (consumers of
-     * `ImplementStepLoopInput` that omit the field) falls back to
-     * `DEFAULT_MAX_TYPE_CHECK_RETRIES` exported from
-     * `@ai-sdlc/application/implement-step-loop`.
-     */
-    maxTypeCheckRetries: z.number().int().positive().default(5),
-    /**
-     * Maximum number of whole-Step retries when commit coverage still misses
-     * declared expected_files after the unaffected-files verification.
-     * Zero preserves immediate terminal failure. Defaults to one retry.
-     */
-    maxDeclaredFilesRetries: z.number().int().nonnegative().default(1),
-    /**
-     * Threshold for holistic re-derivation (#766). When the loop hits this
-     * iteration index (1-based), it assesses repeat-offender files.
-     * Defaults to 3.
-     */
-    holisticThresholdIteration: z.number().int().positive().default(3),
-    /**
-     * Threshold for holistic re-derivation (#766). When a file has this
-     * many findings across prior iterations, it triggers re-derivation mode.
-     * Defaults to 2.
-     */
-    holisticThresholdFindings: z.number().int().positive().default(2),
-    /**
-     * When true (default), iteration >= 2 scopes the reviewer to the diff
-     * since the previously reviewed commit for intermediate reviews.
-     * Set to false to disable delta-scoped re-review for intermediate passes.
-     * Initial full review and final full review are always mandatory and
-     * cannot be disabled by configuration (#723).
-     */
-    deltaScopedReReview: z.boolean().default(true),
-    /**
-     * Exact repository-relative paths that may be committed even when absent from
-     * the current task's expected_files/files surface. Matching and path
-     * normalization are owned by ImplementHandler; no implicit exemptions apply.
-     */
-    exemptUndeclaredFiles: z.array(z.string()).default([]),
-  }),
+  implement: z
+    .object({
+      /**
+       * Exact repository-relative paths that may be committed even when absent from
+       * the current task's expected_files/files surface. Matching and path
+       * normalization are owned by ImplementHandler; no implicit exemptions apply.
+       */
+      exemptUndeclaredFiles: z.array(z.string()).default([]),
+    })
+    .default({ exemptUndeclaredFiles: [] }),
   fixValidate: z
     .object({
       maxIterations: z.number().int().positive(),
       enabled: z.boolean().default(true),
-    })
-    .optional(),
-  // Bounded self-repair for plan-write's structural validation (validatePlanTaskList).
-  // maxRepairAttempts: 0 reproduces pre-repair-loop behavior (immediate hard-fail on the
-  // first validation failure). Defaults to 2 when the whole key or the field is omitted.
-  planWrite: z
-    .object({
-      maxRepairAttempts: z.number().int().nonnegative().default(2),
     })
     .optional(),
   // Architecture review phase (strict policy) iteration budget.
@@ -172,23 +47,6 @@ const phasesSchema = z.object({
       maxCorrections: z.number().int().min(0).max(5).default(2),
     })
     .default({ maxCorrections: 2 }),
-  // Post-PR review poller (scripts/ai-pr-review-poll) settings. When absent, the
-  // Bash launcher falls back to maxPolls=3 / pollIntervalSeconds=300.
-  postPrReview: z
-    .object({
-      maxPolls: z.number().int().positive(),
-      pollIntervalSeconds: z.number().int().positive(),
-      /**
-       * Maximum seconds the poller will keep polling an empty PR (zero
-       * comments) before treating the absence of review activity as a quiet
-       * signal. After this window elapses with no reviewer ever commenting,
-       * normal quiet-poll accounting takes over and the run may go to
-       * `waiting`. Defaults to 1800 (30 min) — exceeds observed reviewer
-       * bot latency (~15–20 min) on this repo.
-       */
-      firstReviewGraceWindowSeconds: z.number().int().positive().optional(),
-    })
-    .optional(),
   // Lean wait-merge phase's bounded in-process poll loop for CI/merge
   // readiness. Defaults: wait 10 minutes before the first check (CI
   // typically takes 6-8 minutes to report), then re-check every 2 minutes

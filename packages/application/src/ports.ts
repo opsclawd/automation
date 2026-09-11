@@ -323,11 +323,6 @@ export type {
 } from './ports/operational-recovery-port.js';
 export type { RepositoryAvailabilityPort } from './ports/repository-availability-port.js';
 export type {
-  RunWorkspaceTypecheckPort,
-  RunWorkspaceTypecheckInput,
-  RunWorkspaceTypecheckResult,
-} from './ports/run-workspace-typecheck-port.js';
-export type {
   RevertScopeFilesInput,
   RevertScopeFilesResult,
   RevertScopeFilesPort,

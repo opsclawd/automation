@@ -526,7 +526,7 @@ describe('RunExecutor durable resume', () => {
     const executor = new RunExecutor(deps);
     await executor.execute({
       run,
-      skip: [makePhaseName('plan-review'), makePhaseName('compound')],
+      skip: [makePhaseName('compound')],
       presentArtifacts: [],
     });
 
@@ -623,7 +623,7 @@ describe('RunExecutor durable resume', () => {
     // 3. Resume run
     await executor.execute({
       run,
-      skip: [makePhaseName('plan-review'), makePhaseName('compound')],
+      skip: [makePhaseName('compound')],
       presentArtifacts: [],
     });
 

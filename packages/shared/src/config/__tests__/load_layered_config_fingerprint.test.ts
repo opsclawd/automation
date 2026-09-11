@@ -15,8 +15,7 @@ describe('loadLayeredConfig fingerprint', () => {
       validation: { commands: ['pnpm build'], timeout: 300 },
       phases: {
         skip: [],
-        reviewFix: { maxIterations: 10 },
-        implement: { maxIterations: 5 },
+        reviewConvergence: { maxIterations: 4 },
       },
       timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
     });
@@ -27,8 +26,7 @@ describe('loadLayeredConfig fingerprint', () => {
       timeouts: { invocationMaxMinutes: 30, readyMaxDays: 7 },
       validation: { timeout: 300, commands: ['pnpm build'] },
       phases: {
-        implement: { maxIterations: 5 },
-        reviewFix: { maxIterations: 10 },
+        reviewConvergence: { maxIterations: 4 },
         skip: [],
       },
     });
@@ -48,8 +46,7 @@ describe('loadLayeredConfig fingerprint', () => {
         validation: { commands: ['pnpm build'], timeout: 300 },
         phases: {
           skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
+          reviewConvergence: { maxIterations: 4 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
       }),
@@ -63,8 +60,7 @@ describe('loadLayeredConfig fingerprint', () => {
         validation: { commands: ['pnpm build'], timeout: 300 },
         phases: {
           skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 6 },
+          reviewConvergence: { maxIterations: 5 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
       }),

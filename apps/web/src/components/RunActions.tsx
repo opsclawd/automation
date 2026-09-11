@@ -14,14 +14,16 @@ import {
 const CANONICAL_PHASE_ORDER = [
   'read_issue',
   'plan-design',
-  'plan-write',
   'implement',
   'validate',
   'fix-validate',
-  'review-fix',
+  'spec-review',
+  'quality-review',
+  'fix-review',
+  'follow-up-review',
   'compound',
   'create-pr',
-  'post-pr-review',
+  'wait-merge',
 ];
 
 interface RunActionsProps {

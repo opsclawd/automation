@@ -29,8 +29,6 @@ const BASE_CONFIG = JSON.stringify({
   validation: { commands: ['pnpm build'], timeout: 300 },
   phases: {
     skip: [],
-    reviewFix: { maxIterations: 10 },
-    implement: { maxIterations: 5 },
   },
   timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
 });
@@ -39,8 +37,6 @@ const BASE_WITH_AGENT = JSON.stringify({
   validation: { commands: ['pnpm build'], timeout: 300 },
   phases: {
     skip: [],
-    reviewFix: { maxIterations: 10 },
-    implement: { maxIterations: 5 },
   },
   timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   agent: {
@@ -63,8 +59,6 @@ describe('loadConfig', () => {
         validation: { commands: ['pnpm build'], timeout: 300 },
         phases: {
           skip: ['compound'],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
       }),
@@ -119,83 +113,38 @@ describe('loadConfig', () => {
     expect(cfg.phases.skip).toEqual([]);
   });
 
-  it('defaults phases.reviewFix.unfoundedPingPongLimit to 4 when omitted', () => {
-    const repo = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
+  it('defaults phases.implement.exemptUndeclaredFiles to empty array', () => {
+    const repo = makeRepo(BASE_CONFIG);
     const cfg = loadConfig(repo);
-    expect(cfg.phases.reviewFix.unfoundedPingPongLimit).toBe(4);
+    expect(cfg.phases.implement.exemptUndeclaredFiles).toEqual([]);
   });
 
-  it('parses unfoundedPingPongLimit when provided', () => {
+  it('parses phases.implement.exemptUndeclaredFiles when provided', () => {
     const repo = makeRepo(
       JSON.stringify({
         validation: { commands: ['pnpm build'], timeout: 300 },
         phases: {
-          reviewFix: { maxIterations: 10, unfoundedPingPongLimit: 6 },
-          implement: { maxIterations: 5 },
+          implement: { exemptUndeclaredFiles: ['foo/bar.ts'] },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
       }),
     );
     const cfg = loadConfig(repo);
-    expect(cfg.phases.reviewFix.unfoundedPingPongLimit).toBe(6);
+    expect(cfg.phases.implement.exemptUndeclaredFiles).toEqual(['foo/bar.ts']);
   });
 
-  it('parses planWrite.maxRepairAttempts when provided', () => {
+  it('defaults phases.reviewConvergence.maxIterations to 4 when present without maxIterations', () => {
     const repo = makeRepo(
       JSON.stringify({
         validation: { commands: ['pnpm build'], timeout: 300 },
         phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-          planWrite: { maxRepairAttempts: 0 },
+          reviewConvergence: {},
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
       }),
     );
     const cfg = loadConfig(repo);
-    expect(cfg.phases.planWrite!.maxRepairAttempts).toBe(0);
-  });
-
-  it('defaults planWrite.maxRepairAttempts to 2 when the key is present but empty', () => {
-    const repo = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-          planWrite: {},
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const cfg = loadConfig(repo);
-    expect(cfg.phases.planWrite!.maxRepairAttempts).toBe(2);
-  });
-
-  it('defaults planWrite to undefined when omitted entirely', () => {
-    const repo = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const cfg = loadConfig(repo);
-    expect(cfg.phases.planWrite).toBeUndefined();
+    expect(cfg.phases.reviewConvergence?.maxIterations).toBe(4);
   });
 });
 
@@ -271,102 +220,6 @@ describe('loadConfig with local override', () => {
   });
 });
 
-describe('phases.postPrReview', () => {
-  it('parses configured maxPolls and pollIntervalSeconds', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-          postPrReview: { maxPolls: 10, pollIntervalSeconds: 120 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const config = loadConfig(dir);
-    expect(config.phases.postPrReview).toEqual({ maxPolls: 10, pollIntervalSeconds: 120 });
-  });
-
-  it('is optional (absent → undefined)', () => {
-    const dir = makeRepo(BASE_CONFIG);
-    expect(loadConfig(dir).phases.postPrReview).toBeUndefined();
-  });
-
-  it('rejects a non-positive maxPolls', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-          postPrReview: { maxPolls: 0, pollIntervalSeconds: 300 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    expect(() => loadConfig(dir)).toThrow(ConfigError);
-  });
-});
-
-describe('phases.postPrReview.firstReviewGraceWindowSeconds', () => {
-  it('parses the field when provided', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-          postPrReview: {
-            maxPolls: 10,
-            pollIntervalSeconds: 60,
-            firstReviewGraceWindowSeconds: 2400,
-          },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const config = loadConfig(dir);
-    expect(config.phases.postPrReview?.firstReviewGraceWindowSeconds).toBe(2400);
-  });
-
-  it('is undefined when omitted (consumers must fall back to DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS)', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-          postPrReview: { maxPolls: 10, pollIntervalSeconds: 60 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const config = loadConfig(dir);
-    expect(config.phases.postPrReview?.firstReviewGraceWindowSeconds).toBeUndefined();
-  });
-
-  it('rejects a non-positive value', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-          postPrReview: { maxPolls: 10, pollIntervalSeconds: 60, firstReviewGraceWindowSeconds: 0 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    expect(() => loadConfig(dir)).toThrow(/firstReviewGraceWindowSeconds/);
-  });
-});
-
 describe('DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS', () => {
   it('is 1800', async () => {
     const mod = await import('../schema.js');
@@ -374,62 +227,13 @@ describe('DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS', () => {
   });
 });
 
-describe('phases.reviewFix.blockOnSeverity', () => {
-  it('defaults to "medium" when omitted', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const cfg = loadConfig(dir);
-    expect(cfg.phases.reviewFix.blockOnSeverity).toBe('medium');
-  });
-
-  it('accepts "critical" as a valid threshold', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10, blockOnSeverity: 'critical' },
-          implement: { maxIterations: 5 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const cfg = loadConfig(dir);
-    expect(cfg.phases.reviewFix.blockOnSeverity).toBe('critical');
-  });
-
-  it('rejects an invalid threshold value', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10, blockOnSeverity: 'urgent' },
-          implement: { maxIterations: 5 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    expect(() => loadConfig(dir)).toThrow(ConfigError);
-  });
-
+describe('taskSplitting', () => {
   it('defaults taskSplitting config when omitted', () => {
     const dir = makeRepo(
       JSON.stringify({
         validation: { commands: ['pnpm build'], timeout: 300 },
         phases: {
           skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
       }),
@@ -448,8 +252,6 @@ describe('phases.reviewFix.blockOnSeverity', () => {
         validation: { commands: ['pnpm build'], timeout: 300 },
         phases: {
           skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         taskSplitting: {
@@ -471,8 +273,6 @@ describe('loadConfig role normalization', () => {
     validation: { commands: ['pnpm build'], timeout: 300 },
     phases: {
       skip: [],
-      reviewFix: { maxIterations: 10 },
-      implement: { maxIterations: 5 },
     },
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
     agent: {
@@ -513,7 +313,7 @@ describe('loadConfig role normalization', () => {
   it('resolves fallbackRole to fallbackProfile', () => {
     const withFallbackRole = JSON.stringify({
       validation: { commands: ['pnpm build'], timeout: 300 },
-      phases: { skip: [], reviewFix: { maxIterations: 10 }, implement: { maxIterations: 5 } },
+      phases: { skip: [] },
       timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
       agent: {
         defaultProfile: 'p1',
@@ -541,101 +341,5 @@ describe('loadConfig role normalization', () => {
     const cfg = loadConfig(dir);
     expect(cfg.agent!.phaseProfiles['implement'].profile).toBe('senior');
     expect(cfg.agent!.phaseProfiles['review'].profile).toBe('junior');
-  });
-});
-
-describe('phases.implement.maxTypeCheckRetries', () => {
-  it('parses maxTypeCheckRetries when provided', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5, maxTypeCheckRetries: 7 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const cfg = loadConfig(dir);
-    expect(cfg.phases.implement.maxTypeCheckRetries).toBe(7);
-  });
-
-  it('maxTypeCheckRetries defaults to 5 when omitted', () => {
-    const dir = makeRepo(BASE_CONFIG);
-    const cfg = loadConfig(dir);
-    expect(cfg.phases.implement.maxTypeCheckRetries).toBe(5);
-  });
-
-  it('rejects non-integer maxTypeCheckRetries', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5, maxTypeCheckRetries: 1.5 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    expect(() => loadConfig(dir)).toThrow(/maxTypeCheckRetries/);
-  });
-
-  it('rejects maxTypeCheckRetries of 0 (must be positive to retain observability)', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5, maxTypeCheckRetries: 0 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    expect(() => loadConfig(dir)).toThrow(/maxTypeCheckRetries/);
-  });
-});
-
-describe('phases.implement.maxDeclaredFilesRetries', () => {
-  it('parses maxDeclaredFilesRetries when provided', () => {
-    const dir = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5, maxDeclaredFilesRetries: 3 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    expect(loadConfig(dir).phases.implement.maxDeclaredFilesRetries).toBe(3);
-  });
-
-  it('maxDeclaredFilesRetries defaults to 1 when omitted', () => {
-    const dir = makeRepo(BASE_CONFIG);
-    expect(loadConfig(dir).phases.implement.maxDeclaredFilesRetries).toBe(1);
-  });
-
-  it('accepts maxDeclaredFilesRetries of 0 to disable retries', () => {
-    const parsed = JSON.parse(BASE_CONFIG);
-    parsed.phases.implement.maxDeclaredFilesRetries = 0;
-    expect(
-      loadConfig(makeRepo(JSON.stringify(parsed))).phases.implement.maxDeclaredFilesRetries,
-    ).toBe(0);
-  });
-
-  it('rejects negative maxDeclaredFilesRetries', () => {
-    const parsed = JSON.parse(BASE_CONFIG);
-    parsed.phases.implement.maxDeclaredFilesRetries = -1;
-    expect(() => loadConfig(makeRepo(JSON.stringify(parsed)))).toThrow(/maxDeclaredFilesRetries/);
-  });
-
-  it('rejects non-integer maxDeclaredFilesRetries', () => {
-    const parsed = JSON.parse(BASE_CONFIG);
-    parsed.phases.implement.maxDeclaredFilesRetries = 1.5;
-    expect(() => loadConfig(makeRepo(JSON.stringify(parsed)))).toThrow(/maxDeclaredFilesRetries/);
   });
 });
