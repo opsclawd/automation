@@ -24,6 +24,7 @@ import {
   runStatusToExecutionOutcome,
   type ResumeDisposition,
   type ExecutionPolicy,
+  ReleaseBatchId,
 } from '@ai-sdlc/domain';
 import { newRunId, EXECUTION_POLICIES } from '@ai-sdlc/shared';
 import {
@@ -2299,6 +2300,149 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               } else {
                 await containerRef?.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
                 await containerRef?.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              }
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              await drainAndExit(containerRef, EXIT_USER_ERROR);
+            }
+          },
+        ),
+    );
+
+  program
+    .command('release-batch')
+    .description('Manage autonomous release batches')
+    .addCommand(
+      new Command('start')
+        .description('Start a release batch from an explicit ordered issue list')
+        .requiredOption(
+          '--issues <numbers>',
+          'Comma-separated ordered GitHub issue numbers (e.g. 101,102,103)',
+        )
+        .option('--repository-id <id|owner/name>', 'Repository ID or owner/name')
+        .option(
+          '--source-branch <branch>',
+          'Source branch (default: target repository default branch)',
+        )
+        .option(
+          '--release-branch <branch>',
+          'Release branch name (otherwise deterministically generated)',
+        )
+        .option('--batch-id <id>', 'Optional release batch ID')
+        .option(
+          '--execution-policy <policy>',
+          'Execution policy: standard | strict | legacy',
+          'standard',
+        )
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(
+          async (opts: {
+            issues: string;
+            repositoryId?: string;
+            sourceBranch?: string;
+            releaseBranch?: string;
+            batchId?: string;
+            executionPolicy?: string;
+            targetRepoRoot?: string;
+          }) => {
+            let containerRef: Container | undefined;
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+                runStartupSweeps: false,
+              });
+              containerRef = c;
+
+              if (!opts.issues) {
+                console.error('Error: --issues is required');
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
+              const rawIssues = opts.issues
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+              if (rawIssues.length === 0) {
+                console.error(
+                  'Error: --issues must specify at least one positive integer issue number',
+                );
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
+              const issueNumbers: number[] = [];
+              for (const raw of rawIssues) {
+                if (!/^\d+$/.test(raw)) {
+                  console.error(`Error: invalid issue number "${raw}": must be a positive integer`);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
+                }
+                const n = parseInt(raw, 10);
+                if (n < 1) {
+                  console.error(`Error: invalid issue number "${raw}": must be >= 1`);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
+                }
+                issueNumbers.push(n);
+              }
+
+              let executionPolicy: ExecutionPolicy = 'standard';
+              if (opts.executionPolicy) {
+                if (!(EXECUTION_POLICIES as readonly string[]).includes(opts.executionPolicy)) {
+                  console.error(
+                    `Error: --execution-policy must be "standard" or "strict", got "${opts.executionPolicy}"`,
+                  );
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
+                }
+                executionPolicy = opts.executionPolicy as ExecutionPolicy;
+              }
+
+              const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
+              const repoId = callerRepoId
+                ? (callerRepoId as RepositoryId)
+                : c.repoFullName
+                  ? RepositoryId(c.repoFullName)
+                  : undefined;
+
+              const result = await c.startReleaseBatch.execute({
+                repoId,
+                issueNumbers,
+                sourceBranch: opts.sourceBranch,
+                releaseBranch: opts.releaseBranch,
+                batchId: opts.batchId ? ReleaseBatchId(opts.batchId) : undefined,
+                executionPolicy,
+              });
+
+              const outputLines = [
+                `Release batch ${result.batchId} created successfully:`,
+                `  Release Branch: ${result.releaseBranch}`,
+                `  Source Branch:  ${result.sourceBranch} (${result.sourceStartSha})`,
+                `  Issues (${result.batch.items.length}):    ${result.batch.items.map((i: { issueNumber: number }) => `#${i.issueNumber}`).join(', ')}`,
+                `  Admitted Item:  #${result.batch.items[0]?.issueNumber} (Run UUID: ${result.runUuid})`,
+                `  Initial Job ID: ${result.jobId}`,
+              ];
+              await new Promise<void>((resolve, reject) =>
+                process.stdout.write(outputLines.join('\n') + '\n', (err) =>
+                  err ? reject(err) : resolve(),
+                ),
+              );
+
+              const isCliTestSuite =
+                buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+              if (!isCliTestSuite) {
+                await drainAndExit(c, 0);
+              } else {
+                await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
               }
             } catch (err) {
               console.error(err instanceof Error ? err.message : String(err));

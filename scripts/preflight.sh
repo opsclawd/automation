@@ -170,5 +170,10 @@ if [[ "$targets_checked" -eq 0 ]]; then
   echo "No separate target repositories to check."
 fi
 
-echo "==> Starting orchestrator run..."
-exec pnpm --filter @ai-sdlc/api dev run "$@"
+if [[ "${1:-}" == "release-batch" || "${1:-}" == "run" || "${1:-}" == "worker" || "${1:-}" == "serve" || "${1:-}" == "runs" || "${1:-}" == "repo" ]]; then
+  echo "==> Starting orchestrator $1..."
+  exec pnpm --filter @ai-sdlc/api dev "$@"
+else
+  echo "==> Starting orchestrator run..."
+  exec pnpm --filter @ai-sdlc/api dev run "$@"
+fi

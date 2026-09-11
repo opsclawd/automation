@@ -502,4 +502,21 @@ export class GhCliAdapter implements GitHubPort {
       labels: (j.labels ?? []).map((l) => l.name),
     }));
   }
+
+  async verifyCapabilities(
+    repoFullName: string,
+  ): Promise<{ canWrite: boolean; permission: string }> {
+    const out = await this.run(['repo', 'view', repoFullName, '--json', 'viewerPermission']);
+    const command = `gh repo view ${repoFullName} --json viewerPermission`;
+    const data = this.safeJsonParse<{ viewerPermission?: string }>(out, command);
+    const permission = (data.viewerPermission ?? '').toUpperCase();
+    const writePermissions = new Set(['ADMIN', 'MAINTAIN', 'WRITE']);
+    if (!writePermissions.has(permission)) {
+      throw new GitHubFailedError(
+        command,
+        `Insufficient GitHub permissions on ${repoFullName}: got '${permission}', required WRITE or ADMIN`,
+      );
+    }
+    return { canWrite: true, permission };
+  }
 }

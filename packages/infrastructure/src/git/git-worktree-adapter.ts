@@ -176,6 +176,24 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     }
   }
 
+  async fetch(cwd: string, remote: string, ref?: string): Promise<void> {
+    const args = ['fetch', remote];
+    if (ref) args.push(ref);
+    await git(cwd, args);
+  }
+
+  async resolveRef(cwd: string, ref: string): Promise<string | undefined> {
+    try {
+      return await git(cwd, ['rev-parse', '--verify', ref]);
+    } catch {
+      return undefined;
+    }
+  }
+
+  async createBranch(cwd: string, branch: string, startPoint: string): Promise<void> {
+    await git(cwd, ['branch', '-f', branch, startPoint]);
+  }
+
   async isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
     try {
       await git(cwd, ['merge-base', '--is-ancestor', ancestor, descendant]);

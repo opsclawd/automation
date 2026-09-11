@@ -109,4 +109,5 @@ export interface GitHubPort {
   ): Promise<void>;
   listReviews(repoFullName: string, prNumber: number): Promise<PullRequestReview[]>;
   searchIssues?(repoFullName: string, query: string): Promise<GitHubIssue[]>;
+  verifyCapabilities?(repoFullName: string): Promise<{ canWrite: boolean; permission: string }>;
 }

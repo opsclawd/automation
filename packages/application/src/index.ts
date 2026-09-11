@@ -55,3 +55,4 @@ export * from './task-validation-commands.js';
 export * from './task-file-boundaries.js';
 export * from './scratch-file-remediation.js';
 export * from './revalidation-plan.js';
+export * from './start-release-batch.js';

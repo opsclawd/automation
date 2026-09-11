@@ -34,6 +34,10 @@ export class FakeGitPort implements GitPort {
   defaultWorktreeFileContent: ((path: string) => string | undefined) | string | undefined = (
     path: string,
   ) => `fake worktree content for ${path}`;
+  fetchCalls: Array<{ cwd: string; remote: string; ref?: string }> = [];
+  createBranchCalls: Array<{ cwd: string; branch: string; startPoint: string }> = [];
+  resolveRefResults = new Map<string, string>();
+  branchesByCwd = new Map<string, Set<string>>();
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);
@@ -204,5 +208,38 @@ export class FakeGitPort implements GitPort {
       return this.defaultWorktreeFileContent(path);
     }
     return this.defaultWorktreeFileContent;
+  }
+
+  async fetch(cwd: string, remote: string, ref?: string): Promise<void> {
+    this.fetchCalls.push({ cwd, remote, ...(ref !== undefined ? { ref } : {}) });
+  }
+
+  async resolveRef(cwd: string, ref: string): Promise<string | undefined> {
+    const key = `${cwd}:${ref}`;
+    if (this.resolveRefResults.has(key)) {
+      return this.resolveRefResults.get(key);
+    }
+    if (this.resolveRefResults.has(ref)) {
+      return this.resolveRefResults.get(ref);
+    }
+    if (ref.startsWith('origin/')) {
+      const branch = ref.slice('origin/'.length);
+      const remoteKey = `origin/${branch}`;
+      if (this.remoteRefs.has(remoteKey)) {
+        return this.remoteRefs.get(remoteKey);
+      }
+    }
+    return undefined;
+  }
+
+  async createBranch(cwd: string, branch: string, startPoint: string): Promise<void> {
+    this.createBranchCalls.push({ cwd, branch, startPoint });
+    let branches = this.branchesByCwd.get(cwd);
+    if (!branches) {
+      branches = new Set<string>();
+      this.branchesByCwd.set(cwd, branches);
+    }
+    branches.add(branch);
+    this.headByCwd.set(cwd, startPoint);
   }
 }

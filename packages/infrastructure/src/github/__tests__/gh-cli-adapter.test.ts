@@ -135,3 +135,14 @@ describe('GhCliAdapter writes', () => {
     expect(result.reason).toContain('Service Unavailable');
   });
 });
+
+describe('GhCliAdapter verifyCapabilities', () => {
+  it('returns canWrite: true and permission when viewerPermission is WRITE or ADMIN', async () => {
+    const res = await ok.verifyCapabilities('o/r');
+    expect(res).toEqual({ canWrite: true, permission: 'ADMIN' });
+  });
+
+  it('throws GitHubFailedError when gh command fails', async () => {
+    await expect(bad.verifyCapabilities('o/r')).rejects.toBeInstanceOf(GitHubFailedError);
+  });
+});

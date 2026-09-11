@@ -19,6 +19,7 @@
     "typecheck": "pnpm -r typecheck",
     "compare-runs": "tsx scripts/compare-runs.ts",
     "run:preflight": "scripts/preflight.sh",
+    "batch:preflight": "scripts/preflight.sh release-batch start",
     "boundaries": "depcruise . --config .dependency-cruiser.cjs",
     "prepare": "husky || true"
   },
