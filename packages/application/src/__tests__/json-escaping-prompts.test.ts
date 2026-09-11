@@ -19,7 +19,6 @@ const TEMPLATES: Array<{ phase: string; step: string }> = [
   { phase: 'architecture-review', step: 'architecture-fix' },
   { phase: 'plan-design', step: 'plan-unified' },
   { phase: 'compound', step: 'compound' },
-  { phase: 'plan-review', step: 'plan-fix' },
   { phase: 'plan-write', step: 'plan-write' },
   { phase: 'plan-write', step: 'plan-write-repair' },
 ];

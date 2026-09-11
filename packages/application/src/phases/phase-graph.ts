@@ -119,9 +119,8 @@ class LeanPhaseGraph implements PhaseGraph {
 }
 
 export function resolvePhaseGraph(policy?: ExecutionPolicy): PhaseGraph {
-  const effectivePolicy = policy ?? 'legacy';
-  if (effectivePolicy === 'standard' || effectivePolicy === 'strict') {
-    return new LeanPhaseGraph(effectivePolicy);
+  if (policy === 'strict') {
+    return new LeanPhaseGraph('strict');
   }
-  return new LegacyPhaseGraph();
+  return new LeanPhaseGraph('standard');
 }

@@ -28,7 +28,24 @@ function makeRun(overrides?: Partial<Run>): Run {
 function makeStubHandler(phase: string): PhaseHandler {
   return {
     phase: makePhaseName(phase),
-    run: async (_ctx: PhaseHandlerContext): Promise<PhaseResult> => ({ outcome: 'passed' }),
+    run: async (ctx: PhaseHandlerContext): Promise<PhaseResult> => {
+      if (phase === 'spec-review') {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: makePhaseName('spec-review'),
+          relativePath: 'spec-review.json',
+          contents: JSON.stringify({ verdict: 'PASS' }),
+        });
+      } else if (phase === 'quality-review') {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: makePhaseName('quality-review'),
+          relativePath: 'quality-review.json',
+          contents: JSON.stringify({ verdict: 'APPROVE' }),
+        });
+      }
+      return { outcome: 'passed' };
+    },
   };
 }
 
@@ -68,9 +85,9 @@ function makeDeps(overrides?: {
 }
 
 describe('RunExecutor end-to-end dirty-worktree detection (issue #959)', () => {
-  it('passes priorPhaseName=plan-review to implement handler when plan-review dirtied the worktree', async () => {
+  it('passes priorPhaseName=plan-design to implement handler when plan-design dirtied the worktree', async () => {
     const registry = new PhaseHandlerRegistry();
-    for (const phase of ['read_issue', 'plan-design', 'plan-write', 'plan-review']) {
+    for (const phase of ['read_issue', 'plan-design']) {
       registry.register(makeStubHandler(phase));
     }
 
@@ -132,7 +149,7 @@ describe('RunExecutor end-to-end dirty-worktree detection (issue #959)', () => {
     // implement's handler must have observed a priorPhaseName from the live run,
     // not from the initial parameter (which would always be undefined).
     expect(observedPriorPhaseNames.length).toBeGreaterThan(0);
-    expect(observedPriorPhaseNames[observedPriorPhaseNames.length - 1]).toBe('plan-review');
+    expect(observedPriorPhaseNames[observedPriorPhaseNames.length - 1]).toBe('plan-design');
 
     const implementPhase = result.phases.find((p) => p.phase === makePhaseName('implement'));
     expect(implementPhase).toBeDefined();
@@ -144,14 +161,14 @@ describe('RunExecutor end-to-end dirty-worktree detection (issue #959)', () => {
     for (const phase of [
       'read_issue',
       'plan-design',
-      'plan-write',
-      'plan-review',
       'validate',
       'fix-validate',
-      'review-fix',
-      'compound',
+      'spec-review',
+      'quality-review',
+      'fix-review',
+      'follow-up-review',
       'create-pr',
-      'post-pr-review',
+      'wait-merge',
     ]) {
       registry.register(makeStubHandler(phase));
     }

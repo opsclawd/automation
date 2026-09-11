@@ -2,16 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { PlanDesignHandler } from '../plan-design.js';
 import { PlanWriteHandler } from '../plan-write.js';
-import { PlanReviewHandler } from '../plan-review.js';
 import { FakeAgentPort } from '../../../test-doubles/fake-agent-port.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
 import { FakeGitHubPort } from '../../../test-doubles/fake-github-port.js';
 import type { AgentInvocationResult } from '../../../ports/agent-invocation-types.js';
 import type { PhaseHandlerContext } from '../../handler.js';
-import type { PlanReviewLoop } from '../../../plan-review/plan-review-loop.js';
-import type { PlanReviewLoopResult } from '../../../plan-review/types.js';
-import { PhaseName } from '@ai-sdlc/domain';
 
 const { mockLoadPromptTemplate, mockRenderPrompt } = vi.hoisted(() => ({
   mockLoadPromptTemplate: vi.fn<[string, string, { promptsRoot: string }], string>(),
@@ -167,22 +163,6 @@ describe('Unified Planning (Issue #1092)', () => {
     expect(writeResult.outcome).toBe('passed');
     expect(agent.invocations).toHaveLength(1); // Still exactly 1 invocation total!
     expect(eventsOf(ctx, 'plan-write.completed')).toHaveLength(1);
-
-    // 3. Plan-review runs: skipped under standard policy (0 agent calls)
-    const mockLoop = {
-      execute: vi.fn(),
-    } as unknown as PlanReviewLoop;
-    const reviewHandler = new PlanReviewHandler({
-      loop: mockLoop,
-      enabled: true,
-      maxIterations: 3,
-    });
-    const reviewResult = await reviewHandler.run(ctx);
-
-    expect(reviewResult.outcome).toBe('passed');
-    expect(mockLoop.execute).not.toHaveBeenCalled();
-    expect(agent.invocations).toHaveLength(1); // Still exactly 1 invocation total across all planning phases!
-    expect(eventsOf(ctx, 'plan-review.skipped')).toHaveLength(1);
   });
 
   it('deterministic checks reject malformed planning output without invoking reviewer or fixer agents', async () => {
@@ -246,54 +226,6 @@ describe('Unified Planning (Issue #1092)', () => {
       expect(result.failure.message).toContain('Result extraction failed');
     }
     expect(agent.invocations).toHaveLength(1);
-  });
-
-  it('strict mode caps plan-review at 1 iteration and disables bonus iterations', async () => {
-    const strictCtx = makeCtx({ executionPolicy: 'strict' });
-    seedGit(strictCtx);
-
-    await strictCtx.artifacts.write({
-      runId: strictCtx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Setup\nDetails.',
-    });
-
-    const mockLoop = {
-      execute: vi.fn(
-        async (input: {
-          maxIterations: number;
-          options?: { bonusIteration?: boolean; deltaScopedReReview?: boolean };
-        }) => {
-          expect(input.maxIterations).toBe(1);
-          expect(input.options?.bonusIteration).toBe(false);
-          expect(input.options?.deltaScopedReReview).toBe(false);
-          return {
-            loop: {
-              id: 'l-strict',
-              runId: strictCtx.runUuid as never,
-              phaseId: PhaseName('plan-review'),
-              type: 'plan-review',
-              maxIterations: 1,
-              iterations: [],
-              status: 'running',
-              startedAt: new Date(),
-            },
-            outcome: 'success',
-            proceedWithConcerns: false,
-          } as unknown as PlanReviewLoopResult;
-        },
-      ),
-    } as unknown as PlanReviewLoop;
-
-    const reviewHandler = new PlanReviewHandler({
-      loop: mockLoop,
-      enabled: true,
-      maxIterations: 3,
-    });
-    const result = await reviewHandler.run(strictCtx);
-
-    expect(result.outcome).toBe('passed');
-    expect(mockLoop.execute).toHaveBeenCalledTimes(1);
   });
 
   it('resume/retry idempotently reuses existing canonical planning artifacts', async () => {

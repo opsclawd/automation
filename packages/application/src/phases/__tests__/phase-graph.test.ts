@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PhaseName } from '@ai-sdlc/domain';
 import {
-  CANONICAL_PHASE_ORDER,
   STANDARD_LEAN_PHASE_ORDER,
   STRICT_LEAN_PHASE_ORDER,
   LEAN_PHASE_ORDER,
@@ -10,18 +9,16 @@ import {
 } from '../index.js';
 
 describe('phase-graph', () => {
-  it('resolves canonical order for legacy execution policy', () => {
+  it('resolves standard lean order for legacy execution policy', () => {
     const order = resolvePhaseOrder('legacy');
-    expect(order).toEqual(CANONICAL_PHASE_ORDER);
-    expect(order).toContain(PhaseName('plan-write'));
-    expect(order).toContain(PhaseName('plan-review'));
-    expect(order).toContain(PhaseName('compound'));
-    expect(order).toContain(PhaseName('post-pr-review'));
+    expect(order).toEqual(STANDARD_LEAN_PHASE_ORDER);
+    expect(order).not.toContain(PhaseName('plan-write'));
+    expect(order).not.toContain(PhaseName('plan-review'));
 
     const graph = resolvePhaseGraph('legacy');
-    expect(graph.policy).toBe('legacy');
-    expect(graph.scheduledPhases).toEqual(CANONICAL_PHASE_ORDER);
-    expect(graph.isReachable('plan-write')).toBe(true);
+    expect(graph.policy).toBe('standard');
+    expect(graph.scheduledPhases).toEqual(STANDARD_LEAN_PHASE_ORDER);
+    expect(graph.isReachable('plan-write')).toBe(false);
   });
 
   it('resolves distinct lean phase orders for standard and strict policies', () => {

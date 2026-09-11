@@ -60,21 +60,79 @@ function makeExecutor(overrides?: {
   const phases = [
     'read_issue',
     'plan-design',
-    'plan-write',
-    'plan-review',
     'implement',
     'validate',
     'fix-validate',
-    'review-fix',
-    'compound',
+    'spec-review',
+    'quality-review',
+    'fix-review',
+    'follow-up-review',
     'create-pr',
-    'post-pr-review',
+    'wait-merge',
   ];
   for (const p of phases) {
     const override = overrides?.handlers?.find((h) => h.phase === p);
     registry.register({
       phase: makePhaseName(p),
-      run: override?.run ?? (async () => ({ outcome: 'passed' as const })),
+      run:
+        override?.run ??
+        (async (ctx) => {
+          if (p === 'plan-design') {
+            await ctx.artifacts.write({
+              runId: ctx.runUuid,
+              phaseId: makePhaseName('plan-design'),
+              relativePath: 'design.md',
+              contents: '# Design',
+            });
+            await ctx.artifacts.write({
+              runId: ctx.runUuid,
+              phaseId: makePhaseName('plan-design'),
+              relativePath: 'plan.md',
+              contents: '# Plan',
+            });
+          } else if (p === 'implement') {
+            await ctx.artifacts.write({
+              runId: ctx.runUuid,
+              phaseId: makePhaseName('implement'),
+              relativePath: 'implementation-log.md',
+              contents: '# Implementation Log',
+            });
+          } else if (p === 'spec-review') {
+            await ctx.artifacts.write({
+              runId: ctx.runUuid,
+              phaseId: makePhaseName('spec-review'),
+              relativePath: 'spec-review.json',
+              contents: JSON.stringify({ verdict: 'PASS' }),
+            });
+            await ctx.artifacts.write({
+              runId: ctx.runUuid,
+              phaseId: makePhaseName('spec-review'),
+              relativePath: 'spec-review.md',
+              contents: '# Spec Review\nPASS',
+            });
+          } else if (p === 'quality-review') {
+            await ctx.artifacts.write({
+              runId: ctx.runUuid,
+              phaseId: makePhaseName('quality-review'),
+              relativePath: 'quality-review.json',
+              contents: JSON.stringify({ verdict: 'APPROVE' }),
+            });
+            await ctx.artifacts.write({
+              runId: ctx.runUuid,
+              phaseId: makePhaseName('quality-review'),
+              relativePath: 'quality-review.md',
+              contents: '# Quality Review\nLGTM',
+            });
+          } else if (p === 'create-pr') {
+            await ctx.artifacts.write({
+              runId: ctx.runUuid,
+              phaseId: makePhaseName('create-pr'),
+              relativePath: 'pr-url.txt',
+              contents: 'https://github.com/o/r/pull/1',
+            });
+          }
+          return { outcome: 'passed' as const };
+        }),
     });
   }
   const executor = new RunExecutor({
@@ -101,7 +159,7 @@ function makeExecutor(overrides?: {
 }
 
 describe('RunExecutor end-to-end', () => {
-  it('completes a full run through all 11 phases with in-memory fakes', async () => {
+  it('completes a full run through lean phases with in-memory fakes', async () => {
     const { executor, run } = makeExecutor();
 
     const result = await executor.execute({
@@ -111,9 +169,13 @@ describe('RunExecutor end-to-end', () => {
     });
 
     expect(result.run.status).toBe('passed');
-    expect(result.phases).toHaveLength(11);
+    expect(result.phases).toHaveLength(9);
     for (const phase of result.phases) {
-      expect(phase.status).toBe('passed');
+      if (phase.phase === makePhaseName('fix-validate')) {
+        expect(phase.status).toBe('skipped');
+      } else {
+        expect(phase.status).toBe('passed');
+      }
     }
   });
 
@@ -123,27 +185,33 @@ describe('RunExecutor end-to-end', () => {
     await executor.execute({ run, skip: [], presentArtifacts: [] });
 
     const persistedPhases = phaseRepo.listByRun(run.uuid);
-    expect(persistedPhases).toHaveLength(11);
+    expect(persistedPhases).toHaveLength(9);
     for (const phase of persistedPhases) {
-      expect(phase.status).toBe('passed');
+      if (phase.name === 'fix-validate') {
+        expect(phase.status).toBe('skipped');
+      } else {
+        expect(phase.status).toBe('passed');
+      }
     }
 
     const updatedRun = runRepo.findByUuid(run.uuid);
     expect(updatedRun?.status).toBe('passed');
   });
 
-  it('skips the compound phase when in skip list', async () => {
-    const { executor, run } = makeExecutor();
+  it('bypasses fix-validate when validation passes', async () => {
+    const { executor, run, phaseRepo } = makeExecutor();
 
     const result = await executor.execute({
       run,
-      skip: [makePhaseName('compound')],
+      skip: [],
       presentArtifacts: [],
     });
 
     expect(result.run.status).toBe('passed');
-    const compoundPhase = result.phases.find((p) => p.phase === 'compound');
-    expect(compoundPhase?.status).toBe('skipped');
+    const fixValidatePhase = result.phases.find((p) => p.phase === 'fix-validate');
+    expect(fixValidatePhase?.status).toBe('skipped');
+    const persisted = phaseRepo.listByRun(run.uuid).find((p) => p.name === 'fix-validate');
+    expect(persisted?.status).toBe('skipped');
   });
 
   it('marks run as failed when a handler returns failed outcome', async () => {
@@ -250,7 +318,7 @@ describe('RunExecutor end-to-end', () => {
     const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
 
     expect(result.run.status).toBe('passed');
-    expect(result.phases).toHaveLength(11);
+    expect(result.phases).toHaveLength(9);
     expect(result.phases[0]!.status).toBe('passed');
     expect(result.phases[0]!.phase).toBe(makePhaseName('read_issue'));
     expect(result.phases[1]!.status).toBe('passed');

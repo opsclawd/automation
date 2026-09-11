@@ -18,21 +18,22 @@ import type { PhaseRepositoryPort } from '../../ports/phase-repository-port.js';
 import { RunExecutor } from '../run-executor.js';
 import type { ExecuteRunInput } from '../run-executor.js';
 import { FakePhaseRepository } from '../../test-doubles/fake-phase-repository.js';
+import { FakeArtifactStore } from '../../test-doubles/fake-artifact-store.js';
 import type { RunNotificationPort } from '../../ports/run-notification-port.js';
 import { FakeRunNotification } from '../../test-doubles/fake-run-notification.js';
 
 const ALL_PHASES = [
   'read_issue',
   'plan-design',
-  'plan-write',
-  'plan-review',
   'implement',
   'validate',
   'fix-validate',
-  'review-fix',
-  'compound',
+  'spec-review',
+  'quality-review',
+  'fix-review',
+  'follow-up-review',
   'create-pr',
-  'post-pr-review',
+  'wait-merge',
 ] as const;
 
 function makeRun(overrides?: Partial<Run>): Run {
@@ -68,6 +69,62 @@ function makeStubHandler(
       }
       if (outcome === 'needs_human_review') {
         return { outcome: 'needs_human_review', failure: makeFailure(phase, 'agent_incomplete') };
+      }
+      if (outcome === 'passed') {
+        if (phase === 'plan-design') {
+          await _ctx.artifacts.write({
+            runId: _ctx.runUuid,
+            phaseId: makePhaseName('plan-design'),
+            relativePath: 'design.md',
+            contents: '# Design',
+          });
+          await _ctx.artifacts.write({
+            runId: _ctx.runUuid,
+            phaseId: makePhaseName('plan-design'),
+            relativePath: 'plan.md',
+            contents: '# Plan',
+          });
+        } else if (phase === 'implement') {
+          await _ctx.artifacts.write({
+            runId: _ctx.runUuid,
+            phaseId: makePhaseName('implement'),
+            relativePath: 'implementation-log.md',
+            contents: '# Implementation Log',
+          });
+        } else if (phase === 'spec-review') {
+          await _ctx.artifacts.write({
+            runId: _ctx.runUuid,
+            phaseId: makePhaseName('spec-review'),
+            relativePath: 'spec-review.json',
+            contents: JSON.stringify({ verdict: 'PASS' }),
+          });
+          await _ctx.artifacts.write({
+            runId: _ctx.runUuid,
+            phaseId: makePhaseName('spec-review'),
+            relativePath: 'spec-review.md',
+            contents: '# Spec Review\nPASS',
+          });
+        } else if (phase === 'quality-review') {
+          await _ctx.artifacts.write({
+            runId: _ctx.runUuid,
+            phaseId: makePhaseName('quality-review'),
+            relativePath: 'quality-review.json',
+            contents: JSON.stringify({ verdict: 'APPROVE' }),
+          });
+          await _ctx.artifacts.write({
+            runId: _ctx.runUuid,
+            phaseId: makePhaseName('quality-review'),
+            relativePath: 'quality-review.md',
+            contents: '# Quality Review\nLGTM',
+          });
+        } else if (phase === 'create-pr') {
+          await _ctx.artifacts.write({
+            runId: _ctx.runUuid,
+            phaseId: makePhaseName('create-pr'),
+            relativePath: 'pr-url.txt',
+            contents: 'https://github.com/o/r/pull/1',
+          });
+        }
       }
       return { outcome };
     },
@@ -105,6 +162,7 @@ function makeDeps(overrides?: {
   logger?: LoggerPort;
   runNotification?: RunNotificationPort;
 }) {
+  const artifactStore = new FakeArtifactStore();
   return {
     runRepository: {
       insertIfNoActive: vi.fn(),
@@ -137,18 +195,7 @@ function makeDeps(overrides?: {
         repoFullName: 'acme/widgets',
         issueNumber: 42,
         cwd: '/tmp/worktree',
-        artifacts: {
-          read: async () => '',
-          write: async () => ({
-            runId: 'test-uuid',
-            relativePath: '',
-            absolutePath: '',
-            bytes: 0,
-            createdAt: fixedNow,
-          }),
-          list: async () => [],
-          hydrateWorktree: async () => {},
-        },
+        artifacts: artifactStore,
         github: {} as never,
         git: {} as never,
         agent: {} as never,

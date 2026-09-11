@@ -7,21 +7,21 @@ describe('@ai-sdlc/application', () => {
     expect(packageName).toBe('@ai-sdlc/application');
   });
 
-  it('exposes the plan-review parse subpath with the .js export alias', () => {
+  it('exposes defined subpath exports', () => {
     const pkg = JSON.parse(
       readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
     ) as {
       exports?: Record<string, { development?: string; types?: string; import?: string }>;
     };
-    expect(pkg.exports?.['./plan-review/parse-plan-review-findings']).toMatchObject({
-      development: './src/plan-review/parse-plan-review-findings.ts',
-      types: './dist/plan-review/parse-plan-review-findings.d.ts',
-      import: './dist/plan-review/parse-plan-review-findings.js',
+    expect(pkg.exports?.['./ports']).toMatchObject({
+      development: './src/ports/index.ts',
+      types: './dist/ports/index.d.ts',
+      import: './dist/ports/index.js',
     });
-    expect(pkg.exports?.['./plan-review/parse-plan-review-findings.js']).toMatchObject({
-      development: './src/plan-review/parse-plan-review-findings.ts',
-      types: './dist/plan-review/parse-plan-review-findings.d.ts',
-      import: './dist/plan-review/parse-plan-review-findings.js',
+    expect(pkg.exports?.['./review-state']).toMatchObject({
+      development: './src/review-state/types.ts',
+      types: './dist/review-state/types.d.ts',
+      import: './dist/review-state/types.js',
     });
   });
 });

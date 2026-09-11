@@ -1129,118 +1129,9 @@ describe('resume worktree lifecycle integration', () => {
     );
   }, 30_000);
 
-  it('does not silently clean a detected plan-review contract violation', async () => {
-    // -------------------------------------------------------------
-    // Part A: Detected plan-review contract violation escalates upstream
-    // -------------------------------------------------------------
-    const contractViolationReviewScript: ScriptedAgentScript = {
-      phaseId: 'plan-review',
-      handle: async (request) => {
-        // Agent violates contract and writes forbidden residue into worktree
-        writeFileSync(path.join(request.cwd, 'violating-agent-residue.tmp'), 'probe residue');
-        return {
-          runtime: 'test' as const,
-          provider: 'test',
-          model: 'test',
-          exitCode: 1,
-          durationMs: 10,
-          stdoutPath: '/dev/null',
-          stderrPath: '/dev/null',
-          contractViolations: ['missing_required_artifact'],
-          outcome: 'contract_violation' as const,
-        };
-      },
-    };
-
-    const harnessA = trackHarness(
-      await createHarness({
-        scripts: [contractViolationReviewScript],
-      }),
-    );
-
-    execFileSync(
-      'git',
-      [
-        'worktree',
-        'add',
-        '-b',
-        `ai/issue-${harnessA.run.issueNumber}`,
-        harnessA.worktreeDir,
-        'main',
-      ],
-      { cwd: harnessA.targetRoot },
-    );
-
-    harnessA.container.runRepository.update(harnessA.run.uuid, {
-      status: 'running',
-      currentPhase: null,
-      completedPhases: ['read_issue', 'plan-design', 'plan-write'],
-    });
-
-    await harnessA.context.artifacts.write({
-      runId: harnessA.run.uuid,
-      phaseId: 'read_issue',
-      relativePath: 'issue.md',
-      contents: '# Issue\n',
-    });
-    await harnessA.context.artifacts.write({
-      runId: harnessA.run.uuid,
-      phaseId: 'read_issue',
-      relativePath: 'issue-comments.md',
-      contents: '[]\n',
-    });
-    await harnessA.context.artifacts.write({
-      runId: harnessA.run.uuid,
-      phaseId: 'plan-design',
-      relativePath: 'design.md',
-      contents: '# Design\n',
-    });
-    await harnessA.context.artifacts.write({
-      runId: harnessA.run.uuid,
-      phaseId: 'plan-write',
-      relativePath: 'plan.md',
-      contents: '# Plan\n\n## Task 1: Task\n',
-    });
-    await harnessA.context.artifacts.write({
-      runId: harnessA.run.uuid,
-      phaseId: 'plan-write',
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify({
-        version: 2,
-        task_count: 1,
-        tasks: [{ n: 1, title: 'Task 1' }],
-      }),
-    });
-
-    // Write a probe file in worktree
-    writeFileSync(path.join(harnessA.worktreeDir, 'violating-agent-residue.tmp'), 'probe residue');
-
-    const planReviewHandler = harnessA.container.phaseRegistry.get('plan-review')!;
-    const phaseResultA = await planReviewHandler.run(harnessA.context);
-
-    // Plan review's own read-only guard (#1024) catches the contract violation
-    // and escalates to human review rather than hard-failing the run.
-    expect(phaseResultA.outcome).toBe('needs_human_review');
-
-    // Event repository has NO implement.inbound_worktree_reset event
-    const eventsA = harnessA.container.eventRepository.listByRunSince(
-      RunId(harnessA.run.uuid),
-      new Date(0),
-    );
-    expect(eventsA.some((e) => e.type === 'implement.inbound_worktree_reset')).toBe(false);
-
-    // -------------------------------------------------------------
-    // Part B: Residual ambient drift from a plan-review that already completed
-    // in a prior process (e.g. the process crashed or was killed after plan-review
-    // finished but before any cleanup ran) is audited and cleaned at the implement
-    // boundary. This must NOT be simulated via a live plan-review agent invocation
-    // that leaves residue mid-invocation — plan-review's own read-only guard
-    // (#1024) now detects and cleans that class of drift itself, before implement
-    // is ever entered, which would make this scenario indistinguishable from
-    // Part A. Instead, plan-review is marked already-completed (as if resumed
-    // after a crash) and the residue is written directly into the worktree,
-    // matching drift that no live per-invocation guard ever had a chance to see.
-    // -------------------------------------------------------------
+  it('cleans residual ambient drift from a historical plan-review run resuming into implement', async () => {
+    // Residual ambient drift from a plan-review that already completed
+    // in a prior process (e.g. historical run) is audited and cleaned at the implement boundary.
     const implementScript: ScriptedAgentScript = {
       phaseId: 'implement',
       handle: async (request) => {
@@ -1429,34 +1320,7 @@ describe('resume worktree lifecycle integration', () => {
     expect(existsSync(path.join(harnessB.worktreeDir, 'ambient-review-probe.tmp'))).toBe(false);
   }, 30_000);
 
-  it('resumes across plan-review boundary reading deliverables from .ai/ without root copies', async () => {
-    const planReviewScript: ScriptedAgentScript = {
-      phaseId: 'plan-review',
-      handle: async (request) => {
-        // Verify deliverables exist under .ai/ and root copies are absent
-        expect(existsSync(path.join(request.cwd, '.ai', 'plan.md'))).toBe(true);
-        expect(existsSync(path.join(request.cwd, '.ai', 'task-manifest.json'))).toBe(true);
-        expect(existsSync(path.join(request.cwd, '.ai', 'design.md'))).toBe(true);
-        expect(existsSync(path.join(request.cwd, 'plan.md'))).toBe(false);
-        expect(existsSync(path.join(request.cwd, 'task-manifest.json'))).toBe(false);
-        expect(existsSync(path.join(request.cwd, 'design.md'))).toBe(false);
-
-        const findingsPath = path.join(request.cwd, 'plan-review-findings.md');
-        writeFileSync(findingsPath, '## verdict\npass\n\n## findings\n', 'utf-8');
-        return {
-          runtime: 'test' as const,
-          provider: 'test',
-          model: 'test',
-          exitCode: 0,
-          durationMs: 10,
-          stdoutPath: '/dev/null',
-          stderrPath: '/dev/null',
-          contractViolations: [],
-          outcome: 'success' as const,
-        };
-      },
-    };
-
+  it('resumes across implement boundary reading deliverables from .ai/ without root copies', async () => {
     const implementScript: ScriptedAgentScript = {
       phaseId: 'implement',
       handle: async (request) => {
@@ -1538,7 +1402,7 @@ describe('resume worktree lifecycle integration', () => {
 
     const harness = trackHarness(
       await createHarness({
-        scripts: [planReviewScript, implementScript, specReviewScript, qualityReviewScript],
+        scripts: [implementScript, specReviewScript, qualityReviewScript],
       }),
     );
 
@@ -1553,12 +1417,12 @@ describe('resume worktree lifecycle integration', () => {
       encoding: 'utf8',
     }).trim();
 
-    // Durable state: run failed at plan-review
+    // Durable state: historical run that completed plan-review and paused/failed at implement
     harness.container.runRepository.update(harness.run.uuid, {
       status: 'failed',
-      currentPhase: 'plan-review',
+      currentPhase: 'implement',
       startCommitSha: baselineSha,
-      completedPhases: ['read_issue', 'plan-design', 'plan-write'],
+      completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review'],
     });
 
     harness.container.phaseRepository.insert({
@@ -1592,6 +1456,15 @@ describe('resume worktree lifecycle integration', () => {
       id: 'phase-plan-review-pr',
       runUuid: harness.run.uuid,
       name: 'plan-review',
+      status: 'passed',
+      attempt: 1,
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
+    harness.container.phaseRepository.insert({
+      id: 'phase-implement-pr',
+      runUuid: harness.run.uuid,
+      name: 'implement',
       status: 'failed',
       attempt: 1,
       startedAt: new Date(),

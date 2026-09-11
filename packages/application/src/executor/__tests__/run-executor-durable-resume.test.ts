@@ -170,6 +170,16 @@ function makePassingHandler(phase: string, runSpy?: ReturnType<typeof vi.fn>): P
         } catch {
           // ignore
         }
+      } else if (phase === 'create-pr') {
+        try {
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            relativePath: 'pr-url.txt',
+            contents: 'https://github.com/o/r/pull/1',
+          });
+        } catch {
+          // ignore
+        }
       }
       return { outcome: 'passed' };
     },
@@ -273,15 +283,23 @@ function registerPassThroughHandlers(
   });
   registry.register({
     phase: makePhaseName('plan-design'),
-    run: async () => ({ outcome: 'passed' }),
-  });
-  registry.register({
-    phase: makePhaseName('plan-write'),
-    run: async () => ({ outcome: 'passed' }),
-  });
-  registry.register({
-    phase: makePhaseName('plan-review'),
-    run: async () => ({ outcome: 'passed' }),
+    run: async (ctx) => {
+      try {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          relativePath: 'design.md',
+          contents: '# Design\n',
+        });
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          relativePath: 'plan.md',
+          contents: '# Plan\n',
+        });
+      } catch {
+        // ignore
+      }
+      return { outcome: 'passed' };
+    },
   });
   registry.register(makePassingHandler('implement', implementSpy));
   for (const phase of PHASES_AFTER_IMPLEMENT) {
@@ -381,11 +399,10 @@ describe('RunExecutor durable resume', () => {
       'plan-review',
       'implement',
       'validate',
-      'fix-validate',
-      'review-fix',
-      'compound',
+      'spec-review',
+      'quality-review',
       'create-pr',
-      'post-pr-review',
+      'wait-merge',
     ]);
 
     const implementPhase = result.phases.find(
@@ -1239,7 +1256,7 @@ describe('RunExecutor durable resume', () => {
 
   it('allows clean non-implement phase resume without step baseline', async () => {
     const run = makeRun({
-      completedPhases: ['read_issue', 'plan-design', 'plan-write'],
+      completedPhases: ['read_issue'],
     });
 
     const artifacts = new FakeArtifactStore();
@@ -1253,32 +1270,28 @@ describe('RunExecutor durable resume', () => {
       relativePath: 'issue-comments.md',
       contents: '[]',
     });
-    await artifacts.write({
-      runId: run.uuid,
-      relativePath: 'design.md',
-      contents: '# Design',
-    });
-    await artifacts.write({
-      runId: run.uuid,
-      relativePath: 'plan.md',
-      contents: '# Plan',
-    });
-    await artifacts.write({
-      runId: run.uuid,
-      phaseId: 'implement',
-      relativePath: 'implementation-log.md',
-      contents: '# Log',
-    });
 
     const git = new FakeGitPort();
     git.statusByCwd.set('/tmp/worktree', '');
 
-    const planReviewSpy = vi.fn(async () => ({ outcome: 'passed' as const }));
+    const planDesignSpy = vi.fn(async (ctx: PhaseHandlerContext) => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'design.md',
+        contents: '# Design\n',
+      });
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'plan.md',
+        contents: '# Plan\n',
+      });
+      return { outcome: 'passed' as const };
+    });
     const registry = new PhaseHandlerRegistry();
     registerPassThroughHandlers(registry, vi.fn());
     registry.register({
-      phase: makePhaseName('plan-review'),
-      run: planReviewSpy,
+      phase: makePhaseName('plan-design'),
+      run: planDesignSpy,
     });
 
     const deps = makeDeps({
@@ -1304,23 +1317,35 @@ describe('RunExecutor durable resume', () => {
     });
 
     expect(result.run.status).toBe('passed');
-    expect(planReviewSpy).toHaveBeenCalled();
+    expect(planDesignSpy).toHaveBeenCalled();
   });
 
   it('escalates dirty non-implement phase resume when baseline is absent', async () => {
     const run = makeRun({
-      completedPhases: ['read_issue', 'plan-design', 'plan-write'],
+      completedPhases: ['read_issue'],
+    });
+
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: run.uuid,
+      relativePath: 'issue.md',
+      contents: '# Issue',
+    });
+    await artifacts.write({
+      runId: run.uuid,
+      relativePath: 'issue-comments.md',
+      contents: '[]',
     });
 
     const git = new FakeGitPort();
     git.statusByCwd.set('/tmp/worktree', '?? dirty.ts\n');
 
-    const planReviewSpy = vi.fn();
+    const planDesignSpy = vi.fn();
     const registry = new PhaseHandlerRegistry();
     registerPassThroughHandlers(registry, vi.fn());
     registry.register({
-      phase: makePhaseName('plan-review'),
-      run: planReviewSpy,
+      phase: makePhaseName('plan-design'),
+      run: planDesignSpy,
     });
 
     const deps = makeDeps({
@@ -1330,7 +1355,7 @@ describe('RunExecutor durable resume', () => {
           runId: run.displayId,
           runUuid: run.uuid,
           cwd: '/tmp/worktree',
-          artifacts: new FakeArtifactStore(),
+          artifacts,
           git,
           events: { publish: vi.fn(), subscribe: vi.fn().mockReturnValue(() => {}) },
           now: () => FIXED_NOW,
@@ -1346,12 +1371,12 @@ describe('RunExecutor durable resume', () => {
     });
 
     expect(result.run.status).toBe('needs_human_review');
-    expect(planReviewSpy).not.toHaveBeenCalled();
+    expect(planDesignSpy).not.toHaveBeenCalled();
   });
 
   it('fresh jobs skip resume preparation', async () => {
     const run = makeRun({
-      completedPhases: ['read_issue', 'plan-design', 'plan-write'],
+      completedPhases: ['read_issue'],
     });
 
     const artifacts = new FakeArtifactStore();
@@ -1365,35 +1390,31 @@ describe('RunExecutor durable resume', () => {
       relativePath: 'issue-comments.md',
       contents: '[]',
     });
-    await artifacts.write({
-      runId: run.uuid,
-      relativePath: 'design.md',
-      contents: '# Design',
-    });
-    await artifacts.write({
-      runId: run.uuid,
-      relativePath: 'plan.md',
-      contents: '# Plan',
-    });
-    await artifacts.write({
-      runId: run.uuid,
-      phaseId: 'implement',
-      relativePath: 'implementation-log.md',
-      contents: '# Log',
-    });
 
     const git = new FakeGitPort();
     // Even if status has dirty files, fresh jobs (no resumeDisposition) do not do resume preparation
     git.statusByCwd.set('/tmp/worktree', '?? uncommitted.ts\n');
 
     const lifecycle = new FakeWorktreeLifecycle();
-    const planReviewSpy = vi.fn(async () => ({ outcome: 'passed' as const }));
+    const planDesignSpy = vi.fn(async (ctx: PhaseHandlerContext) => {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'design.md',
+        contents: '# Design\n',
+      });
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'plan.md',
+        contents: '# Plan\n',
+      });
+      return { outcome: 'passed' as const };
+    });
 
     const registry = new PhaseHandlerRegistry();
     registerPassThroughHandlers(registry, vi.fn());
     registry.register({
-      phase: makePhaseName('plan-review'),
-      run: planReviewSpy,
+      phase: makePhaseName('plan-design'),
+      run: planDesignSpy,
     });
 
     const deps = makeDeps({
@@ -1422,7 +1443,7 @@ describe('RunExecutor durable resume', () => {
     expect(result.run.status).toBe('passed');
     expect(lifecycle.inspectCalls).toHaveLength(0);
     expect(lifecycle.executeCalls).toHaveLength(0);
-    expect(planReviewSpy).toHaveBeenCalled();
+    expect(planDesignSpy).toHaveBeenCalled();
   });
 
   it('defers to the implement phase inbound audit when step baseline is absent, instead of escalating on ambient dirt', async () => {
