@@ -2415,7 +2415,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let fingerprint: string | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let sources: any;
-  let executionPolicy: ExecutionPolicy = 'legacy';
+  let executionPolicy: ExecutionPolicy = 'standard';
   try {
     const cacheKey = `${effectiveRepoRoot}|${effectiveTargetRepoRoot ?? ''}`;
     let layered = layeredConfigCache.get(cacheKey);
@@ -2428,7 +2428,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     }
     fingerprint = layered.fingerprint;
     sources = layered.sources;
-    executionPolicy = layered.config.executionPolicy ?? 'legacy';
+    executionPolicy = layered.config.executionPolicy ?? 'standard';
   } catch {
     // Ignore error here; the main config loader below will throw if config is invalid/missing.
   }
@@ -3979,7 +3979,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             now: () => new Date(),
           },
           {
-            executionPolicy: run.executionPolicy ?? config.executionPolicy ?? 'legacy',
+            executionPolicy: run.executionPolicy ?? config.executionPolicy ?? 'standard',
             promptsRoot: join(effectiveRepoRoot, 'prompts'),
             expectedBranch: `ai/issue-${run.issueNumber}`,
             baseBranch: run.baseBranch ?? opts.baseBranch ?? defaultBranch,
@@ -7125,8 +7125,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             if ('seedArtifactExcludes' in gitAdapter) {
               await (gitAdapter as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
             }
-            const sha = await gitAdapter.headCommitSha(worktreePath);
-            runRepository.update(r.uuid, { startCommitSha: sha });
+            if (!r.startCommitSha) {
+              const sha = await gitAdapter.headCommitSha(worktreePath);
+              runRepository.update(r.uuid, { startCommitSha: sha });
+            }
             return { cwd: worktreePath };
           },
           resetWorktree: (repoId) => {

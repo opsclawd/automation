@@ -24,7 +24,7 @@ import {
   type ResumeDisposition,
   type ExecutionPolicy,
 } from '@ai-sdlc/domain';
-import { newRunId } from '@ai-sdlc/shared';
+import { newRunId, EXECUTION_POLICIES } from '@ai-sdlc/shared';
 import {
   planRunRecoveryAction,
   ReapOrphanedTestWorkers,
@@ -756,9 +756,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         } else if (opts.strict) {
           resolvedExecutionPolicy = 'strict';
         } else if (opts.executionPolicy !== undefined) {
-          if (!['legacy', 'standard', 'strict'].includes(opts.executionPolicy)) {
+          if (!(EXECUTION_POLICIES as readonly string[]).includes(opts.executionPolicy)) {
             console.error(
-              `Error: --execution-policy must be "legacy", "standard", or "strict", got "${opts.executionPolicy}"`,
+              `Error: --execution-policy must be "standard" or "strict", got "${opts.executionPolicy}"`,
             );
             await drainAndExit(c, EXIT_USER_ERROR);
             return;
@@ -766,7 +766,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           resolvedExecutionPolicy = opts.executionPolicy as ExecutionPolicy;
         }
 
-        const effectiveExecutionPolicy = resolvedExecutionPolicy ?? c.executionPolicy ?? 'legacy';
+        const effectiveExecutionPolicy = resolvedExecutionPolicy ?? c.executionPolicy ?? 'standard';
 
         // --- flag-combination validation ---
         if (opts.executor === 'ts' && (opts.model !== undefined || opts.agentCli !== undefined)) {
@@ -883,11 +883,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               runId: run.displayId,
               level: 'info',
               type: 'run.config',
-              message: `run.config: executor=ts executionPolicy=${run.executionPolicy ?? 'legacy'} baseBranch=${effectiveBaseBranch || '(default)'}`,
+              message: `run.config: executor=ts executionPolicy=${run.executionPolicy ?? 'standard'} baseBranch=${effectiveBaseBranch || '(default)'}`,
               timestamp: startedAt.toISOString(),
               metadata: {
                 executor: 'ts',
-                executionPolicy: run.executionPolicy ?? 'legacy',
+                executionPolicy: run.executionPolicy ?? 'standard',
                 baseBranch: effectiveBaseBranch || null,
               },
             });
@@ -1976,7 +1976,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 await drainAndExit(c, EXIT_USER_ERROR);
                 return;
               }
-              const runPolicy = (reconciledRun.executionPolicy ?? 'legacy').toUpperCase();
+              const runPolicy = (reconciledRun.executionPolicy ?? 'standard').toUpperCase();
               const resumePhase =
                 plan.targetPhase ?? opts.fromPhase ?? reconciledRun.currentPhase ?? 'auto';
               const effectivePhases = resolvePhaseOrder(reconciledRun.executionPolicy);

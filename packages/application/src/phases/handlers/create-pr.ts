@@ -68,7 +68,10 @@ export class CreatePrHandler implements PhaseHandler {
     }
 
     let dirtyPaths = uncommittedSourcePaths(rawStatus);
-    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    const isLeanPolicy =
+      ctx.executionPolicy === 'standard' ||
+      ctx.executionPolicy === 'strict' ||
+      ctx.executionPolicy === 'legacy';
 
     if (isLeanPolicy && dirtyPaths.length > 0) {
       const protectedPaths = dirtyPaths.filter((p) => isProtectedFilePath(p));

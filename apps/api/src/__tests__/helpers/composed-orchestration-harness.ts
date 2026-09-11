@@ -11,7 +11,7 @@ import type {
   AgentInvocationResult,
   PhaseHandlerContext,
 } from '@ai-sdlc/application';
-import { RepositoryId, type Run } from '@ai-sdlc/domain';
+import { RepositoryId, type Run, type ExecutionPolicy } from '@ai-sdlc/domain';
 import { randomUUID, createHash } from 'node:crypto';
 
 export function createReviewFailScript(): ScriptedAgentScript {
@@ -323,6 +323,7 @@ export interface ComposedOrchestrationHarnessOptions {
   scripts?: ScriptedAgentScript[];
   ambientGitHubRepository?: string;
   agentConfig?: object;
+  executionPolicy?: ExecutionPolicy;
 }
 
 const PADDING_SIZE = 70000;
@@ -532,6 +533,7 @@ export function createComposedOrchestrationHarness(
     completedPhases: [],
     skippedPhases: [],
     startedAt: new Date(),
+    ...(opts.executionPolicy !== undefined ? { executionPolicy: opts.executionPolicy } : {}),
   };
 
   container.runRepository.insertIfNoActive(runRecord);

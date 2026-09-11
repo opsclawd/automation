@@ -114,27 +114,6 @@ Create authentication service.
 ## Task 2: Add login endpoint
 Add login route and handler.`;
 
-  const validManifest = {
-    version: 2,
-    task_count: 2,
-    tasks: [
-      {
-        n: 1,
-        title: 'Setup auth service',
-        task_type: 'standard',
-        expected_files: ['src/auth/service.ts'],
-        reference_files: ['src/config.ts'],
-      },
-      {
-        n: 2,
-        title: 'Add login endpoint',
-        task_type: 'standard',
-        expected_files: ['src/routes/login.ts'],
-        reference_files: [],
-      },
-    ],
-  };
-
   beforeEach(async () => {
     vi.clearAllMocks();
     ctx = makeCtx({ executionPolicy: 'standard' });
@@ -355,37 +334,24 @@ Add login route and handler.`;
     expect(agent.invocations.length).toBe(0);
   });
 
-  it('legacy execution policy continues to use multi-task runStep iteration', async () => {
+  it('legacy execution policy routes to lean implementation without calling runStep', async () => {
     const legacyCtx = makeCtx({ executionPolicy: 'legacy' });
     seedGit(legacyCtx);
     await legacyCtx.artifacts.write({
       runId: legacyCtx.runUuid,
-      phaseId: 'plan-write',
+      phaseId: 'plan-design',
       relativePath: 'plan.md',
       contents: validPlanMd,
     });
     await legacyCtx.artifacts.write({
       runId: legacyCtx.runUuid,
-      phaseId: 'plan-write',
-      relativePath: 'task-manifest.json',
-      contents: JSON.stringify(validManifest),
+      phaseId: 'implement',
+      relativePath: 'implementation-log.md',
+      contents:
+        'Status: DONE\nImplemented auth and login.\nFiles changed:\n- src/auth/service.ts\n- src/routes/login.ts\n',
     });
-
-    const git = legacyCtx.git as FakeGitPort;
-    const preSha = '0'.repeat(40);
-    const postSha1 = 'fake-sha-1';
-    const postSha2 = 'fake-sha-2';
-
-    runStepMock.mockImplementation(async (sctx) => {
-      if (sctx.stepIndex === 1) {
-        git.headByCwd.set(legacyCtx.cwd, postSha1);
-        git.changedFilesResults.set(`${preSha}|${postSha1}`, ['src/auth/service.ts']);
-      } else if (sctx.stepIndex === 2) {
-        git.headByCwd.set(legacyCtx.cwd, postSha2);
-        git.changedFilesResults.set(`${postSha1}|${postSha2}`, ['src/routes/login.ts']);
-      }
-      return { outcome: 'success' };
-    });
+    const agent = legacyCtx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult());
 
     const handler = new ImplementHandler({
       steps,
@@ -395,13 +361,8 @@ Add login route and handler.`;
     const result = await handler.run(legacyCtx);
 
     expect(result.outcome).toBe('passed');
-    expect(runStepMock).toHaveBeenCalledTimes(2);
-    expect(runStepMock).toHaveBeenCalledWith(
-      expect.objectContaining({ stepIndex: 1, stepTitle: 'Task 1: Setup auth service' }),
-    );
-    expect(runStepMock).toHaveBeenCalledWith(
-      expect.objectContaining({ stepIndex: 2, stepTitle: 'Task 2: Add login endpoint' }),
-    );
+    expect(runStepMock).not.toHaveBeenCalled();
+    expect(agent.invocations.length).toBe(1);
   });
 
   it('marks step failed and returns failure when agent invocation fails', async () => {

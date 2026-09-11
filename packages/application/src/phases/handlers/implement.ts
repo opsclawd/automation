@@ -488,7 +488,10 @@ export class ImplementHandler implements PhaseHandler {
     const planMd = await this.readPlan(ctx, emit);
     if (typeof planMd !== 'string') return planMd;
 
-    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    const isLeanPolicy =
+      ctx.executionPolicy === 'standard' ||
+      ctx.executionPolicy === 'strict' ||
+      ctx.executionPolicy === 'legacy';
     if (isLeanPolicy) {
       return this.runLean(ctx, emit, planMd);
     }

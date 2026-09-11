@@ -8,7 +8,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { composeRoot, type Container } from '../compose.js';
 import { buildServer } from '../server.js';
-import { WorkerId, RunId, RepositoryId, type Run } from '@ai-sdlc/domain';
+import { WorkerId, RunId, RepositoryId, type Run, type ExecutionPolicy } from '@ai-sdlc/domain';
 import {
   workerLoop,
   type AgentPort,
@@ -120,6 +120,7 @@ async function createHarness(opts: {
   repoFullName?: string;
   issueNumber?: number;
   scripts?: ScriptedAgentScript[];
+  executionPolicy?: ExecutionPolicy;
 }): Promise<TestHarness> {
   const repoFullName = opts.repoFullName ?? 'owner/test-repo';
   const issueNumber = opts.issueNumber ?? 1;
@@ -159,12 +160,37 @@ async function createHarness(opts: {
         readFileSync(planFixSrc, 'utf-8'),
       );
     }
+    const implementPromptsRoot = path.join(targetRoot, 'prompts', 'implement');
+    mkdirSync(implementPromptsRoot, { recursive: true });
+    const implementSrc = path.join(repoPromptsDir, 'implement', 'implement.md');
+    if (existsSync(implementSrc)) {
+      writeFileSync(
+        path.join(implementPromptsRoot, 'implement.md'),
+        readFileSync(implementSrc, 'utf-8'),
+      );
+    }
+    const reviewFixPromptsRoot = path.join(targetRoot, 'prompts', 'review-fix');
+    mkdirSync(reviewFixPromptsRoot, { recursive: true });
+    for (const name of ['spec-review.md', 'quality-review.md']) {
+      const src = path.join(repoPromptsDir, 'review-fix', name);
+      if (existsSync(src)) {
+        writeFileSync(path.join(reviewFixPromptsRoot, name), readFileSync(src, 'utf-8'));
+      }
+    }
   } catch {}
 
   const agentConfig = {
     validation: { commands: ['exit 0'], timeout: 60 },
     phases: {
-      skip: ['validate', 'fix-validate', 'review-fix', 'compound', 'create-pr', 'post-pr-review'],
+      skip: [
+        'fix-validate',
+        'fix-review',
+        'follow-up-review',
+        'compound',
+        'create-pr',
+        'post-pr-review',
+        'wait-merge',
+      ],
       planReview: { enabled: true, maxIterations: 2 },
       reviewFix: { maxIterations: 2 },
       implement: {
@@ -246,14 +272,16 @@ async function createHarness(opts: {
     issueNumber,
     type: 'issue_to_pr',
     status: 'running',
+    executionPolicy: opts.executionPolicy ?? 'legacy',
     completedPhases: [],
     skippedPhases: [
-      'validate',
       'fix-validate',
-      'review-fix',
+      'fix-review',
+      'follow-up-review',
       'compound',
       'create-pr',
       'post-pr-review',
+      'wait-merge',
     ],
     startedAt: new Date(),
   };
@@ -311,8 +339,10 @@ describe('resume worktree lifecycle integration', () => {
       handle: async (request) => {
         mkdirSync(path.join(request.cwd, 'src'), { recursive: true });
         writeFileSync(path.join(request.cwd, 'src', 'task1.ts'), 'export const task1 = 2;\n');
-        execFileSync('git', ['add', '.'], { cwd: request.cwd });
-        execFileSync('git', ['commit', '-m', 'feat: task 1 implemented'], { cwd: request.cwd });
+        writeFileSync(
+          path.join(request.cwd, 'implementation-log.md'),
+          JSON.stringify({ files: ['src/task1.ts'], summary: 'task 1 implemented' }),
+        );
         return {
           runtime: 'test' as const,
           provider: 'test',
@@ -333,15 +363,16 @@ describe('resume worktree lifecycle integration', () => {
         writeFileSync(
           path.join(request.cwd, 'result.json'),
           JSON.stringify({
-            result: 'pass',
-            reviewType: 'spec',
-            findings: [
+            verdict: 'PASS',
+            requirements_checks: [
               {
-                severity: 'P3',
-                summary: 'Implementation matches issue requirements; no anchored-design gaps found',
-                file: 'src/task1.ts',
+                requirement_id: 'REQ-1',
+                requirement: 'Task 1 implemented',
+                result: 'PASS',
+                evidence: 'verified',
               },
             ],
+            findings: [],
           }),
         );
         return {
@@ -363,7 +394,7 @@ describe('resume worktree lifecycle integration', () => {
       handle: async (request) => {
         writeFileSync(
           path.join(request.cwd, 'result.json'),
-          JSON.stringify({ result: 'pass', reviewType: 'quality', findings: [] }),
+          JSON.stringify({ verdict: 'APPROVE', findings: [] }),
         );
         return {
           runtime: 'test' as const,
@@ -427,6 +458,7 @@ describe('resume worktree lifecycle integration', () => {
       status: 'failed',
       currentPhase: 'implement',
       completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review'],
+      startCommitSha: baselineSha,
     });
 
     harness.container.phaseRepository.insert({
@@ -533,6 +565,11 @@ describe('resume worktree lifecycle integration', () => {
       relativePath: 'plan-review-passed.marker',
       contents: '',
     });
+    await harness.context.artifacts.write({
+      runId: harness.run.uuid,
+      relativePath: 'spec-requirements-ledger.json',
+      contents: JSON.stringify({ version: 1, issueNumber: harness.run.issueNumber, items: [] }),
+    });
 
     // Set a legacy root plan.md in worktree to test rehydration and migration
     writeFileSync(path.join(harness.worktreeDir, 'plan.md'), '# Stale Legacy Root Plan\n');
@@ -613,8 +650,8 @@ describe('resume worktree lifecycle integration', () => {
     expect(existsSync(path.join(harness.worktreeDir, '.ai', 'issue.md'))).toBe(true);
     expect(existsSync(path.join(harness.worktreeDir, 'issue.md'))).toBe(false);
 
-    // d. Implement phase entered and completed successfully
     const finalRun = harness.container.runRepository.findByUuid(harness.run.uuid);
+    expect(finalRun?.failureReason ?? '').toBe('');
     expect(finalRun?.status).toBe('passed');
   }, 30_000);
 
@@ -629,10 +666,13 @@ describe('resume worktree lifecycle integration', () => {
         const task1Content = readFileSync(path.join(request.cwd, 'src', 'task1.ts'), 'utf-8');
         expect(task1Content).toContain('// operator repair: in-scope fix for task 1');
 
-        execFileSync('git', ['add', 'src/task1.ts'], { cwd: request.cwd });
-        execFileSync('git', ['commit', '-m', 'implement: task 1 finished with operator repair'], {
-          cwd: request.cwd,
-        });
+        writeFileSync(
+          path.join(request.cwd, 'implementation-log.md'),
+          JSON.stringify({
+            files: ['src/task1.ts'],
+            summary: 'task 1 finished with operator repair',
+          }),
+        );
 
         return {
           runtime: 'test' as const,
@@ -654,7 +694,18 @@ describe('resume worktree lifecycle integration', () => {
         handle: async (request) => {
           writeFileSync(
             path.join(request.cwd, 'result.json'),
-            JSON.stringify({ result: 'pass', reviewType: 'spec', findings: [] }),
+            JSON.stringify({
+              verdict: 'PASS',
+              requirements_checks: [
+                {
+                  requirement_id: 'REQ-1',
+                  requirement: 'Task 1 in-scope repair',
+                  result: 'PASS',
+                  evidence: 'verified',
+                },
+              ],
+              findings: [],
+            }),
           );
           return {
             runtime: 'test' as const,
@@ -674,7 +725,7 @@ describe('resume worktree lifecycle integration', () => {
         handle: async (request) => {
           writeFileSync(
             path.join(request.cwd, 'result.json'),
-            JSON.stringify({ result: 'pass', reviewType: 'quality', findings: [] }),
+            JSON.stringify({ verdict: 'APPROVE', findings: [] }),
           );
           return {
             runtime: 'test' as const,
@@ -730,6 +781,7 @@ describe('resume worktree lifecycle integration', () => {
       status: 'needs_human_review',
       currentPhase: 'implement',
       completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review'],
+      startCommitSha: baselineShaA,
     });
 
     harnessA.container.phaseRepository.insert({
@@ -840,6 +892,11 @@ describe('resume worktree lifecycle integration', () => {
       relativePath: 'plan-review-passed.marker',
       contents: '',
     });
+    await harnessA.context.artifacts.write({
+      runId: harnessA.run.uuid,
+      relativePath: 'spec-requirements-ledger.json',
+      contents: JSON.stringify({ version: 1, issueNumber: harnessA.run.issueNumber, items: [] }),
+    });
 
     // Explicit preserve_working_tree disposition via API (with confirm: true)
     const apiResA = await harnessA.app.inject({
@@ -922,6 +979,7 @@ describe('resume worktree lifecycle integration', () => {
       status: 'needs_human_review',
       currentPhase: 'implement',
       completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review'],
+      startCommitSha: baselineShaB,
     });
 
     harnessB.container.phaseRepository.insert({
@@ -1157,20 +1215,12 @@ describe('resume worktree lifecycle integration', () => {
     // Write a probe file in worktree
     writeFileSync(path.join(harnessA.worktreeDir, 'violating-agent-residue.tmp'), 'probe residue');
 
-    const runToExecA = harnessA.container.runRepository.findByUuid(harnessA.run.uuid)!;
-    const execResultA = await harnessA.container.runExecutor!.execute({
-      run: runToExecA,
-      skip: [],
-      presentArtifacts: [],
-    });
+    const planReviewHandler = harnessA.container.phaseRegistry.get('plan-review')!;
+    const phaseResultA = await planReviewHandler.run(harnessA.context);
 
     // Plan review's own read-only guard (#1024) catches the contract violation
     // and escalates to human review rather than hard-failing the run.
-    expect(execResultA.run.status).toBe('needs_human_review');
-
-    // Implement was never entered
-    const implementPhaseA = execResultA.phases.find((p) => p.phase === 'implement');
-    expect(implementPhaseA).toBeUndefined();
+    expect(phaseResultA.outcome).toBe('needs_human_review');
 
     // Event repository has NO implement.inbound_worktree_reset event
     const eventsA = harnessA.container.eventRepository.listByRunSince(
@@ -1196,8 +1246,10 @@ describe('resume worktree lifecycle integration', () => {
       handle: async (request) => {
         mkdirSync(path.join(request.cwd, 'src'), { recursive: true });
         writeFileSync(path.join(request.cwd, 'src', 'task1.ts'), 'export const task1 = 1;\n');
-        execFileSync('git', ['add', '.'], { cwd: request.cwd });
-        execFileSync('git', ['commit', '-m', 'implement: task 1'], { cwd: request.cwd });
+        writeFileSync(
+          path.join(request.cwd, 'implementation-log.md'),
+          JSON.stringify({ files: ['src/task1.ts'], summary: 'task 1 implemented' }),
+        );
         return {
           runtime: 'test' as const,
           provider: 'test',
@@ -1219,16 +1271,16 @@ describe('resume worktree lifecycle integration', () => {
           writeFileSync(
             path.join(request.cwd, 'result.json'),
             JSON.stringify({
-              result: 'pass',
-              reviewType: 'spec',
-              findings: [
+              verdict: 'PASS',
+              requirements_checks: [
                 {
-                  severity: 'P3',
-                  summary:
-                    'Implementation matches issue requirements; no anchored-design gaps found',
-                  file: 'src/task1.ts',
+                  requirement_id: 'REQ-1',
+                  requirement: 'Task 1 in-scope repair',
+                  result: 'PASS',
+                  evidence: 'verified',
                 },
               ],
+              findings: [],
             }),
           );
           return {
@@ -1249,7 +1301,7 @@ describe('resume worktree lifecycle integration', () => {
         handle: async (request) => {
           writeFileSync(
             path.join(request.cwd, 'result.json'),
-            JSON.stringify({ result: 'pass', reviewType: 'quality', findings: [] }),
+            JSON.stringify({ verdict: 'APPROVE', findings: [] }),
           );
           return {
             runtime: 'test' as const,
@@ -1285,9 +1337,15 @@ describe('resume worktree lifecycle integration', () => {
       { cwd: harnessB.targetRoot },
     );
 
+    const baselineShaB = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: harnessB.worktreeDir,
+      encoding: 'utf8',
+    }).trim();
+
     harnessB.container.runRepository.update(harnessB.run.uuid, {
       status: 'running',
       currentPhase: null,
+      startCommitSha: baselineShaB,
       // plan-review is already completed (as if from a prior, crashed process),
       // so the run resumes directly at the implement boundary with pre-existing
       // ambient residue that no live plan-review invocation guard ever observed.
@@ -1340,6 +1398,11 @@ describe('resume worktree lifecycle integration', () => {
         task_count: 1,
         tasks: [{ n: 1, title: 'First Task' }],
       }),
+    });
+    await harnessB.context.artifacts.write({
+      runId: harnessB.run.uuid,
+      relativePath: 'spec-requirements-ledger.json',
+      contents: JSON.stringify({ version: 1, issueNumber: harnessB.run.issueNumber, items: [] }),
     });
 
     const runToExecB = harnessB.container.runRepository.findByUuid(harnessB.run.uuid)!;
@@ -1402,8 +1465,10 @@ describe('resume worktree lifecycle integration', () => {
 
         mkdirSync(path.join(request.cwd, 'src'), { recursive: true });
         writeFileSync(path.join(request.cwd, 'src', 'task1.ts'), 'export const task1 = 1;\n');
-        execFileSync('git', ['add', '.'], { cwd: request.cwd });
-        execFileSync('git', ['commit', '-m', 'feat: task 1'], { cwd: request.cwd });
+        writeFileSync(
+          path.join(request.cwd, 'implementation-log.md'),
+          JSON.stringify({ files: ['src/task1.ts'], summary: 'task 1 implemented' }),
+        );
         return {
           runtime: 'test' as const,
           provider: 'test',
@@ -1424,16 +1489,16 @@ describe('resume worktree lifecycle integration', () => {
         writeFileSync(
           path.join(request.cwd, 'result.json'),
           JSON.stringify({
-            result: 'pass',
-            reviewType: 'spec',
-            findings: [
+            verdict: 'PASS',
+            requirements_checks: [
               {
-                severity: 'P3',
-                summary:
-                  'Implementation satisfies issue requirements; no anchored-design gaps found',
-                file: 'src/task1.ts',
+                requirement_id: 'REQ-1',
+                requirement: 'Task 1 in-scope repair',
+                result: 'PASS',
+                evidence: 'verified',
               },
             ],
+            findings: [],
           }),
         );
         return {
@@ -1455,7 +1520,7 @@ describe('resume worktree lifecycle integration', () => {
       handle: async (request) => {
         writeFileSync(
           path.join(request.cwd, 'result.json'),
-          JSON.stringify({ result: 'pass', reviewType: 'quality', findings: [] }),
+          JSON.stringify({ verdict: 'APPROVE', findings: [] }),
         );
         return {
           runtime: 'test' as const,
@@ -1483,10 +1548,16 @@ describe('resume worktree lifecycle integration', () => {
       { cwd: harness.targetRoot },
     );
 
+    const baselineSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: harness.worktreeDir,
+      encoding: 'utf8',
+    }).trim();
+
     // Durable state: run failed at plan-review
     harness.container.runRepository.update(harness.run.uuid, {
       status: 'failed',
       currentPhase: 'plan-review',
+      startCommitSha: baselineSha,
       completedPhases: ['read_issue', 'plan-design', 'plan-write'],
     });
 
@@ -1560,6 +1631,11 @@ describe('resume worktree lifecycle integration', () => {
         task_count: 1,
         tasks: [{ n: 1, title: 'First Task' }],
       }),
+    });
+    await harness.context.artifacts.write({
+      runId: harness.run.uuid,
+      relativePath: 'spec-requirements-ledger.json',
+      contents: JSON.stringify({ version: 1, issueNumber: harness.run.issueNumber, items: [] }),
     });
 
     // Put a legacy root copy in the worktree

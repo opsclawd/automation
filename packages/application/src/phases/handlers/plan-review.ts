@@ -21,14 +21,9 @@ export class PlanReviewHandler implements PhaseHandler {
     const emit = createEventEmitter(ctx, this.phase);
     emit('plan-review.started', 'info', 'plan-review started');
 
-    if (!this.opts.enabled) {
-      // AC #4: behaviour unchanged when disabled.
-      emit('plan-review.skipped', 'info', 'plan-review disabled by config; skipping');
-      return { outcome: 'passed' };
-    }
-
-    if (ctx.executionPolicy === 'standard') {
-      emit('plan-review.skipped', 'info', 'plan-review skipped under standard execution policy');
+    if (!this.opts.enabled || ctx.executionPolicy === 'standard') {
+      // AC #4: behaviour unchanged when disabled or standard policy.
+      emit('plan-review.skipped', 'info', 'plan-review disabled by config or policy; skipping');
       return { outcome: 'passed' };
     }
 

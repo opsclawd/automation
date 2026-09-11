@@ -142,7 +142,7 @@ export class StartIssueRun {
       issueNumber: input.issueNumber,
       startedAt,
       repoId,
-      executionPolicy: input.executionPolicy ?? this.deps.executionPolicy ?? 'legacy',
+      executionPolicy: input.executionPolicy ?? this.deps.executionPolicy ?? 'standard',
     });
     this.deps.runRepository.insertIfNoActive(run);
 

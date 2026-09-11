@@ -28,7 +28,10 @@ export class CompoundHandler extends SingleShotAgentHandler {
   override async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
 
-    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    const isLeanPolicy =
+      ctx.executionPolicy === 'standard' ||
+      ctx.executionPolicy === 'strict' ||
+      ctx.executionPolicy === 'legacy';
     if (isLeanPolicy) {
       emit(
         `${String(this.phase)}.completed`,

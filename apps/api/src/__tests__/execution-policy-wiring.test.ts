@@ -45,7 +45,7 @@ describe('serializeRun with executionPolicy', () => {
     expect(serializeRun(runStrict).executionPolicy).toBe('strict');
   });
 
-  it('defaults executionPolicy to legacy when omitted or legacy', () => {
+  it('defaults executionPolicy to standard when omitted and preserves legacy for historical runs', () => {
     const runDefault = createRun({
       uuid: 'u-3',
       displayId: 'issue-3-20260513-000000',
@@ -53,7 +53,7 @@ describe('serializeRun with executionPolicy', () => {
       issueNumber: 3,
       startedAt: new Date('2026-05-13T00:00:00Z'),
     });
-    expect(serializeRun(runDefault).executionPolicy).toBe('legacy');
+    expect(serializeRun(runDefault).executionPolicy).toBe('standard');
 
     const runExplicitLegacy = createRun({
       uuid: 'u-4',
@@ -92,6 +92,30 @@ describe('Execution Policy API and Composition Wiring', () => {
     });
 
     expect(c.executionPolicy).toBe('standard');
+  });
+
+  it('rejects legacy executionPolicy in POST /api/runs with 400', async () => {
+    const dir = createTempDir();
+    const c = composeRoot({
+      repoRoot: dir,
+      scriptPath: '/dev/null',
+      repoFullName: 'owner/repo',
+      runStartupSweeps: false,
+    });
+    const app = await buildServer(c);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/runs',
+      payload: {
+        issueNumber: 42,
+        executionPolicy: 'legacy',
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body);
+    expect(body.error).toBe('invalid_execution_policy');
   });
 
   it('rejects invalid executionPolicy in POST /api/runs with 400', async () => {
