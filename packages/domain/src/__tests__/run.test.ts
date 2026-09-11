@@ -261,8 +261,13 @@ describe('Run state machine', () => {
   });
 
   describe('executionPolicy', () => {
-    it('defaults executionPolicy to legacy when omitted in createRun', () => {
+    it('leaves executionPolicy undefined when omitted in createRun', () => {
       const r = createRun(base);
+      expect(r.executionPolicy).toBeUndefined();
+    });
+
+    it('preserves historical legacy executionPolicy on Run', () => {
+      const r = createRun({ ...base, executionPolicy: 'legacy' });
       expect(r.executionPolicy).toBe('legacy');
     });
 

@@ -75,24 +75,27 @@ describe('composeRoot — SweepWaitingRuns wiring', () => {
   it('invokes SweepWaitingRuns when runStartupSweeps !== false', async () => {
     const { composeRoot } = await import('../compose.js');
     const repoRoot = makeRepo({ withPostPrReview: true });
-    composeRoot({ repoRoot, scriptPath: '/dev/null' });
+    const c = composeRoot({ repoRoot, scriptPath: '/dev/null' });
     expect(sweepsConstructed.count).toBe(1);
-  });
+    await c.drainStartupSweeps?.();
+  }, 30_000);
 
   it('does NOT invoke SweepWaitingRuns when runStartupSweeps === false', async () => {
     const { composeRoot } = await import('../compose.js');
     const repoRoot = makeRepo({ withPostPrReview: true });
-    composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
+    const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
     expect(sweepsConstructed.count).toBe(0);
-  });
+    await c.drainStartupSweeps?.();
+  }, 30_000);
 
   it('passes configured readyMaxDays from config to SweepWaitingRuns', async () => {
     const { composeRoot } = await import('../compose.js');
     const repoRoot = makeRepo({ withPostPrReview: true, readyMaxDays: 30 });
-    composeRoot({ repoRoot, scriptPath: '/dev/null' });
+    const c = composeRoot({ repoRoot, scriptPath: '/dev/null' });
     expect(sweepsConstructed.count).toBe(1);
     expect(lastReadyMaxDays.value).toBe(30);
-  });
+    await c.drainStartupSweeps?.();
+  }, 30_000);
 
   it('passes runNotification to SweepWaitingRuns on startup and exposes drainStartupSweeps', async () => {
     const { composeRoot } = await import('../compose.js');

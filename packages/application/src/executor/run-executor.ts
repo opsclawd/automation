@@ -168,9 +168,9 @@ export class RunExecutor {
           'follow-up-review',
           'create-pr',
         ];
-        const isLeanReviewLoopTolerantPhase =
-          (currentRun.executionPolicy === 'standard' || currentRun.executionPolicy === 'strict') &&
-          leanReviewLoopTolerantPhases.includes(firstIncompletePhase as string);
+        const isLeanReviewLoopTolerantPhase = leanReviewLoopTolerantPhases.includes(
+          firstIncompletePhase as string,
+        );
         let resumableStep: Step | undefined;
         if (this.deps.stepRepository) {
           const runSteps = this.deps.stepRepository.listForRun(run.uuid as RunId);
@@ -360,6 +360,7 @@ export class RunExecutor {
               if (!execResult.success) {
                 throw new Error('worktree lifecycle execution failed');
               }
+              this.deps.runRepository.update(currentRun.uuid, { startCommitSha: baseline.trim() });
             } catch (err) {
               const failureMessage = `failed to execute resume reset plan: ${err instanceof Error ? err.message : String(err)}`;
               const failure: Failure = {
@@ -878,7 +879,9 @@ export class RunExecutor {
     };
 
     const isLean =
-      currentRun.executionPolicy === 'standard' || currentRun.executionPolicy === 'strict';
+      currentRun.executionPolicy === 'standard' ||
+      currentRun.executionPolicy === 'strict' ||
+      currentRun.executionPolicy === 'legacy';
     if (isLean) {
       return this.executeLean(input, executionState);
     }
@@ -1045,7 +1048,7 @@ export class RunExecutor {
             phases,
           );
         }
-      } else if (step.status !== 'passed') {
+      } else if (step.status !== 'passed' && step.status !== 'skipped') {
         return this.escalateToHumanReview(
           state.currentRun,
           PhaseName('validate'),

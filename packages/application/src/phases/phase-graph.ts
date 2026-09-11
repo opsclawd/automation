@@ -22,7 +22,7 @@ export interface PhaseGraph {
   getOrderedDefinitions(skip?: PhaseName[]): PhaseDefinition[];
 }
 
-class LegacyPhaseGraph implements PhaseGraph {
+export class LegacyPhaseGraph implements PhaseGraph {
   readonly policy: ExecutionPolicy = 'legacy';
   readonly scheduledPhases: readonly PhaseName[] = CANONICAL_PHASE_ORDER;
 

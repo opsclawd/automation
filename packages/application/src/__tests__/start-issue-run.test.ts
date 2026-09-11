@@ -1366,7 +1366,7 @@ describe('StartIssueRun repository resolution', () => {
     expect(capturedEnv?.AI_EXECUTION_POLICY).toBe('standard');
   });
 
-  it('defaults executionPolicy to legacy when omitted', async () => {
+  it('defaults executionPolicy to standard when omitted', async () => {
     const repoA = {
       id: RepositoryId('a'.repeat(64)),
       fullName: 'owner/repo-a',
@@ -1391,7 +1391,7 @@ describe('StartIssueRun repository resolution', () => {
     await startIssueRun.execute({ issueNumber: 42, repoId: repoA.id });
     const inserted = runRepo.inserted[0];
     expect(inserted).toBeDefined();
-    expect(inserted?.executionPolicy).toBe('legacy');
-    expect(capturedEnv?.AI_EXECUTION_POLICY).toBe('legacy');
+    expect(inserted?.executionPolicy).toBe('standard');
+    expect(capturedEnv?.AI_EXECUTION_POLICY).toBe('standard');
   });
 });

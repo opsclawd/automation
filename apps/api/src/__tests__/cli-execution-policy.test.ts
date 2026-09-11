@@ -287,7 +287,32 @@ describe('CLI execution policy and observability (#1122)', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(EXIT_USER_ERROR);
     const errCalls = consoleErrorSpy.mock.calls.map((c) => c.join(' ')).join('\n');
-    expect(errCalls).toContain('--execution-policy must be "legacy", "standard", or "strict"');
+    expect(errCalls).toContain('--execution-policy must be "standard" or "strict"');
+  });
+
+  it('rejects legacy --execution-policy value with error', async () => {
+    const { root } = setupTempRepo();
+
+    const program = buildProgram({
+      composeOverrides: getComposeOverrides(root),
+    });
+    await program.parseAsync([
+      'node',
+      'cli.ts',
+      'run',
+      '--issue',
+      '1122',
+      '--execution-policy',
+      'legacy',
+      '--target-repo-root',
+      root,
+      '--repository-id',
+      'test-owner/test-repo',
+    ]);
+
+    expect(exitSpy).toHaveBeenCalledWith(EXIT_USER_ERROR);
+    const errCalls = consoleErrorSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(errCalls).toContain('--execution-policy must be "standard" or "strict"');
   });
 
   it('runs resume inherits persisted executionPolicy and logs phase graph', async () => {

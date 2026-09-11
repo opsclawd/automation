@@ -272,7 +272,7 @@ export function orderedPhases(
 ): PhaseDefinition[] {
   const defs = definitions ?? PHASE_DEFINITIONS;
   const skipSet = new Set(skip as string[]);
-  const phaseOrder = resolvePhaseOrder(policy);
+  const phaseOrder = policy !== undefined ? resolvePhaseOrder(policy) : CANONICAL_PHASE_ORDER;
 
   for (const s of skipSet) {
     const def = defs[s as PhaseName];
@@ -301,7 +301,10 @@ export function orderedPhases(
       }
     }
     for (const out of def.outputs) producedByKept.add(out);
-    if ((policy === 'standard' || policy === 'strict') && def.name === 'plan-design') {
+    if (
+      (policy === 'standard' || policy === 'strict' || policy === 'legacy') &&
+      def.name === 'plan-design'
+    ) {
       producedByKept.add('plan.md');
     }
   }

@@ -854,17 +854,18 @@ describe('Authoritative Grounded Whole-Change Review (Issue #1094)', () => {
     expect(targetedFixCall?.[1].vars.SELF_VERIFY_INSTRUCTIONS).toContain('- `pnpm lint`');
   });
 
-  it('delegates to legacy runLoop when executionPolicy is legacy', async () => {
+  it('does not delegate to legacy runLoop when executionPolicy is legacy', async () => {
     ctx = makeCtx({ executionPolicy: 'legacy' });
-    legacyRunLoopMock.mockResolvedValue({
-      phaseOutcome: 'passed',
-      loopStatus: 'converged',
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'whole-change-review.json',
+      contents: JSON.stringify({ verdict: 'APPROVE' }),
     });
 
     const handler = new ReviewFixHandler({ runLoop: legacyRunLoopMock });
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(legacyRunLoopMock).toHaveBeenCalled();
+    expect(legacyRunLoopMock).not.toHaveBeenCalled();
   });
 });

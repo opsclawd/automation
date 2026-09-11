@@ -321,17 +321,17 @@ describe('executionPolicy', () => {
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };
 
-  it('defaults executionPolicy to legacy when omitted', () => {
+  it('defaults executionPolicy to standard when omitted', () => {
     const parsed = orchestratorConfigSchema.parse(baseConfig);
-    expect(parsed.executionPolicy).toBe('legacy');
+    expect(parsed.executionPolicy).toBe('standard');
   });
 
-  it('accepts legacy executionPolicy explicitly', () => {
-    const parsed = orchestratorConfigSchema.parse({
+  it('rejects legacy executionPolicy explicitly', () => {
+    const result = orchestratorConfigSchema.safeParse({
       ...baseConfig,
       executionPolicy: 'legacy',
     });
-    expect(parsed.executionPolicy).toBe('legacy');
+    expect(result.success).toBe(false);
   });
 
   it('accepts standard executionPolicy', () => {
@@ -351,7 +351,7 @@ describe('executionPolicy', () => {
   });
 
   it('rejects invalid executionPolicy values', () => {
-    const invalidValues = ['fast', 'relaxed', 'custom', '', 'LEGACY', 123];
+    const invalidValues = ['legacy', 'fast', 'relaxed', 'custom', '', 'LEGACY', 123];
     for (const val of invalidValues) {
       const result = orchestratorConfigSchema.safeParse({
         ...baseConfig,

@@ -56,7 +56,10 @@ export class ReviewFixHandler implements PhaseHandler {
   constructor(private readonly opts: ReviewFixHandlerOpts) {}
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
-    const isLeanPolicy = ctx.executionPolicy === 'standard' || ctx.executionPolicy === 'strict';
+    const isLeanPolicy =
+      ctx.executionPolicy === 'standard' ||
+      ctx.executionPolicy === 'strict' ||
+      ctx.executionPolicy === 'legacy';
     if (isLeanPolicy) {
       return this.runLean(ctx);
     }

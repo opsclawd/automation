@@ -19,6 +19,7 @@ import {
   UnknownPhaseError,
   ResumeDispositionRequiredError,
 } from '@ai-sdlc/application';
+import { EXECUTION_POLICIES } from '@ai-sdlc/shared';
 import { resolveRepoContext, canonicalizeRepoContext, guardRead } from './_lib.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -115,7 +116,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     if (body.executionPolicy !== undefined) {
       if (
         typeof body.executionPolicy !== 'string' ||
-        !['legacy', 'standard', 'strict'].includes(body.executionPolicy)
+        !(EXECUTION_POLICIES as readonly string[]).includes(body.executionPolicy)
       ) {
         return reply.code(400).send({ error: 'invalid_execution_policy' });
       }

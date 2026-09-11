@@ -52,7 +52,7 @@ export class RunRepository {
     private readonly db: Db,
     private readonly configFingerprint: string | null = null,
     private readonly configSourcesJson: string | null = null,
-    private readonly defaultExecutionPolicy: ExecutionPolicy = 'legacy',
+    private readonly defaultExecutionPolicy: ExecutionPolicy = 'standard',
   ) {}
 
   insert(run: Run, pid?: number): void {
@@ -81,7 +81,7 @@ export class RunRepository {
         base_branch: (run as RunRecord).baseBranch ?? null,
         config_fingerprint: (run as RunRecord).configFingerprint ?? this.configFingerprint ?? null,
         config_sources_json: (run as RunRecord).configSourcesJson ?? this.configSourcesJson ?? null,
-        execution_policy: run.executionPolicy ?? this.defaultExecutionPolicy ?? 'legacy',
+        execution_policy: run.executionPolicy ?? this.defaultExecutionPolicy ?? 'standard',
       });
   }
 
@@ -423,6 +423,6 @@ function toRecord(row: RunRow): RunRecord {
     ...(row.base_branch !== null ? { baseBranch: row.base_branch } : {}),
     ...(row.config_fingerprint !== null ? { configFingerprint: row.config_fingerprint } : {}),
     ...(row.config_sources_json !== null ? { configSourcesJson: row.config_sources_json } : {}),
-    executionPolicy: (row.execution_policy as ExecutionPolicy) ?? 'legacy',
+    executionPolicy: (row.execution_policy as ExecutionPolicy) ?? 'standard',
   };
 }

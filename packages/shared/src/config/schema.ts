@@ -436,8 +436,8 @@ const agentSchema = z
     }
   });
 
-export const EXECUTION_POLICIES = ['legacy', 'standard', 'strict'] as const;
-export const DEFAULT_EXECUTION_POLICY = 'legacy';
+export const EXECUTION_POLICIES = ['standard', 'strict'] as const;
+export const DEFAULT_EXECUTION_POLICY = 'standard';
 
 export const executionPolicySchema = z.enum(EXECUTION_POLICIES).default(DEFAULT_EXECUTION_POLICY);
 

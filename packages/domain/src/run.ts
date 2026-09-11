@@ -57,7 +57,7 @@ export function createRun(input: CreateRunInput): Run {
     issueNumber: input.issueNumber,
     type: input.type ?? 'issue_to_pr',
     ...(input.baseBranch !== undefined ? { baseBranch: input.baseBranch } : {}),
-    executionPolicy: input.executionPolicy ?? 'legacy',
+    ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
     status: 'running',
     completedPhases: [],
     skippedPhases: [],
