@@ -119,7 +119,7 @@ When exactly one Repository is enabled, `--repository-id` may be omitted. With m
 Useful run options:
 
 ```text
---execution-policy <policy> Execution policy: standard (fast lean path), strict (lean + architecture assurance), legacy
+--execution-policy <policy> Execution policy: standard (fast lean path, default), strict (lean + architecture assurance)
 --strict                   Convenience shortcut for --execution-policy strict
 --base-branch <branch>     Override the Repository default branch.
 --executor ts              TypeScript executor (default).
@@ -132,7 +132,7 @@ On successful enqueue/start, the command emits JSON containing the Run UUID, dis
 
 ## Execution policies & phase graphs
 
-The orchestrator supports three execution policies:
+The orchestrator supports two active lean execution policies:
 
 ### 1. `standard` (Fast Lean Path)
 The lean lifecycle pipeline executing single-shot planning without a separate architecture review pass:
@@ -147,6 +147,7 @@ read_issue
 → quality-review
 → fix-review
 → follow-up-review
+→ compound
 → create-pr
 → wait-merge
 ```
@@ -165,6 +166,7 @@ read_issue
 → quality-review
 → fix-review
 → follow-up-review
+→ compound
 → create-pr
 → wait-merge
 ```
@@ -188,24 +190,9 @@ The iterative correction budget is configured via `phases.architectureReview.max
 - `2` (Default): Gives the planner up to two correction and re-verification attempts to resolve concrete review findings before escalating to `needs_human_review`.
 - Maximum value is bounded to `5` by configuration schema.
 
-### 3. `legacy` (Canonical Phases)
-The original multi-stage planning and post-PR review topology:
+#### Historical run inspection compatibility
 
-```text
-read_issue
-→ plan-design
-→ plan-write
-→ plan-review
-→ implement
-→ validate
-→ fix-validate
-→ review-fix
-→ compound
-→ create-pr
-→ post-pr-review
-```
-
-The top-level phases are durable orchestration state. The chosen policy is persisted to `Run.executionPolicy` at creation and inherited automatically across `runs resume` without mutation.
+Historical runs recorded under the retired `legacy` execution policy remain fully inspectable through the database, API, and timeline UI. The chosen policy is persisted to `Run.executionPolicy` at creation and inherited automatically across `runs resume` without mutation. New runs reject `legacy` execution policy at intake.
 
 ## Run statuses
 
@@ -337,8 +324,7 @@ Key sections include:
   },
   "phases": {
     "skip": [],
-    "implement": { "maxIterations": 3 },
-    "reviewFix": { "maxIterations": 3 },
+    "fixValidate": { "enabled": true, "maxIterations": 3 },
   },
   "scheduler": {
     "globalConcurrency": 1,

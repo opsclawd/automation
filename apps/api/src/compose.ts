@@ -1,6 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { execFileSync, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileSync } from 'node:child_process';
 import {
   open as fsOpen,
   stat as fsStat,
@@ -75,10 +74,8 @@ import {
   ReadIssueHandler,
   PlanDesignHandler,
   ArchitectureReviewHandler,
-  PlanWriteHandler,
   ImplementHandler,
   ValidateHandler,
-  ReviewFixHandler,
   SpecReviewHandler,
   QualityReviewHandler,
   FixReviewHandler,
@@ -86,7 +83,6 @@ import {
   CompoundHandler,
   CreatePrHandler,
   WaitMergeHandler,
-  PostPrReviewHandler,
   PrReviewPoller,
   ProcessPrReviewComments,
   decideReactivation,
@@ -142,7 +138,6 @@ import {
   buildTargetedTestCommand,
   type ValidationRunCommandItem,
   CONTRACT_VIOLATION_CODES,
-  type RunWorkspaceTypecheckPort,
   type ResolveRefShaFn,
   type ArtifactGuardPort,
   type StepAgentOutcome,
@@ -1881,7 +1876,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventBus: persistingEventBus,
       });
       const agent = config.agent;
-      // Non-optional local so the ReviewFixHandler closure below can reference it
+      // Non-optional local so closures below can reference it
       // without a guard (the outer `let` stays `| undefined` for other consumers).
       const resolveProfileBound = (phaseName: string) => {
         try {
@@ -2396,11 +2391,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         }),
       );
       phaseRegistry.register(
-        new PlanWriteHandler({
-          maxRepairAttempts: config.phases.planWrite?.maxRepairAttempts ?? 2,
-        }),
-      );
-      phaseRegistry.register(
         new CompoundHandler({
           exemptUndeclaredFiles: config.phases.implement.exemptUndeclaredFiles,
           scopeContractEnforcement: config.features?.scopeContractEnforcement ?? true,
@@ -2460,19 +2450,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         return { ok: true };
       };
 
-      const runWorkspaceTypecheck: RunWorkspaceTypecheckPort = async ({ cwd }) => {
-        try {
-          await promisify(execFile)('pnpm', ['-r', 'typecheck'], {
-            cwd,
-            encoding: 'utf-8',
-          });
-          return { ok: true };
-        } catch (err) {
-          const error = err as { stdout?: string; stderr?: string };
-          return { ok: false, error: error.stdout || error.stderr || String(err) };
-        }
-      };
-
       phaseRegistry.register(
         new ImplementHandler({
           steps: stepRepository,
@@ -2519,20 +2496,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           }),
         );
       }
-
-      phaseRegistry.register(
-        new ReviewFixHandler({
-          selfVerifyCommands: config.validation.selfVerifyCommands,
-          revalidate: {
-            runValidation,
-            commands: config.validation.commands,
-            timeoutSeconds: config.validation.timeout,
-            logDir: join(runsDir, 'review-fix-revalidate'),
-          },
-          validationPort: validationAdapter,
-          runWorkspaceTypecheck,
-        }),
-      );
 
       phaseRegistry.register(
         new SpecReviewHandler({
@@ -2587,67 +2550,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           maxPolls: config.phases.waitMerge?.maxPolls ?? 6,
           pollIntervalMs: (config.phases.waitMerge?.pollIntervalSeconds ?? 120) * 1000,
           initialDelayMs: (config.phases.waitMerge?.initialDelaySeconds ?? 600) * 1000,
-        }),
-      );
-
-      phaseRegistry.register(
-        new PostPrReviewHandler({
-          runPoll: async (ctx) => {
-            let prNumber: number;
-            try {
-              const prUrl = (await ctx.artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
-              const match = prUrl.match(/\/pull\/(\d+)/);
-              if (!match) {
-                return { signal: 'blocked' as const };
-              }
-              prNumber = parseInt(match[1]!, 10);
-            } catch {
-              return { signal: 'blocked' as const };
-            }
-
-            // Fast-path: if the PR is already closed/merged, short-circuit.
-            try {
-              const ghAdapterForPoll = new GhCliAdapter({});
-              const prDetail = await ghAdapterForPoll.getPr(ctx.repoFullName, prNumber);
-              if (prDetail.state === 'merged') return { signal: 'merged' as const };
-              if (prDetail.state === 'closed') return { signal: 'cancelled' as const };
-            } catch {
-              // Non-fatal — fall through to the poller which will handle it.
-            }
-
-            // Resolve the per-run base branch at poll time so it follows the
-            // value the run was started with (CLI --base-branch or default).
-            const runRecord = runRepository.findByUuid(ctx.runUuid);
-            const baseBranch = runRecord?.baseBranch ?? opts.baseBranch ?? resolvedDefaultBranch;
-
-            const poller = buildPrReviewPoller({
-              maxPolls: config.phases.postPrReview?.maxPolls ?? 10,
-              pollIntervalMs: (config.phases.postPrReview?.pollIntervalSeconds ?? 60) * 1000,
-              readyMaxDays: config.timeouts.readyMaxDays,
-              phaseStartedAt: ctx.now(),
-              baseBranch,
-              ...(config.phases.postPrReview?.firstReviewGraceWindowSeconds !== undefined
-                ? {
-                    firstReviewGraceWindowSeconds:
-                      config.phases.postPrReview.firstReviewGraceWindowSeconds,
-                  }
-                : {}),
-            });
-            const result = await poller.run({
-              runId: RunId(ctx.runUuid),
-              repoId: ctx.repoFullName as RepositoryId,
-              repoFullName: ctx.repoFullName,
-              prNumber,
-              cwd: ctx.cwd,
-              phaseId: PhaseName('post-pr-review'),
-            });
-            return { signal: result.terminalState };
-          },
-          setRunStatus: (runUuid, status: import('@ai-sdlc/domain').RunStatus) => {
-            runRepository.update(runUuid, {
-              status: status as import('@ai-sdlc/domain').RunStatus,
-            });
-          },
         }),
       );
 

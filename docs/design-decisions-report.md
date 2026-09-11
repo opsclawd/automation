@@ -12,12 +12,12 @@ UUID-identified, scoped to exactly one approved Repository (`RepositoryId`) and 
 ## Q2 — Phase structure
 
 **How does review/fix fit into the phase model?**
-Review/fix is a single Phase (`review-fix`) with an internal Loop in the **target** domain model. Each Loop iteration = one review + one fix. Phase sequence advances monotonically. As of M8-06, the observability surface (`apps/web/src/lib/timeline.ts`, classifier, DB, scripts) uses the single canonical `review-fix` phase name. The `review` + `fix-review` → `review-fix` collapse was completed as a coordinated rename across config, code, tests, and docs. Loop-internal routing keys (`whole-pr-review`, `fix-review`, `whole-pr-fix-review`, `fix-review-architect`) remain in `phaseProfiles` for agent-profile dispatch within the review-fix loop. For the full compatibility specification across historical and legacy phase names, schema mappings, and UI rendering support, see [historical-phase-compatibility.md](historical-phase-compatibility.md).
+In the lean architecture, review and fix are decoupled into dedicated top-level phases: `spec-review`, `quality-review`, conditional `fix-review`, and `follow-up-review`. These phases evolve structured review artifacts (`code-review.md`, `finding-ledger.json`) across iterations. The legacy monolithic `review-fix` phase and its internal loops have been retired from active registries; historical runs recorded with `review-fix` remain fully supported for inspection through `KNOWN_HISTORICAL_PHASES` in the timeline UI and historical schema registries.
 
 ## Q3 — Implement phase internals
 
 **How are implementation tasks modeled?**
-`implement` is one Phase, tasks are Steps within it. Each Step groups related Agent Invocations. Steps can have their own Loops (spec-review + quality-review + fix, max 5 iterations).
+In the lean model, `implement` executes as a single issue-level agent invocation that realizes the design and plan end-to-end. Worktree preparation and self-verification commands run deterministically around the agent invocation. The previous per-task internal sub-steps and embedded micro-loops have been superseded by the pipeline's deterministic validation gate (`validate`), test-repair loop (`fix-validate`), and subsequent grounded review phases (`spec-review`, `quality-review`).
 
 ## Q4 — Resume granularity
 
@@ -91,15 +91,15 @@ Split. Orchestration metadata (prompts sent, result.json, logs) in `.ai-runs/`. 
 **Who creates the PR?**
 Orchestrator invokes agent to draft PR description, then orchestrator calls GitHub API via GitHubPort. Separation of creative (agent) from mechanical (API call).
 
-## Q17 — Post-PR review polling
-
-**Is review polling a separate Run or part of the same one?**
-Same Run extended. After create-pr, Run transitions into pr-review-poll phase. Run isn't completed until PR merged or user cancels. One continuous lifecycle issue-to-merged-PR.
-
-## Q18 — Poll mechanism
-
-**How does the system check for new reviews?**
-Timer-based polling for MVP, designed so webhook-driven is addable later. The GitHubPort abstraction hides whether "check for reviews" is poll or webhook.
+## Q17 — PR lifecycle & merge tracking
+ 
+**How is PR merge readiness tracked?**
+After `create-pr`, the Run advances to the `wait-merge` phase. The orchestrator tracks PR state, CI checks, and merge completion deterministically. The previous `post-pr-review` multi-agent polling loops have been retired from active registries in favor of deterministic wait-merge status evaluation.
+ 
+## Q18 — Merge wait mechanism
+ 
+**How does the system wait for PR merge?**
+In `wait-merge`, the orchestrator queries GitHub via GitHubPort to check merge status, CI check status, and reviews, allowing clean terminal progression to `passed` upon merge or escalation if merge requirements fail.
 
 ## Q19 — User intervention model
 
@@ -151,8 +151,8 @@ The M1/M2 config covers validation, phase skip-list, and timeouts. Starting in M
   },
   "phases": {
     "skip": ["compound"],
-    "reviewFix": { "maxIterations": 10 },
-    "implement": { "maxIterations": 5 }
+    "fixValidate": { "enabled": true, "maxIterations": 3 },
+    "architectureReview": { "maxCorrections": 2 }
   },
   "timeouts": {
     "readyMaxDays": 7,
@@ -179,14 +179,14 @@ The M1/M2 config covers validation, phase skip-list, and timeouts. Starting in M
     },
     "phaseProfiles": {
       "plan-design": { "profile": "opencode-frontier" },
-      "plan-write": { "profile": "opencode-frontier" },
       "implement": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
-      "validate": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
-      "review": { "profile": "opencode-frontier" },
-      "fix-review": { "profile": "opencode-frontier" },
+      "fix-validate": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "spec-review": { "profile": "opencode-frontier" },
+      "quality-review": { "profile": "opencode-frontier" },
+      "fix-review": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "follow-up-review": { "profile": "opencode-frontier" },
       "compound": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
-      "create-pr": { "profile": "opencode-frontier" },
-      "pr-review-poll": { "profile": "opencode-frontier" }
+      "create-pr": { "profile": "opencode-frontier" }
     }
   }
 }

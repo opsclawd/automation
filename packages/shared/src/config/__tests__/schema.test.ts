@@ -1,90 +1,29 @@
 import { describe, it, expect } from 'vitest';
 import { orchestratorConfigSchema } from '../schema.js';
 
-describe('phases.implement.deltaScopedReReview', () => {
+describe('phases.implement.exemptUndeclaredFiles', () => {
   const baseConfig = {
     validation: { commands: ['pnpm test'], timeout: 60 },
     phases: {
       skip: [],
-      reviewFix: { maxIterations: 5 },
-      implement: { maxIterations: 1 },
     },
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };
 
-  it('defaults deltaScopedReReview to true when omitted', () => {
+  it('defaults exemptUndeclaredFiles to [] when omitted', () => {
     const parsed = orchestratorConfigSchema.parse(baseConfig);
-    expect(parsed.phases.implement.deltaScopedReReview).toBe(true);
+    expect(parsed.phases.implement.exemptUndeclaredFiles).toEqual([]);
   });
 
-  it('accepts deltaScopedReReview=false to disable intermediate delta scoping', () => {
+  it('accepts explicit exemptUndeclaredFiles', () => {
     const parsed = orchestratorConfigSchema.parse({
       ...baseConfig,
       phases: {
         ...baseConfig.phases,
-        implement: { maxIterations: 1, deltaScopedReReview: false },
+        implement: { exemptUndeclaredFiles: ['docs/solutions/foo.md'] },
       },
     });
-    expect(parsed.phases.implement.deltaScopedReReview).toBe(false);
-  });
-
-  it('accepts explicit deltaScopedReReview=true', () => {
-    const parsed = orchestratorConfigSchema.parse({
-      ...baseConfig,
-      phases: {
-        ...baseConfig.phases,
-        implement: { maxIterations: 1, deltaScopedReReview: true },
-      },
-    });
-    expect(parsed.phases.implement.deltaScopedReReview).toBe(true);
-  });
-});
-
-describe('phases.reviewFix.architectPass', () => {
-  const baseConfig = {
-    validation: { commands: ['pnpm test'], timeout: 60 },
-    phases: {
-      skip: [],
-      reviewFix: { maxIterations: 5 },
-      implement: { maxIterations: 1 },
-    },
-    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-  };
-
-  it('defaults architectPass to enabled=false when omitted', () => {
-    const parsed = orchestratorConfigSchema.parse(baseConfig);
-    expect(parsed.phases.reviewFix.architectPass).toEqual({ enabled: false, timeoutMinutes: 10 });
-  });
-
-  it('accepts architectPass.enabled=true with custom timeoutMinutes', () => {
-    const parsed = orchestratorConfigSchema.parse({
-      ...baseConfig,
-      phases: {
-        ...baseConfig.phases,
-        reviewFix: {
-          maxIterations: 5,
-          architectPass: { enabled: true, timeoutMinutes: 20 },
-        },
-      },
-    });
-    expect(parsed.phases.reviewFix.architectPass).toEqual({
-      enabled: true,
-      timeoutMinutes: 20,
-    });
-  });
-
-  it('rejects negative timeoutMinutes', () => {
-    const result = orchestratorConfigSchema.safeParse({
-      ...baseConfig,
-      phases: {
-        ...baseConfig.phases,
-        reviewFix: {
-          maxIterations: 5,
-          architectPass: { enabled: true, timeoutMinutes: -1 },
-        },
-      },
-    });
-    expect(result.success).toBe(false);
+    expect(parsed.phases.implement.exemptUndeclaredFiles).toEqual(['docs/solutions/foo.md']);
   });
 });
 
@@ -93,8 +32,6 @@ describe('serve config', () => {
     validation: { commands: ['pnpm test'], timeout: 60 },
     phases: {
       skip: [],
-      reviewFix: { maxIterations: 5 },
-      implement: { maxIterations: 1 },
     },
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };
@@ -136,8 +73,6 @@ describe('features.scopeContractEnforcement', () => {
     validation: { commands: ['pnpm test'], timeout: 60 },
     phases: {
       skip: [],
-      reviewFix: { maxIterations: 5 },
-      implement: { maxIterations: 1 },
     },
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };
@@ -161,8 +96,6 @@ describe('validation narrowByChangedFiles', () => {
     validation: { commands: ['pnpm test'], timeout: 60 },
     phases: {
       skip: [],
-      reviewFix: { maxIterations: 5 },
-      implement: { maxIterations: 1 },
     },
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };
@@ -202,8 +135,6 @@ describe('validation additionalCommands', () => {
     validation: { commands: ['pnpm test'], timeout: 60 },
     phases: {
       skip: [],
-      reviewFix: { maxIterations: 5 },
-      implement: { maxIterations: 1 },
     },
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };
@@ -247,8 +178,6 @@ describe('validation selfVerifyCommands', () => {
     validation: { commands: ['pnpm test'], timeout: 60 },
     phases: {
       skip: [],
-      reviewFix: { maxIterations: 5 },
-      implement: { maxIterations: 1 },
     },
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };
@@ -292,8 +221,6 @@ describe('validation commands', () => {
     validation: { commands: ['pnpm test'], timeout: 60 },
     phases: {
       skip: [],
-      reviewFix: { maxIterations: 5 },
-      implement: { maxIterations: 1 },
     },
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };
@@ -315,8 +242,6 @@ describe('executionPolicy', () => {
     validation: { commands: ['pnpm test'], timeout: 60 },
     phases: {
       skip: [],
-      reviewFix: { maxIterations: 5 },
-      implement: { maxIterations: 1 },
     },
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };
@@ -367,8 +292,6 @@ describe('notifications config', () => {
     validation: { commands: ['pnpm test'], timeout: 60 },
     phases: {
       skip: [],
-      reviewFix: { maxIterations: 5 },
-      implement: { maxIterations: 1 },
     },
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };

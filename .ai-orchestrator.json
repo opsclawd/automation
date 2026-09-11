@@ -21,20 +21,9 @@
     "reviewConvergence": {
       "maxIterations": 4
     },
-    "reviewFix": {
-      "maxIterations": 10,
-      "maxConsecutiveFixFailures": 3,
-      "maxTotalFixAttempts": 50,
-      "architectPass": {
-        "enabled": false,
-        "timeoutMinutes": 10
-      }
-    },
-    "implement": { "maxIterations": 5 },
+    "implement": { "exemptUndeclaredFiles": [] },
     "fixValidate": { "maxIterations": 2 },
-    "planReview": { "maxIterations": 5, "enabled": true },
-    "architectureReview": { "maxCorrections": 2 },
-    "postPrReview": { "maxPolls": 10, "pollIntervalSeconds": 300 }
+    "architectureReview": { "maxCorrections": 2 }
   },
   "timeouts": {
     "readyMaxDays": 7,
@@ -164,18 +153,13 @@
       "fixer": { "profile": "builder", "fallback": "junior" },
       "critic": { "profile": "task-reviewer", "fallback": "junior" },
       "task-agent": { "profile": "junior", "fallback": "builder" },
-      "post-pr-agent": { "profile": "mimo-pro", "fallback": "junior" },
-      "pr-reviewer": { "profile": "gemini", "fallback": "junior" },
-      "verify-reviewer": { "profile": "reviewer", "fallback": "junior" }
+      "pr-reviewer": { "profile": "gemini", "fallback": "junior" }
     },
     "phaseProfiles": {
       "plan-design": { "role": "planner" },
       "architecture-review": { "role": "pr-reviewer" },
       "architecture-fix": { "role": "planner" },
-      "plan-write": { "profile": "codex-writer", "fallbackProfile": "architect" },
       "implement": { "role": "implementer" },
-      "post-implementation-spec-review": { "role": "pr-reviewer" },
-      "post-implementation-quality-review": { "role": "critic" },
       "quality-review": { "role": "critic" },
       "spec-review": {
         "role": "critic",
@@ -184,21 +168,10 @@
       },
       "follow-up-review": { "role": "critic" },
       "fix-review": { "role": "fixer" },
-      "whole-pr-fix-review": { "role": "fixer" },
       "fix-validate": { "role": "fixer" },
-      "whole-pr-review": { "role": "pr-reviewer" },
-      "review-triage": { "role": "planner" },
-      "post-pr-review": { "role": "post-pr-agent" },
       "compound": { "role": "task-agent" },
-      "extract": { "role": "task-agent" },
       "create-pr": { "role": "task-agent" },
-      "arbiter": { "role": "planner" },
-      "plan-review": { "role": "planner" },
-      "plan-fix": { "role": "planner" },
-      "result-writer": { "role": "critic" },
-      "fix-review-architect": { "role": "planner" },
-      "commit-completion": { "role": "task-agent" },
-      "verify-pr-review": { "role": "verify-reviewer" }
+      "result-writer": { "role": "critic" }
     }
   }
 }

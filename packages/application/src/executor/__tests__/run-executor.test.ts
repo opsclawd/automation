@@ -758,7 +758,7 @@ describe('RunExecutor', () => {
   });
 
   it('allows resting handler-owned cancellation to complete phase bookkeeping', async () => {
-    // Simulates PostPrReviewHandler's signal=cancelled/timed_out pattern:
+    // Simulates wait-merge handler's signal=cancelled/timed_out pattern:
     // the handler calls setRunStatus('cancelled') then returns { outcome: 'resting' }.
     // The cancellation guard must not intercept — the resting branch should still
     // update the phase row and clear currentPhase.

@@ -19,13 +19,15 @@ import {
   RunExecutor,
   ReadIssueHandler,
   PlanDesignHandler,
-  PlanWriteHandler,
   ImplementHandler,
   ValidateHandler,
-  ReviewFixHandler,
+  SpecReviewHandler,
+  QualityReviewHandler,
+  FixReviewHandler,
+  FollowUpReviewHandler,
   CompoundHandler,
   CreatePrHandler,
-  PostPrReviewHandler,
+  WaitMergeHandler,
 } from '@ai-sdlc/application';
 import type { PrReviewPollerDeps } from '@ai-sdlc/application';
 
@@ -633,18 +635,20 @@ exit 1
     expect(readIssueHandler).toBeDefined();
     expect(readIssueHandler).toBeInstanceOf(ReadIssueHandler);
 
-    // Verify all 9 canonical phases have handlers registered and are real
+    // Verify all canonical lean phases have handlers registered and are real
     // implementations (not HandlerNotWiredError stubs)
     const handlerClasses: Record<string, unknown> = {
       read_issue: ReadIssueHandler,
       'plan-design': PlanDesignHandler,
-      'plan-write': PlanWriteHandler,
       implement: ImplementHandler,
       validate: ValidateHandler,
-      'review-fix': ReviewFixHandler,
+      'spec-review': SpecReviewHandler,
+      'quality-review': QualityReviewHandler,
+      'fix-review': FixReviewHandler,
+      'follow-up-review': FollowUpReviewHandler,
       compound: CompoundHandler,
       'create-pr': CreatePrHandler,
-      'post-pr-review': PostPrReviewHandler,
+      'wait-merge': WaitMergeHandler,
     };
     for (const [phase, HandlerClass] of Object.entries(handlerClasses)) {
       const handler = c.phaseRegistry.get(PhaseName(phase));
@@ -661,8 +665,6 @@ exit 1
         validation: { commands: ['echo ok'], timeout: 60 },
         phases: {
           skip: [],
-          reviewFix: { maxIterations: 3 },
-          implement: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -671,7 +673,7 @@ exit 1
             test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
           },
           phaseProfiles: {
-            'whole-pr-review': { profile: 'test' },
+            'spec-review': { profile: 'test' },
             'fix-review': { profile: 'test' },
           },
         },

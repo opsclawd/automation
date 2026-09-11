@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,8 +16,6 @@ const BASE_CONFIG = {
   validation: { commands: ['pnpm build'], timeout: 300 },
   phases: {
     skip: [],
-    reviewFix: { maxIterations: 10 },
-    implement: { maxIterations: 5 },
   },
   timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
 };
@@ -513,119 +511,40 @@ describe('loadConfig (back-compat wrapper)', () => {
   });
 });
 
-describe('loadLayeredConfig warnOnRetiredArbiterPhaseKey', () => {
-  it('emits console.warn when phaseProfiles.arbitrate is present in merged config', () => {
-    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const automationRoot = makeRepo({
-        '.ai-orchestrator.json': validConfig({
-          agent: {
-            defaultProfile: 'opencode-frontier',
-            profiles: {
-              'opencode-frontier': {
-                runtime: 'opencode',
-                provider: 'anthropic',
-                model: 'm',
-                timeoutMinutes: 1,
-              },
-            },
-            phaseProfiles: {
-              arbitrate: { profile: 'opencode-frontier' },
-            },
-          },
-        }),
-      });
-
-      loadLayeredConfig({ automationRoot });
-
-      expect(spy).toHaveBeenCalledTimes(1);
-      expect(spy.mock.calls[0]?.[0]).toContain("phaseProfiles['arbitrate']");
-      expect(spy.mock.calls[0]?.[0]).toContain('arbiter');
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it('does not emit console.warn when phaseProfiles.arbitrate is absent', () => {
-    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const automationRoot = makeRepo({
-        '.ai-orchestrator.json': validConfig({
-          agent: {
-            defaultProfile: 'opencode-frontier',
-            profiles: {
-              'opencode-frontier': {
-                runtime: 'opencode',
-                provider: 'anthropic',
-                model: 'm',
-                timeoutMinutes: 1,
-              },
-            },
-            phaseProfiles: {
-              arbiter: { profile: 'opencode-frontier' },
-            },
-          },
-        }),
-      });
-
-      loadLayeredConfig({ automationRoot });
-
-      expect(spy).not.toHaveBeenCalled();
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it('does not emit console.warn when the config has no agent block', () => {
-    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const automationRoot = makeRepo({
-        '.ai-orchestrator.json': validConfig({}),
-      });
-
-      loadLayeredConfig({ automationRoot });
-
-      expect(spy).not.toHaveBeenCalled();
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  describe('phases.architectureReview configuration', () => {
-    it('defaults maxCorrections to 2 when omitted', () => {
-      const automationRoot = makeRepo({
-        '.ai-orchestrator.json': validConfig({}),
-      });
-
-      const result = loadLayeredConfig({ automationRoot });
-      expect(result.config.phases.architectureReview).toEqual({ maxCorrections: 2 });
+describe('phases.architectureReview configuration', () => {
+  it('defaults maxCorrections to 2 when omitted', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({}),
     });
 
-    it('accepts explicit maxCorrections within 0..5', () => {
-      const automationRoot = makeRepo({
-        '.ai-orchestrator.json': validConfig({
-          phases: {
-            ...BASE_CONFIG.phases,
-            architectureReview: { maxCorrections: 0 },
-          },
-        }),
-      });
+    const result = loadLayeredConfig({ automationRoot });
+    expect(result.config.phases.architectureReview).toEqual({ maxCorrections: 2 });
+  });
 
-      const result = loadLayeredConfig({ automationRoot });
-      expect(result.config.phases.architectureReview).toEqual({ maxCorrections: 0 });
+  it('accepts explicit maxCorrections within 0..5', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        phases: {
+          ...BASE_CONFIG.phases,
+          architectureReview: { maxCorrections: 0 },
+        },
+      }),
     });
 
-    it('rejects maxCorrections outside 0..5', () => {
-      const automationRoot = makeRepo({
-        '.ai-orchestrator.json': validConfig({
-          phases: {
-            ...BASE_CONFIG.phases,
-            architectureReview: { maxCorrections: 6 },
-          },
-        }),
-      });
+    const result = loadLayeredConfig({ automationRoot });
+    expect(result.config.phases.architectureReview).toEqual({ maxCorrections: 0 });
+  });
 
-      expect(() => loadLayeredConfig({ automationRoot })).toThrow();
+  it('rejects maxCorrections outside 0..5', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        phases: {
+          ...BASE_CONFIG.phases,
+          architectureReview: { maxCorrections: 6 },
+        },
+      }),
     });
+
+    expect(() => loadLayeredConfig({ automationRoot })).toThrow();
   });
 });

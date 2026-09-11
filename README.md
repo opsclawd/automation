@@ -32,23 +32,31 @@ The system never discovers issues automatically and never executes against an un
 
 ## Canonical pipeline
 
-The implemented phase order is:
+The implemented canonical lean phase order is:
 
 ```text
 read_issue
 → plan-design
-→ plan-write
-→ plan-review
 → implement
 → validate
 → fix-validate
-→ review-fix
+→ spec-review
+→ quality-review
+→ fix-review
+→ follow-up-review
 → compound
 → create-pr
-→ post-pr-review
+→ wait-merge
 ```
 
-Plan review, implementation review/fix, validation repair, and post-PR review contain bounded internal loops. Configuration may disable only phases explicitly marked skippable.
+Validation repair (`fix-validate`) and review fixes (`fix-review` / `follow-up-review`) contain bounded internal loops. Configuration may disable only phases explicitly marked skippable.
+
+### Responsibility model
+
+The system maintains a strict separation of concerns across the delivery lifecycle:
+- **Agents reason:** Agent invocations perform cognitive work (analysis, design, implementation, and code review). Runtimes never mutate orchestrator state directly.
+- **Application owns state & artifacts:** The orchestrator tracks phases, steps, loops, run records, and durable filesystem artifacts.
+- **Deterministic gates enforce:** Deterministic validation commands, workspace invariants, schema checks, and CI/merge gates enforce quality and scope boundaries unconditionally.
 
 ## Run lifecycle
 

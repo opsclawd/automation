@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { ImplementHandler } from '../implement.js';
 import { ValidateHandler } from '../validate.js';
-import { ReviewFixHandler } from '../review-fix.js';
+import { SpecReviewHandler } from '../spec-review.js';
 import { CompoundHandler } from '../compound.js';
 import { CreatePrHandler } from '../create-pr.js';
 import { RunValidation } from '../../../run-validation.js';
@@ -185,32 +185,47 @@ describe('Lean End-to-End Phase Sequence (Issue #1103)', () => {
     expect((await artifacts.read(runUuid, 'validation.result')).trim()).toBe('passed');
     expect((await artifacts.read(runUuid, 'validation.headsha')).trim()).toBe(baseSha);
 
-    // ── 3. Review-Fix Phase ──
-    agent.enqueue('opencode-frontier', () => {
-      return makeSuccessAgentResult();
-    });
+    // ── 3. Spec Review Phase ──
     await artifacts.write({
       runId: runUuid,
-      relativePath: 'result.json',
+      relativePath: 'spec-requirements-ledger.json',
       contents: JSON.stringify({
-        verdict: 'APPROVE',
-        acceptance_criteria: [{ criterion: 'AC1', result: 'PASS', evidence: 'Verified' }],
-        findings: [],
-        summary: 'All requirements satisfied.',
+        schema_version: 'requirements-ledger-v1',
+        issue_number: 1103,
+        items: [
+          {
+            id: 'REQ-1',
+            description: 'Simplify lean prompts',
+            source: 'issue',
+            category: 'functional',
+          },
+        ],
       }),
     });
-    await artifacts.write({
-      runId: runUuid,
-      relativePath: 'code-review.md',
-      contents: '# Review\nLGTM\n',
+
+    agent.enqueue('opencode-frontier', async () => {
+      await artifacts.write({
+        runId: runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          requirements_checks: [
+            {
+              requirement_id: 'REQ-1',
+              requirement: 'Simplify lean prompts',
+              result: 'PASS',
+              evidence: 'Verified',
+            },
+          ],
+          findings: [],
+          summary: 'All requirements satisfied.',
+          review_md: '# Review\nLGTM\n',
+        }),
+      });
+      return makeSuccessAgentResult();
     });
 
-    const reviewHandler = new ReviewFixHandler({
-      runValidation,
-      validationCommands: ['pnpm test'],
-      validationTimeout: 300,
-      validationLogDir: `${cwd}/.ai-runs/r1/review-validate`,
-    });
+    const reviewHandler = new SpecReviewHandler();
     const reviewResult = await reviewHandler.run(ctx);
     expect(reviewResult.outcome).toBe('passed');
 

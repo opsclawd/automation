@@ -25,7 +25,7 @@ A single end-to-end orchestration attempt for one GitHub issue inside one Reposi
 _Avoid_: Job, execution, session
 
 **Phase**:
-A named stage within a Run (e.g. plan-design, implement, validate).
+A named stage within a Run (canonical lean sequence: `read_issue`, `plan-design`, `implement`, `validate`, `fix-validate`, `spec-review`, `quality-review`, `fix-review`, `follow-up-review`, `compound`, `create-pr`, `wait-merge`).
 _Avoid_: Stage
 
 **Step**:
@@ -33,7 +33,7 @@ An ordered sub-unit within a Phase that groups related Agent Invocations (e.g. o
 _Avoid_: Task (overloaded with GitHub issues)
 
 **Loop**:
-A repeated cycle within a Phase or Step (e.g. review + fix, up to a max iteration count).
+A repeated cycle within a Phase or Step (e.g. `fix-validate` validation repair loop, or `fix-review` / `follow-up-review` review fix loop, up to a max iteration count).
 _Avoid_: Retry, cycle
 
 **Agent Invocation**:
@@ -67,7 +67,7 @@ _Avoid_: Output, result file
 - A **Step** groups one or more **Agent Invocations**
 - An **Agent Invocation** is executed through exactly one **Agent Profile**, which resolves to exactly one **Agent Runtime** adapter
 - An **Agent Invocation** is validated immediately upon completion; missing artifacts or unparseable results are treated as FAILED outcome
-- The orchestrator owns state, policy, contracts, validation, retry/resume, failure classification, lease management, and runtime routing. **Agent Runtimes** only execute agent processes — they do not decide phase progression, retry policy, or runtime selection
+- Core architectural split: **agents reason; application owns state/artifacts; deterministic gates enforce scope/validation/CI/merge**. The orchestrator owns state, policy, contracts, validation, retry/resume, failure classification, lease management, and runtime routing. **Agent Runtimes** only execute agent processes — they do not decide phase progression, retry policy, or runtime selection
 
 ## Outcome rules
 

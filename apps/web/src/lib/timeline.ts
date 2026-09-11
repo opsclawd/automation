@@ -1,13 +1,16 @@
 export const CANONICAL_PHASES = [
   'read_issue',
   'plan-design',
-  'plan-write',
   'implement',
   'validate',
   'fix-validate',
-  'review-fix',
+  'spec-review',
+  'quality-review',
+  'fix-review',
+  'follow-up-review',
   'compound',
   'create-pr',
+  'wait-merge',
 ] as const;
 
 export type PhaseName = (typeof CANONICAL_PHASES)[number] | string;
@@ -35,20 +38,17 @@ export interface PhaseTimelineEntry {
 
 export const KNOWN_HISTORICAL_PHASES = new Set<string>([
   ...CANONICAL_PHASES,
+  'plan-write',
   'plan-review',
+  'review-fix',
   'post-pr-review',
   'pr-review-poll',
-  'spec-review',
-  'quality-review',
-  'fix-review',
-  'follow-up-review',
   'architecture-review',
   'whole-pr-review',
   'whole-change-review',
   'narrow-verification',
   'plan-fix',
   'arbiter',
-  'wait-merge',
   'verify',
 ]);
 

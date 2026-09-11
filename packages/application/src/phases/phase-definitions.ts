@@ -40,20 +40,6 @@ export class MissingRequiredInputError extends Error {
 
 // TODO: converge CANONICAL_PHASE_ORDER + PHASE_RESULT_REGISTRY into one source of truth
 // Canonical names map to result registry keys via PHASE_NAME_MIGRATION_MAP in phase-registry.ts
-export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
-  makePhaseName('read_issue'),
-  makePhaseName('plan-design'),
-  makePhaseName('plan-write'),
-  makePhaseName('plan-review'),
-  makePhaseName('implement'),
-  makePhaseName('validate'),
-  makePhaseName('fix-validate'),
-  makePhaseName('review-fix'),
-  makePhaseName('compound'),
-  makePhaseName('create-pr'),
-  makePhaseName('post-pr-review'),
-];
-
 export const STANDARD_LEAN_PHASE_ORDER: readonly PhaseName[] = [
   makePhaseName('read_issue'),
   makePhaseName('plan-design'),
@@ -83,16 +69,14 @@ export const STRICT_LEAN_PHASE_ORDER: readonly PhaseName[] = [
   makePhaseName('wait-merge'),
 ];
 
+export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = STANDARD_LEAN_PHASE_ORDER;
 export const LEAN_PHASE_ORDER: readonly PhaseName[] = STANDARD_LEAN_PHASE_ORDER;
 
 export function resolvePhaseOrder(policy?: ExecutionPolicy): readonly PhaseName[] {
   if (policy === 'strict') {
     return STRICT_LEAN_PHASE_ORDER;
   }
-  if (policy === 'standard' || policy === 'legacy') {
-    return STANDARD_LEAN_PHASE_ORDER;
-  }
-  return CANONICAL_PHASE_ORDER;
+  return STANDARD_LEAN_PHASE_ORDER;
 }
 
 const _phaseDefinitions = {
@@ -106,8 +90,8 @@ const _phaseDefinitions = {
   'plan-design': {
     name: makePhaseName('plan-design'),
     inputs: { required: ['issue.md'], optional: ['issue-comments.md'] },
-    outputs: ['design.md'],
-    agentContract: { requiredArtifacts: ['design.md'], mustNotChangeBranch: true },
+    outputs: ['design.md', 'plan.md'],
+    agentContract: { requiredArtifacts: ['design.md', 'plan.md'], mustNotChangeBranch: true },
     retrySafety: 'safe',
     skippable: false,
   },
@@ -125,21 +109,6 @@ const _phaseDefinitions = {
     agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
     retrySafety: 'safe',
     skippable: false,
-  },
-  'plan-write': {
-    name: makePhaseName('plan-write'),
-    inputs: { required: ['design.md'], optional: [] },
-    outputs: ['plan.md'],
-    agentContract: { requiredArtifacts: ['plan.md'], mustNotChangeBranch: true },
-    retrySafety: 'safe',
-    skippable: false,
-  },
-  'plan-review': {
-    name: makePhaseName('plan-review'),
-    inputs: { required: ['plan.md'], optional: ['issue.md'] },
-    outputs: ['plan.md'], // in-place edits by plan-fix
-    retrySafety: 'safe',
-    skippable: true, // skipped when phases.planReview.enabled === false
   },
   implement: {
     name: makePhaseName('implement'),
@@ -161,13 +130,6 @@ const _phaseDefinitions = {
     inputs: { required: [], optional: ['validate/failure.json'] },
     outputs: [],
     retrySafety: 'safe',
-    skippable: false,
-  },
-  'review-fix': {
-    name: makePhaseName('review-fix'),
-    inputs: { required: [], optional: [] },
-    outputs: ['code-review.md'],
-    retrySafety: 'unsafe',
     skippable: false,
   },
   'spec-review': {
@@ -244,13 +206,6 @@ const _phaseDefinitions = {
     retrySafety: 'safe',
     skippable: false,
   },
-  'post-pr-review': {
-    name: makePhaseName('post-pr-review'),
-    inputs: { required: ['pr-url.txt'], optional: [] },
-    outputs: ['comments.json', 'reviews.json'],
-    retrySafety: 'unsafe',
-    skippable: false,
-  },
 } satisfies Record<string, PhaseDefinition>;
 
 export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = _phaseDefinitions;
@@ -301,12 +256,6 @@ export function orderedPhases(
       }
     }
     for (const out of def.outputs) producedByKept.add(out);
-    if (
-      (policy === 'standard' || policy === 'strict' || policy === 'legacy') &&
-      def.name === 'plan-design'
-    ) {
-      producedByKept.add('plan.md');
-    }
   }
 
   return kept;
