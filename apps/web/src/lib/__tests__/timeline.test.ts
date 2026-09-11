@@ -357,4 +357,47 @@ describe('derivePhaseTimeline', () => {
     const v = timeline.find((p) => p.name === 'validate')!;
     expect(v.status).toBe('failed');
   });
+
+  it('renders historical phases (plan-review, post-pr-review) when present in events', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'plan-review',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+      ev({
+        id: 2,
+        phase: 'plan-review',
+        type: 'phase.completed',
+        timestamp: '2026-05-16T12:00:10.000Z',
+      }),
+      ev({
+        id: 3,
+        phase: 'post-pr-review',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:05:00.000Z',
+      }),
+      ev({
+        id: 4,
+        phase: 'post-pr-review',
+        type: 'phase.completed',
+        timestamp: '2026-05-16T12:06:00.000Z',
+      }),
+    ]);
+
+    const planReview = timeline.find((p) => p.name === 'plan-review');
+    expect(planReview).toBeDefined();
+    expect(planReview?.status).toBe('passed');
+    expect(planReview?.durationMs).toBe(10000);
+
+    const postPr = timeline.find((p) => p.name === 'post-pr-review');
+    expect(postPr).toBeDefined();
+    expect(postPr?.status).toBe('passed');
+    expect(postPr?.durationMs).toBe(60000);
+
+    // Canonical phases are still present
+    expect(timeline.find((p) => p.name === 'read_issue')).toBeDefined();
+    expect(timeline.find((p) => p.name === 'create-pr')).toBeDefined();
+  });
 });
