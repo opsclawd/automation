@@ -33,6 +33,7 @@ import {
   PrReviewRepository,
   AgentUsageRepository,
   SqliteStepRepository,
+  ReleaseBatchRepository,
   RunDirectory,
   runBashScript,
   classifyExit,
@@ -624,6 +625,7 @@ export interface Container {
   validationRunRepository: ValidationRunRepository;
   prReviewRepository: PrReviewRepository;
   loopRepository: LoopRepository;
+  releaseBatchRepository: ReleaseBatchRepository;
   workerLeaseRepository: WorkerLeaseRepository;
   jobQueue: JobQueuePort;
   workerRegistry?: WorkerRegistryPort;
@@ -1654,6 +1656,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const validationRunRepository = new ValidationRunRepository(db);
   const agentUsageRepository = new AgentUsageRepository(db);
   const loopRepository = new LoopRepository(db);
+  const releaseBatchRepository = new ReleaseBatchRepository(db);
   const validationAdapter = opts.validationPort ?? new ProcessValidationAdapter();
   const runValidation = new RunValidation({
     validation: validationAdapter,
@@ -3555,6 +3558,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     validationRunRepository,
     prReviewRepository,
     loopRepository,
+    releaseBatchRepository,
     workerLeaseRepository,
     jobQueue,
     workerRegistry,
