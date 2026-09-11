@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { ImplementHandler } from '../implement.js';
-import type { StepRunContext, StepRunResult } from '../implement.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeStepRepository } from '../../../test-doubles/fake-step-repository.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
@@ -14,6 +13,10 @@ import type {
   WorktreeLifecycleExecutionResult,
   EventRepositoryPort,
 } from '../../../ports.js';
+
+vi.mock('../run-single-shot-agent-phase.js', () => ({
+  runSingleShotAgentPhase: vi.fn(async () => ({ outcome: 'passed' })),
+}));
 
 class FakeEventRepository implements EventRepositoryPort {
   events: Array<{
@@ -116,6 +119,8 @@ function makeCtx(
       let n = 0;
       return () => `id-${++n}`;
     })(),
+    resolveProfile: () => 'opencode-frontier',
+    promptsRoot: '/tmp/prompts',
     ...(options?.priorPhaseName !== undefined ? { priorPhaseName: options.priorPhaseName } : {}),
     ...(options?.worktreeLifecycle !== undefined
       ? { worktreeLifecycle: options.worktreeLifecycle }
@@ -145,12 +150,9 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     git.headByCwd.set('/tmp/wt', 'head-sha');
     git.statusByCwd.set('/tmp/wt', ' M packages/application/src/test.ts\n?? scratch-probe.ts\n');
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(
-      async (_sctx: StepRunContext): Promise<StepRunResult> => ({ outcome: 'success' }),
-    );
     const { ctx, events } = makeCtx(artifacts, git, { priorPhaseName: 'plan-write' });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('failed');
     if (result.outcome === 'failed') {
@@ -160,7 +162,6 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
       expect(result.failure.message).toContain('scratch-probe.ts');
     }
     expect(setup).not.toHaveBeenCalled();
-    expect(runStep).not.toHaveBeenCalled();
     const implementFailed = events.filter(
       (e) => e.type === 'implement.failed' && e.level === 'error',
     );
@@ -179,16 +180,12 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     git.headByCwd.set('/tmp/wt', 'head-sha');
     git.statusByCwd.set('/tmp/wt', '');
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(
-      async (_sctx: StepRunContext): Promise<StepRunResult> => ({ outcome: 'success' }),
-    );
     const { ctx } = makeCtx(artifacts, git, { priorPhaseName: 'plan-review' });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('passed');
     expect(setup).toHaveBeenCalled();
-    expect(runStep).toHaveBeenCalled();
   });
 
   it('cleans audited ambient plan-review residue before inbound cleanliness enforcement', async () => {
@@ -237,20 +234,16 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     };
 
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(
-      async (_sctx: StepRunContext): Promise<StepRunResult> => ({ outcome: 'success' }),
-    );
     const { ctx, events } = makeCtx(artifacts, git, {
       priorPhaseName: 'plan-review',
       worktreeLifecycle: lifecycle,
       eventRepository: eventRepo,
     });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('passed');
     expect(setup).toHaveBeenCalled();
-    expect(runStep).toHaveBeenCalled();
 
     // Verify eventRepository.insert called before worktreeLifecycle.execute
     expect(callOrder).toEqual(['eventRepository.insert', 'worktreeLifecycle.execute']);
@@ -315,16 +308,13 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     };
 
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(
-      async (_sctx: StepRunContext): Promise<StepRunResult> => ({ outcome: 'success' }),
-    );
     const { ctx } = makeCtx(artifacts, git, {
       priorPhaseName: 'read-issue',
       worktreeLifecycle: lifecycle,
       eventRepository: eventRepo,
     });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('failed');
     if (result.outcome === 'failed') {
@@ -334,7 +324,6 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     expect(lifecycle.executeCalls).toHaveLength(0);
     expect(eventRepo.events).toHaveLength(0);
     expect(setup).not.toHaveBeenCalled();
-    expect(runStep).not.toHaveBeenCalled();
   });
 
   it('does not mutate when inbound reset audit insertion fails', async () => {
@@ -363,16 +352,13 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     };
 
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(
-      async (_sctx: StepRunContext): Promise<StepRunResult> => ({ outcome: 'success' }),
-    );
     const { ctx } = makeCtx(artifacts, git, {
       priorPhaseName: 'plan-review',
       worktreeLifecycle: lifecycle,
       eventRepository: eventRepo,
     });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('failed');
     if (result.outcome === 'failed') {
@@ -380,7 +366,6 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     }
     expect(lifecycle.executeCalls).toHaveLength(0);
     expect(setup).not.toHaveBeenCalled();
-    expect(runStep).not.toHaveBeenCalled();
   });
 
   it('preserves orchestrator artifacts and gitignore during inbound cleanup', async () => {
@@ -411,16 +396,13 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     };
 
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(
-      async (_sctx: StepRunContext): Promise<StepRunResult> => ({ outcome: 'success' }),
-    );
     const { ctx } = makeCtx(artifacts, git, {
       priorPhaseName: 'plan-review',
       worktreeLifecycle: lifecycle,
       eventRepository: eventRepo,
     });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('passed');
     expect(eventRepo.events).toHaveLength(1);
@@ -446,10 +428,6 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     const lifecycle = new FakeWorktreeLifecycle();
     const eventRepo = new FakeEventRepository();
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
-      git.statusByCwd.set('/tmp/wt', '');
-      return { outcome: 'success' };
-    });
     const { ctx } = makeCtx(artifacts, git, {
       priorPhaseName: 'plan-review',
       worktreeLifecycle: lifecycle,
@@ -460,11 +438,10 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
       ],
     });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('passed');
     expect(setup).toHaveBeenCalled();
-    expect(runStep).toHaveBeenCalled();
     expect(lifecycle.executeCalls).toHaveLength(0);
     expect(eventRepo.events).toHaveLength(0);
   });
@@ -487,9 +464,6 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     const lifecycle = new FakeWorktreeLifecycle();
     const eventRepo = new FakeEventRepository();
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(
-      async (_sctx: StepRunContext): Promise<StepRunResult> => ({ outcome: 'success' }),
-    );
     const { ctx } = makeCtx(artifacts, git, {
       priorPhaseName: 'plan-review',
       worktreeLifecycle: lifecycle,
@@ -497,7 +471,7 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
       inboundPreserveAllowance: ['packages/application/src/feature.ts'],
     });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('failed');
     if (result.outcome === 'failed') {
@@ -505,7 +479,6 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
       expect(result.failure.message).toContain('unapproved-drift.ts');
     }
     expect(setup).not.toHaveBeenCalled();
-    expect(runStep).not.toHaveBeenCalled();
     expect(lifecycle.executeCalls).toHaveLength(0);
   });
 
@@ -535,10 +508,6 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     };
 
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
-      git.statusByCwd.set('/tmp/wt', '');
-      return { outcome: 'success' };
-    });
     const { ctx } = makeCtx(artifacts, git, {
       priorPhaseName: 'plan-review',
       worktreeLifecycle: lifecycle,
@@ -546,11 +515,10 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
       // inboundPreserveAllowance is undefined
     });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('passed');
     expect(setup).toHaveBeenCalled();
-    expect(runStep).toHaveBeenCalled();
     expect(lifecycle.executeCalls).toHaveLength(1);
     expect(eventRepo.events).toHaveLength(1);
     expect(eventRepo.events[0].type).toBe('implement.inbound_worktree_reset');
@@ -584,21 +552,16 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     };
 
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
-      git.statusByCwd.set('/tmp/wt', '');
-      return { outcome: 'success' };
-    });
     const { ctx } = makeCtx(artifacts, git, {
       priorPhaseName: 'plan-write',
       worktreeLifecycle: lifecycle,
       eventRepository: eventRepo,
     });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('passed');
     expect(setup).toHaveBeenCalled();
-    expect(runStep).toHaveBeenCalled();
     expect(lifecycle.executeCalls).toHaveLength(0);
     expect(eventRepo.events).toHaveLength(0);
   });
@@ -628,16 +591,13 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     };
 
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(
-      async (_sctx: StepRunContext): Promise<StepRunResult> => ({ outcome: 'success' }),
-    );
     const { ctx } = makeCtx(artifacts, git, {
       priorPhaseName: 'plan-write',
       worktreeLifecycle: lifecycle,
       eventRepository: eventRepo,
     });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('failed');
     if (result.outcome === 'failed') {
@@ -647,7 +607,6 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
       expect(result.failure.message).not.toContain('.gitignore');
     }
     expect(setup).not.toHaveBeenCalled();
-    expect(runStep).not.toHaveBeenCalled();
     expect(lifecycle.executeCalls).toHaveLength(0);
     expect(eventRepo.events).toHaveLength(0);
   });
@@ -668,20 +627,15 @@ describe('ImplementHandler inbound worktree cleanliness check (issue #959 & #977
     const lifecycle = new FakeWorktreeLifecycle();
     const eventRepo = new FakeEventRepository();
     const setup = vi.fn(async () => ({ ok: true }));
-    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
-      git.statusByCwd.set('/tmp/wt', '');
-      return { outcome: 'success' };
-    });
     const { ctx } = makeCtx(artifacts, git, {
       priorPhaseName: 'architecture-review',
       worktreeLifecycle: lifecycle,
       eventRepository: eventRepo,
     });
 
-    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+    const result = await new ImplementHandler({ steps, setup }).run(ctx);
 
     expect(result.outcome).toBe('passed');
     expect(setup).toHaveBeenCalled();
-    expect(runStep).toHaveBeenCalled();
   });
 });

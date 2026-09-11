@@ -3,12 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot, type ComposeOptions } from '../compose.js';
-import {
-  ValidateFixLoop,
-  ReviewFixLoop,
-  ImplementStepLoop,
-  extractResult,
-} from '@ai-sdlc/application';
+import { ValidateFixLoop, extractResult } from '@ai-sdlc/application';
 import {
   RepositoryId,
   AgentInvocationId,
@@ -116,115 +111,6 @@ describe('ValidateFixLoop and ReviewFixLoop wiring in composeRoot', () => {
     expect(loopDeps.artifactStore).toBeDefined();
     expect(typeof loopDeps.artifactStore?.read).toBe('function');
     expect(typeof loopDeps.artifactStore?.write).toBe('function');
-  });
-
-  it('wires git, readWorktreeFile, and artifactStore into ReviewFixLoop', async () => {
-    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-')));
-    const outsideDir = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-outside-')));
-    const scriptPath = fakeScript(0);
-    writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(makeAgentConfig()));
-
-    const container = composeRoot({
-      repoRoot: root,
-      scriptPath,
-      metadataResolver: FAKE_METADATA_RESOLVER,
-    });
-
-    expect(container.reviewFixLoop).toBeDefined();
-    expect(container.reviewFixLoop).toBeInstanceOf(ReviewFixLoop);
-
-    const loopDeps = container.reviewFixLoop!.deps;
-    expect(loopDeps).toBeDefined();
-    expect(loopDeps.git).toBeDefined();
-    expect(loopDeps.git).toBe(container.git);
-
-    expect(typeof loopDeps.readWorktreeFile).toBe('function');
-    const testFile = 'review-test-file.txt';
-    writeFileSync(path.join(root, testFile), 'review manifest content');
-    const readContent = await loopDeps.readWorktreeFile!(root, testFile);
-    expect(readContent).toBe('review manifest content');
-
-    const missingContent = await loopDeps.readWorktreeFile!(root, 'nonexistent.txt');
-    expect(missingContent).toBeUndefined();
-
-    // Verify path traversal protection
-    const outsideFile = path.join(outsideDir, 'secret.txt');
-    writeFileSync(outsideFile, 'secret content');
-    const traversalRelative = await loopDeps.readWorktreeFile!(root, '../outside.txt');
-    expect(traversalRelative).toBeUndefined();
-
-    const traversalAbsolute = await loopDeps.readWorktreeFile!(root, outsideFile);
-    expect(traversalAbsolute).toBeUndefined();
-
-    const traversalNested = await loopDeps.readWorktreeFile!(root, 'sub/../../outside.txt');
-    expect(traversalNested).toBeUndefined();
-
-    expect(loopDeps.artifactStore).toBeDefined();
-    expect(typeof loopDeps.artifactStore?.read).toBe('function');
-    expect(typeof loopDeps.artifactStore?.write).toBe('function');
-    expect(typeof loopDeps.revertScopeFiles).toBe('function');
-  });
-
-  it('artifactStore wired into ReviewFixLoop reads and writes through the worktree path resolution, falling back to repoRootPath when no worktree exists', async () => {
-    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-')));
-    const scriptPath = fakeScript(0);
-    writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(makeAgentConfig()));
-
-    const container = composeRoot({
-      repoRoot: root,
-      scriptPath,
-      metadataResolver: FAKE_METADATA_RESOLVER,
-      repoFullName: 'owner/repo',
-    });
-
-    const run = {
-      uuid: 'a1b2c3d4-0000-4000-8000-000000000001',
-      displayId: 'issue-91-20260622-120000',
-      repoId: RepositoryId('owner/repo'),
-      issueNumber: 91,
-      type: 'issue_to_pr' as const,
-      status: 'running' as const,
-      completedPhases: [],
-      skippedPhases: [],
-      startedAt: new Date('2026-06-22T12:00:00.000Z'),
-    };
-    container.runRepository.insertIfNoActive(run);
-
-    const artifactStore = container.reviewFixLoop!.deps.artifactStore!;
-
-    // No worktree at .ai-worktrees/issue-91 exists yet, so path resolution
-    // must fall back to the repo root rather than throwing or writing nowhere.
-    await artifactStore.write({
-      runId: run.uuid,
-      phaseId: 'review-fix',
-      relativePath: 'fix-result.json',
-      contents: '{"fixed":true}',
-    });
-
-    const readBack = await artifactStore.read(run.uuid, 'fix-result.json');
-    expect(readBack).toBe('{"fixed":true}');
-  });
-
-  it('wires git, readWorktreeFile, and cleanArtifacts into ImplementStepLoop', () => {
-    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-')));
-    const scriptPath = fakeScript(0);
-    writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(makeAgentConfig()));
-
-    const container = composeRoot({
-      repoRoot: root,
-      scriptPath,
-      metadataResolver: FAKE_METADATA_RESOLVER,
-    });
-
-    expect(container.implementStepLoop).toBeDefined();
-    expect(container.implementStepLoop).toBeInstanceOf(ImplementStepLoop);
-
-    const loopDeps = container.implementStepLoop!.deps;
-    expect(loopDeps).toBeDefined();
-    expect(loopDeps.git).toBeDefined();
-    expect(loopDeps.git).toBe(container.git);
-    expect(typeof loopDeps.readWorktreeFile).toBe('function');
-    expect(typeof loopDeps.cleanArtifacts).toBe('function');
   });
 
   it('wires readWorktreeFile into buildPhaseHandlerContext', async () => {

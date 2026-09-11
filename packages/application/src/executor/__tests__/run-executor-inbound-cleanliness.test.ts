@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createRun, type Run, PhaseName as makePhaseName, RepositoryId } from '@ai-sdlc/domain';
+import {
+  createRun,
+  type Run,
+  PhaseName as makePhaseName,
+  RepositoryId,
+  RunId,
+} from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../../phases/handler.js';
 import { PhaseHandlerRegistry } from '../phase-handler-registry.js';
 import type { RunRepositoryPort, FailureRepositoryPort } from '../../ports.js';
@@ -107,7 +113,6 @@ describe('RunExecutor end-to-end dirty-worktree detection (issue #959)', () => {
 
     const implementHandler = new ImplementHandler({
       steps: new FakeStepRepository(),
-      runStep: vi.fn(async () => ({ outcome: 'success' as const })),
     });
     registry.register(implementHandler);
 
@@ -179,14 +184,31 @@ describe('RunExecutor end-to-end dirty-worktree detection (issue #959)', () => {
       relativePath: 'plan.md',
       contents: '# Plan\n\n## Task 1: work\n',
     });
+    await artifacts.write({
+      runId: 'test-uuid',
+      relativePath: 'implementation-log.md',
+      contents: 'Status: DONE\n',
+    });
 
     const git = new FakeGitPort();
     git.headByCwd.set('/tmp/worktree', 'pre-step');
     git.statusByCwd.set('/tmp/worktree', '');
 
+    const steps = new FakeStepRepository();
+    steps.upsert({
+      id: 'test-uuid:implement:1',
+      runId: 'test-uuid' as RunId,
+      phaseId: makePhaseName('implement'),
+      index: 1,
+      title: 'Implement issue',
+      status: 'success',
+      startedAt: fixedNow,
+      completedAt: fixedNow,
+      revertCounts: {},
+    });
+
     const implementHandler = new ImplementHandler({
-      steps: new FakeStepRepository(),
-      runStep: vi.fn(async () => ({ outcome: 'success' as const })),
+      steps,
     });
     registry.register(implementHandler);
 

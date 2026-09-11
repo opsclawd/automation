@@ -14,9 +14,8 @@ import * as childProcess from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { composeRoot, captureExecOutput, type ComposeOptions } from '../compose.js';
 import { openDatabase, applyMigrations, GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
-import { RunId, RepositoryId, PhaseName, AgentProfileName, Step } from '@ai-sdlc/domain';
+import { RunId, RepositoryId, PhaseName, Step } from '@ai-sdlc/domain';
 import {
-  ReviewFixLoop,
   RunExecutor,
   ReadIssueHandler,
   PlanDesignHandler,
@@ -28,9 +27,7 @@ import {
   CreatePrHandler,
   PostPrReviewHandler,
 } from '@ai-sdlc/application';
-import { FakeLoopRepository } from '@ai-sdlc/application/test-doubles';
-import type { OrchestratorEvent } from '@ai-sdlc/shared';
-import type { PrReviewPollerDeps, PostFixGateResult } from '@ai-sdlc/application';
+import type { PrReviewPollerDeps } from '@ai-sdlc/application';
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -559,7 +556,7 @@ exit 1
     expect(typeof c.runValidation.execute).toBe('function');
   });
 
-  it('exposes loopRepository and reviewFixLoop', () => {
+  it('exposes loopRepository and validateFixLoop', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     writeFileSync(
       path.join(root, '.ai-orchestrator.json'),
@@ -579,6 +576,7 @@ exit 1
           phaseProfiles: {
             'whole-pr-review': { profile: 'test' },
             'fix-review': { profile: 'test' },
+            'fix-validate': { profile: 'test' },
           },
         },
       }),
@@ -590,15 +588,8 @@ exit 1
       runStartupSweeps: false,
     });
     expect(c.loopRepository).toBeDefined();
-    expect(c.reviewFixLoop).toBeDefined();
-    expect(typeof c.reviewFixLoop!.execute).toBe('function');
-
-    const container = c;
-    // Issue #623: ReviewFixLoop must be wired with the evidence inspector
-    // and the artifact store so the rebuttal-aware convergence branch can run.
-    expect(container.reviewFixLoop).toBeDefined();
-    // Internal check via the existing public surface — no direct field access.
-    // The real assertion lives in the per-component tests for review-fix-loop.ts.
+    expect(c.validateFixLoop).toBeDefined();
+    expect(typeof c.validateFixLoop!.execute).toBe('function');
   });
 
   it('exposes runExecutor and phaseRegistry on the container', () => {
@@ -696,120 +687,6 @@ exit 1
     expect(handler).toBeDefined();
     // The handler should NOT be a HandlerNotWiredError stub
     expect(handler).toBeInstanceOf(ReadIssueHandler);
-  });
-
-  it('reviewFixLoop.execute converges when review immediately passes', async () => {
-    const bus = {
-      publish: (_runUuid: string, _event: OrchestratorEvent) => {},
-      subscribe: () => () => {},
-    };
-    const fixLoop = new ReviewFixLoop({
-      runPostFixGate: async (): Promise<PostFixGateResult> => ({
-        outcome: 'pass',
-        output: '',
-      }),
-      runReview: async () => ({
-        invocationId: 'review-1',
-        agentOutcome: 'success' as const,
-        verdict: 'pass' as const,
-      }),
-      runFix: async () => ({
-        invocationId: 'fix-1',
-        agentOutcome: 'success' as const,
-        verdict: 'done_with_fixes' as const,
-      }),
-      runRevalidation: async () => ({
-        validationRunId: 'reval-1',
-        passed: true,
-      }),
-      loops: new FakeLoopRepository(),
-      events: bus,
-      now: () => new Date(),
-      idFactory: () => 'smoke-loop-1',
-    });
-
-    const result = await fixLoop.execute({
-      runId: RunId('test-run'),
-      phaseId: PhaseName('whole-pr-review'),
-      repoId: 'owner/repo',
-      cwd: '/tmp',
-      maxIterations: 3,
-      reviewProfile: AgentProfileName('test'),
-      fixProfile: AgentProfileName('test'),
-    });
-
-    expect(result.phaseOutcome).toBe('passed');
-    expect(result.loop.status).toBe('converged');
-    expect(result.loop.iterations).toHaveLength(1);
-  });
-
-  it('ReviewFixLoop routes gate failure directly to fixer, bypassing reviewer', async () => {
-    const bus = {
-      publish: (_runUuid: string, _event: OrchestratorEvent) => {},
-      subscribe: () => () => {},
-    };
-    let reviewCalls = 0;
-    let fixCalls = 0;
-    const fixOptions: FixStepOptions[] = [];
-    let gateCalls = 0;
-
-    const fixLoop = new ReviewFixLoop({
-      runPostFixGate: async (): Promise<PostFixGateResult> => {
-        gateCalls += 1;
-        // Fail on first call (iteration 2), pass on second call (iteration 3)
-        return {
-          outcome: gateCalls === 1 ? 'fail' : 'pass',
-          output: 'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
-        };
-      },
-      runReview: async () => {
-        reviewCalls += 1;
-        return {
-          invocationId: `review-${reviewCalls}`,
-          agentOutcome: 'success' as const,
-          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
-        };
-      },
-      runFix: async (ctx, opts) => {
-        fixCalls += 1;
-        fixOptions.push(opts);
-        return {
-          invocationId: `fix-${fixCalls}`,
-          agentOutcome: 'success' as const,
-          verdict: 'done_with_fixes' as const,
-        };
-      },
-      runRevalidation: async () => ({
-        validationRunId: 'reval-1',
-        passed: true,
-      }),
-      loops: new FakeLoopRepository(),
-      events: bus,
-      now: () => new Date(),
-      idFactory: () => 'smoke-loop-gate',
-    });
-
-    const result = await fixLoop.execute({
-      runId: RunId('test-run-gate'),
-      phaseId: PhaseName('whole-pr-review'),
-      repoId: 'owner/repo',
-      cwd: '/tmp',
-      maxIterations: 4,
-      reviewProfile: AgentProfileName('test'),
-      fixProfile: AgentProfileName('test'),
-    });
-
-    expect(result.phaseOutcome).toBe('passed');
-    // Iteration 1: Review Fail -> Fix (standard)
-    // Iteration 2: Gate fails -> Bypasses reviewer, calls Fixer (deterministic)
-    // Iteration 3: Gate passes -> Reviewer called (returns pass) -> Resolved!
-    expect(reviewCalls).toBe(2); // Only called in Iteration 1 and 3, not 2
-    expect(fixCalls).toBe(2);
-    expect(fixOptions[0]!.attemptKind).toBeUndefined(); // Standard fix
-    expect(fixOptions[1]!.attemptKind).toBe('deterministic'); // Deterministic fix
-    expect(fixOptions[1]!.deterministicDiagnostic).toBe(
-      'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
-    );
   });
 
   it('removes per-run tmp dir after a failed run completes', async () => {
@@ -1248,201 +1125,6 @@ exit 1
     expect(c.buildRunContext).toBeUndefined();
   });
 
-  it('runTypecheck contains non-fatal pre-build step before typecheck', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const typecheckFnMatch = composeSrc.match(/const runTypecheck[\s\S]*?(?=const runSpecReview)/);
-    expect(typecheckFnMatch).toBeTruthy();
-    const fnSrc = typecheckFnMatch![0];
-    const buildIdx = fnSrc.indexOf("'-r', 'run', '--if-present', 'build'");
-    const typecheckIdx = fnSrc.indexOf("'-r', 'typecheck'");
-    expect(buildIdx).toBeGreaterThan(-1);
-    expect(typecheckIdx).toBeGreaterThan(-1);
-    expect(buildIdx).toBeLessThan(typecheckIdx);
-    expect(fnSrc).toContain('timeout: 180_000');
-    expect(fnSrc).toContain('let buildError');
-    expect(fnSrc).toContain('buildError = captureExecOutput(err)');
-    expect(fnSrc).toContain('if (buildError)');
-    expect(fnSrc).toMatch(/catch[^{]*\{[^}]*\/\/ Non-fatal/);
-  });
-
-  it('runPostFixGate contains non-fatal pre-build step before typecheck', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const gateFnMatch = composeSrc.match(
-      /const runPostFixGate[\s\S]*?(?=const reviewFixLoopInstance)/,
-    );
-    expect(gateFnMatch).toBeTruthy();
-    const fnSrc = gateFnMatch![0];
-    const buildIdx = fnSrc.indexOf("'-r', 'run', '--if-present', 'build'");
-    const typecheckIdx = fnSrc.indexOf("'-r', 'typecheck'");
-    expect(buildIdx).toBeGreaterThan(-1);
-    expect(typecheckIdx).toBeGreaterThan(-1);
-    expect(buildIdx).toBeLessThan(typecheckIdx);
-    expect(fnSrc).toContain('timeout: 180_000');
-    expect(fnSrc).toContain('let buildError');
-    expect(fnSrc).toContain('buildError = captureExecOutput(err)');
-    expect(fnSrc).toMatch(/catch[^{]*\{[^}]*\/\/ Non-fatal/);
-  });
-
-  it('archives phase-segregated review/fix results so runArbiter reads distinct excerpts (#661)', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    // runSpecReview must archive its result.json under a spec-review-specific name
-    const specReviewMatch = composeSrc.match(
-      /const runSpecReview[\s\S]*?(?=const runQualityReview)/,
-    );
-    expect(specReviewMatch).toBeTruthy();
-    expect(specReviewMatch![0]).toContain('SPEC_REVIEW_RESULT_ARTIFACT');
-    // runQualityReview must archive its result.json under a quality-review-specific name
-    const qualityReviewMatch = composeSrc.match(
-      /const runQualityReview[\s\S]*?(?=const implRunFix)/,
-    );
-    expect(qualityReviewMatch).toBeTruthy();
-    expect(qualityReviewMatch![0]).toContain('QUALITY_REVIEW_RESULT_ARTIFACT');
-    // implRunFix must archive its result.json under a fix-specific name
-    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
-    expect(fixMatch).toBeTruthy();
-    expect(fixMatch![0]).toContain('FIX_RESULT_ARTIFACT');
-    // runArbiter must read the segregated artifacts, never the shared result.json
-    // (both excerpts previously read the same path, so the arbiter always saw
-    // identical spec and fix content)
-    const arbiterMatch = composeSrc.match(
-      /const runArbiter[\s\S]*?(?=implementStepLoop = new ImplementStepLoop)/,
-    );
-    expect(arbiterMatch).toBeTruthy();
-    expect(arbiterMatch![0]).toContain('readArbiterExcerpts');
-    expect(arbiterMatch![0]).not.toMatch(/artifacts\.read\(String\(ctx\.runId\), 'result\.json'\)/);
-  });
-
-  it('implRunFix forwards FixStepOptions.reconciliationContext and historyContext into buildImplementStepFixPrompt (#670)', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
-    expect(fixMatch).toBeTruthy();
-    // The call site must spread opts.reconciliationContext and opts.historyContext
-    // into the prompt-builder input object. Without this, the arbiter rationale
-    // and prior-fix-history are silently dropped (issue #670).
-    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?reconciliationContext/);
-    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?historyContext/);
-  });
-
-  it('implRunFix routes isTerminalFix to the terminal profile and forwards it to the prompt builder (#763)', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
-    expect(fixMatch).toBeTruthy();
-    // Profile selection must consult opts.isTerminalFix and prefer the
-    // terminal profile. Without this, the terminal escalation silently
-    // re-runs the economy fixer that just exhausted the loop while events
-    // report the terminal profile ran (same seam bug class as #670).
-    expect(fixMatch![0]).toMatch(/opts\.isTerminalFix\s*&&\s*terminalFixProfileName/);
-    expect(fixMatch![0]).toMatch(/\?\s*terminalFixProfileName/);
-    // The terminal framing block must reach the prompt builder.
-    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?isTerminalFix/);
-  });
-
-  it('implRunFix forwards holisticFindings into buildImplementStepFixPrompt (#766)', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
-    expect(fixMatch).toBeTruthy();
-    // The loop's per-file finding accumulation is useless if the seam drops
-    // it — same silent-no-op class as #670/#763.
-    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?holisticFindings/);
-  });
-
-  it('implRunFix forwards task scope contract fields and hasInvertedCommand into buildImplementStepFixPrompt', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
-    expect(fixMatch).toBeTruthy();
-    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?expectedFiles/);
-    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?nonGoals/);
-    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?hasInvertedCommand/);
-  });
-
-  it('implRunFix passes the worktree cwd and persisted end commit to fix-result repair', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
-    expect(fixMatch).toBeTruthy();
-    const code = fixMatch![0];
-    expect(code).toMatch(/readFixVerdict\([\s\S]*?cwd:\s*ctx\.cwd/);
-    expect(code).toMatch(
-      /readFixVerdict\([\s\S]*?repairExpectedHead:\s*(?:patched\.endCommitSha\s*\?\?\s*startCommitSha|repairExpectedHead)/,
-    );
-  });
-
-  it('implRunFix archives fix-result.json only after a successful original or repaired verdict', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
-    expect(fixMatch).toBeTruthy();
-    const code = fixMatch![0];
-    const readIndex = code.indexOf('readFixVerdict');
-    const archiveIndex = code.indexOf('archiveStepResultDurably');
-    expect(readIndex).toBeLessThan(archiveIndex);
-    expect(code).toMatch(/if\s*\(\s*fixVerdict\.ok\s*\)\s*\{\s*archiveStepResultDurably/);
-  });
-
-  it('implRunFix returns a repaired done_with_fixes verdict as a successful FixResult', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
-    expect(fixMatch).toBeTruthy();
-    const code = fixMatch![0];
-    expect(code).toMatch(/agentOutcome:\s*fixVerdict\.ok/);
-    expect(code).toMatch(/verdict:\s*fixVerdict\.verdict/);
-  });
-
-  it('a failed repair remains contract_violation and does not archive a nonexistent artifact', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
-    expect(fixMatch).toBeTruthy();
-    const code = fixMatch![0];
-    expect(code).toMatch(
-      /agentOutcome:\s*fixVerdict\.ok\s*\?\s*\(?\s*'success'\s*(?:as\s+const)?\s*\)?\s*:\s*\(?\s*'contract_violation'\s*(?:as\s+const)?\s*\)?/,
-    );
-    expect(code).toMatch(/if\s*\(\s*fixVerdict\.ok\s*\)\s*\{\s*archiveStepResultDurably/);
-  });
-
-  it('implRunFix uses the fallbackReason from options when registering the fallback invocation', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
-    expect(fixMatch).toBeTruthy();
-    const code = fixMatch![0];
-    expect(code).toMatch(
-      /fallbackReason:\s*opts\.fallbackReason\s*\?\?\s*'two_consecutive_fix_failures'/,
-    );
-  });
-
   describe('worktreeSetup behavior', () => {
     const fakeAgentConfig = {
       validation: { commands: ['echo ok'], timeout: 60 },
@@ -1675,16 +1357,6 @@ exit 1
       });
       expect(container.runsDir).toBe(path.join(repoRoot, '.ai-runs'));
     });
-  });
-
-  it('implement-step fix prompt no longer tells fixer to read a nonexistent findings file (#664)', () => {
-    // Source-level regression check: the old broken contract must be gone,
-    // and the new findings section must be present.
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const composeSource = fs.readFileSync(path.join(__dirname, '..', 'compose.ts'), 'utf-8');
-    expect(composeSource).not.toContain('Read any review findings in the working directory');
-    expect(composeSource).toContain('## WHAT THE REVIEWERS FOUND (verbatim)');
   });
 
   it('persistingEventBus dynamically resolves repoId for multi-repo isolation and wires background components', () => {

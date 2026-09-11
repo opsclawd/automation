@@ -28,8 +28,6 @@ export * from './pr-review/check-merge-readiness.js';
 export * from './pr-review/unified-diff.js';
 export * from './pr-review/context-selector.js';
 export * from './review-fix/types.js';
-export * from './review-fix/review-fix-loop.js';
-export * from './review-fix/review-loop-history.js';
 export * from './review-fix/read-verdicts.js';
 export * from './validate-fix/types.js';
 export * from './validate-fix/validate-fix-loop.js';
@@ -39,27 +37,6 @@ export * from './executor/phase-handler-registry.js';
 export * from './executor/run-executor.js';
 export * from './executor/worker-loop.js';
 export * from './repository-recovery-coordinator.js';
-export type {
-  StepLoopContext,
-  ImplementStepOptions,
-  FixResult,
-  TypecheckResult,
-  TypescriptError,
-  ImplementStepLoopDeps,
-  ImplementStepLoopInput,
-  ImplementStepLoopResult,
-} from './implement-step/types.js';
-export * from './implement-step/implement-step-loop.js';
-export * from './implement-step/typescript-errors.js';
-export * from './implement-step/implement-step-history.js';
-export * from './implement-step/arbiter-grounding.js';
-export type {
-  ImplementStepHistoryEntry,
-  ImplementStepHistoryPort,
-  ImplementFixStepOptions,
-  HolisticFinding,
-  HolisticFile,
-} from './implement-step/types.js';
 export * from './artifacts/index.js';
 export * from './run-recovery-actions.js';
 export * from './review-state/types.js';

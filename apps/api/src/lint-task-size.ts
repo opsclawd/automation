@@ -1,7 +1,19 @@
 import { readFile } from 'node:fs/promises';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import type { TaskManifest } from '@ai-sdlc/application';
-import type { LintTaskSizeResult, OversizedTask } from '@ai-sdlc/application';
+
+export interface OversizedTask {
+  taskNum: number;
+  taskTitle: string;
+  file: string;
+  lineCount: number;
+  testCaseCount: number;
+}
+
+export interface LintTaskSizeResult {
+  ok: boolean;
+  oversized: OversizedTask[];
+}
 
 const TEST_FILE_RE = /(?:\b|_|\.)(test|spec)\.(ts|tsx)$|\.bats$/;
 const TEST_CASE_RE = /^\s*(it|test|xit|xtest)(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*\s*\(/gm;
