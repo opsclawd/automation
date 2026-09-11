@@ -148,7 +148,6 @@ describe('Lean End-to-End Phase Sequence (Issue #1103)', () => {
 
     const implementHandler = new ImplementHandler({
       steps,
-      runStep: vi.fn(),
     });
     const implementResult = await implementHandler.run(ctx);
     expect(implementResult.outcome).toBe('passed');

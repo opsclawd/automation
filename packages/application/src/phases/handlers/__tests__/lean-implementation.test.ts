@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
-import { ImplementHandler, type StepRunContext, type StepRunResult } from '../implement.js';
+import { ImplementHandler } from '../implement.js';
 import { FakeAgentPort } from '../../../test-doubles/fake-agent-port.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
@@ -104,7 +104,6 @@ function eventsOf(
 describe('Lean Implementation (Issue #1093)', () => {
   let ctx: ReturnType<typeof makeCtx>;
   let steps: FakeStepRepository;
-  let runStepMock: ReturnType<typeof vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>>;
 
   const validPlanMd = `# Implementation Plan
 
@@ -119,7 +118,6 @@ Add login route and handler.`;
     ctx = makeCtx({ executionPolicy: 'standard' });
     seedGit(ctx);
     steps = new FakeStepRepository();
-    runStepMock = vi.fn();
 
     mockLoadPromptTemplate.mockReturnValue('# Implement Prompt\n\n{{artifact:plan.md}}');
     mockRenderPrompt.mockResolvedValue('# Rendered Implement Prompt');
@@ -132,7 +130,7 @@ Add login route and handler.`;
     });
   });
 
-  it('standard policy uses exactly one implementation invocation and bypasses runStep/task reviews', async () => {
+  it('standard policy uses exactly one implementation invocation and executes lean implementation', async () => {
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('opencode-frontier', successResult());
 
@@ -146,14 +144,12 @@ Add login route and handler.`;
 
     const handler = new ImplementHandler({
       steps,
-      runStep: runStepMock,
     });
 
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('passed');
     expect(agent.invocations.length).toBe(1);
-    expect(runStepMock).not.toHaveBeenCalled();
 
     const startedEvents = eventsOf(ctx, 'step.started');
     expect(startedEvents.length).toBe(1);
@@ -177,7 +173,7 @@ Add login route and handler.`;
     expect(persistedSteps[0]?.index).toBe(1);
   });
 
-  it('strict policy also uses single-shot implementation invocation and bypasses runStep', async () => {
+  it('strict policy also uses single-shot implementation invocation', async () => {
     const strictCtx = makeCtx({ executionPolicy: 'strict' });
     seedGit(strictCtx);
     await strictCtx.artifacts.write({
@@ -198,14 +194,12 @@ Add login route and handler.`;
 
     const handler = new ImplementHandler({
       steps,
-      runStep: runStepMock,
     });
 
     const result = await handler.run(strictCtx);
 
     expect(result.outcome).toBe('passed');
     expect(agent.invocations.length).toBe(1);
-    expect(runStepMock).not.toHaveBeenCalled();
   });
 
   it('resume idempotency: skips agent invocation when implementation step is already completed', async () => {
@@ -232,14 +226,12 @@ Add login route and handler.`;
 
     const handler = new ImplementHandler({
       steps,
-      runStep: runStepMock,
     });
 
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('passed');
     expect(agent.invocations.length).toBe(0);
-    expect(runStepMock).not.toHaveBeenCalled();
 
     const skippedEvents = eventsOf(ctx, 'step.skipped');
     expect(skippedEvents.length).toBe(1);
@@ -268,7 +260,6 @@ Add login route and handler.`;
 
     const handler = new ImplementHandler({
       steps,
-      runStep: runStepMock,
     });
 
     const result = await handler.run(ctx);
@@ -299,7 +290,6 @@ Add login route and handler.`;
 
     const handler = new ImplementHandler({
       steps,
-      runStep: runStepMock,
     });
 
     const result = await handler.run(ctx);
@@ -324,7 +314,6 @@ Add login route and handler.`;
 
     const handler = new ImplementHandler({
       steps,
-      runStep: runStepMock,
     });
 
     const result = await handler.run(inboundCtx);
@@ -334,7 +323,7 @@ Add login route and handler.`;
     expect(agent.invocations.length).toBe(0);
   });
 
-  it('legacy execution policy routes to lean implementation without calling runStep', async () => {
+  it('legacy execution policy routes to lean implementation', async () => {
     const legacyCtx = makeCtx({ executionPolicy: 'legacy' });
     seedGit(legacyCtx);
     await legacyCtx.artifacts.write({
@@ -355,13 +344,11 @@ Add login route and handler.`;
 
     const handler = new ImplementHandler({
       steps,
-      runStep: runStepMock,
     });
 
     const result = await handler.run(legacyCtx);
 
     expect(result.outcome).toBe('passed');
-    expect(runStepMock).not.toHaveBeenCalled();
     expect(agent.invocations.length).toBe(1);
   });
 
@@ -371,7 +358,6 @@ Add login route and handler.`;
 
     const handler = new ImplementHandler({
       steps,
-      runStep: runStepMock,
     });
 
     const result = await handler.run(ctx);
@@ -387,7 +373,6 @@ Add login route and handler.`;
 
     const handler = new ImplementHandler({
       steps,
-      runStep: runStepMock,
     });
 
     const result = await handler.run(ctx);
@@ -405,7 +390,6 @@ Add login route and handler.`;
 
     const handler = new ImplementHandler({
       steps,
-      runStep: runStepMock,
       setup: setupMock,
     });
 

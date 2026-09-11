@@ -1,39 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import {
-  ArtifactNotFoundError,
-  type ArtifactStore,
-  WORKSPACE_CONSTRAINTS,
-  SCRATCH_FILE_POLICY,
-} from '@ai-sdlc/application';
-import {
-  buildImplementPrompt,
-  buildImplementStepFixPrompt,
-  buildPostPrReviewTaskPrompt,
-} from '../compose.js';
-import {
-  buildReviewFixFixPrompt,
-  buildReviewFixReviewPrompt,
-  buildWholePrArbiterPrompt,
-} from '../review-fix-prompts.js';
+import { WORKSPACE_CONSTRAINTS, SCRATCH_FILE_POLICY } from '@ai-sdlc/application';
+import { buildPostPrReviewTaskPrompt, buildPostPrReviewBatchPrompt } from '../compose.js';
+import { buildReviewFixFixPrompt } from '../review-fix-prompts.js';
 
 const SCRATCH_POLICY = [
   'Transient working files and scratch scripts MUST be written inside `.ai-tmp/`.',
   '`.ai-tmp/` is already gitignored.',
   'Nothing may be written to the worktree root unless it is a declared deliverable.',
 ] as const;
-
-const missingArtifacts: ArtifactStore = {
-  async read(runId, relativePath) {
-    throw new ArtifactNotFoundError(runId, relativePath);
-  },
-  async write() {
-    throw new Error('not in scope');
-  },
-  async list() {
-    return [];
-  },
-  async hydrateWorktree() {},
-};
 
 function expectScratchPolicy(prompt: string): void {
   for (const instruction of SCRATCH_POLICY) {
@@ -53,47 +27,7 @@ describe('scratch workspace policy', () => {
     expectNoScratchPolicy(WORKSPACE_CONSTRAINTS);
   });
 
-  it('does not propagate scratch policy to read-only prompts', () => {
-    const reviewPrompt = buildReviewFixReviewPrompt({
-      cwd: '/worktree/issue-894',
-      repoId: 'owner/repo',
-      defaultBranch: 'main',
-    });
-    const arbiterPrompt = buildWholePrArbiterPrompt({
-      cwd: '/worktree/issue-894',
-      repoId: 'owner/repo',
-      disputedFindings: [],
-      dispositionHistory: [],
-      relevantExcerpts: [],
-      fixDelta: '',
-      fixRebuttal: '',
-    });
-
-    expectNoScratchPolicy(reviewPrompt);
-    expectNoScratchPolicy(arbiterPrompt);
-  });
-
-  it('propagates the scratch-file policy to implement prompts', () => {
-    const prompt = buildImplementPrompt(
-      {
-        stepIndex: 1,
-        stepTitle: 'Implement the change',
-        cwd: '/worktree/issue-894',
-        repoId: 'owner/repo',
-      },
-      'Task context',
-      'ai/issue-894',
-    );
-
-    expectScratchPolicy(prompt);
-  });
-
-  it('propagates the scratch-file policy to fix-validate, review-fix, and PR review task prompts', async () => {
-    const validateFixPrompt = await buildImplementStepFixPrompt(missingArtifacts, 'run-1', {
-      cwd: '/worktree/issue-894',
-      stepIndex: 1,
-      stepTitle: 'Implement the change',
-    });
+  it('propagates the scratch-file policy to fix and PR review task prompts', async () => {
     const reviewFixPrompt = buildReviewFixFixPrompt({
       cwd: '/worktree/issue-894',
       repoId: 'owner/repo',
@@ -110,9 +44,31 @@ describe('scratch workspace policy', () => {
       diff: 'diff --git a/src/index.ts b/src/index.ts',
       mode: 'initial_full',
     });
+    const prReviewBatchPrompt = buildPostPrReviewBatchPrompt({
+      cwd: '/worktree/issue-894',
+      comments: [
+        {
+          commentId: 1,
+          path: 'src/index.ts',
+          line: 10,
+          body: 'Please fix this',
+        },
+      ],
+      diffsByCommentId: new Map([[1, 'diff --git a/src/index.ts b/src/index.ts']]),
+      mode: 'initial_full',
+      dispositions: [],
+      context: {
+        level: 'file',
+        includedFiles: [],
+        includedHunks: [],
+        includedSymbols: [],
+        fullDiffIncluded: false,
+        sections: [],
+      },
+    });
 
-    expectScratchPolicy(validateFixPrompt);
     expectScratchPolicy(reviewFixPrompt);
     expectScratchPolicy(prReviewTaskPrompt);
+    expectScratchPolicy(prReviewBatchPrompt);
   });
 });
