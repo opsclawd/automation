@@ -36,6 +36,9 @@ export class FakeGitHubPort implements GitHubPort {
   autoMergeRequests: Array<{ repoFullName: string; prNumber: number; mergeMethod: MergeMethod }> =
     [];
   autoMergeResult: RequestAutoMergeResult = { requested: true };
+  autoMergeAllowedByRepo = new Map<string, boolean>();
+  defaultAutoMergeAllowed = true;
+  isAutoMergeAllowedCalls: string[] = [];
   viewerPermissionByRepo = new Map<string, string>();
   verifyCapabilitiesCalls: string[] = [];
 
@@ -74,6 +77,8 @@ export class FakeGitHubPort implements GitHubPort {
         isMerged: pr.state === 'merged',
         ciStatus: pr.state === 'merged' ? 'passed' : 'pending',
         mergeStateStatus: pr.state === 'merged' ? 'clean' : 'unknown',
+        baseRefName: pr.baseRefName,
+        autoMergeEnabled: true,
       };
     }
     throw new Error(`no pr ${repoFullName}#${prNumber}`);
@@ -81,12 +86,18 @@ export class FakeGitHubPort implements GitHubPort {
 
   async createPullRequest(input: CreatePullRequestInput): Promise<PullRequest> {
     this.createdPrInputs.push(input);
+    const prNumber = this.createdPrs.length + 1;
     const pr: PullRequest = {
-      number: this.createdPrs.length + 1,
-      url: `https://example/pr/${this.createdPrs.length + 1}`,
+      number: prNumber,
+      url: `https://example/pr/${prNumber}`,
       state: 'open',
     };
     this.createdPrs.push(pr);
+    this.prs.set(`${input.repoFullName}/${prNumber}`, {
+      ...pr,
+      headRefName: input.headBranch,
+      baseRefName: input.baseBranch,
+    });
     return pr;
   }
 
@@ -186,5 +197,10 @@ export class FakeGitHubPort implements GitHubPort {
       );
     }
     return { canWrite: true, permission };
+  }
+
+  async isAutoMergeAllowed(repoFullName: string): Promise<boolean> {
+    this.isAutoMergeAllowedCalls.push(repoFullName);
+    return this.autoMergeAllowedByRepo.get(repoFullName) ?? this.defaultAutoMergeAllowed;
   }
 }

@@ -19,6 +19,7 @@ import {
   markItemWaitingMerge,
   markItemMerged,
   markItemBlocked,
+  markBatchBlocked,
   ReleaseBatchStateError,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
@@ -28,8 +29,12 @@ import type {
   JobQueuePort,
   EventBusPort,
   EventRepositoryPort,
+  GitPort,
+  GitHubPort,
+  PrMergeReadiness,
 } from './ports.js';
 import type { EventRepositoryFactory } from './start-issue-run.js';
+import type { InterItemMaintenanceService } from './inter-item-maintenance.js';
 
 export type ReconciliationAction =
   | 'idle'
@@ -39,7 +44,9 @@ export type ReconciliationAction =
   | 'pr_attached'
   | 'build_completed'
   | 'job_recovered'
-  | 'run_adopted';
+  | 'run_adopted'
+  | 'item_merged'
+  | 'maintenance_run';
 
 export interface ReconcileBatchResult {
   batchId: ReleaseBatchId;
@@ -66,6 +73,9 @@ export interface ReleaseBatchCoordinatorDeps {
   };
   eventBus: EventBusPort;
   eventRepository?: EventRepositoryPort | EventRepositoryFactory | undefined;
+  git?: GitPort;
+  github?: GitHubPort;
+  maintenanceService?: InterItemMaintenanceService;
   resolvePrMetadata?: (run: Run) => Promise<{ prNumber: number } | undefined>;
   executionPolicy?: ExecutionPolicy | undefined;
   now?: (() => Date) | undefined;
@@ -145,15 +155,65 @@ export class ReleaseBatchCoordinator {
         };
       }
 
-      // Precondition: if batch is blocked, do not admit successor
+      // Precondition: if batch is blocked, check if we can retry maintenance if it was an environment blocker
       if (batch.status === 'blocked') {
-        return {
-          batchId: batch.id,
-          batchStatus: batch.status,
-          currentPosition: batch.currentPosition,
-          actions: ['idle'],
-          batch,
-        };
+        const isEnvBlocker =
+          batch.blockedReason?.startsWith('environment_unhealthy') ||
+          batch.blockedReason?.startsWith('Disk free space') ||
+          batch.blockedReason?.startsWith('Available memory');
+
+        if (isEnvBlocker && this.deps.maintenanceService && currentItem.position > 1) {
+          const repo = this.deps.repositoryPort.findById(batch.repoId);
+          const priorItem = batch.items.find((i) => i.position === currentItem.position - 1);
+          if (repo && priorItem) {
+            const retryMaint = await this.deps.maintenanceService.execute({
+              repoLocalBasePath: repo.localBasePath,
+              completedIssueNumber: priorItem.issueNumber,
+              completedRunUuid: priorItem.runUuid,
+            });
+            if (retryMaint.success) {
+              const { blockedReason: _br, ...unblockedBatch } = batch;
+              void _br;
+              batch = { ...unblockedBatch, status: 'building' };
+              this.deps.releaseBatchRepository.update(batch);
+              actions.push('unblocked');
+              this.publishEvent(batch, {
+                type: 'release_batch.unblocked',
+                level: 'info',
+                message: `release-batch ${batch.id} unblocked: maintenance health checks passed`,
+                timestamp: now,
+                metadata: {
+                  releaseBatchId: batch.id,
+                  position: currentItem.position,
+                },
+              });
+            } else {
+              return {
+                batchId: batch.id,
+                batchStatus: batch.status,
+                currentPosition: batch.currentPosition,
+                actions: ['idle'],
+                batch,
+              };
+            }
+          } else {
+            return {
+              batchId: batch.id,
+              batchStatus: batch.status,
+              currentPosition: batch.currentPosition,
+              actions: ['idle'],
+              batch,
+            };
+          }
+        } else {
+          return {
+            batchId: batch.id,
+            batchStatus: batch.status,
+            currentPosition: batch.currentPosition,
+            actions: ['idle'],
+            batch,
+          };
+        }
       }
 
       // Precondition: no other item may be active or waiting_merge
@@ -172,8 +232,69 @@ export class ReleaseBatchCoordinator {
         };
       }
 
-      // Admit successor
-      const admissionResult = await this.admitSuccessor(batch, currentItem, now);
+      // Inter-item maintenance before successor admission
+      if (currentItem.position > 1 && this.deps.maintenanceService) {
+        const repo = this.deps.repositoryPort.findById(batch.repoId);
+        const priorItem = batch.items.find((i) => i.position === currentItem.position - 1);
+        if (repo && priorItem) {
+          const mResult = await this.deps.maintenanceService.execute({
+            repoLocalBasePath: repo.localBasePath,
+            completedIssueNumber: priorItem.issueNumber,
+            completedRunUuid: priorItem.runUuid,
+          });
+          if (!mResult.success) {
+            const reason = mResult.reason ?? 'environment_unhealthy';
+            batch = markBatchBlocked(batch, reason);
+            this.deps.releaseBatchRepository.update(batch);
+            actions.push('blocked');
+            this.publishEvent(batch, {
+              type: 'release_batch.blocked',
+              level: 'warn',
+              message: `release-batch ${batch.id} blocked: maintenance check failed: ${reason}`,
+              timestamp: now,
+              metadata: {
+                releaseBatchId: batch.id,
+                position: currentItem.position,
+                blockedReason: reason,
+              },
+            });
+            return {
+              batchId: batch.id,
+              batchStatus: batch.status,
+              currentPosition: batch.currentPosition,
+              actions,
+              batch,
+            };
+          }
+          actions.push('maintenance_run');
+        }
+      }
+
+      // Fresh release-base certification: fetch origin/<releaseBranch> and resolve exact SHA
+      let freshBaseSha =
+        currentItem.baseSha ?? this.resolveBaseShaForPosition(batch, currentItem.position);
+      const repo = this.deps.repositoryPort.findById(batch.repoId);
+      if (this.deps.git && repo) {
+        try {
+          await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
+          const remoteSha = await this.deps.git.resolveRef(
+            repo.localBasePath,
+            `origin/${batch.releaseBranch}`,
+          );
+          if (remoteSha) {
+            freshBaseSha = remoteSha;
+          }
+        } catch (err) {
+          this.deps.logger?.warn?.(
+            `Failed to fetch or resolve origin/${batch.releaseBranch}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+
+      // Admit successor with certified fresh SHA
+      const admissionResult = await this.admitSuccessor(batch, currentItem, now, freshBaseSha);
       batch = admissionResult.batch;
       actions.push(...admissionResult.actions);
 
@@ -243,8 +364,14 @@ export class ReleaseBatchCoordinator {
           actions.push('job_recovered');
         }
 
-        // If item or batch was blocked, unblock it!
-        if (currentItem.status === 'blocked' || batch.status === 'blocked') {
+        // If item was blocked due to run state, unblock it!
+        const isRunBlocker = [
+          'run_failed',
+          'run_blocked',
+          'run_cancelled',
+          'needs_human_review',
+        ].includes(currentItem.blockedReason ?? '');
+        if (isRunBlocker) {
           batch = unblockItem(batch, currentItem.position);
           this.deps.releaseBatchRepository.update(batch);
           actions.push('unblocked');
@@ -273,7 +400,13 @@ export class ReleaseBatchCoordinator {
       }
 
       case 'waiting': {
-        if (currentItem.status === 'blocked' || batch.status === 'blocked') {
+        const isRunBlocker = [
+          'run_failed',
+          'run_blocked',
+          'run_cancelled',
+          'needs_human_review',
+        ].includes(currentItem.blockedReason ?? '');
+        if (isRunBlocker) {
           batch = unblockItem(batch, currentItem.position);
           this.deps.releaseBatchRepository.update(batch);
           actions.push('unblocked');
@@ -417,6 +550,18 @@ export class ReleaseBatchCoordinator {
       }
     }
 
+    // Check and reconcile PR merge status if GitHub port and PR metadata are available
+    const latestItem = batch.items.find((i) => i.position === currentItem.position);
+    const prNum = latestItem?.prNumber;
+    if (this.deps.github && prNum && run.status !== 'failed' && run.status !== 'cancelled') {
+      const prResult = await this.checkAndReconcilePrMerge(batch, currentItem.position, prNum, now);
+      if (prResult.certifyResult) {
+        return prResult.certifyResult;
+      }
+      batch = prResult.batch;
+      actions.push(...prResult.actions);
+    }
+
     if (actions.length === 0) {
       actions.push('idle');
     }
@@ -519,6 +664,7 @@ export class ReleaseBatchCoordinator {
     batch: ReleaseBatch,
     item: ReleaseBatchItem,
     now: Date,
+    explicitBaseSha?: string,
   ): Promise<{ batch: ReleaseBatch; actions: ReconciliationAction[] }> {
     const actions: ReconciliationAction[] = [];
     let runUuid: string;
@@ -568,7 +714,10 @@ export class ReleaseBatchCoordinator {
       actions.push('job_recovered');
     }
 
-    const baseSha = this.resolveBaseShaForPosition(batch, item.position);
+    const baseSha =
+      explicitBaseSha ?? item.baseSha ?? this.resolveBaseShaForPosition(batch, item.position);
+    this.deps.runRepository.update(runUuid, { startCommitSha: baseSha });
+
     const updatedBatch = admitItem(batch, item.position, {
       runUuid,
       baseSha,
@@ -653,6 +802,235 @@ export class ReleaseBatchCoordinator {
       );
     }
     return undefined;
+  }
+
+  private async checkAndReconcilePrMerge(
+    batch: ReleaseBatch,
+    position: number,
+    prNumber: number,
+    now: Date,
+  ): Promise<{
+    batch: ReleaseBatch;
+    actions: ReconciliationAction[];
+    certifyResult?: ReconcileBatchResult;
+  }> {
+    const actions: ReconciliationAction[] = [];
+    if (!this.deps.github) {
+      return { batch, actions };
+    }
+
+    const repo = this.deps.repositoryPort.findById(batch.repoId);
+    if (!repo) {
+      return { batch, actions };
+    }
+
+    let readiness: PrMergeReadiness;
+    try {
+      readiness = await this.deps.github.getPrMergeReadiness(repo.fullName, prNumber);
+    } catch (err) {
+      this.deps.logger?.warn?.(
+        `Failed to get PR merge readiness for PR #${prNumber} in ${repo.fullName}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { batch, actions };
+    }
+
+    const currentItem = batch.items.find((i) => i.position === position);
+    if (!currentItem) {
+      return { batch, actions };
+    }
+
+    // 1. PR Base Branch Mismatch Check
+    if (readiness.baseRefName && readiness.baseRefName !== batch.releaseBranch) {
+      const reason = `pr_base_mismatch: PR #${prNumber} base is ${readiness.baseRefName}, expected ${batch.releaseBranch}`;
+      if (currentItem.status !== 'blocked' || currentItem.blockedReason !== reason) {
+        batch = markItemBlocked(batch, position, reason);
+        this.deps.releaseBatchRepository.update(batch);
+        actions.push('blocked');
+        this.publishEvent(batch, {
+          type: 'release_batch.blocked',
+          level: 'warn',
+          message: `release-batch ${batch.id} blocked: ${reason}`,
+          timestamp: now,
+          metadata: {
+            releaseBatchId: batch.id,
+            position,
+            issueNumber: currentItem.issueNumber,
+            runUuid: currentItem.runUuid,
+            prNumber,
+            blockedReason: reason,
+          },
+        });
+      }
+      return { batch, actions };
+    }
+
+    // 2. Closed Unmerged Check
+    if (readiness.state === 'closed' && !readiness.isMerged) {
+      const reason = `pr_closed_unmerged: PR #${prNumber} closed without merge`;
+      if (currentItem.status !== 'blocked' || currentItem.blockedReason !== reason) {
+        batch = markItemBlocked(batch, position, reason);
+        this.deps.releaseBatchRepository.update(batch);
+        actions.push('blocked');
+        this.publishEvent(batch, {
+          type: 'release_batch.blocked',
+          level: 'warn',
+          message: `release-batch ${batch.id} blocked: ${reason}`,
+          timestamp: now,
+          metadata: {
+            releaseBatchId: batch.id,
+            position,
+            issueNumber: currentItem.issueNumber,
+            runUuid: currentItem.runUuid,
+            prNumber,
+            blockedReason: reason,
+          },
+        });
+      }
+      return { batch, actions };
+    }
+
+    // 3. Auto-Merge Disabled / Unavailable Check
+    if (
+      readiness.autoMergeEnabled === false &&
+      !readiness.isMerged &&
+      readiness.state !== 'merged'
+    ) {
+      const reason = `auto_merge_unavailable: PR #${prNumber} does not have auto-merge enabled`;
+      if (currentItem.status !== 'blocked' || currentItem.blockedReason !== reason) {
+        batch = markItemBlocked(batch, position, reason);
+        this.deps.releaseBatchRepository.update(batch);
+        actions.push('blocked');
+        this.publishEvent(batch, {
+          type: 'release_batch.blocked',
+          level: 'warn',
+          message: `release-batch ${batch.id} blocked: ${reason}`,
+          timestamp: now,
+          metadata: {
+            releaseBatchId: batch.id,
+            position,
+            issueNumber: currentItem.issueNumber,
+            runUuid: currentItem.runUuid,
+            prNumber,
+            blockedReason: reason,
+          },
+        });
+      }
+      return { batch, actions };
+    }
+
+    // 4. CI Failure Check
+    if (readiness.ciStatus === 'failed' && !readiness.isMerged && readiness.state !== 'merged') {
+      const reason = `ci_failed: PR #${prNumber} CI checks failed`;
+      if (currentItem.status !== 'blocked' || currentItem.blockedReason !== reason) {
+        batch = markItemBlocked(batch, position, reason);
+        this.deps.releaseBatchRepository.update(batch);
+        actions.push('blocked');
+        this.publishEvent(batch, {
+          type: 'release_batch.blocked',
+          level: 'warn',
+          message: `release-batch ${batch.id} blocked: ${reason}`,
+          timestamp: now,
+          metadata: {
+            releaseBatchId: batch.id,
+            position,
+            issueNumber: currentItem.issueNumber,
+            runUuid: currentItem.runUuid,
+            prNumber,
+            blockedReason: reason,
+          },
+        });
+      }
+      return { batch, actions };
+    }
+
+    // If item was blocked due to a PR issue (ci_failed, auto_merge_unavailable, pr_base_mismatch),
+    // but the issue has been resolved, unblock it!
+    const isPrBlocker =
+      currentItem.status === 'blocked' &&
+      (currentItem.blockedReason?.startsWith('ci_failed') ||
+        currentItem.blockedReason?.startsWith('auto_merge_unavailable') ||
+        currentItem.blockedReason?.startsWith('pr_base_mismatch'));
+
+    if (isPrBlocker) {
+      batch = unblockItem(batch, position);
+      this.deps.releaseBatchRepository.update(batch);
+      actions.push('unblocked');
+      this.publishEvent(batch, {
+        type: 'release_batch.unblocked',
+        level: 'info',
+        message: `release-batch ${batch.id} unblocked: PR #${prNumber} blocker resolved`,
+        timestamp: now,
+        metadata: {
+          releaseBatchId: batch.id,
+          position,
+          issueNumber: currentItem.issueNumber,
+          runUuid: currentItem.runUuid,
+          prNumber,
+        },
+      });
+    }
+
+    // 5. Merged Check
+    if (readiness.isMerged || readiness.state === 'merged') {
+      let mergedSha = readiness.mergeCommitSha;
+      const r = this.deps.repositoryPort.findById(batch.repoId);
+      if (this.deps.git && r) {
+        try {
+          await this.deps.git.fetch(r.localBasePath, 'origin', batch.releaseBranch);
+          const remoteSha = await this.deps.git.resolveRef(
+            r.localBasePath,
+            `origin/${batch.releaseBranch}`,
+          );
+          if (remoteSha) {
+            mergedSha = remoteSha;
+          }
+        } catch (err) {
+          this.deps.logger?.warn?.(
+            `Failed to fetch origin/${batch.releaseBranch}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+      if (!mergedSha) {
+        mergedSha = readiness.mergeCommitSha ?? 'unknown-merge-sha';
+      }
+
+      const certifyResult = await this.certifyItemMerged({
+        batchId: batch.id,
+        position,
+        mergedCommitSha: mergedSha,
+        now,
+      });
+      return { batch: certifyResult.batch, actions, certifyResult };
+    }
+
+    // 6. Open / Pending CI / Merge Check
+    if (readiness.state === 'open') {
+      const updatedItem = batch.items.find((i) => i.position === position);
+      if (updatedItem && updatedItem.status === 'active') {
+        batch = markItemWaitingMerge(batch, position, prNumber);
+        this.deps.releaseBatchRepository.update(batch);
+        actions.push('pr_attached');
+        this.publishEvent(batch, {
+          type: 'release_batch.item_waiting_merge',
+          level: 'info',
+          message: `release-batch ${batch.id} item #${updatedItem.issueNumber} waiting merge on PR #${prNumber}`,
+          timestamp: now,
+          metadata: {
+            releaseBatchId: batch.id,
+            position,
+            issueNumber: updatedItem.issueNumber,
+            runUuid: updatedItem.runUuid,
+            prNumber,
+          },
+        });
+      }
+    }
+
+    return { batch, actions };
   }
 
   private publishEvent(

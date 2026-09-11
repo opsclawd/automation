@@ -12,6 +12,11 @@ import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
 import { FakeJobQueuePort } from '../test-doubles/fake-job-queue-port.js';
 import { FakeEventBus } from '../test-doubles/fake-event-bus.js';
 import { FakeRepositoryPort } from '../test-doubles/fake-repository-port.js';
+import { FakeGitHubPort } from '../test-doubles/fake-github-port.js';
+import { FakeGitPort } from '../test-doubles/fake-git-port.js';
+import { FakeEnvironmentHealthPort } from '../test-doubles/fake-environment-health-port.js';
+import { InterItemMaintenanceService } from '../inter-item-maintenance.js';
+import { ReapOrphanedTestWorkers } from '../reap-orphaned-test-workers.js';
 
 function createTestRepo(overrides?: Partial<Repository>): Repository {
   return {
@@ -568,6 +573,427 @@ describe('ReleaseBatchCoordinator', () => {
         runUuid: 'run-item-1',
         prNumber: 88,
       });
+    });
+  });
+
+  describe('PR merge readiness & failure reconciliation', () => {
+    let fakeGitHub: FakeGitHubPort;
+    let fakeGit: FakeGitPort;
+
+    beforeEach(() => {
+      fakeGitHub = new FakeGitHubPort();
+      fakeGit = new FakeGitPort();
+      coordinator = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        jobQueue,
+        repositoryPort,
+        eventBus,
+        git: fakeGit,
+        github: fakeGitHub,
+        resolvePrMetadata: async (run) => {
+          if (run.issueNumber === 101) return { prNumber: 88 };
+          return undefined;
+        },
+        now: () => t1,
+      });
+    });
+
+    it('transitions active item to waiting_merge when PR is open and rests without holding worker lease', async () => {
+      const { batchId } = setupFiveItemBatch();
+      fakeGitHub.mergeReadiness.set(`${defaultRepo.fullName}/88`, {
+        prNumber: 88,
+        state: 'open',
+        isMerged: false,
+        ciStatus: 'pending',
+        autoMergeEnabled: true,
+        baseRefName: 'release/2026-09-11-batch-five',
+      });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('pr_attached');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.items[0]?.status).toBe('waiting_merge');
+      expect(saved.items[0]?.prNumber).toBe(88);
+      expect(saved.status).toBe('building');
+    });
+
+    it('blocks batch and item when PR CI checks fail without creating a new Run UUID', async () => {
+      const { batchId } = setupFiveItemBatch();
+      fakeGitHub.mergeReadiness.set(`${defaultRepo.fullName}/88`, {
+        prNumber: 88,
+        state: 'open',
+        isMerged: false,
+        ciStatus: 'failed',
+        autoMergeEnabled: true,
+        baseRefName: 'release/2026-09-11-batch-five',
+      });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('blocked');
+      expect(result.batchStatus).toBe('blocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.items[0]?.status).toBe('blocked');
+      expect(saved.items[0]?.blockedReason).toContain('ci_failed');
+      expect(saved.items[0]?.runUuid).toBe('run-item-1');
+      expect(runRepository.runs.size).toBe(1); // No new Run UUID
+    });
+
+    it('unblocks batch and item when PR CI checks recover to passed without creating a new Run UUID', async () => {
+      const { batchId } = setupFiveItemBatch();
+      // Initially failed
+      fakeGitHub.mergeReadiness.set(`${defaultRepo.fullName}/88`, {
+        prNumber: 88,
+        state: 'open',
+        isMerged: false,
+        ciStatus: 'failed',
+        autoMergeEnabled: true,
+        baseRefName: 'release/2026-09-11-batch-five',
+      });
+      await coordinator.reconcile(batchId);
+
+      // Now CI passes
+      fakeGitHub.mergeReadiness.set(`${defaultRepo.fullName}/88`, {
+        prNumber: 88,
+        state: 'open',
+        isMerged: false,
+        ciStatus: 'passed',
+        autoMergeEnabled: true,
+        baseRefName: 'release/2026-09-11-batch-five',
+      });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('unblocked');
+      expect(result.batchStatus).toBe('building');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('building');
+      expect(saved.items[0]?.status).toBe('waiting_merge');
+      expect(saved.items[0]?.runUuid).toBe('run-item-1');
+      expect(runRepository.runs.size).toBe(1); // Same run preserved
+    });
+
+    it('blocks batch when PR is closed unmerged', async () => {
+      const { batchId } = setupFiveItemBatch();
+      fakeGitHub.mergeReadiness.set(`${defaultRepo.fullName}/88`, {
+        prNumber: 88,
+        state: 'closed',
+        isMerged: false,
+        ciStatus: 'passed',
+        autoMergeEnabled: false,
+        baseRefName: 'release/2026-09-11-batch-five',
+      });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('blocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.items[0]?.status).toBe('blocked');
+      expect(saved.items[0]?.blockedReason).toContain('pr_closed_unmerged');
+      expect(runRepository.runs.size).toBe(1);
+    });
+
+    it('blocks batch when PR base branch mismatches batch releaseBranch', async () => {
+      const { batchId } = setupFiveItemBatch();
+      fakeGitHub.mergeReadiness.set(`${defaultRepo.fullName}/88`, {
+        prNumber: 88,
+        state: 'open',
+        isMerged: false,
+        ciStatus: 'passed',
+        autoMergeEnabled: true,
+        baseRefName: 'main', // mismatches release/2026-09-11-batch-five
+      });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('blocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.items[0]?.status).toBe('blocked');
+      expect(saved.items[0]?.blockedReason).toContain('pr_base_mismatch');
+      expect(runRepository.runs.size).toBe(1);
+    });
+
+    it('blocks batch when auto-merge is disabled on PR', async () => {
+      const { batchId } = setupFiveItemBatch();
+      fakeGitHub.mergeReadiness.set(`${defaultRepo.fullName}/88`, {
+        prNumber: 88,
+        state: 'open',
+        isMerged: false,
+        ciStatus: 'passed',
+        autoMergeEnabled: false,
+        baseRefName: 'release/2026-09-11-batch-five',
+      });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('blocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.items[0]?.status).toBe('blocked');
+      expect(saved.items[0]?.blockedReason).toContain('auto_merge_unavailable');
+      expect(runRepository.runs.size).toBe(1);
+    });
+
+    it('certifies item merged when PR is merged and advances batch', async () => {
+      const { batchId } = setupFiveItemBatch();
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', 'sha-fresh-merged-101');
+      fakeGitHub.mergeReadiness.set(`${defaultRepo.fullName}/88`, {
+        prNumber: 88,
+        state: 'merged',
+        isMerged: true,
+        ciStatus: 'passed',
+        autoMergeEnabled: true,
+        baseRefName: 'release/2026-09-11-batch-five',
+        mergeCommitSha: 'sha-fresh-merged-101',
+      });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('successor_admitted');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.items[0]?.status).toBe('merged');
+      expect(saved.items[0]?.mergedCommitSha).toBe('sha-fresh-merged-101');
+      expect(saved.items[1]?.status).toBe('active');
+      expect(saved.items[1]?.baseSha).toBe('sha-fresh-merged-101');
+    });
+  });
+
+  describe('inter-item maintenance and health thresholds', () => {
+    let fakeGitHub: FakeGitHubPort;
+    let fakeGit: FakeGitPort;
+    let fakeHealth: FakeEnvironmentHealthPort;
+    let maintenanceService: InterItemMaintenanceService;
+
+    beforeEach(() => {
+      fakeGitHub = new FakeGitHubPort();
+      fakeGit = new FakeGitPort();
+      fakeHealth = new FakeEnvironmentHealthPort();
+      maintenanceService = new InterItemMaintenanceService({
+        orphanReaper: new ReapOrphanedTestWorkers({
+          listProcesses: async () => [],
+          killProcess: () => true,
+        }),
+        git: fakeGit,
+        health: fakeHealth,
+      });
+
+      coordinator = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        jobQueue,
+        repositoryPort,
+        eventBus,
+        git: fakeGit,
+        github: fakeGitHub,
+        maintenanceService,
+        resolvePrMetadata: async (run) => {
+          if (run.issueNumber === 101) return { prNumber: 88 };
+          return undefined;
+        },
+        now: () => t1,
+      });
+    });
+
+    it('executes maintenance before admitting successor and admits with fresh base', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const worktreePath = `${defaultRepo.localBasePath}/.ai-worktrees/issue-101`;
+      fakeGit.worktrees.push(worktreePath);
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', 'sha-merged-item-1');
+
+      fakeGitHub.mergeReadiness.set(`${defaultRepo.fullName}/88`, {
+        prNumber: 88,
+        state: 'merged',
+        isMerged: true,
+        ciStatus: 'passed',
+        autoMergeEnabled: true,
+        baseRefName: 'release/2026-09-11-batch-five',
+        mergeCommitSha: 'sha-merged-item-1',
+      });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('maintenance_run');
+      expect(result.actions).toContain('successor_admitted');
+
+      // Completed worktree removed
+      expect(fakeGit.worktrees.includes(worktreePath)).toBe(false);
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.items[1]?.status).toBe('active');
+      expect(saved.items[1]?.baseSha).toBe('sha-merged-item-1');
+
+      // Verify runRepository was updated with fresh startCommitSha
+      const run2 = runRepository.findByUuid(saved.items[1]?.runUuid!);
+      expect(run2?.startCommitSha).toBe('sha-merged-item-1');
+    });
+
+    it('blocks batch when environment health check fails and admits nothing', async () => {
+      const { batchId } = setupFiveItemBatch();
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', 'sha-merged-item-1');
+
+      fakeHealth.diskFreeMb = 1024;
+
+      const result = await coordinator.certifyItemMerged({
+        batchId,
+        position: 1,
+        mergedCommitSha: 'sha-merged-item-1',
+        now: t1,
+      });
+
+      expect(result.actions).toContain('blocked');
+      expect(result.batchStatus).toBe('blocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.blockedReason).toContain('Disk free space (1024MB) is below required floor');
+
+      // Item 2 remains pending!
+      expect(saved.items[1]?.status).toBe('pending');
+      expect(saved.items[1]?.runUuid).toBeUndefined();
+      expect(runRepository.runs.size).toBe(1); // No successor run created
+    });
+
+    it('retries maintenance idempotently and admits successor once environment health recovers', async () => {
+      const { batchId } = setupFiveItemBatch();
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', 'sha-merged-item-1');
+
+      fakeHealth.diskFreeMb = 1024;
+
+      await coordinator.certifyItemMerged({
+        batchId,
+        position: 1,
+        mergedCommitSha: 'sha-merged-item-1',
+        now: t1,
+      });
+
+      let saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+
+      // Disk space recovered!
+      fakeHealth.diskFreeMb = 5120;
+
+      const retryResult = await coordinator.reconcile(batchId);
+      expect(retryResult.actions).toContain('unblocked');
+      expect(retryResult.actions).toContain('successor_admitted');
+
+      saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('building');
+      expect(saved.items[1]?.status).toBe('active');
+      expect(saved.items[1]?.runUuid).toBeDefined();
+      expect(saved.items[1]?.baseSha).toBe('sha-merged-item-1');
+      expect(runRepository.runs.size).toBe(2);
+    });
+  });
+
+  describe('fresh release-base certification', () => {
+    let fakeGitHub: FakeGitHubPort;
+    let fakeGit: FakeGitPort;
+
+    beforeEach(() => {
+      fakeGitHub = new FakeGitHubPort();
+      fakeGit = new FakeGitPort();
+      coordinator = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        jobQueue,
+        repositoryPort,
+        eventBus,
+        git: fakeGit,
+        github: fakeGitHub,
+        now: () => t1,
+      });
+    });
+
+    it('stale local branch regression test: successor branches from fresh remote SHA, not stale local branch', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      // Local repo head/branch has stale SHA
+      const staleLocalSha = 'sha-stale-local-12345';
+      fakeGit.headByCwd.set(defaultRepo.localBasePath, staleLocalSha);
+
+      // Remote release branch on origin has fresh merged SHA
+      const freshRemoteSha = 'sha-fresh-remote-98765';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', freshRemoteSha);
+
+      // Certify item 1 merged
+      const result = await coordinator.certifyItemMerged({
+        batchId,
+        position: 1,
+        mergedCommitSha: 'sha-item-1-merged',
+        now: t1,
+      });
+
+      expect(result.actions).toContain('successor_admitted');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      const item2 = saved.items[1]!;
+      expect(item2.status).toBe('active');
+
+      // Successor baseSha MUST be freshRemoteSha, NOT staleLocalSha!
+      expect(item2.baseSha).toBe(freshRemoteSha);
+      expect(item2.baseSha).not.toBe(staleLocalSha);
+
+      // Successor run startCommitSha in runRepository MUST be freshRemoteSha!
+      const run2 = runRepository.findByUuid(item2.runUuid!);
+      expect(run2?.startCommitSha).toBe(freshRemoteSha);
+      expect(run2?.startCommitSha).not.toBe(staleLocalSha);
+
+      // Verify fetch was called for origin/release/2026-09-11-batch-five
+      expect(fakeGit.fetchCalls).toContainEqual({
+        cwd: defaultRepo.localBasePath,
+        remote: 'origin',
+        ref: 'release/2026-09-11-batch-five',
+      });
+    });
+  });
+
+  describe('repeated reconciliation idempotency', () => {
+    it('repeated reconciliation cannot admit successor twice or create duplicate runs', async () => {
+      const fakeGit = new FakeGitPort();
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', 'sha-item-1');
+      coordinator = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        jobQueue,
+        repositoryPort,
+        eventBus,
+        git: fakeGit,
+        now: () => t1,
+      });
+
+      const { batchId } = setupFiveItemBatch();
+
+      // Certify item 1 merged -> admits item 2
+      const res1 = await coordinator.certifyItemMerged({
+        batchId,
+        position: 1,
+        mergedCommitSha: 'sha-item-1',
+        now: t1,
+      });
+      expect(res1.actions).toContain('successor_admitted');
+      expect(runRepository.runs.size).toBe(2);
+
+      const saved1 = releaseBatchRepository.findById(batchId)!;
+      const item2RunUuid = saved1.items[1]?.runUuid;
+      expect(item2RunUuid).toBeDefined();
+
+      // Reconcile again (and again)
+      const res2 = await coordinator.reconcile(batchId);
+      expect(res2.actions).not.toContain('successor_admitted');
+      expect(runRepository.runs.size).toBe(2); // Still exactly 2 runs
+
+      const res3 = await coordinator.reconcile(batchId);
+      expect(res3.actions).not.toContain('successor_admitted');
+      expect(runRepository.runs.size).toBe(2);
+
+      const saved3 = releaseBatchRepository.findById(batchId)!;
+      expect(saved3.items[1]?.runUuid).toBe(item2RunUuid); // Same run UUID
+      expect(saved3.items[2]?.status).toBe('pending'); // Item 3 still pending
+      expect(saved3.items[2]?.runUuid).toBeUndefined();
     });
   });
 

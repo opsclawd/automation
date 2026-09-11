@@ -363,6 +363,20 @@ describe('StartReleaseBatch', () => {
     expect(jobQueue.listActive()).toHaveLength(0);
   });
 
+  it('rejects when GitHub repository has auto-merge disabled with ReleaseBatchPreflightError and zero partial state', async () => {
+    github.autoMergeAllowedByRepo.set('test-org/test-repo', false);
+
+    await expect(
+      startReleaseBatch.execute({
+        issueNumbers: [101, 102],
+      }),
+    ).rejects.toThrow(/auto-merge is disabled for repository/);
+
+    expect(releaseBatchRepository.listForRepo(defaultRepo.id)).toHaveLength(0);
+    expect(runRepository.runs.size).toBe(0);
+    expect(jobQueue.listActive()).toHaveLength(0);
+  });
+
   it('rejects ambiguous repository when multiple enabled repos exist and repoId is omitted', async () => {
     const secondRepo = createTestRepo({
       id: RepositoryId('test-org/another-repo'),

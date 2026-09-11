@@ -55,12 +55,14 @@ import {
   WorktreeLifecycleAdapter,
   WebhookRunNotificationAdapter,
   NoopRunNotificationAdapter,
+  EnvironmentHealthAdapter,
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
   StartIssueRun,
   StartReleaseBatch,
   ReleaseBatchCoordinator,
+  InterItemMaintenanceService,
   CancelRun,
   ResumeRun,
   RetryFailedPhase,
@@ -663,6 +665,7 @@ export interface Container {
   startIssueRun: StartIssueRun;
   startReleaseBatch: StartReleaseBatch;
   releaseBatchCoordinator: ReleaseBatchCoordinator;
+  interItemMaintenanceService: InterItemMaintenanceService;
   loadRepositoryForRun: LoadRepositoryForRun;
   runAbort: RunAbortPort;
   cancelRun: CancelRun;
@@ -750,6 +753,8 @@ export interface ComposeOptions {
   startReleaseBatch?: StartReleaseBatch;
   /** Inject custom ReleaseBatchCoordinator (for tests) */
   releaseBatchCoordinator?: ReleaseBatchCoordinator;
+  /** Inject custom InterItemMaintenanceService (for tests) */
+  interItemMaintenanceService?: InterItemMaintenanceService;
 }
 
 class AbortRegistry implements RunAbortPort {
@@ -1737,6 +1742,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       eventRepository,
       executionPolicy,
     });
+  const interItemMaintenanceService =
+    opts.interItemMaintenanceService ??
+    new InterItemMaintenanceService({
+      orphanReaper: reapOrphanedTestWorkers,
+      git: gitAdapter,
+      health: new EnvironmentHealthAdapter(),
+    });
+
   const releaseBatchCoordinator =
     opts.releaseBatchCoordinator ??
     new ReleaseBatchCoordinator({
@@ -1747,6 +1760,9 @@ export function composeRoot(opts: ComposeOptions): Container {
       eventBus: persistingEventBus,
       eventRepository,
       executionPolicy,
+      git: gitAdapter,
+      github: ghPortForReleaseBatch,
+      maintenanceService: interItemMaintenanceService,
       resolvePrMetadata: async (run) => {
         const prCtx = await resolvePrContextForRun(run);
         return prCtx ? { prNumber: prCtx.prNumber } : undefined;
@@ -2757,7 +2773,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             const repoRootPath = repo ? repo.localBasePath : targetRoot;
             const repoDefaultBranch = repo ? repo.defaultBranch : resolvedDefaultBranch;
             const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
-            const baseBranch = r.baseBranch ?? opts.baseBranch ?? repoDefaultBranch;
+            const baseBranch =
+              r.startCommitSha ?? r.baseBranch ?? opts.baseBranch ?? repoDefaultBranch;
             await gitAdapter.createWorktree({
               repoLocalBasePath: repoRootPath,
               worktreePath,
@@ -3611,6 +3628,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     startIssueRun,
     startReleaseBatch,
     releaseBatchCoordinator,
+    interItemMaintenanceService,
     loadRepositoryForRun,
     runAbort: abortRegistry,
     cancelRun,
