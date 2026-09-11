@@ -419,7 +419,7 @@ describe('ValidateFixLoop and ReviewFixLoop wiring in composeRoot', () => {
     }
   });
 
-  it('wires selfVerifyCommands into buildPhaseHandlerContext when defined in config', () => {
+  it('wires selfVerifyCommands into buildPhaseHandlerContext and ImplementHandler when defined in config', () => {
     const root = trackDir(() =>
       mkdtempSync(path.join(os.tmpdir(), 'ai-orch-boundary-self-verify-')),
     );
@@ -449,5 +449,12 @@ describe('ValidateFixLoop and ReviewFixLoop wiring in composeRoot', () => {
     });
 
     expect(ctx.selfVerifyCommands).toEqual(['pnpm typecheck', 'pnpm lint']);
+
+    const implementHandler = container.phaseRegistry.get(PhaseName('implement')) as unknown as {
+      opts: {
+        selfVerifyCommands?: string[];
+      };
+    };
+    expect(implementHandler.opts.selfVerifyCommands).toEqual(['pnpm typecheck', 'pnpm lint']);
   });
 });

@@ -399,4 +399,84 @@ Add login route and handler.`;
     expect(result.failure?.kind).toBe('setup_failed');
     expect(setupMock).toHaveBeenCalled();
   });
+
+  it('injects SELF_VERIFY_INSTRUCTIONS into implement prompt vars based on selfVerifyCommands', async () => {
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'implement',
+      relativePath: 'implementation-log.md',
+      contents: 'Status: DONE\n',
+    });
+
+    const handler = new ImplementHandler({
+      steps,
+      selfVerifyCommands: ['pnpm typecheck', 'pnpm lint'],
+    });
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toContain('Limit your own verification to:');
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toContain('- `pnpm typecheck`');
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toContain('- `pnpm lint`');
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toContain(
+      'plus only the specific unit test(s) that directly cover your changes.',
+    );
+  });
+
+  it('injects SELF_VERIFY_INSTRUCTIONS from ctx.selfVerifyCommands when opts.selfVerifyCommands is omitted', async () => {
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'implement',
+      relativePath: 'implementation-log.md',
+      contents: 'Status: DONE\n',
+    });
+
+    ctx.selfVerifyCommands = ['pnpm typecheck', 'pnpm test:unit'];
+
+    const handler = new ImplementHandler({
+      steps,
+    });
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toContain('- `pnpm typecheck`');
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toContain('- `pnpm test:unit`');
+  });
+
+  it('falls back to default generic SELF_VERIFY_INSTRUCTIONS when selfVerifyCommands is not configured', async () => {
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'implement',
+      relativePath: 'implementation-log.md',
+      contents: 'Status: DONE\n',
+    });
+
+    const handler = new ImplementHandler({
+      steps,
+    });
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    expect(promptCtx?.vars.SELF_VERIFY_INSTRUCTIONS).toBe(
+      'Limit your own verification to: typecheck and lint for the files you changed, plus only the specific unit test(s) that directly cover them.',
+    );
+  });
 });

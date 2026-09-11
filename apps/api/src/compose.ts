@@ -2477,6 +2477,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         new ImplementHandler({
           steps: stepRepository,
           setup: worktreeSetup,
+          selfVerifyCommands: config.validation.selfVerifyCommands,
         }),
       );
 

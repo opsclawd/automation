@@ -12,10 +12,12 @@ import {
 import { normalizeTaskPath } from '../../task-file-boundaries.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
+import { formatSelfVerifyInstructions } from '../../prompts/constants.js';
 
 export interface ImplementHandlerOpts {
   steps: StepRepositoryPort;
   setup?: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
+  selfVerifyCommands?: string[] | undefined;
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -178,12 +180,17 @@ export class ImplementHandler implements PhaseHandler {
     }
 
     // 7. Invoke agent single-shot
+    const selfVerifyCommands = this.opts.selfVerifyCommands ?? ctx.selfVerifyCommands;
     const runResult = await runSingleShotAgentPhase(ctx, {
       phase: this.phase,
       profile,
       step: 'implement',
       ...(template ? { template } : {}),
-      vars: { issue_number: String(ctx.issueNumber), cwd: ctx.cwd },
+      vars: {
+        issue_number: String(ctx.issueNumber),
+        cwd: ctx.cwd,
+        SELF_VERIFY_INSTRUCTIONS: formatSelfVerifyInstructions(selfVerifyCommands),
+      },
       agentContract: {
         requiredArtifacts: ['implementation-log.md'],
         mustNotChangeBranch: true,
