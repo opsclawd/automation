@@ -175,6 +175,7 @@ import {
   RunId,
   RepositoryId,
   generateJobOwnership,
+  runStatusToExecutionOutcome,
   type PrReviewComment,
   type ValidationCommandOutcome,
 } from '@ai-sdlc/domain';
@@ -2696,7 +2697,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 presentArtifacts: [],
                 ...(resumeDisposition !== undefined ? { resumeDisposition } : {}),
               });
-              return { ok: result.run.status === 'passed' };
+              return { outcome: runStatusToExecutionOutcome(result.run.status) };
             } finally {
               doneResolve();
               abortRegistry.unregister(RunId(run.uuid));

@@ -70,7 +70,7 @@ const executeOk = async (_input: {
   workerId: WorkerId;
   cwd: string;
   signal: AbortSignal;
-}) => ({ ok: true as const });
+}) => ({ outcome: 'completed' as const });
 const executeThrow = async () => {
   throw new Error('executeRun crashed');
 };
@@ -1027,5 +1027,253 @@ describe('workerLoop', () => {
 
     expect(executeRun).toHaveBeenCalled();
     expect(capturedResumeDisposition).toBeUndefined();
+  });
+
+  describe('execution outcome mapping and capacity release (Issue #895)', () => {
+    it('passed Run (completed): marks Job succeeded and releases WorkerLease', async () => {
+      const s = setup();
+      s.queue.enqueue({
+        job: createJob({
+          id: JobId('job-passed'),
+          runId: RunId('run-passed'),
+          repoId: RepositoryId('r1'),
+          issueNumber: IssueNumber(1),
+          createdAt: s.now,
+        }),
+      });
+
+      let run = { ...makeRun('run-passed'), status: 'passed' as const };
+
+      await workerLoop(WorkerId('w1'), {
+        registry: s.registry,
+        queue: s.queue,
+        leases: s.leases,
+        repos: s.repos,
+        repoId: RepositoryId('r1'),
+        executeRun: async () => ({ outcome: 'completed' }),
+        prepareWorktree: prepareOk,
+        resetWorktree: () => {},
+        isWorkerAlive: () => true,
+        now: () => new Date(),
+        ttlMs: 60_000,
+        findRun: () => run,
+        updateRun: (_runId, patch) => {
+          run = { ...run, ...patch };
+        },
+      });
+
+      const settledJob = s.queue.findById(JobId('job-passed'));
+      expect(settledJob?.status).toBe('succeeded');
+      expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+      expect(s.registry.findById(WorkerId('w1'), RepositoryId('r1'))?.status).toBe('idle');
+      expect(run.status).toBe('passed');
+    });
+
+    it('waiting Run (deferred): marks Job succeeded, leaves Run waiting, and releases WorkerLease and capacity', async () => {
+      const s = setup();
+      s.queue.enqueue({
+        job: createJob({
+          id: JobId('job-waiting'),
+          runId: RunId('run-waiting'),
+          repoId: RepositoryId('r1'),
+          issueNumber: IssueNumber(2),
+          createdAt: s.now,
+        }),
+      });
+
+      let run = { ...makeRun('run-waiting'), status: 'waiting' as const };
+
+      await workerLoop(WorkerId('w1'), {
+        registry: s.registry,
+        queue: s.queue,
+        leases: s.leases,
+        repos: s.repos,
+        repoId: RepositoryId('r1'),
+        executeRun: async () => ({ outcome: 'deferred' }),
+        prepareWorktree: prepareOk,
+        resetWorktree: () => {},
+        isWorkerAlive: () => true,
+        now: () => new Date(),
+        ttlMs: 60_000,
+        findRun: () => run,
+        updateRun: (_runId, patch) => {
+          run = { ...run, ...patch };
+        },
+      });
+
+      const settledJob = s.queue.findById(JobId('job-waiting'));
+      expect(settledJob?.status).toBe('succeeded');
+      expect(run.status).toBe('waiting');
+      expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+      expect(s.registry.findById(WorkerId('w1'), RepositoryId('r1'))?.status).toBe('idle');
+    });
+
+    it('blocked Run (operator_blocked): marks Job succeeded, preserves Run blocker, and releases WorkerLease and capacity', async () => {
+      const s = setup();
+      s.queue.enqueue({
+        job: createJob({
+          id: JobId('job-blocked'),
+          runId: RunId('run-blocked'),
+          repoId: RepositoryId('r1'),
+          issueNumber: IssueNumber(3),
+          createdAt: s.now,
+        }),
+      });
+
+      let run = {
+        ...makeRun('run-blocked'),
+        status: 'blocked' as const,
+        failureReason: 'operator gate blocked',
+      };
+
+      await workerLoop(WorkerId('w1'), {
+        registry: s.registry,
+        queue: s.queue,
+        leases: s.leases,
+        repos: s.repos,
+        repoId: RepositoryId('r1'),
+        executeRun: async () => ({ outcome: 'operator_blocked' }),
+        prepareWorktree: prepareOk,
+        resetWorktree: () => {},
+        isWorkerAlive: () => true,
+        now: () => new Date(),
+        ttlMs: 60_000,
+        findRun: () => run,
+        updateRun: (_runId, patch) => {
+          run = { ...run, ...patch };
+        },
+      });
+
+      const settledJob = s.queue.findById(JobId('job-blocked'));
+      expect(settledJob?.status).toBe('succeeded');
+      expect(run.status).toBe('blocked');
+      expect(run.failureReason).toBe('operator gate blocked');
+      expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+      expect(s.registry.findById(WorkerId('w1'), RepositoryId('r1'))?.status).toBe('idle');
+    });
+
+    it('needs_human_review Run (operator_blocked): marks Job succeeded, preserves Run blocker, and releases WorkerLease and capacity', async () => {
+      const s = setup();
+      s.queue.enqueue({
+        job: createJob({
+          id: JobId('job-nhr'),
+          runId: RunId('run-nhr'),
+          repoId: RepositoryId('r1'),
+          issueNumber: IssueNumber(4),
+          createdAt: s.now,
+        }),
+      });
+
+      let run = {
+        ...makeRun('run-nhr'),
+        status: 'needs_human_review' as const,
+        failureReason: 'review policy exhausted',
+      };
+
+      await workerLoop(WorkerId('w1'), {
+        registry: s.registry,
+        queue: s.queue,
+        leases: s.leases,
+        repos: s.repos,
+        repoId: RepositoryId('r1'),
+        executeRun: async () => ({ outcome: 'operator_blocked' }),
+        prepareWorktree: prepareOk,
+        resetWorktree: () => {},
+        isWorkerAlive: () => true,
+        now: () => new Date(),
+        ttlMs: 60_000,
+        findRun: () => run,
+        updateRun: (_runId, patch) => {
+          run = { ...run, ...patch };
+        },
+      });
+
+      const settledJob = s.queue.findById(JobId('job-nhr'));
+      expect(settledJob?.status).toBe('succeeded');
+      expect(run.status).toBe('needs_human_review');
+      expect(run.failureReason).toBe('review policy exhausted');
+      expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+      expect(s.registry.findById(WorkerId('w1'), RepositoryId('r1'))?.status).toBe('idle');
+    });
+
+    it('failed Run (failed): marks Job failed and releases WorkerLease', async () => {
+      const s = setup();
+      s.queue.enqueue({
+        job: createJob({
+          id: JobId('job-failed'),
+          runId: RunId('run-failed'),
+          repoId: RepositoryId('r1'),
+          issueNumber: IssueNumber(5),
+          createdAt: s.now,
+        }),
+      });
+
+      let run = {
+        ...makeRun('run-failed'),
+        status: 'failed' as const,
+        failureReason: 'test failure',
+      };
+
+      await workerLoop(WorkerId('w1'), {
+        registry: s.registry,
+        queue: s.queue,
+        leases: s.leases,
+        repos: s.repos,
+        repoId: RepositoryId('r1'),
+        executeRun: async () => ({ outcome: 'failed' }),
+        prepareWorktree: prepareOk,
+        resetWorktree: () => {},
+        isWorkerAlive: () => true,
+        now: () => new Date(),
+        ttlMs: 60_000,
+        findRun: () => run,
+        updateRun: (_runId, patch) => {
+          run = { ...run, ...patch };
+        },
+      });
+
+      const settledJob = s.queue.findById(JobId('job-failed'));
+      expect(settledJob?.status).toBe('failed');
+      expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+      expect(s.registry.findById(WorkerId('w1'), RepositoryId('r1'))?.status).toBe('idle');
+    });
+
+    it('cancelled Run (cancelled): marks Job cancelled and releases WorkerLease', async () => {
+      const s = setup();
+      s.queue.enqueue({
+        job: createJob({
+          id: JobId('job-cancelled'),
+          runId: RunId('run-cancelled'),
+          repoId: RepositoryId('r1'),
+          issueNumber: IssueNumber(6),
+          createdAt: s.now,
+        }),
+      });
+
+      let run = { ...makeRun('run-cancelled'), status: 'cancelled' as const };
+
+      await workerLoop(WorkerId('w1'), {
+        registry: s.registry,
+        queue: s.queue,
+        leases: s.leases,
+        repos: s.repos,
+        repoId: RepositoryId('r1'),
+        executeRun: async () => ({ outcome: 'cancelled' }),
+        prepareWorktree: prepareOk,
+        resetWorktree: () => {},
+        isWorkerAlive: () => true,
+        now: () => new Date(),
+        ttlMs: 60_000,
+        findRun: () => run,
+        updateRun: (_runId, patch) => {
+          run = { ...run, ...patch };
+        },
+      });
+
+      const settledJob = s.queue.findById(JobId('job-cancelled'));
+      expect(settledJob?.status).toBe('cancelled');
+      expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+      expect(s.registry.findById(WorkerId('w1'), RepositoryId('r1'))?.status).toBe('idle');
+    });
   });
 });

@@ -6,6 +6,7 @@ import type {
   Run,
   Job,
   ResumeDisposition,
+  ExecutionOutcome,
 } from '@ai-sdlc/domain';
 import type {
   WorkerRegistryPort,
@@ -21,6 +22,7 @@ import {
   JobOwnershipLostError,
   RepositoryUnavailableError,
   generateJobOwnership,
+  executionOutcomeToJobStatus,
 } from '@ai-sdlc/domain';
 import {
   safeDispatchRunNotification,
@@ -28,6 +30,8 @@ import {
 } from '../ports/run-notification-port.js';
 
 export type AbortReason = 'shutdown' | 'user_cancelled' | 'lease_lost' | 'repository_unavailable';
+
+export type ExecuteRunResult = { outcome: ExecutionOutcome };
 
 export interface WorkerLoopDeps {
   registry: WorkerRegistryPort;
@@ -41,7 +45,7 @@ export interface WorkerLoopDeps {
     cwd: string;
     signal: AbortSignal;
     resumeDisposition?: ResumeDisposition;
-  }) => Promise<{ ok: boolean }>;
+  }) => Promise<ExecuteRunResult>;
   prepareWorktree: (input: {
     repoId: RepositoryId;
     runId: RunId;
@@ -189,7 +193,7 @@ export async function runClaimedJob(
           : {}),
       });
 
-      const result = await new Promise<{ ok: boolean }>((resolve, reject) => {
+      const result = await new Promise<ExecuteRunResult | { ok: boolean }>((resolve, reject) => {
         let graceTimer: ReturnType<typeof setTimeout> | undefined;
         let settled = false;
 
@@ -263,8 +267,12 @@ export async function runClaimedJob(
         );
       });
 
-      if (result.ok) {
+      const outcome = 'outcome' in result ? result.outcome : result.ok ? 'completed' : 'failed';
+      const jobStatus = executionOutcomeToJobStatus(outcome);
+      if (jobStatus === 'succeeded') {
         queue.markSucceeded(ownership, deps.now());
+      } else if (jobStatus === 'cancelled') {
+        queue.markCancelled(ownership, deps.now());
       } else {
         queue.markFailed(ownership, deps.now());
       }
