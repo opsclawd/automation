@@ -60,6 +60,7 @@ import {
   LoadRepositoryForRun,
   StartIssueRun,
   StartReleaseBatch,
+  ReleaseBatchCoordinator,
   CancelRun,
   ResumeRun,
   RetryFailedPhase,
@@ -661,6 +662,7 @@ export interface Container {
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   startReleaseBatch: StartReleaseBatch;
+  releaseBatchCoordinator: ReleaseBatchCoordinator;
   loadRepositoryForRun: LoadRepositoryForRun;
   runAbort: RunAbortPort;
   cancelRun: CancelRun;
@@ -746,6 +748,8 @@ export interface ComposeOptions {
   gitPort?: import('@ai-sdlc/application/ports').GitPort;
   /** Inject custom StartReleaseBatch (for tests) */
   startReleaseBatch?: StartReleaseBatch;
+  /** Inject custom ReleaseBatchCoordinator (for tests) */
+  releaseBatchCoordinator?: ReleaseBatchCoordinator;
 }
 
 class AbortRegistry implements RunAbortPort {
@@ -1732,6 +1736,21 @@ export function composeRoot(opts: ComposeOptions): Container {
       eventBus: persistingEventBus,
       eventRepository,
       executionPolicy,
+    });
+  const releaseBatchCoordinator =
+    opts.releaseBatchCoordinator ??
+    new ReleaseBatchCoordinator({
+      releaseBatchRepository,
+      runRepository,
+      jobQueue,
+      repositoryPort: registryBackedRepo,
+      eventBus: persistingEventBus,
+      eventRepository,
+      executionPolicy,
+      resolvePrMetadata: async (run) => {
+        const prCtx = await resolvePrContextForRun(run);
+        return prCtx ? { prNumber: prCtx.prNumber } : undefined;
+      },
     });
   const worktreeLifecycleAdapter = new WorktreeLifecycleAdapter({
     isPreserved: isProtectedFilePath,
@@ -3591,6 +3610,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     runValidation,
     startIssueRun,
     startReleaseBatch,
+    releaseBatchCoordinator,
     loadRepositoryForRun,
     runAbort: abortRegistry,
     cancelRun,

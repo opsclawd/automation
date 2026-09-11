@@ -371,8 +371,10 @@ export function admitItem(
   }
 
   const now = input?.now ?? new Date();
+  const { blockedReason: _ibr, ...restItem } = item;
+  void _ibr;
   const nextItem: ReleaseBatchItem = {
-    ...item,
+    ...restItem,
     status: 'active',
     startedAt: item.startedAt ?? now,
     ...(input?.runUuid !== undefined ? { runUuid: input.runUuid } : {}),
@@ -465,6 +467,9 @@ export function markItemWaitingMerge(
       `cannot mark item at position ${position} waiting_merge: item is already merged`,
     );
   }
+  if (item.status === 'waiting_merge' && item.prNumber === prNumber) {
+    return batch;
+  }
   if (item.status !== 'active') {
     throw new ReleaseBatchStateError(
       `cannot mark item at position ${position} waiting_merge: status is ${item.status}, expected 'active'`,
@@ -473,6 +478,37 @@ export function markItemWaitingMerge(
 
   const nextItems = [...batch.items];
   nextItems[itemIndex] = { ...item, status: 'waiting_merge', prNumber };
+
+  return { ...batch, items: nextItems };
+}
+
+export function attachItemPr(
+  batch: ReleaseBatch,
+  position: number,
+  prNumber: number,
+): ReleaseBatch {
+  assertNotTerminal(batch, 'attach item PR');
+
+  if (!Number.isInteger(prNumber) || prNumber <= 0) {
+    throw new ReleaseBatchStateError(`prNumber must be a positive integer, got ${prNumber}`);
+  }
+
+  const itemIndex = batch.items.findIndex((i) => i.position === position);
+  if (itemIndex === -1) {
+    throw new ReleaseBatchStateError(`position ${position} not found in release batch ${batch.id}`);
+  }
+
+  const item = batch.items[itemIndex];
+  if (!item) {
+    throw new ReleaseBatchStateError(`position ${position} not found in release batch ${batch.id}`);
+  }
+
+  if (item.prNumber === prNumber) {
+    return batch;
+  }
+
+  const nextItems = [...batch.items];
+  nextItems[itemIndex] = { ...item, prNumber };
 
   return { ...batch, items: nextItems };
 }
@@ -571,6 +607,39 @@ export function unblockBatch(batch: ReleaseBatch): ReleaseBatch {
   const { blockedReason: _br, ...rest } = batch;
   void _br;
   return { ...rest, status: 'building' };
+}
+
+export function unblockItem(batch: ReleaseBatch, position: number): ReleaseBatch {
+  assertNotTerminal(batch, 'unblock item');
+
+  const itemIndex = batch.items.findIndex((i) => i.position === position);
+  if (itemIndex === -1) {
+    throw new ReleaseBatchStateError(`position ${position} not found in release batch ${batch.id}`);
+  }
+
+  const item = batch.items[itemIndex];
+  if (!item) {
+    throw new ReleaseBatchStateError(`position ${position} not found in release batch ${batch.id}`);
+  }
+
+  if (item.status !== 'blocked') {
+    return batch;
+  }
+
+  const { blockedReason: _ibr, ...restItem } = item;
+  void _ibr;
+  const nextItem: ReleaseBatchItem = { ...restItem, status: 'active' };
+
+  const nextItems = [...batch.items];
+  nextItems[itemIndex] = nextItem;
+
+  const hasOtherBlocked = nextItems.some((i) => i.status === 'blocked');
+  let nextBatch: ReleaseBatch = { ...batch, items: nextItems };
+  if (!hasOtherBlocked && nextBatch.status === 'blocked') {
+    nextBatch = unblockBatch(nextBatch);
+  }
+
+  return nextBatch;
 }
 
 export function transitionToAwaitingManualTest(
