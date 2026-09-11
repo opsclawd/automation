@@ -93,6 +93,8 @@ describe('composeRoot', () => {
     expect(container.artifactRepository).toBeDefined();
     expect(container.failureRepository).toBeDefined();
     expect(container.releaseBatchRepository).toBeDefined();
+    expect(container.startReleaseBatch).toBeDefined();
+    expect(container.releaseBatchCoordinator).toBeDefined();
     expect(container.startIssueRun).toBeDefined();
     expect(container.runsDir).toBe(path.join(root, '.ai-runs'));
     expect(container.buildPhaseHandlerContext).toBeDefined();

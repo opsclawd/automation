@@ -10,6 +10,8 @@ import {
   markItemBlocked,
   markBatchBlocked,
   unblockBatch,
+  unblockItem,
+  attachItemPr,
   transitionToAwaitingManualTest,
   approveBatchCandidate,
   rejectBatchCandidate,
@@ -427,6 +429,68 @@ describe('ReleaseBatch domain model & invariants', () => {
       expect(() => cancelBatch(batch)).toThrow(TerminalBatchError);
       expect(() => promoteBatch(batch)).toThrow(TerminalBatchError);
       expect(() => markBatchBlocked(batch, 'fail')).toThrow(TerminalBatchError);
+    });
+
+    it('unblocks blocked item and batch, clearing blocked reasons', () => {
+      let batch = createSampleBatch();
+      batch = admitItem(batch, 1, { runUuid: 'run-1' });
+      batch = markItemBlocked(batch, 1, 'run_failed');
+
+      expect(batch.status).toBe('blocked');
+      expect(batch.blockedReason).toBe('run_failed');
+      expect(batch.items[0]?.status).toBe('blocked');
+      expect(batch.items[0]?.blockedReason).toBe('run_failed');
+
+      batch = unblockItem(batch, 1);
+      expect(batch.status).toBe('building');
+      expect(batch.blockedReason).toBeUndefined();
+      expect(batch.items[0]?.status).toBe('active');
+      expect(batch.items[0]?.blockedReason).toBeUndefined();
+
+      // Idempotent call
+      const batch2 = unblockItem(batch, 1);
+      expect(batch2).toEqual(batch);
+    });
+
+    it('attaches PR metadata idempotently', () => {
+      let batch = createSampleBatch();
+      batch = admitItem(batch, 1, { runUuid: 'run-1' });
+      batch = attachItemPr(batch, 1, 42);
+
+      expect(batch.items[0]?.prNumber).toBe(42);
+      expect(batch.items[0]?.status).toBe('active');
+
+      // Idempotent
+      batch = attachItemPr(batch, 1, 42);
+      expect(batch.items[0]?.prNumber).toBe(42);
+    });
+
+    it('allows idempotent markItemWaitingMerge with same prNumber', () => {
+      let batch = createSampleBatch();
+      batch = admitItem(batch, 1, { runUuid: 'run-1' });
+      batch = markItemWaitingMerge(batch, 1, 42);
+      expect(batch.items[0]?.status).toBe('waiting_merge');
+      expect(batch.items[0]?.prNumber).toBe(42);
+
+      // Idempotent call should not throw
+      const batch2 = markItemWaitingMerge(batch, 1, 42);
+      expect(batch2.items[0]?.status).toBe('waiting_merge');
+      expect(batch2.items[0]?.prNumber).toBe(42);
+    });
+
+    it('clears item blockedReason when admitItem reactivates a blocked item', () => {
+      let batch = createSampleBatch();
+      batch = admitItem(batch, 1, { runUuid: 'run-1' });
+      batch = markItemBlocked(batch, 1, 'run_failed');
+
+      expect(batch.items[0]?.status).toBe('blocked');
+      expect(batch.items[0]?.blockedReason).toBe('run_failed');
+
+      batch = admitItem(batch, 1, { runUuid: 'run-1' });
+      expect(batch.items[0]?.status).toBe('active');
+      expect(batch.items[0]?.blockedReason).toBeUndefined();
+      expect(batch.status).toBe('building');
+      expect(batch.blockedReason).toBeUndefined();
     });
   });
 });
