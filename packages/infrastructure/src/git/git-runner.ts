@@ -1,4 +1,31 @@
+import { isAbsolute } from 'node:path';
 import { execa } from 'execa';
+
+/**
+ * Ensures a worktree-relative file path is treated as a literal pathspec by Git,
+ * disabling pathspec-magic interpretation (such as leading `:` for `:(exclude)`,
+ * `:!`, etc.) by prefixing relative paths with `./` unless already prefixed with
+ * `./`, `../`, or `/`.
+ *
+ * @param filePath - A worktree-relative or absolute file path.
+ * @returns A safe pathspec that Git treats as literal path.
+ */
+export function toLiteralGitPathspec(filePath: string): string {
+  if (
+    !filePath ||
+    filePath === '.' ||
+    filePath === '..' ||
+    filePath.startsWith('./') ||
+    filePath.startsWith('../') ||
+    filePath.startsWith('/') ||
+    filePath.startsWith('.\\') ||
+    filePath.startsWith('..\\') ||
+    isAbsolute(filePath)
+  ) {
+    return filePath;
+  }
+  return `./${filePath}`;
+}
 
 export class GitFailedError extends Error {
   readonly cwd: string;

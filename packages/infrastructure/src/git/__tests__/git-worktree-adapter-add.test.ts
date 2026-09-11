@@ -41,4 +41,15 @@ describe('GitWorktreeAdapter.add', () => {
     expect(status).toContain(' M unrelated.ts');
     expect(status).toContain('?? scratch.md');
   });
+
+  it('stages files whose names begin with pathspec-magic characters like colon (:)', async () => {
+    const repo = await makeRepository();
+    await writeFile(join(repo, ':memory:.ses'), 'sqlite session litter\n');
+    await writeFile(join(repo, 'valid.ts'), 'export const a = 1;\n');
+
+    await new GitWorktreeAdapter().add(repo, [':memory:.ses', 'valid.ts']);
+
+    const staged = await git(repo, ['diff', '--cached', '--name-only']);
+    expect(staged.split('\n').filter(Boolean).sort()).toEqual([':memory:.ses', 'valid.ts']);
+  });
 });

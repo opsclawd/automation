@@ -164,6 +164,25 @@ describe('CreatePrHandler clean-worktree gate', () => {
       expect(recordedHeadSha).toBe(git.commits[0]?.sha);
     });
 
+    it('stages and commits dirty files whose names start with pathspec-magic character colon (:)', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+      };
+      git.statusByCwd.set('/tmp/wt', '?? :memory:.ses\n M src/valid.ts\n');
+
+      const revalidateCalls: string[] = [];
+      const leanHandler = createRevalidateHandler(true, revalidateCalls);
+      const result = await leanHandler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.addCalls).toEqual([{ cwd: '/tmp/wt', files: [':memory:.ses', 'src/valid.ts'] }]);
+      expect(git.commits).toHaveLength(1);
+      expect(git.commits[0]?.files).toEqual([':memory:.ses', 'src/valid.ts']);
+      expect(git.pushes).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+    });
+
     it('blocks PR creation when revalidation fails on the new control-plane commit', async () => {
       ctx = {
         ...ctx,

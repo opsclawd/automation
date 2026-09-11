@@ -33,6 +33,7 @@ export * from './git/git-worktree-adapter.js';
 export * from './git/repository-metadata-resolver.js';
 export * from './git/worktree-recovery-adapter.js';
 export * from './git/worktree-lifecycle-adapter.js';
+export { git, GitFailedError, toLiteralGitPathspec } from './git/git-runner.js';
 export {
   createPrReviewContextSource,
   MAX_CONTEXT_FILES,
