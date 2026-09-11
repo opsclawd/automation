@@ -21,6 +21,7 @@ export interface PullRequest {
 /** PR metadata including branch name, used by the poller. */
 export interface PullRequestDetail extends PullRequest {
   headRefName: string;
+  baseRefName?: string;
 }
 
 /** Raw GitHub review comment (wire shape from REST API).
@@ -62,6 +63,9 @@ export interface PrMergeReadiness {
   mergeStateStatus?: 'clean' | 'blocked' | 'dirty' | 'behind' | 'unstable' | 'unknown' | undefined;
   autoMergeEnabled?: boolean | undefined;
   details?: string | undefined;
+  baseRefName?: string | undefined;
+  mergedAt?: string | undefined;
+  mergeCommitSha?: string | undefined;
 }
 
 export type MergeMethod = 'squash' | 'merge' | 'rebase';
@@ -110,4 +114,5 @@ export interface GitHubPort {
   listReviews(repoFullName: string, prNumber: number): Promise<PullRequestReview[]>;
   searchIssues?(repoFullName: string, query: string): Promise<GitHubIssue[]>;
   verifyCapabilities?(repoFullName: string): Promise<{ canWrite: boolean; permission: string }>;
+  isAutoMergeAllowed?(repoFullName: string): Promise<boolean>;
 }

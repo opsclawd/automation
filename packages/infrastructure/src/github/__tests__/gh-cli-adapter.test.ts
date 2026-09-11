@@ -32,10 +32,29 @@ describe('GhCliAdapter reads', () => {
     });
   });
 
-  it('parses PR metadata and normalises state to lowercase', async () => {
+  it('parses PR metadata and normalises state to lowercase, including baseRefName', async () => {
     const pr = await ok.getPr('o/r', 5);
     expect(pr.headRefName).toBe('feat-x');
+    expect(pr.baseRefName).toBe('main');
     expect(pr.state).toBe('open');
+  });
+
+  it('parses PR merge readiness including baseRefName, mergedAt, and mergeCommitSha', async () => {
+    const readiness = await ok.getPrMergeReadiness('o/r', 5);
+    expect(readiness.prNumber).toBe(5);
+    expect(readiness.baseRefName).toBe('main');
+    expect(readiness.mergeStateStatus).toBe('clean');
+    expect(readiness.autoMergeEnabled).toBe(true);
+    expect(readiness.mergedAt).toBe('2026-09-11T12:00:00Z');
+    expect(readiness.mergeCommitSha).toBe('sha-merge-123');
+  });
+
+  it('checks isAutoMergeAllowed returning true when allowed and false on failure', async () => {
+    const allowed = await ok.isAutoMergeAllowed('o/r');
+    expect(allowed).toBe(true);
+
+    const disallowed = await bad.isAutoMergeAllowed('o/r');
+    expect(disallowed).toBe(false);
   });
 
   it('maps review comments from REST shape', async () => {

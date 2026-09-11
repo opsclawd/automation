@@ -29,3 +29,4 @@ export * from './fake-operational-recovery-port.js';
 export * from './fake-pr-review-context-source.js';
 export * from './fake-run-notification.js';
 export * from './fake-release-batch-repository.js';
+export * from './fake-environment-health-port.js';

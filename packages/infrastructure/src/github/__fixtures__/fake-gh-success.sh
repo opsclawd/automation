@@ -10,13 +10,15 @@ case "$1 ${2:-}" in
   "repo view")
     echo '{"viewerPermission":"ADMIN"}' ;;
   "pr view")
-    echo '{"number":5,"url":"https://x/pr/5","state":"OPEN","headRefName":"feat-x"}' ;;
+    echo '{"number":5,"url":"https://x/pr/5","state":"OPEN","headRefName":"feat-x","baseRefName":"main","statusCheckRollup":[],"mergeStateStatus":"CLEAN","autoMergeRequest":{"enabledAt":"2026-09-11T00:00:00Z"},"mergedAt":"2026-09-11T12:00:00Z","mergeCommit":{"oid":"sha-merge-123"}}' ;;
   "api graphql")
     # resolveReviewThread query or mutation — return minimal success
     echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"T_1","isResolved":false,"comments":{"nodes":[{"databaseId":9001}]}}]}}}}}' ;;
   "api"*)
     # REST: pulls/.../comments listing or replies post
-    if [[ "$*" == *"/replies"* ]]; then
+    if [[ "$*" == *".allow_auto_merge"* ]]; then
+      echo 'true'
+    elif [[ "$*" == *"/replies"* ]]; then
       echo '{"id":9002,"path":"a.ts","line":3,"user":{"login":"octocat"},"body":"thanks","created_at":"2026-06-04T00:00:00Z","in_reply_to_id":9001}'
     elif [[ "$*" == *"/issues/"* ]]; then
       echo '[{"id":9001,"user":{"login":"octocat"},"body":"issue comment body","created_at":"2026-06-04T00:00:00Z"}]'

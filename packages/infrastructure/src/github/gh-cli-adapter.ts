@@ -140,7 +140,7 @@ export class GhCliAdapter implements GitHubPort {
       '--repo',
       repoFullName,
       '--json',
-      'number,url,state,headRefName',
+      'number,url,state,headRefName,baseRefName',
     ]);
     const command = `gh pr view ${prNumber} --repo ${repoFullName}`;
     const j = this.safeJsonParse<{
@@ -148,6 +148,7 @@ export class GhCliAdapter implements GitHubPort {
       url: string;
       state: string;
       headRefName: string;
+      baseRefName?: string;
     }>(out, command);
     const VALID_STATES = new Set(['open', 'closed', 'merged']);
     const normalised = j.state.toLowerCase();
@@ -162,6 +163,7 @@ export class GhCliAdapter implements GitHubPort {
       url: j.url,
       state: normalised as PullRequest['state'],
       headRefName: j.headRefName,
+      ...(j.baseRefName !== undefined ? { baseRefName: j.baseRefName } : {}),
     };
   }
 
@@ -173,7 +175,7 @@ export class GhCliAdapter implements GitHubPort {
       '--repo',
       repoFullName,
       '--json',
-      'number,state,statusCheckRollup,mergeStateStatus,autoMergeRequest',
+      'number,state,statusCheckRollup,mergeStateStatus,autoMergeRequest,baseRefName,mergedAt,mergeCommit',
     ]);
     const command = `gh pr view ${prNumber} --repo ${repoFullName}`;
     const j = this.safeJsonParse<{
@@ -187,6 +189,9 @@ export class GhCliAdapter implements GitHubPort {
       }>;
       mergeStateStatus?: string;
       autoMergeRequest?: { enabledAt?: string } | null;
+      baseRefName?: string;
+      mergedAt?: string | null;
+      mergeCommit?: { oid?: string } | null;
     }>(out, command);
 
     const normalisedState = j.state.toLowerCase() as 'open' | 'closed' | 'merged';
@@ -249,6 +254,9 @@ export class GhCliAdapter implements GitHubPort {
       mergeStateStatus: mergeState,
       autoMergeEnabled: Boolean(j.autoMergeRequest),
       ...(failedDetail !== undefined ? { details: failedDetail } : {}),
+      ...(j.baseRefName !== undefined ? { baseRefName: j.baseRefName } : {}),
+      ...(j.mergedAt ? { mergedAt: j.mergedAt } : {}),
+      ...(j.mergeCommit?.oid ? { mergeCommitSha: j.mergeCommit.oid } : {}),
     };
   }
 
@@ -518,5 +526,14 @@ export class GhCliAdapter implements GitHubPort {
       );
     }
     return { canWrite: true, permission };
+  }
+
+  async isAutoMergeAllowed(repoFullName: string): Promise<boolean> {
+    try {
+      const out = await this.run(['api', `repos/${repoFullName}`, '--jq', '.allow_auto_merge']);
+      return out.trim() === 'true';
+    } catch {
+      return false;
+    }
   }
 }

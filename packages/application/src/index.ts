@@ -56,4 +56,5 @@ export * from './task-file-boundaries.js';
 export * from './scratch-file-remediation.js';
 export * from './revalidation-plan.js';
 export * from './start-release-batch.js';
+export * from './inter-item-maintenance.js';
 export * from './release-batch-coordinator.js';

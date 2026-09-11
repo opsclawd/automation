@@ -206,6 +206,26 @@ export class StartReleaseBatch {
       }
     }
 
+    // 4b. Verify GitHub repository allows auto-merge
+    if (this.deps.github.isAutoMergeAllowed) {
+      try {
+        const allowed = await this.deps.github.isAutoMergeAllowed(repo.fullName);
+        if (!allowed) {
+          throw new ReleaseBatchPreflightError(
+            `Preflight verification failed: auto-merge is disabled for repository '${repo.fullName}'. ReleaseBatch requires auto-merge to be enabled.`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof ReleaseBatchPreflightError) throw err;
+        throw new ReleaseBatchPreflightError(
+          `GitHub auto-merge preflight check failed for repository ${repo.fullName}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          { cause: err },
+        );
+      }
+    }
+
     // 5. Verify every issue exists in target repository
     for (const issueNumber of input.issueNumbers) {
       try {

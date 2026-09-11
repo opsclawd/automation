@@ -146,6 +146,10 @@ export type {
   HeartbeatLeaseInput,
   ReleaseLeaseInput,
 } from './ports/worker-lease-port.js';
+export type {
+  EnvironmentHealthPort,
+  EnvironmentHealthCheckResult,
+} from './ports/environment-health-port.js';
 
 export type {
   GitHubPort,
