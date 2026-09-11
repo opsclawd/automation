@@ -49,6 +49,7 @@ export interface PhaseHandlerContext {
    */
   priorPhaseName?: string;
   selfVerifyCommands?: string[] | undefined;
+  governanceProtectedPaths?: string[] | undefined;
 }
 
 export type PhaseOutcome =

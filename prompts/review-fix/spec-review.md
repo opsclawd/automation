@@ -82,6 +82,7 @@ A single failed normative requirement makes the verdict `FAIL`.
 - When issue correctness materially depends on repository-owned runtime configuration, certified templates, profiles, schemas, workflow definitions, migrations, generated contracts, capability declarations, or equivalent runtime artifacts, inspect the authoritative production artifact rather than relying solely on code abstractions or synthetic fixtures.
 - Determine which artifact is authoritative from the repository itself rather than assuming test fixtures represent production.
 - Verify that at least one valid end-to-end success path exists under the actual supported production configuration for the behavior required by the issue.
+- Verify that compliance under production configuration does NOT rely on fabricated compliance data, self-authored audit approvals, or weakened fail-closed policy gates in production registries. Falsifying compliance data or modifying external governance registries to pass a gate is a critical spec violation.
 
 ### Workspace Bookkeeping (Do Not Flag)
 

@@ -165,6 +165,244 @@ describe('FixReviewHandler', () => {
     }
   });
 
+  it('returns needs_human_review with reason when fixer reports cannot_fix with reason', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    const ledger = createFindingLedger([
+      {
+        severity: 'high',
+        files: ['src/index.ts'],
+        evidence: 'Licensing compliance issue',
+        rationale: 'External approval required',
+        minimal_correction: 'Seek legal clearance',
+      },
+    ]);
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(ledger),
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({
+        result: 'cannot_fix',
+        reason: 'Component license requires external legal/human approval.',
+      }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain('targeted fixer reported it cannot fix');
+      expect(result.failure.message).toContain(
+        'Component license requires external legal/human approval.',
+      );
+    }
+  });
+
+  it('halts with needs_human_review when fixer modifies a governance file (built-in path)', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    const ledger = createFindingLedger([
+      {
+        severity: 'high',
+        files: ['config/component-license-registry.json'],
+        evidence: 'Licensing gate failure',
+        rationale: 'Review required',
+        minimal_correction: 'Needs approval',
+      },
+    ]);
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(ledger),
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    // When fixer runs, it modifies config/component-license-registry.json
+    agent.enqueue('fix-review', () => {
+      git.statusByCwd.set('/test/repo', ' M config/component-license-registry.json\n');
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'fix-review-result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain(
+        'Governance-sensitive file(s) modified during review fix',
+      );
+      expect(result.failure.message).toContain('config/component-license-registry.json');
+    }
+
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const govEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.governance_file_modified',
+    );
+    expect(govEvents).toHaveLength(1);
+    expect((govEvents[0][1] as { metadata?: { paths?: string[] } }).metadata?.paths).toEqual([
+      'config/component-license-registry.json',
+    ]);
+  });
+
+  it('halts with needs_human_review when fixer modifies a custom governance protected path', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+    ctx.governanceProtectedPaths = ['custom/approvals.json'];
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    const ledger = createFindingLedger([
+      {
+        severity: 'high',
+        files: ['custom/approvals.json'],
+        evidence: 'Approval needed',
+        rationale: 'Review required',
+        minimal_correction: 'Needs approval',
+      },
+    ]);
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(ledger),
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => {
+      git.statusByCwd.set('/test/repo', ' M custom/approvals.json\n');
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'fix-review-result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.message).toContain('custom/approvals.json');
+    }
+  });
+
+  it('does not halt when fixer modifies a governance fixture or test file', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    const ledger = createFindingLedger([
+      {
+        severity: 'high',
+        files: [
+          'packages/infrastructure/src/ffmpeg/test-support/component-license-registry-fixtures.ts',
+        ],
+        evidence: 'Test fixture bug',
+        rationale: 'Fixture syntax error',
+        minimal_correction: 'Fix fixture',
+      },
+    ]);
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(ledger),
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => {
+      git.statusByCwd.set(
+        '/test/repo',
+        ' M packages/infrastructure/src/ffmpeg/test-support/component-license-registry-fixtures.ts\n',
+      );
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'fix-review-result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+  });
+
   it('tolerates control characters in fix-review-result.json via centralized ingestion', async () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();

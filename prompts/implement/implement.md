@@ -33,7 +33,7 @@ Also read:
 
 Use the approved design and plan as guidance, but continue investigating the repository as you work. Make any reasonable changes required to implement the issue correctly, including helpers, callers, tests, fixtures, or adjacent code that the plan did not anticipate.
 
-The GitHub issue remains authoritative. Do not silently violate its Anchored Design, Non-goals, or Acceptance Criteria.
+The GitHub issue remains authoritative. Do not silently violate its Anchored Design, Non-goals, or Acceptance Criteria. Do not fabricate compliance data, invent external authorizations, or weaken fail-closed governance/license registries to force tests or checks to pass.
 
 Follow repository architecture and engineering conventions. Avoid unrelated cleanup or refactoring that is not justified by the implementation.
 

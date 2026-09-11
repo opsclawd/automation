@@ -336,3 +336,33 @@ describe('notifications config', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('governance config (#1142)', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: {
+      skip: [],
+      reviewConvergence: { maxIterations: 5 },
+      implement: { maxIterations: 1 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
+
+  it('defaults governance.protectedPaths to [] when omitted', () => {
+    const parsed = orchestratorConfigSchema.parse(baseConfig);
+    expect(parsed.governance).toEqual({ protectedPaths: [] });
+  });
+
+  it('accepts explicit governance.protectedPaths', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      governance: {
+        protectedPaths: ['config/component-license-registry.json', 'governance/policies.json'],
+      },
+    });
+    expect(parsed.governance.protectedPaths).toEqual([
+      'config/component-license-registry.json',
+      'governance/policies.json',
+    ]);
+  });
+});

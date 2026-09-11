@@ -68,7 +68,7 @@ Evaluate whether the implementation is technically sound across the following di
 3. **Error Handling & Failure Semantics**:
    - Unhandled rejections, swallowed errors, loss of error context, missing cleanup on failure, or fail-open behaviors.
 4. **Security & Data Integrity**:
-   - Injection hazards, path traversal, race conditions, atomic commit/rollback guarantees, or corruption hazards.
+   - Injection hazards, path traversal, race conditions, atomic commit/rollback guarantees, corruption hazards, or fabricated compliance/governance data.
 5. **Concurrency, Performance & Resource Management**:
    - Resource leaks (file descriptors, sockets, timers, subprocesses), unbounded buffers, memory pressure, or locking issues.
 6. **Maintainability, Modularity & Complexity**:
@@ -80,8 +80,9 @@ Evaluate whether the implementation is technically sound across the following di
    - Do NOT instruct reverting or removing changes to validation-critical files (listed under Validation-Critical Files above) when they were required for deterministic validation to pass.
 8. **Test Quality & Coverage**:
    - Flaky tests, tautological assertions, missing edge cases, or tests that prove only a weaker interpretation of intended behavior.
-9. **Production-Artifact Fidelity**:
+9. **Production-Artifact Fidelity & Governance Gate Integrity**:
    - Consistency between runtime assumptions, certified configurations/schemas, and code abstractions.
+   - Flag any self-authored tampering with production governance, license registries, or compliance assertions as a critical security and data integrity violation.
 
 ### Scope Distinction
 

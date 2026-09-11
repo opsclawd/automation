@@ -373,11 +373,25 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
         /Do not turn follow-up review into an unrestricted second whole-change review/i,
       );
 
+      // Anti-Goodhart & external authority verification (#1142)
+      expect(template).toMatch(
+        /Distinguish "the code\/data was changed to make the check pass" from "the underlying real-world condition was verified or established"/i,
+      );
+      expect(template).toMatch(
+        /For any finding whose blocking condition traces to an external authority/i,
+      );
+      expect(template).toMatch(
+        /Such modifications constitute fabricated compliance data rather than genuine resolution/i,
+      );
+      expect(template).toMatch(/compliance data fabrication/i);
+
       // Generic durable wording without target-repo specifics
       expect(template).not.toMatch(/audioPrompt/i);
       expect(template).not.toMatch(/\bLTX\b/);
       expect(template).not.toMatch(/ComfyUI/i);
       expect(template).not.toMatch(/RenderProfile/i);
+      expect(template).not.toMatch(/\bffmpeg\b/i);
+      expect(template).not.toMatch(/azure-tts/i);
 
       // Schema output
       expect(template).toContain('follow-up-review-result.json');
@@ -432,9 +446,21 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
         /leave the worktree in a finished state for deterministic validation/i,
       );
 
+      // Governance and anti-fabrication integrity (#1142)
+      expect(template).toMatch(/Governance and Compliance Gate Integrity/i);
+      expect(template).toMatch(/Do NOT fabricate compliance records/i);
+      expect(template).toMatch(/Do NOT edit production license registries/i);
+      expect(template).toMatch(/Never weaken fail-closed policy checks/i);
+      expect(template).toMatch(/External Authority \/ Human-Owned Gates/i);
+      expect(template).toMatch(
+        /Automated fixers CANNOT satisfy external authority gates by self-authoring approval/i,
+      );
+
       // Output contract
       expect(template).toContain('fix-review-result.json');
       expect(template).toContain('"result": "done_with_fixes"');
+      expect(template).toContain('"result": "cannot_fix"');
+      expect(template).toContain('"reason"');
 
       // Critical rules & No git staging/commit choreography
       expect(template).not.toMatch(/git add/i);
@@ -442,6 +468,14 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(template).toMatch(/Do not create commits/i);
       expect(template).toMatch(/Do not switch git branches/i);
       expect(template).toMatch(/Do not ask questions/i);
+      expect(template).toMatch(/Never fabricate compliance data/i);
+      expect(template).toMatch(/If a finding requires external authority.*cannot_fix/i);
+
+      // Generic durable wording without target-repo specifics
+      expect(template).not.toMatch(/\bLTX\b/);
+      expect(template).not.toMatch(/ComfyUI/i);
+      expect(template).not.toMatch(/\bffmpeg\b/i);
+      expect(template).not.toMatch(/azure-tts/i);
 
       // Validation scope constraints (#1164, #1167)
       expect(template).toMatch(/## VALIDATION SCOPE/);

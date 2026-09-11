@@ -9,15 +9,18 @@ import {
   DELETED_SENTINEL,
   formatValidationCriticalFilesWarning,
   hashContent,
+  parseStatusPaths,
   wasRevertedToBeforeState,
   type ValidationCriticalFile,
 } from '../../review-fix/validation-critical-files.js';
 import { parseGitStatusLine, unquoteGitPath } from '../../artifacts/orchestrator-artifacts.js';
 import { formatSelfVerifyInstructions } from '../../prompts/constants.js';
+import { isGovernanceFilePath } from '../../scratch-file-remediation.js';
 
 export interface FixReviewHandlerOpts {
   profileName?: string;
   selfVerifyCommands?: string[] | undefined;
+  governanceProtectedPaths?: string[] | undefined;
 }
 
 export class FixReviewHandler implements PhaseHandler {
@@ -76,6 +79,15 @@ export class FixReviewHandler implements PhaseHandler {
     const validationCriticalWarning = formatValidationCriticalFilesWarning(criticalFiles);
     const selfVerifyCommands = this.opts.selfVerifyCommands ?? ctx.selfVerifyCommands;
 
+    let statusBefore = '';
+    try {
+      if (ctx.git) {
+        statusBefore = await ctx.git.status(ctx.cwd);
+      }
+    } catch {
+      statusBefore = '';
+    }
+
     // 4. Run fixer agent invocation
     const fixRunResult = await runSingleShotAgentPhase(ctx, {
       phase: 'fix-review',
@@ -105,7 +117,13 @@ export class FixReviewHandler implements PhaseHandler {
 
     // 5. Check result for cannot_fix verdict
     if (fixRunResult.result.result === 'cannot_fix') {
-      const message = 'targeted fixer reported it cannot fix the review findings';
+      const reason =
+        'reason' in fixRunResult.result &&
+        typeof fixRunResult.result.reason === 'string' &&
+        fixRunResult.result.reason.trim()
+          ? `: ${fixRunResult.result.reason.trim()}`
+          : '';
+      const message = `targeted fixer reported it cannot fix the review findings${reason}`;
       emit('fix_review.failed', 'error', message);
       return {
         outcome: 'needs_human_review',
@@ -122,7 +140,63 @@ export class FixReviewHandler implements PhaseHandler {
       };
     }
 
-    // 6. Check whether fixer reverted any validation-critical files
+    // 6. Check whether fixer modified any governance-sensitive files
+    if (ctx.git) {
+      let statusAfter = '';
+      try {
+        statusAfter = await ctx.git.status(ctx.cwd);
+      } catch {
+        statusAfter = '';
+      }
+      const pathsBefore = parseStatusPaths(statusBefore, ctx.cwd);
+      const pathsAfter = parseStatusPaths(statusAfter, ctx.cwd);
+      const customProtected = this.opts.governanceProtectedPaths ?? ctx.governanceProtectedPaths;
+
+      const modifiedGovernanceFiles: string[] = [];
+      for (const path of pathsAfter) {
+        if (isGovernanceFilePath(path, customProtected)) {
+          if (!pathsBefore.has(path)) {
+            modifiedGovernanceFiles.push(path);
+          } else {
+            try {
+              const currentContent = await ctx.git.worktreeFileContent(ctx.cwd, path);
+              const headContent = await ctx.git
+                .fileContent(ctx.cwd, 'HEAD', path)
+                .catch(() => undefined);
+              if (currentContent !== headContent) {
+                modifiedGovernanceFiles.push(path);
+              }
+            } catch {
+              modifiedGovernanceFiles.push(path);
+            }
+          }
+        }
+      }
+
+      if (modifiedGovernanceFiles.length > 0) {
+        const msg = `Governance-sensitive file(s) modified during review fix: ${modifiedGovernanceFiles.join(', ')}. Automated fixers must not edit compliance or license registries.`;
+        emit('fix_review.governance_file_modified', 'error', msg, {
+          paths: modifiedGovernanceFiles,
+        });
+        emit('fix_review.failed', 'error', msg);
+        return {
+          outcome: 'needs_human_review',
+          failure: {
+            runUuid: ctx.runUuid,
+            phase: this.phase,
+            kind: 'needs_human_review',
+            message: msg,
+            canRetry: false,
+            suggestedAction:
+              'Review the modified governance registry files and revert unauthorized compliance changes.',
+            artifacts: ['code-review.md', 'finding-ledger.json'],
+            detectedAt: ctx.now(),
+          },
+        };
+      }
+    }
+
+    // 7. Check whether fixer reverted any validation-critical files
     if (criticalFiles.length > 0 && ctx.git) {
       for (const cf of criticalFiles) {
         let currentContent: string | undefined;

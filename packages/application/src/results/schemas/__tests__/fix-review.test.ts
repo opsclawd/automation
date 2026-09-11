@@ -7,9 +7,20 @@ describe('fixReviewResultSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts cannot_fix', () => {
+  it('accepts cannot_fix without reason', () => {
     const result = fixReviewResultSchema.safeParse({ result: 'cannot_fix' });
     expect(result.success).toBe(true);
+  });
+
+  it('accepts cannot_fix with reason', () => {
+    const result = fixReviewResultSchema.safeParse({
+      result: 'cannot_fix',
+      reason: 'Gate requires legal review and external license approval.',
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.result === 'cannot_fix') {
+      expect(result.data.reason).toBe('Gate requires legal review and external license approval.');
+    }
   });
 
   it('accepts done_no_fixes_needed with non-empty rebuttal', () => {

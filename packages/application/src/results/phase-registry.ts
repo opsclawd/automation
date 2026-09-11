@@ -117,7 +117,7 @@ export const PHASE_RESULT_REGISTRY: {
     schema: fixReviewResultSchema,
     defaultResultPath: 'fix-review-result.json',
     schemaContractText:
-      '{\n  "result": "done_with_fixes" | "cannot_fix"\n} | {\n  "result": "done_no_fixes_needed",\n  "rebuttal": string\n}',
+      '{\n  "result": "done_with_fixes"\n} | {\n  "result": "cannot_fix",\n  "reason"?: string\n} | {\n  "result": "done_no_fixes_needed",\n  "rebuttal": string\n}',
   },
   'create-pr': {
     schema: createPrResultSchema,

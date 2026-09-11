@@ -64,6 +64,7 @@ Review the change as a whole. Look for material problems including:
 
 - Verify that at least one valid end-to-end success path exists under the actual supported production configuration for the behavior required by the issue.
 - A solution is not correct if it merely changes the failure mode or converts one failure into an unavoidable downstream failure, leaving the supported production configuration internally unsatisfiable.
+- Confirm that the success path does not rely on fabricated compliance data, self-authored approvals, or weakened fail-closed policy gates in production configuration.
 - For optional or capability-dependent behavior, verify consistency among declared capabilities, validation rules, runtime behavior, and output/provenance contracts when materially relevant.
 - Report material production-artifact mismatches or unsatisfiable configurations as blocking findings when they violate the issue or Acceptance Criteria.
 
