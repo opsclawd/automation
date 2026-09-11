@@ -115,6 +115,224 @@ describe('CLI release-batch command', () => {
     expect(fullStdout).toContain('Initial Job ID: job-101');
   });
 
+  it('registers all release-batch subcommands', () => {
+    const program = buildProgram({ isCliTestSuite: true });
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch');
+    expect(batchCmd).toBeDefined();
+    const subcommands = batchCmd?.commands.map((c) => c.name());
+    expect(subcommands).toContain('start');
+    expect(subcommands).toContain('approve');
+    expect(subcommands).toContain('reject');
+    expect(subcommands).toContain('remediate');
+    expect(subcommands).toContain('promote');
+    expect(subcommands).toContain('integrate-source');
+  });
+
+  it('invokes approveReleaseBatchCandidate with parsed options and writes formatted output', async () => {
+    const mockApprove = {
+      execute: vi.fn().mockResolvedValue({
+        id: ReleaseBatchId('batch-001'),
+        candidateSha: 'sha-candidate-abc',
+        status: 'approved',
+      }),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        approveReleaseBatchCandidate:
+          mockApprove as unknown as import('@ai-sdlc/application').ApproveReleaseBatchCandidate,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(
+      [
+        'approve',
+        '--batch-id',
+        'batch-001',
+        '--candidate-sha',
+        'sha-candidate-abc',
+        '--operator',
+        'alice',
+      ],
+      { from: 'user' },
+    );
+
+    expect(mockApprove.execute).toHaveBeenCalledWith({
+      batchId: ReleaseBatchId('batch-001'),
+      candidateSha: 'sha-candidate-abc',
+      operator: 'alice',
+    });
+
+    const fullStdout = stdoutOutput.join('');
+    expect(fullStdout).toContain(
+      'Release batch batch-001 candidate sha-candidate-abc approved successfully',
+    );
+    expect(fullStdout).toContain('Status:   approved');
+    expect(fullStdout).toContain('Operator: alice');
+  });
+
+  it('invokes rejectReleaseBatchCandidate with parsed options and writes formatted output', async () => {
+    const mockReject = {
+      execute: vi.fn().mockResolvedValue({
+        id: ReleaseBatchId('batch-001'),
+        candidateSha: 'sha-candidate-abc',
+        status: 'test_failed',
+        blockedReason: 'Manual exploratory testing found regressions',
+      }),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        rejectReleaseBatchCandidate:
+          mockReject as unknown as import('@ai-sdlc/application').RejectReleaseBatchCandidate,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(
+      [
+        'reject',
+        '--batch-id',
+        'batch-001',
+        '--candidate-sha',
+        'sha-candidate-abc',
+        '--reason',
+        'Manual exploratory testing found regressions',
+      ],
+      { from: 'user' },
+    );
+
+    expect(mockReject.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: ReleaseBatchId('batch-001'),
+        candidateSha: 'sha-candidate-abc',
+        reason: 'Manual exploratory testing found regressions',
+      }),
+    );
+
+    const fullStdout = stdoutOutput.join('');
+    expect(fullStdout).toContain('Release batch batch-001 candidate sha-candidate-abc rejected');
+    expect(fullStdout).toContain('Status: test_failed');
+    expect(fullStdout).toContain('Reason: Manual exploratory testing found regressions');
+  });
+
+  it('invokes appendRemediationIssues with parsed issue numbers and writes formatted output', async () => {
+    const mockRemediate = {
+      execute: vi.fn().mockResolvedValue({
+        id: ReleaseBatchId('batch-001'),
+        status: 'building',
+        items: [
+          { position: 1, issueNumber: 101 },
+          { position: 2, issueNumber: 104 },
+          { position: 3, issueNumber: 105 },
+        ],
+      }),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        appendRemediationIssues:
+          mockRemediate as unknown as import('@ai-sdlc/application').AppendRemediationIssues,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['remediate', '--batch-id', 'batch-001', '--issues', '104, 105'], {
+      from: 'user',
+    });
+
+    expect(mockRemediate.execute).toHaveBeenCalledWith({
+      batchId: ReleaseBatchId('batch-001'),
+      issueNumbers: [104, 105],
+    });
+
+    const fullStdout = stdoutOutput.join('');
+    expect(fullStdout).toContain('Remediation issues appended to release batch batch-001:');
+    expect(fullStdout).toContain('Status:     building');
+    expect(fullStdout).toContain('Items (3):  #101, #104, #105');
+  });
+
+  it('invokes promoteReleaseBatch with parsed options and writes formatted output', async () => {
+    const mockPromote = {
+      execute: vi.fn().mockResolvedValue({
+        batch: {
+          id: ReleaseBatchId('batch-001'),
+          status: 'promoting',
+          approvedCandidateSha: 'sha-approved-xyz',
+        },
+        prNumber: 99,
+      }),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        promoteReleaseBatch:
+          mockPromote as unknown as import('@ai-sdlc/application').PromoteReleaseBatch,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['promote', '--batch-id', 'batch-001'], { from: 'user' });
+
+    expect(mockPromote.execute).toHaveBeenCalledWith({
+      batchId: ReleaseBatchId('batch-001'),
+      autoMerge: true,
+    });
+
+    const fullStdout = stdoutOutput.join('');
+    expect(fullStdout).toContain('Release batch batch-001 promotion initiated:');
+    expect(fullStdout).toContain('Status:               promoting');
+    expect(fullStdout).toContain('Promotion PR:         #99');
+    expect(fullStdout).toContain('Approved Candidate:   sha-approved-xyz');
+    expect(fullStdout).toContain('Auto-merge Requested: yes');
+  });
+
+  it('invokes integrateSourceBranch on coordinator and writes formatted output', async () => {
+    const mockCoordinator = {
+      integrateSourceBranch: vi.fn().mockResolvedValue({
+        success: true,
+        newReleaseSha: 'sha-integrated-head',
+      }),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        releaseBatchCoordinator:
+          mockCoordinator as unknown as import('@ai-sdlc/application').ReleaseBatchCoordinator,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['integrate-source', '--batch-id', 'batch-001'], { from: 'user' });
+
+    expect(mockCoordinator.integrateSourceBranch).toHaveBeenCalledWith(ReleaseBatchId('batch-001'));
+
+    const fullStdout = stdoutOutput.join('');
+    expect(fullStdout).toContain('Source branch integrated into release batch batch-001:');
+    expect(fullStdout).toContain('New Release Head: sha-integrated-head');
+  });
+
   it('prints error and exits with code 1 on missing issues', async () => {
     const program = buildProgram({
       isCliTestSuite: true,

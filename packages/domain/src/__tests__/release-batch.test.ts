@@ -15,6 +15,9 @@ import {
   transitionToAwaitingManualTest,
   approveBatchCandidate,
   rejectBatchCandidate,
+  appendRemediationItems,
+  attachPromotionPr,
+  recordPromotionCommit,
   promoteBatch,
   completeBatch,
   cancelBatch,
@@ -29,6 +32,7 @@ import {
   InvalidCandidateShaError,
   UnapprovedPromotionError,
   TerminalBatchError,
+  RemediationNotAllowedError,
 } from '../index.js';
 
 const t0 = new Date('2026-09-11T12:00:00.000Z');
@@ -491,6 +495,120 @@ describe('ReleaseBatch domain model & invariants', () => {
       expect(batch.items[0]?.blockedReason).toBeUndefined();
       expect(batch.status).toBe('building');
       expect(batch.blockedReason).toBeUndefined();
+    });
+
+    it('records candidateTreeSha when transitioning to awaiting_manual_test', () => {
+      let batch = createSampleBatch();
+      for (let pos = 1; pos <= 5; pos++) {
+        batch = admitItem(batch, pos, { runUuid: `run-${pos}`, now: t1 });
+        batch = markItemMerged(batch, pos, { mergedCommitSha: `sha-${pos}`, now: t2 });
+      }
+
+      batch = transitionToAwaitingManualTest(batch, 'candidate-sha-123', 'tree-sha-abc');
+      expect(batch.status).toBe('awaiting_manual_test');
+      expect(batch.candidateSha).toBe('candidate-sha-123');
+      expect(batch.candidateTreeSha).toBe('tree-sha-abc');
+    });
+
+    it('attaches promotion PR and records promotion commit', () => {
+      let batch = createFullyMergedAwaitingBatch();
+      batch = approveBatchCandidate(batch, 'candidate-sha-123');
+      batch = attachPromotionPr(batch, 999);
+      expect(batch.status).toBe('promoting');
+      expect(batch.promotionPrNumber).toBe(999);
+
+      batch = recordPromotionCommit(batch, 'promotion-commit-sha-456');
+      expect(batch.promotionCommitSha).toBe('promotion-commit-sha-456');
+    });
+
+    it('rejectBatchCandidate validates candidateSha when provided', () => {
+      let batch = createFullyMergedAwaitingBatch();
+      expect(() => rejectBatchCandidate(batch, 'wrong-sha', 'failed')).toThrow(
+        InvalidCandidateShaError,
+      );
+
+      const rejected = rejectBatchCandidate(batch, 'candidate-sha-123', 'failed');
+      expect(rejected.status).toBe('test_failed');
+      expect(rejected.candidateSha).toBe('candidate-sha-123');
+      expect(rejected.blockedReason).toBe('failed');
+    });
+  });
+
+  describe('remediation issue appending', () => {
+    function createFailedTestBatch() {
+      let batch = createSampleBatch();
+      for (let pos = 1; pos <= 5; pos++) {
+        batch = admitItem(batch, pos, { runUuid: `run-${pos}`, now: t1 });
+        batch = markItemMerged(batch, pos, { mergedCommitSha: `sha-${pos}`, now: t2 });
+      }
+      batch = transitionToAwaitingManualTest(batch, 'candidate-sha-123', 'tree-sha-abc');
+      return rejectBatchCandidate(batch, 'candidate-sha-123', 'manual testing found bug');
+    }
+
+    it('appends remediation issues when status is test_failed', () => {
+      const failedBatch = createFailedTestBatch();
+      expect(failedBatch.status).toBe('test_failed');
+
+      const batchWithRemediation = appendRemediationItems(failedBatch, [106, 107]);
+      expect(batchWithRemediation.status).toBe('building');
+      expect(batchWithRemediation.items).toHaveLength(7);
+      expect(batchWithRemediation.items[5]?.position).toBe(6);
+      expect(batchWithRemediation.items[5]?.issueNumber).toBe(106);
+      expect(batchWithRemediation.items[5]?.status).toBe('pending');
+      expect(batchWithRemediation.items[6]?.position).toBe(7);
+      expect(batchWithRemediation.items[6]?.issueNumber).toBe(107);
+      expect(batchWithRemediation.items[6]?.status).toBe('pending');
+      expect(batchWithRemediation.currentPosition).toBe(6);
+
+      // Prior candidate, approval, and blocked reasons are cleared for the new run
+      expect(batchWithRemediation.candidateSha).toBeUndefined();
+      expect(batchWithRemediation.approvedCandidateSha).toBeUndefined();
+      expect(batchWithRemediation.candidateTreeSha).toBeUndefined();
+      expect(batchWithRemediation.blockedReason).toBeUndefined();
+    });
+
+    it('rejects appending remediation issues when status is not test_failed', () => {
+      const sample = createSampleBatch();
+      expect(() => appendRemediationItems(sample, [106])).toThrow(RemediationNotAllowedError);
+
+      let buildingBatch = admitItem(sample, 1, { runUuid: 'run-1' });
+      expect(() => appendRemediationItems(buildingBatch, [106])).toThrow(
+        RemediationNotAllowedError,
+      );
+
+      for (let pos = 1; pos <= 5; pos++) {
+        buildingBatch = admitItem(buildingBatch, pos, { runUuid: `run-${pos}` });
+        buildingBatch = markItemMerged(buildingBatch, pos, { mergedCommitSha: `sha-${pos}` });
+      }
+      const awaitingBatch = transitionToAwaitingManualTest(buildingBatch, 'cand-sha');
+      expect(() => appendRemediationItems(awaitingBatch, [106])).toThrow(
+        RemediationNotAllowedError,
+      );
+
+      const approvedBatch = approveBatchCandidate(awaitingBatch, 'cand-sha');
+      expect(() => appendRemediationItems(approvedBatch, [106])).toThrow(
+        RemediationNotAllowedError,
+      );
+
+      const promotingBatch = promoteBatch(approvedBatch);
+      expect(() => appendRemediationItems(promotingBatch, [106])).toThrow(
+        RemediationNotAllowedError,
+      );
+    });
+
+    it('rejects duplicate remediation issue numbers against existing items', () => {
+      const failedBatch = createFailedTestBatch();
+      expect(() => appendRemediationItems(failedBatch, [103])).toThrow(DuplicateIssueError);
+    });
+
+    it('rejects duplicate remediation issue numbers within append list', () => {
+      const failedBatch = createFailedTestBatch();
+      expect(() => appendRemediationItems(failedBatch, [106, 106])).toThrow(DuplicateIssueError);
+    });
+
+    it('rejects empty remediation issue list', () => {
+      const failedBatch = createFailedTestBatch();
+      expect(() => appendRemediationItems(failedBatch, [])).toThrow(ReleaseBatchStateError);
     });
   });
 });

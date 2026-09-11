@@ -53,9 +53,9 @@ export class FakeReleaseBatchRepository implements ReleaseBatchRepositoryPort {
       throw new Error(`cannot update release batch ${batch.id}: not found`);
     }
 
-    if (existing.items.length !== batch.items.length) {
+    if (batch.items.length < existing.items.length) {
       throw new ReleaseBatchStateError(
-        `cannot update release batch ${batch.id}: item count cannot change (expected ${existing.items.length}, got ${batch.items.length})`,
+        `cannot update release batch ${batch.id}: item count cannot decrease (expected at least ${existing.items.length}, got ${batch.items.length})`,
       );
     }
 
@@ -86,6 +86,13 @@ export class FakeReleaseBatchRepository implements ReleaseBatchRepositoryPort {
       }
       if (next.runUuid !== undefined && next.runUuid !== prev.runUuid) {
         this.assertRunUuidAvailable(next.runUuid, batch.id, next.position);
+      }
+    }
+
+    for (let i = existing.items.length; i < batch.items.length; i++) {
+      const item = batch.items[i]!;
+      if (item.runUuid !== undefined) {
+        this.assertRunUuidAvailable(item.runUuid, batch.id, item.position);
       }
     }
 

@@ -206,6 +206,33 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     }
   }
 
+  async treeSha(cwd: string, ref: string): Promise<string | undefined> {
+    try {
+      return await git(cwd, ['rev-parse', '--verify', `${ref}^{tree}`]);
+    } catch {
+      return undefined;
+    }
+  }
+
+  async mergeBranch(
+    cwd: string,
+    sourceRef: string,
+    message: string,
+  ): Promise<{ success: boolean; conflict?: boolean; error?: string }> {
+    try {
+      await git(cwd, ['merge', sourceRef, '-m', message]);
+      return { success: true };
+    } catch (err) {
+      if (err instanceof GitFailedError) {
+        const isConflict =
+          err.stderr.toLowerCase().includes('conflict') ||
+          err.message.toLowerCase().includes('conflict');
+        return { success: false, conflict: isConflict, error: err.stderr || err.message };
+      }
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   async logBetween(cwd: string, base: string, head: string): Promise<string[]> {
     const out = await git(cwd, ['log', '--format=%s', `${base}..${head}`]);
     return out ? out.split('\n').filter(Boolean) : [];

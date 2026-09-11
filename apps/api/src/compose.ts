@@ -62,6 +62,10 @@ import {
   StartIssueRun,
   StartReleaseBatch,
   ReleaseBatchCoordinator,
+  ApproveReleaseBatchCandidate,
+  RejectReleaseBatchCandidate,
+  AppendRemediationIssues,
+  PromoteReleaseBatch,
   InterItemMaintenanceService,
   CancelRun,
   ResumeRun,
@@ -665,6 +669,10 @@ export interface Container {
   startIssueRun: StartIssueRun;
   startReleaseBatch: StartReleaseBatch;
   releaseBatchCoordinator: ReleaseBatchCoordinator;
+  approveReleaseBatchCandidate: ApproveReleaseBatchCandidate;
+  rejectReleaseBatchCandidate: RejectReleaseBatchCandidate;
+  appendRemediationIssues: AppendRemediationIssues;
+  promoteReleaseBatch: PromoteReleaseBatch;
   interItemMaintenanceService: InterItemMaintenanceService;
   loadRepositoryForRun: LoadRepositoryForRun;
   runAbort: RunAbortPort;
@@ -753,6 +761,14 @@ export interface ComposeOptions {
   startReleaseBatch?: StartReleaseBatch;
   /** Inject custom ReleaseBatchCoordinator (for tests) */
   releaseBatchCoordinator?: ReleaseBatchCoordinator;
+  /** Inject custom ApproveReleaseBatchCandidate (for tests) */
+  approveReleaseBatchCandidate?: ApproveReleaseBatchCandidate;
+  /** Inject custom RejectReleaseBatchCandidate (for tests) */
+  rejectReleaseBatchCandidate?: RejectReleaseBatchCandidate;
+  /** Inject custom AppendRemediationIssues (for tests) */
+  appendRemediationIssues?: AppendRemediationIssues;
+  /** Inject custom PromoteReleaseBatch (for tests) */
+  promoteReleaseBatch?: PromoteReleaseBatch;
   /** Inject custom InterItemMaintenanceService (for tests) */
   interItemMaintenanceService?: InterItemMaintenanceService;
 }
@@ -1768,6 +1784,52 @@ export function composeRoot(opts: ComposeOptions): Container {
         return prCtx ? { prNumber: prCtx.prNumber } : undefined;
       },
     });
+
+  const approveReleaseBatchCandidate =
+    opts.approveReleaseBatchCandidate ??
+    new ApproveReleaseBatchCandidate({
+      releaseBatchRepository,
+      repositoryPort: registryBackedRepo,
+      eventBus: persistingEventBus,
+      eventRepository,
+      git: gitAdapter,
+      logger,
+    });
+
+  const rejectReleaseBatchCandidate =
+    opts.rejectReleaseBatchCandidate ??
+    new RejectReleaseBatchCandidate({
+      releaseBatchRepository,
+      eventBus: persistingEventBus,
+      eventRepository,
+      logger,
+    });
+
+  const appendRemediationIssues =
+    opts.appendRemediationIssues ??
+    new AppendRemediationIssues({
+      releaseBatchRepository,
+      repositoryPort: registryBackedRepo,
+      github: ghPortForReleaseBatch,
+      eventBus: persistingEventBus,
+      eventRepository,
+      coordinator: releaseBatchCoordinator,
+      logger,
+    });
+
+  const promoteReleaseBatch =
+    opts.promoteReleaseBatch ??
+    new PromoteReleaseBatch({
+      releaseBatchRepository,
+      repositoryPort: registryBackedRepo,
+      github: ghPortForReleaseBatch,
+      git: gitAdapter,
+      eventBus: persistingEventBus,
+      eventRepository,
+      coordinator: releaseBatchCoordinator,
+      logger,
+    });
+
   const worktreeLifecycleAdapter = new WorktreeLifecycleAdapter({
     isPreserved: isProtectedFilePath,
   });
@@ -3628,6 +3690,10 @@ export function composeRoot(opts: ComposeOptions): Container {
     startIssueRun,
     startReleaseBatch,
     releaseBatchCoordinator,
+    approveReleaseBatchCandidate,
+    rejectReleaseBatchCandidate,
+    appendRemediationIssues,
+    promoteReleaseBatch,
     interItemMaintenanceService,
     loadRepositoryForRun,
     runAbort: abortRegistry,

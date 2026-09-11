@@ -58,3 +58,4 @@ export * from './revalidation-plan.js';
 export * from './start-release-batch.js';
 export * from './inter-item-maintenance.js';
 export * from './release-batch-coordinator.js';
+export * from './manual-test-gate.js';
