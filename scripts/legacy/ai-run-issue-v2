@@ -1953,15 +1953,6 @@ if [[ "$PHASE" == "plan-review" ]]; then
   PHASE="implement"
 fi
 
-# ── Map resume phases into implement with correct resume stage ──────────────
-if [[ "$PHASE" == "spec-review" ]]; then
-  # These phases are now handled inside the review-fix loop.
-  # Map to "implement" with resume stage "review" so the task loop re-enters correctly.
-  info "Auto-resume: mapping phase '${PHASE}' to implement with review stage"
-  RESUME_STAGE_OVERRIDE="review"
-  PHASE="implement"
-fi
-
 if [[ "$_INITIAL_PHASE" != "read_issue" ]]; then _emit_skipped_until "$PHASE"; fi
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -149,39 +149,6 @@ describe('loadConfig', () => {
     expect(cfg.phases.reviewFix.unfoundedPingPongLimit).toBe(6);
   });
 
-  it('parses planReview config when provided', () => {
-    const repo = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-          planReview: { maxIterations: 3, enabled: false },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const cfg = loadConfig(repo);
-    expect(cfg.phases.planReview!.maxIterations).toBe(3);
-    expect(cfg.phases.planReview!.enabled).toBe(false);
-  });
-
-  it('defaults planReview to undefined when omitted', () => {
-    const repo = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const cfg = loadConfig(repo);
-    expect(cfg.phases.planReview).toBeUndefined();
-  });
-
   it('parses planWrite.maxRepairAttempts when provided', () => {
     const repo = makeRepo(
       JSON.stringify({
@@ -670,41 +637,5 @@ describe('phases.implement.maxDeclaredFilesRetries', () => {
     const parsed = JSON.parse(BASE_CONFIG);
     parsed.phases.implement.maxDeclaredFilesRetries = 1.5;
     expect(() => loadConfig(makeRepo(JSON.stringify(parsed)))).toThrow(/maxDeclaredFilesRetries/);
-  });
-});
-
-describe('planReview.deltaScopedReReview (#716)', () => {
-  it('defaults to true when planReview config is provided without the field', () => {
-    const repo = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-          planReview: { maxIterations: 3, enabled: true },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const cfg = loadConfig(repo);
-    expect(cfg.phases.planReview!.deltaScopedReReview).toBe(true);
-  });
-
-  it('honors an explicit false value', () => {
-    const repo = makeRepo(
-      JSON.stringify({
-        validation: { commands: ['pnpm build'], timeout: 300 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 10 },
-          implement: { maxIterations: 5 },
-          planReview: { maxIterations: 3, enabled: true, deltaScopedReReview: false },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-      }),
-    );
-    const cfg = loadConfig(repo);
-    expect(cfg.phases.planReview!.deltaScopedReReview).toBe(false);
   });
 });

@@ -20,7 +20,6 @@ import {
 import type { PhaseHandlerContext, PhaseResult } from '../phases/handler.js';
 import type { PhaseDefinition } from '../phases/phase-definitions.js';
 import {
-  CANONICAL_PHASE_ORDER,
   PHASE_DEFINITIONS,
   getPhaseDefinition,
   orderedPhases,
@@ -878,39 +877,7 @@ export class RunExecutor {
       now,
     };
 
-    const isLean =
-      currentRun.executionPolicy === 'standard' ||
-      currentRun.executionPolicy === 'strict' ||
-      currentRun.executionPolicy === 'legacy';
-    if (isLean) {
-      return this.executeLean(input, executionState);
-    }
-    return this.executeLegacy(input, executionState);
-  }
-
-  private async executeLegacy(
-    input: ExecuteRunInput,
-    state: ExecutionState,
-  ): Promise<ExecuteRunOutput> {
-    const { run } = input;
-    const { now, phases } = state;
-
-    for (const phaseName of CANONICAL_PHASE_ORDER) {
-      const step = await this.executeSinglePhase(phaseName, run, state);
-      if (step.status === 'terminal') {
-        return step.terminalResult!;
-      }
-    }
-
-    const cancelledFinal = this.deps.runRepository.findByUuid(run.uuid);
-    if (
-      cancelledFinal &&
-      ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledFinal.status)
-    ) {
-      return { run: cancelledFinal, phases };
-    }
-
-    return this.passRun(state.currentRun, now, phases);
+    return this.executeLean(input, executionState);
   }
 
   // Records a phase that the lean review-convergence loop's own control flow
@@ -968,6 +935,22 @@ export class RunExecutor {
       const def = definitions[completedPhase as PhaseName];
       if (def) {
         for (const out of def.outputs) {
+          if (out === 'issue-comments.md') {
+            if (state.storedArtifacts?.has(out) && !state.presentArtifacts.includes(out)) {
+              state.presentArtifacts.push(out);
+            }
+            continue;
+          }
+
+          if (
+            state.storedArtifacts &&
+            !state.storedArtifacts.has(out) &&
+            !state.presentArtifacts.includes(out) &&
+            (state.storedArtifacts.has('plan.md') || state.storedArtifacts.has('design.md'))
+          ) {
+            return this.failOnResumeArtifactMismatch(state.currentRun, def, out, now(), phases);
+          }
+
           if (!state.presentArtifacts.includes(out)) {
             state.presentArtifacts.push(out);
           }
@@ -977,6 +960,15 @@ export class RunExecutor {
         if (!state.presentArtifacts.includes('plan.md')) {
           state.presentArtifacts.push('plan.md');
         }
+      }
+      if (!phases.some((p) => p.phase === completedPhase)) {
+        phases.push({ phase: PhaseName(completedPhase), status: 'passed' });
+      }
+    }
+
+    for (const skippedPhase of state.previouslySkippedSet) {
+      if (!phases.some((p) => p.phase === skippedPhase)) {
+        phases.push({ phase: PhaseName(skippedPhase), status: 'skipped' });
       }
     }
 
@@ -1351,7 +1343,43 @@ export class RunExecutor {
       if (step.status === 'terminal') return step.terminalResult!;
     }
 
-    // 8. Terminal success
+    // 8. Record any explicitly requested skipSet phases not reached by lean loop
+    for (const skippedPhase of state.skipSet) {
+      if (
+        !phases.some((p) => p.phase === skippedPhase) &&
+        !state.currentRun.skippedPhases.includes(skippedPhase)
+      ) {
+        state.currentRun = {
+          ...state.currentRun,
+          skippedPhases: [...state.currentRun.skippedPhases, skippedPhase],
+        };
+        const phase: Phase = {
+          id: this.phaseId(run.uuid, PhaseName(skippedPhase)),
+          runUuid: run.uuid,
+          name: skippedPhase,
+          status: 'skipped',
+          attempt: 1,
+          startedAt: now(),
+          completedAt: now(),
+        };
+        this.deps.phaseRepository.insert(phase);
+        this.deps.runRepository.update(run.uuid, {
+          skippedPhases: state.currentRun.skippedPhases,
+        });
+        phases.push({ phase: PhaseName(skippedPhase), status: 'skipped' });
+        this.emit(
+          run.displayId,
+          run.uuid,
+          skippedPhase,
+          'info',
+          'phase.skipped',
+          `phase '${skippedPhase}' skipped`,
+          now(),
+        );
+      }
+    }
+
+    // 9. Terminal success
     const cancelledFinal = this.deps.runRepository.findByUuid(run.uuid);
     if (
       cancelledFinal &&

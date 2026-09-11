@@ -89,7 +89,7 @@ export function resolvePhaseOrder(policy?: ExecutionPolicy): readonly PhaseName[
   if (policy === 'strict') {
     return STRICT_LEAN_PHASE_ORDER;
   }
-  if (policy === 'standard') {
+  if (policy === 'standard' || policy === 'legacy') {
     return STANDARD_LEAN_PHASE_ORDER;
   }
   return CANONICAL_PHASE_ORDER;

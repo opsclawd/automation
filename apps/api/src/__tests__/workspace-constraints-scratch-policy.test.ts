@@ -15,7 +15,6 @@ import {
   buildReviewFixReviewPrompt,
   buildWholePrArbiterPrompt,
 } from '../review-fix-prompts.js';
-import { buildPlanReviewFixPrompt, buildPlanReviewReviewPrompt } from '../plan-review-prompts.js';
 
 const SCRATCH_POLICY = [
   'Transient working files and scratch scripts MUST be written inside `.ai-tmp/`.',
@@ -89,12 +88,7 @@ describe('scratch workspace policy', () => {
     expectScratchPolicy(prompt);
   });
 
-  it('propagates the scratch-file policy to the plan-review review prompt (issue #959)', () => {
-    const prompt = buildPlanReviewReviewPrompt('# Base plan-review prompt');
-    expectScratchPolicy(prompt);
-  });
-
-  it('propagates the scratch-file policy to fix-validate, review-fix, plan-fix, and PR review task prompts', async () => {
+  it('propagates the scratch-file policy to fix-validate, review-fix, and PR review task prompts', async () => {
     const validateFixPrompt = await buildImplementStepFixPrompt(missingArtifacts, 'run-1', {
       cwd: '/worktree/issue-894',
       stepIndex: 1,
@@ -105,7 +99,6 @@ describe('scratch workspace policy', () => {
       repoId: 'owner/repo',
       useFallback: false,
     });
-    const planFixPrompt = buildPlanReviewFixPrompt('# Base plan fix prompt');
     const prReviewTaskPrompt = buildPostPrReviewTaskPrompt({
       cwd: '/worktree/issue-894',
       comment: {
@@ -120,7 +113,6 @@ describe('scratch workspace policy', () => {
 
     expectScratchPolicy(validateFixPrompt);
     expectScratchPolicy(reviewFixPrompt);
-    expectScratchPolicy(planFixPrompt);
     expectScratchPolicy(prReviewTaskPrompt);
   });
 });

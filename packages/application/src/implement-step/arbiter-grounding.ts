@@ -1,5 +1,3 @@
-import type { PlanReviewArbiterResult } from './types.js';
-
 export type ArbiterGroundingStatus = 'not_applicable' | 'grounded' | 'ungrounded';
 export type ArbiterGroundingFailureReason = 'missing_quotes' | 'unmatched_quotes';
 
@@ -30,7 +28,8 @@ export function verifyArbiterGrounding(
     return { status: 'not_applicable', quotes: [], unmatchedQuotes: [] };
   }
 
-  const quotes = extractRawQuotes(`${result.evidence}\n${result.rationale}`);
+  const quotes = extractRawQuotes(`${result.evidence}
+${result.rationale}`);
   if (quotes.length === 0) {
     return {
       status: 'ungrounded',
@@ -43,41 +42,6 @@ export function verifyArbiterGrounding(
   const normalizedSources = sources.map((s) => normalizeWhitespace(s));
   const unmatchedQuotes = quotes.filter(
     (quote) => !normalizedSources.some((source) => source.includes(quote)),
-  );
-
-  return unmatchedQuotes.length === 0
-    ? { status: 'grounded', quotes, unmatchedQuotes: [] }
-    : {
-        status: 'ungrounded',
-        reason: 'unmatched_quotes',
-        quotes,
-        unmatchedQuotes,
-      };
-}
-
-export function verifyPlanReviewArbiterGrounding(
-  result: PlanReviewArbiterResult,
-): ArbiterGroundingCheck {
-  if (result.outcome !== 'finding_valid') {
-    return { status: 'not_applicable', quotes: [], unmatchedQuotes: [] };
-  }
-
-  const quotes = extractRawQuotes(`${result.evidence}\n${result.rationale}`);
-  if (quotes.length === 0) {
-    return {
-      status: 'ungrounded',
-      reason: 'missing_quotes',
-      quotes: [],
-      unmatchedQuotes: [],
-    };
-  }
-
-  const sources = [
-    normalizeWhitespace(result.groundingSources.planExcerpt),
-    normalizeWhitespace(result.groundingSources.manifestExcerpt),
-  ];
-  const unmatchedQuotes = quotes.filter(
-    (quote) => !sources.some((source) => source.includes(quote)),
   );
 
   return unmatchedQuotes.length === 0

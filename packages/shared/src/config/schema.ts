@@ -157,20 +157,6 @@ const phasesSchema = z.object({
       enabled: z.boolean().default(true),
     })
     .optional(),
-  planReview: z
-    .object({
-      maxIterations: z.number().int().positive(),
-      enabled: z.boolean().default(true),
-      judgmentAgent: z.string().min(1).optional(),
-      /**
-       * When true (default), iteration >= 2 scopes the reviewer to the prior
-       * finding set + their dispositions + citations introduced by the most
-       * recent fix, instead of re-reviewing the entire plan from scratch
-       * (#716). Mirrors `phases.reviewFix.deltaScopedReReview`.
-       */
-      deltaScopedReReview: z.boolean().default(true),
-    })
-    .optional(),
   // Bounded self-repair for plan-write's structural validation (validatePlanTaskList).
   // maxRepairAttempts: 0 reproduces pre-repair-loop behavior (immediate hard-fail on the
   // first validation failure). Defaults to 2 when the whole key or the field is omitted.
@@ -443,63 +429,49 @@ export const executionPolicySchema = z.enum(EXECUTION_POLICIES).default(DEFAULT_
 
 export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;
 
-export const orchestratorConfigSchema = z
-  .strictObject({
-    executionPolicy: executionPolicySchema,
-    validation: validationSchema,
-    phases: phasesSchema,
-    timeouts: timeoutsSchema,
-    agent: agentSchema.optional(),
-    taskSplitting: z
-      .object({
-        maxTestFileLines: z.number().int().positive().default(500),
-        maxTestCases: z.number().int().positive().default(10),
-        blockOversizedTasks: z.boolean().default(false),
-      })
-      .default({
-        maxTestFileLines: 500,
-        maxTestCases: 10,
-        blockOversizedTasks: false,
-      }),
-    serve: z
-      .object({
-        /**
-         * Interval, in seconds, at which `orchestrator serve` re-runs
-         * SweepWaitingRuns and drives any reactivated run with the worker
-         * loop. 0 (the default) disables the periodic sweep entirely —
-         * `serve` behaves exactly as it does today (a single startup sweep,
-         * no periodic re-check). A positive value is clamped to a minimum
-         * of 30s by the CLI wiring (Task 6) to avoid hammering the GitHub
-         * API/DB if misconfigured.
-         */
-        sweepIntervalSeconds: z.number().int().nonnegative().default(0),
-      })
-      .default({ sweepIntervalSeconds: 0 }),
-    features: z
-      .object({
-        scopeContractEnforcement: z.boolean().default(true),
-      })
-      .default({}),
-    notifications: z
-      .object({
-        runWebhookUrl: z.string().url().optional(),
-      })
-      .default({}),
-    scheduler: schedulerConfigSchema,
-  })
-  .superRefine((config, ctx) => {
-    const judgmentAgent = config.phases.planReview?.judgmentAgent;
-    if (judgmentAgent && config.agent) {
-      const profileNames = new Set(Object.keys(config.agent.profiles));
-      if (!profileNames.has(judgmentAgent)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['phases', 'planReview', 'judgmentAgent'],
-          message: `phases.planReview.judgmentAgent '${judgmentAgent}' is not defined in agent.profiles`,
-        });
-      }
-    }
-  });
+export const orchestratorConfigSchema = z.strictObject({
+  executionPolicy: executionPolicySchema,
+  validation: validationSchema,
+  phases: phasesSchema,
+  timeouts: timeoutsSchema,
+  agent: agentSchema.optional(),
+  taskSplitting: z
+    .object({
+      maxTestFileLines: z.number().int().positive().default(500),
+      maxTestCases: z.number().int().positive().default(10),
+      blockOversizedTasks: z.boolean().default(false),
+    })
+    .default({
+      maxTestFileLines: 500,
+      maxTestCases: 10,
+      blockOversizedTasks: false,
+    }),
+  serve: z
+    .object({
+      /**
+       * Interval, in seconds, at which `orchestrator serve` re-runs
+       * SweepWaitingRuns and drives any reactivated run with the worker
+       * loop. 0 (the default) disables the periodic sweep entirely —
+       * `serve` behaves exactly as it does today (a single startup sweep,
+       * no periodic re-check). A positive value is clamped to a minimum
+       * of 30s by the CLI wiring (Task 6) to avoid hammering the GitHub
+       * API/DB if misconfigured.
+       */
+      sweepIntervalSeconds: z.number().int().nonnegative().default(0),
+    })
+    .default({ sweepIntervalSeconds: 0 }),
+  features: z
+    .object({
+      scopeContractEnforcement: z.boolean().default(true),
+    })
+    .default({}),
+  notifications: z
+    .object({
+      runWebhookUrl: z.string().url().optional(),
+    })
+    .default({}),
+  scheduler: schedulerConfigSchema,
+});
 
 /**
  * Default grace window (in seconds) the poller keeps polling an empty PR
