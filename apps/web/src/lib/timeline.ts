@@ -10,7 +10,7 @@ export const CANONICAL_PHASES = [
   'create-pr',
 ] as const;
 
-export type PhaseName = (typeof CANONICAL_PHASES)[number];
+export type PhaseName = (typeof CANONICAL_PHASES)[number] | string;
 
 export interface ApiEvent {
   id: number;
@@ -33,10 +33,29 @@ export interface PhaseTimelineEntry {
   failure?: { message: string; metadata: Record<string, unknown> };
 }
 
-const CANONICAL_SET = new Set<string>(CANONICAL_PHASES);
+export const KNOWN_HISTORICAL_PHASES = new Set<string>([
+  ...CANONICAL_PHASES,
+  'plan-review',
+  'post-pr-review',
+  'pr-review-poll',
+  'spec-review',
+  'quality-review',
+  'fix-review',
+  'follow-up-review',
+  'architecture-review',
+  'whole-pr-review',
+  'whole-change-review',
+  'narrow-verification',
+  'plan-fix',
+  'arbiter',
+  'wait-merge',
+  'verify',
+]);
 
 export function derivePhaseTimeline(events: ApiEvent[]): PhaseTimelineEntry[] {
   const byPhase = new Map<PhaseName, PhaseTimelineEntry>();
+  const extraPhases: string[] = [];
+
   for (const name of CANONICAL_PHASES) {
     byPhase.set(name, {
       name,
@@ -49,8 +68,19 @@ export function derivePhaseTimeline(events: ApiEvent[]): PhaseTimelineEntry[] {
   }
 
   for (const e of events) {
-    if (e.phase === null || !CANONICAL_SET.has(e.phase)) continue;
-    const entry = byPhase.get(e.phase as PhaseName)!;
+    if (e.phase === null || !KNOWN_HISTORICAL_PHASES.has(e.phase)) continue;
+    if (!byPhase.has(e.phase)) {
+      byPhase.set(e.phase, {
+        name: e.phase,
+        status: 'pending',
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+        artifacts: [],
+      });
+      extraPhases.push(e.phase);
+    }
+    const entry = byPhase.get(e.phase)!;
     const meta: Record<string, unknown> =
       typeof e.metadata === 'object' && e.metadata !== null && !Array.isArray(e.metadata)
         ? e.metadata
@@ -92,7 +122,7 @@ export function derivePhaseTimeline(events: ApiEvent[]): PhaseTimelineEntry[] {
     }
   }
 
-  return CANONICAL_PHASES.map((n) => byPhase.get(n)!);
+  return [...CANONICAL_PHASES, ...extraPhases].map((n) => byPhase.get(n)!);
 }
 
 function computeDuration(startISO: string | null, endISO: string): number | null {

@@ -61,12 +61,11 @@ export interface PhaseResultRegistryMap {
 export type RegisteredPhase = keyof PhaseResultRegistryMap;
 
 export function normalizePhaseId(phaseId: string): string {
-  return phaseId.replace(/-\d+$/, '');
+  return phaseId.replace(/(?:-(?:task|loop))+-[A-Za-z0-9]+$/, '').replace(/-\d+$/, '');
 }
 
-// Temporary mapping from CANONICAL_PHASE_ORDER names to PHASE_RESULT_REGISTRY keys.
+// Mapping from canonical and historical phase names to PHASE_RESULT_REGISTRY keys.
 // Phases with no result entry (null) do not produce result.json artifacts.
-// TODO: converge PHASE_RESULT_REGISTRY into CANONICAL_PHASE_ORDER so there's one source of truth.
 export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   'plan-design': 'plan-design',
   'architecture-review': 'architecture-review',
@@ -79,9 +78,21 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   'initial-review': 'initial-review',
   'fix-review': 'fix-review',
   'follow-up-review': 'follow-up-review',
+  'spec-review': 'spec-review',
+  'quality-review': 'quality-review',
+  'whole-pr-review': 'whole-pr-review',
+  'whole-change-review': 'whole-change-review',
+  'narrow-verification': 'narrow-verification',
+  'fix-validate': 'fix-validate',
+  'plan-fix': 'plan-fix',
+  arbiter: 'arbiter',
+  'plan-review-arbiter': 'plan-review-arbiter',
+  'implement-final-review-arbiter': 'implement-final-review-arbiter',
   'wait-merge': null,
   read_issue: null,
   validate: null,
+  verify: null,
+  review: null,
   'pr-review-poll': 'post-pr-review',
   'post-pr-review': null,
 };
@@ -198,6 +209,13 @@ export function getRegisteredPhaseResultMeta<K extends RegisteredPhase>(
 
 export function getPhaseResultMeta(phase: string): PhaseResultMeta<unknown> | undefined {
   const norm = normalizePhaseId(phase);
+  if (Object.hasOwn(PHASE_NAME_MIGRATION_MAP, norm)) {
+    const targetKey = PHASE_NAME_MIGRATION_MAP[norm];
+    if (targetKey && Object.hasOwn(PHASE_RESULT_REGISTRY, targetKey)) {
+      return PHASE_RESULT_REGISTRY[targetKey as RegisteredPhase];
+    }
+    return undefined;
+  }
   if (Object.hasOwn(PHASE_RESULT_REGISTRY, norm)) {
     return PHASE_RESULT_REGISTRY[norm as RegisteredPhase];
   }
