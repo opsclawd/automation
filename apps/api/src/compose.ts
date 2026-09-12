@@ -64,6 +64,7 @@ import {
   StartIssueRun,
   StartReleaseBatch,
   ReleaseBatchCoordinator,
+  type ReconcileBatchResult,
   ApproveReleaseBatchCandidate,
   RejectReleaseBatchCandidate,
   AppendRemediationIssues,
@@ -206,6 +207,7 @@ export interface RepositorySweepResult {
   fullName: string;
   waiting?: WaitingRunsSweeperResult;
   orphaned?: OrphanedRunsSweeperResult;
+  releaseBatches?: ReconcileBatchResult[];
   error?: string;
 }
 
@@ -1564,6 +1566,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     },
   };
 
+  let runtimeCatalogRef: DefaultRepositoryRuntimeCatalog | undefined;
+
   const resolvePrContextForRun = async (
     run: RunRecord,
   ): Promise<{ repoFullName: string; prNumber: number } | undefined> => {
@@ -1579,6 +1583,23 @@ export function composeRoot(opts: ComposeOptions): Container {
       const repoFullName = repo ? repo.fullName : (resolvedRepoFullName ?? run.repoId);
       return { repoFullName, prNumber: parseInt(match[1]!, 10) };
     } catch {
+      if (runtimeCatalogRef) {
+        try {
+          const repo = registryBackedRepo.findById(run.repoId);
+          if (repo) {
+            const operational = await runtimeCatalogRef.resolve(repo.id, { allowDisabled: true });
+            const prUrl = readFileSync(
+              join(operational.paths.runsRoot(), artifactRoot, 'phase-artifacts', 'pr-url.txt'),
+              'utf8',
+            ).trim();
+            const match = prUrl.match(/\/pull\/(\d+)/);
+            if (!match) return undefined;
+            return { repoFullName: repo.fullName, prNumber: parseInt(match[1]!, 10) };
+          }
+        } catch {
+          // ignore
+        }
+      }
       return undefined;
     }
   };
@@ -1902,6 +1923,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const prCtx = await resolvePrContextForRun(run);
         return prCtx ? { prNumber: prCtx.prNumber } : undefined;
       },
+      logger: sweepLogger,
     });
 
   const approveReleaseBatchCandidate =
@@ -3577,6 +3599,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     registry: registryBackedRepo,
     logger,
   });
+  runtimeCatalogRef = runtimeCatalog;
 
   function buildRepositorySweepCoordinator(): RepositorySweepCoordinator {
     return {
@@ -3622,6 +3645,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               skippedLeaseConflict: 0,
               enqueueErrors: [],
             };
+            entry.releaseBatches = [];
             sweepLogger.debug(
               `RepositorySweepCoordinator: skipping disabled repository ${repository.fullName}`,
             );
@@ -3786,6 +3810,16 @@ export function composeRoot(opts: ComposeOptions): Container {
               }
             } catch {
               /* recovery failure should not block sweep */
+            }
+
+            try {
+              entry.releaseBatches = await releaseBatchCoordinator.reconcileAll(repository.id);
+            } catch (rbErr) {
+              sweepLogger.warn(
+                `RepositorySweepCoordinator: release batch sweep failed for repository ${repository.fullName}: ${
+                  rbErr instanceof Error ? rbErr.message : String(rbErr)
+                }`,
+              );
             }
           } catch (err) {
             entry.error = err instanceof Error ? err.message : String(err);

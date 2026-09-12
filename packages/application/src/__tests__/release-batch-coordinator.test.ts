@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   RepositoryId,
   ReleaseBatchId,
@@ -1004,6 +1004,51 @@ describe('ReleaseBatchCoordinator', () => {
       const results = await coordinator.reconcileAll(defaultRepo.id);
       expect(results).toHaveLength(1);
       expect(results[0]?.batchId).toBe(batchId);
+    });
+
+    it('isolates errors per batch so a failing batch does not stop other batches from reconciling', async () => {
+      const { batchId: batchId1 } = setupFiveItemBatch();
+
+      const batchId2 = ReleaseBatchId('batch-second');
+      const batch2 = createReleaseBatch({
+        id: batchId2,
+        repoId: defaultRepo.id,
+        sourceBranch: 'main',
+        sourceStartSha: 'sha-root-000',
+        releaseBranch: 'release/2026-09-11-batch-second',
+        createdAt: t0,
+        items: [{ position: 1, issueNumber: 201 }],
+      });
+      releaseBatchRepository.insert(batch2);
+
+      const warnSpy = vi.fn();
+      coordinator = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        jobQueue,
+        repositoryPort,
+        eventBus,
+        logger: { warn: warnSpy },
+        now: () => t1,
+      });
+
+      // Cause batchId1 to throw during reconcile by mocking findById
+      const origFindById = releaseBatchRepository.findById.bind(releaseBatchRepository);
+      vi.spyOn(releaseBatchRepository, 'findById').mockImplementation((id) => {
+        if (id === batchId1) {
+          throw new Error('Database disk error on batch 1');
+        }
+        return origFindById(id);
+      });
+
+      const results = await coordinator.reconcileAll(defaultRepo.id);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Failed reconciling release batch batch-five-items: Database disk error on batch 1',
+        ),
+      );
+      expect(results).toHaveLength(1);
+      expect(results[0]?.batchId).toBe(batchId2);
     });
   });
 

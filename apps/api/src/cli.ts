@@ -1339,6 +1339,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 );
               }
             }
+            if (repoResult.releaseBatches && repoResult.releaseBatches.length > 0) {
+              const activeBatches = repoResult.releaseBatches.filter((b) =>
+                b.actions.some((a) => a !== 'idle'),
+              );
+              if (activeBatches.length > 0) {
+                console.error(
+                  `Release batch sweep: reconciled ${activeBatches.length} batch(es) for ${repoResult.fullName}`,
+                );
+              }
+            }
           }
           return initialResult;
         } catch (err) {
@@ -1443,6 +1453,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               if (w.reactivated > 0 || w.errors.length > 0 || w.enqueueErrors.length > 0) {
                 console.error(
                   `Reactivation sweep: ${w.reactivated} reactivated, ${w.errors.length} errors, ${w.enqueueErrors.length} enqueue errors`,
+                );
+              }
+            }
+            if (repoResult.releaseBatches && repoResult.releaseBatches.length > 0) {
+              const activeBatches = repoResult.releaseBatches.filter((b) =>
+                b.actions.some((a) => a !== 'idle'),
+              );
+              if (activeBatches.length > 0) {
+                console.error(
+                  `Release batch sweep: reconciled ${activeBatches.length} batch(es) for ${repoResult.fullName}`,
                 );
               }
             }
