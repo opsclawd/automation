@@ -1044,7 +1044,13 @@ export class ReleaseBatchCoordinator {
       if (b.status === 'completed' || b.status === 'cancelled') {
         continue;
       }
-      results.push(await this.reconcile(b.id));
+      try {
+        results.push(await this.reconcile(b.id));
+      } catch (err) {
+        this.deps.logger?.warn?.(
+          `Failed reconciling release batch ${b.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     return results;
   }

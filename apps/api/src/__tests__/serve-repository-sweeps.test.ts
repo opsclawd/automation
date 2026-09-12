@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
-import { WorkerId } from '@ai-sdlc/domain';
+import { WorkerId, ReleaseBatchId, createReleaseBatch, admitItem } from '@ai-sdlc/domain';
 import { composeRoot } from '../compose.js';
 
 // Task 6 (#652): recovery sweeps must be run per-Repository against each
@@ -30,7 +30,7 @@ afterEach(() => {
   }
 });
 
-function buildContainer() {
+function buildContainer(overrides: Record<string, unknown> = {}) {
   const runsDir = join(tmpdir(), `ai-orch-sweep-test-${Math.random()}`);
   return composeRoot({
     repoRoot: process.cwd(),
@@ -53,6 +53,7 @@ function buildContainer() {
         };
       },
     },
+    ...overrides,
   });
 }
 
@@ -222,5 +223,81 @@ describe('buildRepositorySweepCoordinator (#652 Task 6)', () => {
     // repo B (disabled) appears but did not reactivate waiting work
     expect(entryB?.waiting?.scanned).toBe(0);
     expect(entryB?.error).toBeUndefined();
+  });
+
+  it('reconciles release batches per repository during sweep (#1219)', async () => {
+    const fakeGithub = {
+      getPrMergeReadiness: vi.fn().mockResolvedValue({
+        isMerged: true,
+        state: 'merged',
+        mergeCommitSha: 'sha-merged-101',
+      }),
+    };
+    const fakeGit = {
+      fetch: vi.fn().mockResolvedValue(undefined),
+      resolveRef: vi.fn().mockResolvedValue('sha-merged-101'),
+      resetWorktreeIfClean: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const c = buildContainer({
+      githubPort: fakeGithub as never,
+      gitPort: fakeGit as never,
+    });
+    const repoA = c.registerRepository.execute({ localPath: tmpRepoDir('a') });
+    const repoB = c.registerRepository.execute({ localPath: tmpRepoDir('b') });
+    const runtimeA = await c.runtimeCatalog.resolve(repoA.id, { allowDisabled: true });
+    await c.runtimeCatalog.resolve(repoB.id, { allowDisabled: true });
+
+    const batchId = ReleaseBatchId('batch-sweep-test');
+    let batch = createReleaseBatch({
+      id: batchId,
+      repoId: repoA.id,
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-root-000',
+      releaseBranch: 'release/2026-09-12-test-batch',
+      createdAt: new Date('2026-09-12T10:00:00Z'),
+      items: [
+        { position: 1, issueNumber: 101 },
+        { position: 2, issueNumber: 102 },
+      ],
+    });
+
+    const runUuid1 = '11111111-1111-1111-1111-111111111111';
+    batch = admitItem(batch, 1, {
+      runUuid: runUuid1,
+      baseSha: 'sha-root-000',
+      now: new Date('2026-09-12T10:00:00Z'),
+    });
+    batch.items[0]!.prNumber = 201;
+
+    c.releaseBatchRepository.insert(batch);
+    runtimeA.runRepository.insert(
+      makeRun(runUuid1, repoA.id, {
+        status: 'passed',
+        issueNumber: 101,
+        baseBranch: batch.releaseBranch,
+      }),
+    );
+
+    const coordinator = c.buildRepositorySweepCoordinator();
+    const result = await coordinator.execute(WorkerId('sweep-worker'));
+
+    const entryA = result.results.find((r) => r.repositoryId === String(repoA.id));
+    const entryB = result.results.find((r) => r.repositoryId === String(repoB.id));
+
+    expect(entryA?.releaseBatches).toBeDefined();
+    expect(entryA?.releaseBatches).toHaveLength(1);
+    expect(entryA?.releaseBatches?.[0]?.batchId).toBe(batchId);
+    expect(entryA?.releaseBatches?.[0]?.actions).toContain('successor_admitted');
+
+    // Batch in database advanced: item 1 merged, item 2 active
+    const updatedBatch = c.releaseBatchRepository.findById(batchId);
+    expect(updatedBatch?.items[0]?.status).toBe('merged');
+    expect(updatedBatch?.items[0]?.mergedCommitSha).toBe('sha-merged-101');
+    expect(updatedBatch?.items[1]?.status).toBe('active');
+    expect(updatedBatch?.items[1]?.runUuid).toBeDefined();
+
+    // repo B had no release batches
+    expect(entryB?.releaseBatches).toEqual([]);
   });
 });
