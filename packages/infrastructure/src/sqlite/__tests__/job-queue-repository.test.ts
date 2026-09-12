@@ -622,4 +622,60 @@ describe('JobQueueRepository', () => {
       db.close();
     });
   });
+
+  describe('repoId scoping', () => {
+    it('scopes active jobs, claims, and lookups to specified repository', () => {
+      const db = freshDb();
+      const repos = mockRepos({ 'repo-1': true, 'repo-2': true });
+      const globalQueue = new JobQueueRepository(db, repos);
+      const queue1 = new JobQueueRepository(db, repos, mkRepositoryId('repo-1'));
+      const queue2 = new JobQueueRepository(db, repos, mkRepositoryId('repo-2'));
+
+      const job1 = defaultJob({
+        id: mkJobId('job-1'),
+        repoId: mkRepositoryId('repo-1'),
+        runId: mkRunId('run-1'),
+        priority: 1,
+      });
+      const job2 = defaultJob({
+        id: mkJobId('job-2'),
+        repoId: mkRepositoryId('repo-2'),
+        runId: mkRunId('run-2'),
+        priority: 1,
+      });
+
+      globalQueue.enqueue({ job: job1 });
+      globalQueue.enqueue({ job: job2 });
+
+      // listActive scoping
+      expect(globalQueue.listActive().map((j) => j.id)).toEqual(
+        expect.arrayContaining([job1.id, job2.id]),
+      );
+      expect(queue1.listActive().map((j) => j.id)).toEqual([job1.id]);
+      expect(queue2.listActive().map((j) => j.id)).toEqual([job2.id]);
+
+      // listForRepo scoping
+      expect(queue1.listForRepo(mkRepositoryId('repo-1'))).toHaveLength(1);
+      expect(queue1.listForRepo(mkRepositoryId('repo-2'))).toHaveLength(0);
+
+      // findById scoping
+      expect(queue1.findById(job1.id)).toBeDefined();
+      expect(queue1.findById(job2.id)).toBeUndefined();
+      expect(queue2.findById(job2.id)).toBeDefined();
+      expect(queue2.findById(job1.id)).toBeUndefined();
+
+      // claimNext scoping
+      expect(
+        queue1.claimNext({ workerId: mkWorkerId('w1'), repoId: mkRepositoryId('repo-2') }),
+      ).toBeUndefined();
+
+      const claimed1 = queue1.claimNext({
+        workerId: mkWorkerId('w1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      expect(claimed1?.id).toBe(job1.id);
+
+      db.close();
+    });
+  });
 });

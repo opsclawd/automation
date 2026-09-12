@@ -91,6 +91,11 @@ export class RepositoryRuntimeMigrator {
       return;
     }
 
+    if (controlPlaneDb === operationalDb) {
+      operationalDb.prepare(`UPDATE events SET repo_id = ? WHERE repo_id IS NULL`).run(repoId);
+      return;
+    }
+
     const eventIds = unownedEvents.map((e) => e.id);
 
     const migrateTx = operationalDb.transaction(() => {

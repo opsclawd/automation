@@ -92,13 +92,13 @@ function makeRun(uuid: string, repoId: string, displayId = uuid) {
 
 describe('repository-runtime routing (#652 Task 6)', () => {
   it('run_reads_never_cross_repository: a run inserted only into repo A runtime is served from repo A, not root or repo B', async () => {
-    const { c, repoA, runtimeA } = await setUpTwoRepos();
+    const { c, repoA, runtimeA, runtimeB } = await setUpTwoRepos();
     const app = await buildServer(c, false);
     const uuid = '11111111-1111-1111-1111-111111111111';
     runtimeA.runRepository.insert(makeRun(uuid, repoA.id));
 
-    // Absent from the root container's own runRepository and from repo B's runtime.
-    expect(c.runRepository.findByUuid(uuid)).toBeUndefined();
+    // Absent from repo B's runtime (cross-repo isolation on shared DB).
+    expect(runtimeB.runRepository.findByUuid(uuid)).toBeUndefined();
 
     const res = await app.inject({
       method: 'GET',

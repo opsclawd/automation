@@ -739,4 +739,56 @@ describe('SqliteRunRepository executionPolicy persistence', () => {
 
     db.close();
   });
+
+  describe('repoId scoping', () => {
+    it('scopes findActiveRuns, list, and findByUuid to specified repository', () => {
+      const db = freshDb();
+      const globalRepo = new RunRepository(db);
+      const repo1 = new RunRepository(db, null, null, 'standard', RepositoryId('owner/repo-1'));
+      const repo2 = new RunRepository(db, null, null, 'standard', RepositoryId('owner/repo-2'));
+
+      globalRepo.insert({
+        uuid: 'run-1',
+        displayId: 'issue-1-20260513-000000',
+        repoId: RepositoryId('owner/repo-1'),
+        issueNumber: 1,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T00:00:00Z'),
+      });
+      globalRepo.insert({
+        uuid: 'run-2',
+        displayId: 'issue-2-20260513-000000',
+        repoId: RepositoryId('owner/repo-2'),
+        issueNumber: 2,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T00:00:00Z'),
+      });
+
+      // findActiveRuns scoping
+      expect(globalRepo.findActiveRuns()).toHaveLength(2);
+      expect(repo1.findActiveRuns()).toHaveLength(1);
+      expect(repo1.findActiveRuns()[0]?.uuid).toBe('run-1');
+      expect(repo2.findActiveRuns()).toHaveLength(1);
+      expect(repo2.findActiveRuns()[0]?.uuid).toBe('run-2');
+
+      // list() default scoping
+      expect(globalRepo.list().runs).toHaveLength(2);
+      expect(repo1.list().runs).toHaveLength(1);
+      expect(repo1.list().runs[0]?.uuid).toBe('run-1');
+      expect(repo2.list().runs).toHaveLength(1);
+      expect(repo2.list().runs[0]?.uuid).toBe('run-2');
+
+      // findByUuid scoping
+      expect(repo1.findByUuid('run-1')).toBeDefined();
+      expect(repo1.findByUuid('run-2')).toBeUndefined();
+      expect(repo2.findByUuid('run-2')).toBeDefined();
+      expect(repo2.findByUuid('run-1')).toBeUndefined();
+
+      db.close();
+    });
+  });
 });

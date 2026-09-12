@@ -1,8 +1,5 @@
-import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import type { Db } from '@ai-sdlc/infrastructure';
 import {
-  openDatabase,
   applyMigrations,
   RunRepository,
   PhaseRepository,
@@ -40,18 +37,15 @@ export async function composeRepositoryOperationalRuntime(
 ): Promise<RepositoryOperationalRuntime> {
   const { repository, paths, controlPlaneDb, listEnabledRepositories } = input;
 
-  await mkdir(dirname(paths.database()), { recursive: true });
-
-  const operationalDb = openDatabase(paths.database());
+  const operationalDb = controlPlaneDb;
 
   try {
     applyMigrations(operationalDb);
   } catch (err) {
-    operationalDb.close();
     throw new RepositoryResolutionError(
       repository.id,
       'unknown',
-      `Failed to apply migrations to ${paths.database()}: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to apply migrations: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
@@ -66,7 +60,6 @@ export async function composeRepositoryOperationalRuntime(
     try {
       await migrator.migrateLegacyState(repository.id);
     } catch (err) {
-      operationalDb.close();
       if (err instanceof Error && err.name === 'MigrationError') {
         const migrationErr = err as { code?: string };
         if (migrationErr.code === 'ambiguous_ownership') {
@@ -85,25 +78,29 @@ export async function composeRepositoryOperationalRuntime(
     }
   }
 
-  const runRepository = new RunRepository(operationalDb, '', '');
+  const runRepository = new RunRepository(operationalDb, '', '', 'standard', repository.id);
   const phaseRepository = new PhaseRepository(operationalDb);
   const workerLeaseRepository = new WorkerLeaseRepository(operationalDb);
-  const jobQueue = new JobQueueRepository(operationalDb, {
-    findById: (id: RepositoryId) => {
-      if (id === repository.id) return repository;
-      return undefined;
-    },
-    findByFullName: (fullName: string) => {
-      if (fullName === repository.fullName) return repository;
-      return undefined;
-    },
-    findByLocalPath: (localBasePath: string) => {
-      if (localBasePath === repository.localBasePath) return repository;
-      return undefined;
-    },
-    listAll: () => [repository],
-    listEnabled: () => (repository.enabled ? [repository] : []),
-  } as RepositoryPort);
+  const jobQueue = new JobQueueRepository(
+    operationalDb,
+    {
+      findById: (id: RepositoryId) => {
+        if (id === repository.id) return repository;
+        return undefined;
+      },
+      findByFullName: (fullName: string) => {
+        if (fullName === repository.fullName) return repository;
+        return undefined;
+      },
+      findByLocalPath: (localBasePath: string) => {
+        if (localBasePath === repository.localBasePath) return repository;
+        return undefined;
+      },
+      listAll: () => [repository],
+      listEnabled: () => (repository.enabled ? [repository] : []),
+    } as RepositoryPort,
+    repository.id,
+  );
   const workerRegistry = new WorkerRegistryRepository(operationalDb);
   const eventRepository = new EventRepository(operationalDb, repository.id);
   const prReviewRepository = new PrReviewRepository(operationalDb);
@@ -128,11 +125,8 @@ export async function composeRepositoryOperationalRuntime(
       throw new Error(`Cannot close runtime for ${repository.fullName}: active lease exists`);
     }
     closed = true;
-    try {
-      operationalDb.close();
-    } catch {
-      // Best-effort close
-    }
+    // Note: operationalDb is controlPlaneDb owned by the root container.
+    // Do not close it here to avoid closing the shared process-level database.
   };
 
   const runtime: RepositoryOperationalRuntime = {
