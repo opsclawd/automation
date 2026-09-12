@@ -166,7 +166,7 @@ function findRepoRoot(dir: string): string {
  *     --start-sha <sha>
  *
  * Runs from TypeScript source via tsx (no build required), matching
- * the project's existing dev pattern (apps/api uses node --import tsx/esm).
+ * the project's existing dev pattern (apps/api uses node --import tsx).
  * The --conditions=development flag enables workspace package resolution
  * of src/ rather than dist/ (all packages export a "development" condition).
  */

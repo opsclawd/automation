@@ -28,7 +28,7 @@ export function spawnRecoveryChild(
     'node',
     [
       '--import',
-      'tsx/esm',
+      'tsx',
       join(helpersDir, 'recovery-worker-child.ts'),
       dbPath,
       repoId,
