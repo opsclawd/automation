@@ -3,6 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { WorkerId } from '@ai-sdlc/domain';
+import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 import { composeRoot } from '../compose.js';
 import { startServer } from '../server.js';
 import { buildProgram } from '../cli.js';
@@ -75,6 +77,91 @@ describe('orchestrator serve --target-repo-root', () => {
     } finally {
       await server.stop();
     }
+  });
+
+  it('buildRepositorySweepCoordinator successfully sweeps the target repository without health errors', async () => {
+    const repoRoot = resolve(process.cwd());
+    const container = composeRoot({
+      repoRoot,
+      targetRepoRoot: targetRepo,
+      scriptPath: join(repoRoot, 'scripts/legacy/ai-run-issue-v2'),
+      runStartupSweeps: false,
+      metadataResolver: {
+        resolve: (p) => ({
+          rootPath: p,
+          nameWithOwner: 'test-owner/target-repo',
+          defaultBranch: 'main',
+          remoteUrl: 'https://github.com/test-owner/target-repo.git',
+        }),
+      },
+    });
+
+    const coordinator = container.buildRepositorySweepCoordinator();
+    const result = await coordinator.execute(WorkerId('test-sweep-worker'));
+
+    expect(result.results.length).toBe(1);
+    const entry = result.results[0]!;
+    expect(entry.fullName).toBe('test-owner/target-repo');
+    expect(entry.error).toBeUndefined();
+  });
+
+  it('reads existing registered repository row from central control-plane database and marks healthy', async () => {
+    const centralRepoRoot = join(tmpDir, 'central-orchestrator-repo');
+    mkdirSync(join(centralRepoRoot, '.ai-runs'), { recursive: true });
+    const centralDbPath = join(centralRepoRoot, '.ai-runs', 'orchestrator.sqlite');
+    const centralDb = openDatabase(centralDbPath);
+    applyMigrations(centralDb);
+
+    const registeredId = 'custom-registered-hash-id';
+    centralDb
+      .prepare(
+        `INSERT INTO repositories (
+          id, full_name, owner, name, local_base_path, default_branch, remote_url,
+          enabled, max_concurrent_runs, config_metadata, health_status, health_error,
+          last_health_check_at, created_at, updated_at
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?,
+          1, 1, '{"custom":"config"}', 'healthy', NULL,
+          ?, ?, ?
+        )`,
+      )
+      .run(
+        registeredId,
+        'test-owner/target-repo',
+        'test-owner',
+        'target-repo',
+        targetRepo,
+        'main',
+        'https://github.com/test-owner/target-repo.git',
+        new Date().toISOString(),
+        new Date().toISOString(),
+        new Date().toISOString(),
+      );
+    centralDb.close();
+
+    const container = composeRoot({
+      repoRoot: centralRepoRoot,
+      targetRepoRoot: targetRepo,
+      scriptPath: join(resolve(process.cwd()), 'scripts/legacy/ai-run-issue-v2'),
+      runStartupSweeps: false,
+      metadataResolver: {
+        resolve: (p) => ({
+          rootPath: p,
+          nameWithOwner: 'test-owner/target-repo',
+          defaultBranch: 'main',
+          remoteUrl: 'https://github.com/test-owner/target-repo.git',
+        }),
+      },
+    });
+
+    const coordinator = container.buildRepositorySweepCoordinator();
+    const result = await coordinator.execute(WorkerId('test-sweep-worker'));
+
+    expect(result.results.length).toBe(1);
+    const entry = result.results[0]!;
+    expect(entry.fullName).toBe('test-owner/target-repo');
+    expect(entry.repositoryId).toBe(registeredId);
+    expect(entry.error).toBeUndefined();
   });
 });
 
