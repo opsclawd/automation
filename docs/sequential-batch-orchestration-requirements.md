@@ -1,6 +1,10 @@
 # Sequential Batch Orchestration Requirements
 
-**Status:** Scope locked for v1  
+> [!WARNING]
+> **Superseded by Release Batch Orchestration (Issue #1200 / ADR 0021)**
+> This document specifies the v1 sequential batch requirements. The production batch coordinator has been extended with release-branch isolation (`release-batch`), exact candidate SHA testing, manual approval gates, atomic candidate promotion PRs, and the `releases` operator CLI. See [Release Batch Burn-In Runbook](operations/release-batch-burn-in.md) and [Quickstart Guide](quickstart.md#release-batch-orchestration).
+
+**Status:** Scope locked for v1 (superseded by Release Batch)  
 **Date:** 2026-08-15  
 **Repository:** `opsclawd/automation`
 

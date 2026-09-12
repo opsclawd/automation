@@ -50,4 +50,6 @@ export * from './artifacts/file-tailer.js';
 export { createSignatureReferenceAnalyzer } from './typescript/signature-reference-analyzer.js';
 export * from './notifications/webhook-run-notification-adapter.js';
 export * from './notifications/noop-run-notification-adapter.js';
+export * from './notifications/webhook-release-batch-notification-adapter.js';
+export * from './notifications/noop-release-batch-notification-adapter.js';
 export * from './system/environment-health-adapter.js';

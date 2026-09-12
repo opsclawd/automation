@@ -55,6 +55,8 @@ import {
   WorktreeLifecycleAdapter,
   WebhookRunNotificationAdapter,
   NoopRunNotificationAdapter,
+  WebhookReleaseBatchNotificationAdapter,
+  NoopReleaseBatchNotificationAdapter,
   EnvironmentHealthAdapter,
 } from '@ai-sdlc/infrastructure';
 import {
@@ -66,6 +68,9 @@ import {
   RejectReleaseBatchCandidate,
   AppendRemediationIssues,
   PromoteReleaseBatch,
+  GetReleaseBatchStatus,
+  ResumeReleaseBatch,
+  type ReleaseBatchNotificationPort,
   InterItemMaintenanceService,
   CancelRun,
   ResumeRun,
@@ -625,6 +630,7 @@ export interface Container {
   executionPolicy: ExecutionPolicy;
   runExecutor?: RunExecutor;
   runNotification?: RunNotificationPort;
+  releaseBatchNotification?: ReleaseBatchNotificationPort;
   reapOrphanedTestWorkers: ReapOrphanedTestWorkers;
   eventRepository: EventRepository;
   artifactRepository: ArtifactRepository;
@@ -673,6 +679,8 @@ export interface Container {
   rejectReleaseBatchCandidate: RejectReleaseBatchCandidate;
   appendRemediationIssues: AppendRemediationIssues;
   promoteReleaseBatch: PromoteReleaseBatch;
+  getReleaseBatchStatus: GetReleaseBatchStatus;
+  resumeReleaseBatch: ResumeReleaseBatch;
   interItemMaintenanceService: InterItemMaintenanceService;
   loadRepositoryForRun: LoadRepositoryForRun;
   runAbort: RunAbortPort;
@@ -769,6 +777,12 @@ export interface ComposeOptions {
   appendRemediationIssues?: AppendRemediationIssues;
   /** Inject custom PromoteReleaseBatch (for tests) */
   promoteReleaseBatch?: PromoteReleaseBatch;
+  /** Inject custom GetReleaseBatchStatus (for tests) */
+  getReleaseBatchStatus?: GetReleaseBatchStatus;
+  /** Inject custom ResumeReleaseBatch (for tests) */
+  resumeReleaseBatch?: ResumeReleaseBatch;
+  /** Inject custom ReleaseBatchNotificationPort (for tests) */
+  releaseBatchNotification?: ReleaseBatchNotificationPort;
   /** Inject custom InterItemMaintenanceService (for tests) */
   interItemMaintenanceService?: InterItemMaintenanceService;
 }
@@ -1567,6 +1581,12 @@ export function composeRoot(opts: ComposeOptions): Container {
     ? new WebhookRunNotificationAdapter(runWebhookUrl, logger)
     : new NoopRunNotificationAdapter();
 
+  const releaseBatchNotification: ReleaseBatchNotificationPort =
+    opts.releaseBatchNotification ??
+    (runWebhookUrl
+      ? new WebhookReleaseBatchNotificationAdapter(runWebhookUrl, logger)
+      : new NoopReleaseBatchNotificationAdapter());
+
   let startupSweepPromise: Promise<unknown> | undefined;
 
   if (opts.runStartupSweeps !== false) {
@@ -1776,6 +1796,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       eventBus: persistingEventBus,
       eventRepository,
       executionPolicy,
+      releaseBatchNotification,
       git: gitAdapter,
       github: ghPortForReleaseBatch,
       maintenanceService: interItemMaintenanceService,
@@ -1827,6 +1848,27 @@ export function composeRoot(opts: ComposeOptions): Container {
       eventBus: persistingEventBus,
       eventRepository,
       coordinator: releaseBatchCoordinator,
+      logger,
+    });
+
+  const getReleaseBatchStatus =
+    opts.getReleaseBatchStatus ??
+    new GetReleaseBatchStatus({
+      releaseBatchRepository,
+      runRepository,
+      repositoryPort: registryBackedRepo,
+      git: gitAdapter,
+      github: ghPortForReleaseBatch,
+      logger,
+    });
+
+  const resumeReleaseBatch =
+    opts.resumeReleaseBatch ??
+    new ResumeReleaseBatch({
+      releaseBatchRepository,
+      runRepository,
+      coordinator: releaseBatchCoordinator,
+      repositoryPort: registryBackedRepo,
       logger,
     });
 
@@ -3671,6 +3713,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     reapOrphanedTestWorkers,
     ...(runExecutor !== undefined ? { runExecutor } : {}),
     ...(runNotification !== undefined ? { runNotification } : {}),
+    ...(releaseBatchNotification !== undefined ? { releaseBatchNotification } : {}),
     eventRepository,
     artifactRepository,
     failureRepository,
@@ -3694,6 +3737,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     rejectReleaseBatchCandidate,
     appendRemediationIssues,
     promoteReleaseBatch,
+    getReleaseBatchStatus,
+    resumeReleaseBatch,
     interItemMaintenanceService,
     loadRepositoryForRun,
     runAbort: abortRegistry,

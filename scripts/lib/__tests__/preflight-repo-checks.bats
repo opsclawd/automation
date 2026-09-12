@@ -140,3 +140,9 @@ push_commit_to_origin() {
   [ "$output" = "/batch/path|" ]
 }
 
+@test "target_repos parses --target-repo-root for releases alias" {
+  run preflight_target_repos "/nonexistent/db.sqlite" releases start --issues 101,102 --target-repo-root /batch/path
+  [ "$status" -eq 0 ]
+  [ "$output" = "/batch/path|" ]
+}
+

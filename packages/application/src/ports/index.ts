@@ -183,3 +183,13 @@ export type {
   EnvironmentHealthPort,
   EnvironmentHealthCheckResult,
 } from './environment-health-port.js';
+export type {
+  ReleaseBatchNotificationPort,
+  ReleaseBatchNotification,
+  ReleaseBatchNotificationType,
+} from './release-batch-notification-port.js';
+export {
+  safeDispatchReleaseBatchNotification,
+  DEFAULT_RELEASE_BATCH_NOTIFICATION_TIMEOUT_MS,
+  DEFAULT_RELEASE_BATCH_DRAIN_TIMEOUT_MS,
+} from './release-batch-notification-port.js';

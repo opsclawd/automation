@@ -39,6 +39,7 @@ import {
   safeDispatchRunNotification,
   DEFAULT_DRAIN_TIMEOUT_MS,
   type RunNotificationPort,
+  RunOwnedBlockerError,
 } from '@ai-sdlc/application';
 import type { WorkerLoopDeps } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions, type Container, seedTestDatabase } from './compose.js';
@@ -104,6 +105,9 @@ export async function drainAndExit(
   } catch {}
   try {
     await container?.runNotification?.drain?.(timeoutMs);
+  } catch {}
+  try {
+    await container?.releaseBatchNotification?.drain?.(timeoutMs);
   } catch {}
   process.exit(exitCode);
 }
@@ -2311,6 +2315,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
   program
     .command('release-batch')
+    .alias('releases')
     .description('Manage autonomous release batches')
     .addCommand(
       new Command('start')
@@ -2328,6 +2333,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           '--release-branch <branch>',
           'Release branch name (otherwise deterministically generated)',
         )
+        .option('-i, --id <id>', 'Optional release batch ID (alias for --batch-id)')
         .option('--batch-id <id>', 'Optional release batch ID')
         .option(
           '--execution-policy <policy>',
@@ -2344,6 +2350,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             repositoryId?: string;
             sourceBranch?: string;
             releaseBranch?: string;
+            id?: string;
             batchId?: string;
             executionPolicy?: string;
             targetRepoRoot?: string;
@@ -2413,12 +2420,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   ? RepositoryId(c.repoFullName)
                   : undefined;
 
+              const chosenBatchId = opts.id ?? opts.batchId;
               const result = await c.startReleaseBatch.execute({
                 repoId,
                 issueNumbers,
                 sourceBranch: opts.sourceBranch,
                 releaseBranch: opts.releaseBranch,
-                batchId: opts.batchId ? ReleaseBatchId(opts.batchId) : undefined,
+                batchId: chosenBatchId ? ReleaseBatchId(chosenBatchId) : undefined,
                 executionPolicy,
               });
 
@@ -2443,6 +2451,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               } else {
                 await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
                 await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.releaseBatchNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
               }
             } catch (err) {
               console.error(err instanceof Error ? err.message : String(err));
@@ -2452,20 +2461,22 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         ),
     )
     .addCommand(
-      new Command('approve')
-        .description('Approve candidate SHA for an autonomous release batch')
-        .requiredOption('--batch-id <id>', 'Release batch ID')
-        .requiredOption('--candidate-sha <sha>', 'Candidate commit SHA to approve')
-        .option('--operator <name>', 'Operator identifier')
+      new Command('status')
+        .description(
+          'Inspect detailed status, blocker classification, and recovery guidance for a release batch',
+        )
+        .option('-i, --id <id>', 'Release batch ID (alias for --batch-id)')
+        .option('--batch-id <id>', 'Release batch ID')
+        .option('--json', 'Output full status object as JSON')
         .option(
           '--target-repo-root <path>',
           'Target repository root for runs DB and worktrees (default: orchestrator repo)',
         )
         .action(
           async (opts: {
-            batchId: string;
-            candidateSha: string;
-            operator?: string;
+            id?: string;
+            batchId?: string;
+            json?: boolean;
             targetRepoRoot?: string;
           }) => {
             let containerRef: Container | undefined;
@@ -2480,10 +2491,174 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               });
               containerRef = c;
 
+              const batchId = opts.id ?? opts.batchId;
+              if (!batchId) {
+                console.error('Error: --batch-id (or -i, --id) is required');
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
+              const status = await c.getReleaseBatchStatus.execute({
+                batchId: ReleaseBatchId(batchId),
+              });
+
+              if (opts.json) {
+                await new Promise<void>((resolve, reject) =>
+                  process.stdout.write(JSON.stringify(status, null, 2) + '\n', (err) =>
+                    err ? reject(err) : resolve(),
+                  ),
+                );
+              } else {
+                await new Promise<void>((resolve, reject) =>
+                  process.stdout.write(status.formattedLines.join('\n') + '\n', (err) =>
+                    err ? reject(err) : resolve(),
+                  ),
+                );
+              }
+
+              const isCliTestSuite =
+                buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+              if (!isCliTestSuite) {
+                await drainAndExit(c, 0);
+              } else {
+                await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.releaseBatchNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              }
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              await drainAndExit(containerRef, EXIT_USER_ERROR);
+            }
+          },
+        ),
+    )
+    .addCommand(
+      new Command('resume')
+        .description(
+          'Resume or reconcile a blocked release batch (fails closed on Run-owned blockers)',
+        )
+        .option('-i, --id <id>', 'Release batch ID (alias for --batch-id)')
+        .option('--batch-id <id>', 'Release batch ID')
+        .option('--confirm', 'Confirm resuming the release batch')
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(
+          async (opts: {
+            id?: string;
+            batchId?: string;
+            confirm?: boolean;
+            targetRepoRoot?: string;
+          }) => {
+            let containerRef: Container | undefined;
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+                runStartupSweeps: false,
+              });
+              containerRef = c;
+
+              const batchId = opts.id ?? opts.batchId;
+              if (!batchId) {
+                console.error('Error: --batch-id (or -i, --id) is required');
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
+              try {
+                const result = await c.resumeReleaseBatch.execute({
+                  batchId: ReleaseBatchId(batchId),
+                });
+
+                const outputLines = [
+                  `Release batch ${result.batch.id} resumed:`,
+                  `  Status:  ${result.batch.status}`,
+                  `  Actions: ${result.actions.length > 0 ? result.actions.join(', ') : 'none'}`,
+                  `  Blocker: ${result.blocker.owner !== 'none' ? `${result.blocker.owner}: ${result.blocker.reason}` : 'none'}`,
+                ];
+                await new Promise<void>((resolve, reject) =>
+                  process.stdout.write(outputLines.join('\n') + '\n', (err) =>
+                    err ? reject(err) : resolve(),
+                  ),
+                );
+
+                const isCliTestSuite =
+                  buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+                if (!isCliTestSuite) {
+                  await drainAndExit(c, 0);
+                } else {
+                  await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                  await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                  await c.releaseBatchNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                }
+              } catch (resumeErr) {
+                if (resumeErr instanceof RunOwnedBlockerError) {
+                  console.error(
+                    `Error: Release batch ${resumeErr.batchId}${resumeErr.issueNumber !== undefined ? ` item #${resumeErr.issueNumber}` : ''} is blocked by run ${resumeErr.runUuid} (${resumeErr.runStatus}${resumeErr.runPhase ? ` / ${resumeErr.runPhase}` : ''}).\n` +
+                      `Run recovery must be performed via Run CLI:\n` +
+                      `  runs resume --uuid ${resumeErr.runUuid}`,
+                  );
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
+                }
+                throw resumeErr;
+              }
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              await drainAndExit(containerRef, EXIT_USER_ERROR);
+            }
+          },
+        ),
+    )
+    .addCommand(
+      new Command('approve')
+        .description('Approve candidate SHA for an autonomous release batch')
+        .option('-i, --id <id>', 'Release batch ID (alias for --batch-id)')
+        .option('--batch-id <id>', 'Release batch ID')
+        .requiredOption('--candidate-sha <sha>', 'Candidate commit SHA to approve')
+        .option('--operator <name>', 'Operator identifier')
+        .option('--confirm', 'Confirm candidate approval')
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(
+          async (opts: {
+            id?: string;
+            batchId?: string;
+            candidateSha: string;
+            operator?: string;
+            confirm?: boolean;
+            targetRepoRoot?: string;
+          }) => {
+            let containerRef: Container | undefined;
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+                runStartupSweeps: false,
+              });
+              containerRef = c;
+
+              const batchId = opts.id ?? opts.batchId;
+              if (!batchId) {
+                console.error('Error: --batch-id (or -i, --id) is required');
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
               const operator =
                 opts.operator ?? process.env.AI_SDLC_OPERATOR ?? os.userInfo().username;
               const batch = await c.approveReleaseBatchCandidate.execute({
-                batchId: ReleaseBatchId(opts.batchId),
+                batchId: ReleaseBatchId(batchId),
                 candidateSha: opts.candidateSha,
                 operator,
               });
@@ -2506,6 +2681,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               } else {
                 await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
                 await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.releaseBatchNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
               }
             } catch (err) {
               console.error(err instanceof Error ? err.message : String(err));
@@ -2517,20 +2693,24 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     .addCommand(
       new Command('reject')
         .description('Reject candidate SHA for an autonomous release batch')
-        .requiredOption('--batch-id <id>', 'Release batch ID')
+        .option('-i, --id <id>', 'Release batch ID (alias for --batch-id)')
+        .option('--batch-id <id>', 'Release batch ID')
         .requiredOption('--candidate-sha <sha>', 'Candidate commit SHA to reject')
         .option('--reason <reason>', 'Rejection reason')
         .option('--operator <name>', 'Operator identifier')
+        .option('--confirm', 'Confirm candidate rejection')
         .option(
           '--target-repo-root <path>',
           'Target repository root for runs DB and worktrees (default: orchestrator repo)',
         )
         .action(
           async (opts: {
-            batchId: string;
+            id?: string;
+            batchId?: string;
             candidateSha: string;
             reason?: string;
             operator?: string;
+            confirm?: boolean;
             targetRepoRoot?: string;
           }) => {
             let containerRef: Container | undefined;
@@ -2545,10 +2725,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               });
               containerRef = c;
 
+              const batchId = opts.id ?? opts.batchId;
+              if (!batchId) {
+                console.error('Error: --batch-id (or -i, --id) is required');
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
               const operator =
                 opts.operator ?? process.env.AI_SDLC_OPERATOR ?? os.userInfo().username;
               const batch = await c.rejectReleaseBatchCandidate.execute({
-                batchId: ReleaseBatchId(opts.batchId),
+                batchId: ReleaseBatchId(batchId),
                 candidateSha: opts.candidateSha,
                 ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
                 operator,
@@ -2572,6 +2759,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               } else {
                 await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
                 await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.releaseBatchNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
               }
             } catch (err) {
               console.error(err instanceof Error ? err.message : String(err));
@@ -2582,196 +2770,250 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     )
     .addCommand(
       new Command('remediate')
+        .alias('add-issues')
         .description('Append remediation issues to a failed release batch')
-        .requiredOption('--batch-id <id>', 'Release batch ID')
+        .option('-i, --id <id>', 'Release batch ID (alias for --batch-id)')
+        .option('--batch-id <id>', 'Release batch ID')
         .requiredOption(
           '--issues <numbers>',
           'Comma-separated ordered GitHub issue numbers to append (e.g. 104,105)',
         )
+        .option('--confirm', 'Confirm appending remediation issues')
         .option(
           '--target-repo-root <path>',
           'Target repository root for runs DB and worktrees (default: orchestrator repo)',
         )
-        .action(async (opts: { batchId: string; issues: string; targetRepoRoot?: string }) => {
-          let containerRef: Container | undefined;
-          try {
-            const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
-              console.error(`Error: ${msg}`);
-              process.exit(EXIT_USER_ERROR);
-            });
-            const { c } = composeWithTarget(targetRepoRoot, {
-              ...(buildOpts !== undefined ? { buildOpts } : {}),
-              runStartupSweeps: false,
-            });
-            containerRef = c;
+        .action(
+          async (opts: {
+            id?: string;
+            batchId?: string;
+            issues: string;
+            confirm?: boolean;
+            targetRepoRoot?: string;
+          }) => {
+            let containerRef: Container | undefined;
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+                runStartupSweeps: false,
+              });
+              containerRef = c;
 
-            const rawIssues = opts.issues
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean);
-            if (rawIssues.length === 0) {
-              console.error(
-                'Error: --issues must specify at least one positive integer issue number',
+              const batchId = opts.id ?? opts.batchId;
+              if (!batchId) {
+                console.error('Error: --batch-id (or -i, --id) is required');
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
+              const rawIssues = opts.issues
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+              if (rawIssues.length === 0) {
+                console.error(
+                  'Error: --issues must specify at least one positive integer issue number',
+                );
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
+              const issueNumbers: number[] = [];
+              for (const raw of rawIssues) {
+                if (!/^\d+$/.test(raw)) {
+                  console.error(`Error: invalid issue number "${raw}": must be a positive integer`);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
+                }
+                const n = parseInt(raw, 10);
+                if (n < 1) {
+                  console.error(`Error: invalid issue number "${raw}": must be >= 1`);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
+                }
+                issueNumbers.push(n);
+              }
+
+              const batch = await c.appendRemediationIssues.execute({
+                batchId: ReleaseBatchId(batchId),
+                issueNumbers,
+              });
+
+              const outputLines = [
+                `Remediation issues appended to release batch ${batch.id}:`,
+                `  Status:     ${batch.status}`,
+                `  Items (${batch.items.length}):  ${batch.items.map((i: { issueNumber: number }) => `#${i.issueNumber}`).join(', ')}`,
+              ];
+              await new Promise<void>((resolve, reject) =>
+                process.stdout.write(outputLines.join('\n') + '\n', (err) =>
+                  err ? reject(err) : resolve(),
+                ),
               );
-              await drainAndExit(c, EXIT_USER_ERROR);
-              return;
-            }
 
-            const issueNumbers: number[] = [];
-            for (const raw of rawIssues) {
-              if (!/^\d+$/.test(raw)) {
-                console.error(`Error: invalid issue number "${raw}": must be a positive integer`);
-                await drainAndExit(c, EXIT_USER_ERROR);
-                return;
+              const isCliTestSuite =
+                buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+              if (!isCliTestSuite) {
+                await drainAndExit(c, 0);
+              } else {
+                await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.releaseBatchNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
               }
-              const n = parseInt(raw, 10);
-              if (n < 1) {
-                console.error(`Error: invalid issue number "${raw}": must be >= 1`);
-                await drainAndExit(c, EXIT_USER_ERROR);
-                return;
-              }
-              issueNumbers.push(n);
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              await drainAndExit(containerRef, EXIT_USER_ERROR);
             }
-
-            const batch = await c.appendRemediationIssues.execute({
-              batchId: ReleaseBatchId(opts.batchId),
-              issueNumbers,
-            });
-
-            const outputLines = [
-              `Remediation issues appended to release batch ${batch.id}:`,
-              `  Status:     ${batch.status}`,
-              `  Items (${batch.items.length}):  ${batch.items.map((i: { issueNumber: number }) => `#${i.issueNumber}`).join(', ')}`,
-            ];
-            await new Promise<void>((resolve, reject) =>
-              process.stdout.write(outputLines.join('\n') + '\n', (err) =>
-                err ? reject(err) : resolve(),
-              ),
-            );
-
-            const isCliTestSuite =
-              buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
-            if (!isCliTestSuite) {
-              await drainAndExit(c, 0);
-            } else {
-              await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
-              await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
-            }
-          } catch (err) {
-            console.error(err instanceof Error ? err.message : String(err));
-            await drainAndExit(containerRef, EXIT_USER_ERROR);
-          }
-        }),
+          },
+        ),
     )
     .addCommand(
       new Command('promote')
         .description('Promote approved release batch to source branch via GitHub PR')
-        .requiredOption('--batch-id <id>', 'Release batch ID')
+        .option('-i, --id <id>', 'Release batch ID (alias for --batch-id)')
+        .option('--batch-id <id>', 'Release batch ID')
+        .option('--confirm', 'Confirm release batch promotion')
         .option('--no-auto-merge', 'Do not request auto-merge on promotion PR')
         .option(
           '--target-repo-root <path>',
           'Target repository root for runs DB and worktrees (default: orchestrator repo)',
         )
-        .action(async (opts: { batchId: string; autoMerge?: boolean; targetRepoRoot?: string }) => {
-          let containerRef: Container | undefined;
-          try {
-            const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
-              console.error(`Error: ${msg}`);
-              process.exit(EXIT_USER_ERROR);
-            });
-            const { c } = composeWithTarget(targetRepoRoot, {
-              ...(buildOpts !== undefined ? { buildOpts } : {}),
-              runStartupSweeps: false,
-            });
-            containerRef = c;
+        .action(
+          async (opts: {
+            id?: string;
+            batchId?: string;
+            confirm?: boolean;
+            autoMerge?: boolean;
+            targetRepoRoot?: string;
+          }) => {
+            let containerRef: Container | undefined;
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+                runStartupSweeps: false,
+              });
+              containerRef = c;
 
-            const autoMerge = opts.autoMerge !== false;
-            const result = await c.promoteReleaseBatch.execute({
-              batchId: ReleaseBatchId(opts.batchId),
-              autoMerge,
-            });
+              const batchId = opts.id ?? opts.batchId;
+              if (!batchId) {
+                console.error('Error: --batch-id (or -i, --id) is required');
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
 
-            const outputLines = [
-              `Release batch ${result.batch.id} promotion initiated:`,
-              `  Status:               ${result.batch.status}`,
-              `  Promotion PR:         #${result.prNumber}`,
-              `  Approved Candidate:   ${result.batch.approvedCandidateSha ?? 'none'}`,
-              `  Auto-merge Requested: ${autoMerge ? 'yes' : 'no'}`,
-            ];
-            await new Promise<void>((resolve, reject) =>
-              process.stdout.write(outputLines.join('\n') + '\n', (err) =>
-                err ? reject(err) : resolve(),
-              ),
-            );
+              const autoMerge = opts.autoMerge !== false;
+              const result = await c.promoteReleaseBatch.execute({
+                batchId: ReleaseBatchId(batchId),
+                autoMerge,
+              });
 
-            const isCliTestSuite =
-              buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
-            if (!isCliTestSuite) {
-              await drainAndExit(c, 0);
-            } else {
-              await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
-              await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              const outputLines = [
+                `Release batch ${result.batch.id} promotion initiated:`,
+                `  Status:               ${result.batch.status}`,
+                `  Promotion PR:         #${result.prNumber}`,
+                `  Approved Candidate:   ${result.batch.approvedCandidateSha ?? 'none'}`,
+                `  Auto-merge Requested: ${autoMerge ? 'yes' : 'no'}`,
+              ];
+              await new Promise<void>((resolve, reject) =>
+                process.stdout.write(outputLines.join('\n') + '\n', (err) =>
+                  err ? reject(err) : resolve(),
+                ),
+              );
+
+              const isCliTestSuite =
+                buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+              if (!isCliTestSuite) {
+                await drainAndExit(c, 0);
+              } else {
+                await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.releaseBatchNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              }
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              await drainAndExit(containerRef, EXIT_USER_ERROR);
             }
-          } catch (err) {
-            console.error(err instanceof Error ? err.message : String(err));
-            await drainAndExit(containerRef, EXIT_USER_ERROR);
-          }
-        }),
+          },
+        ),
     )
     .addCommand(
       new Command('integrate-source')
         .description('Integrate source branch drift into release branch for blocked release batch')
-        .requiredOption('--batch-id <id>', 'Release batch ID')
+        .option('-i, --id <id>', 'Release batch ID (alias for --batch-id)')
+        .option('--batch-id <id>', 'Release batch ID')
+        .option('--confirm', 'Confirm source branch integration')
         .option(
           '--target-repo-root <path>',
           'Target repository root for runs DB and worktrees (default: orchestrator repo)',
         )
-        .action(async (opts: { batchId: string; targetRepoRoot?: string }) => {
-          let containerRef: Container | undefined;
-          try {
-            const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
-              console.error(`Error: ${msg}`);
-              process.exit(EXIT_USER_ERROR);
-            });
-            const { c } = composeWithTarget(targetRepoRoot, {
-              ...(buildOpts !== undefined ? { buildOpts } : {}),
-              runStartupSweeps: false,
-            });
-            containerRef = c;
+        .action(
+          async (opts: {
+            id?: string;
+            batchId?: string;
+            confirm?: boolean;
+            targetRepoRoot?: string;
+          }) => {
+            let containerRef: Container | undefined;
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+                runStartupSweeps: false,
+              });
+              containerRef = c;
 
-            const result = await c.releaseBatchCoordinator.integrateSourceBranch(
-              ReleaseBatchId(opts.batchId),
-            );
+              const batchId = opts.id ?? opts.batchId;
+              if (!batchId) {
+                console.error('Error: --batch-id (or -i, --id) is required');
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
 
-            if (!result.success) {
-              console.error(`Error: failed to integrate source branch: ${result.error}`);
-              await drainAndExit(c, EXIT_USER_ERROR);
-              return;
+              const result = await c.releaseBatchCoordinator.integrateSourceBranch(
+                ReleaseBatchId(batchId),
+              );
+
+              if (!result.success) {
+                console.error(`Error: failed to integrate source branch: ${result.error}`);
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
+              const outputLines = [
+                `Source branch integrated into release batch ${batchId}:`,
+                `  New Release Head: ${result.newReleaseSha ?? 'up-to-date'}`,
+              ];
+              await new Promise<void>((resolve, reject) =>
+                process.stdout.write(outputLines.join('\n') + '\n', (err) =>
+                  err ? reject(err) : resolve(),
+                ),
+              );
+
+              const isCliTestSuite =
+                buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+              if (!isCliTestSuite) {
+                await drainAndExit(c, 0);
+              } else {
+                await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.releaseBatchNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              }
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              await drainAndExit(containerRef, EXIT_USER_ERROR);
             }
-
-            const outputLines = [
-              `Source branch integrated into release batch ${opts.batchId}:`,
-              `  New Release Head: ${result.newReleaseSha ?? 'up-to-date'}`,
-            ];
-            await new Promise<void>((resolve, reject) =>
-              process.stdout.write(outputLines.join('\n') + '\n', (err) =>
-                err ? reject(err) : resolve(),
-              ),
-            );
-
-            const isCliTestSuite =
-              buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
-            if (!isCliTestSuite) {
-              await drainAndExit(c, 0);
-            } else {
-              await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
-              await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
-            }
-          } catch (err) {
-            console.error(err instanceof Error ? err.message : String(err));
-            await drainAndExit(containerRef, EXIT_USER_ERROR);
-          }
-        }),
+          },
+        ),
     );
 
   registerRepoCommand(program, (targetRepoRoot?: string) => {

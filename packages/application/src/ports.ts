@@ -343,3 +343,13 @@ export {
   DEFAULT_NOTIFICATION_TIMEOUT_MS,
   DEFAULT_DRAIN_TIMEOUT_MS,
 } from './ports/run-notification-port.js';
+export type {
+  ReleaseBatchNotificationPort,
+  ReleaseBatchNotification,
+  ReleaseBatchNotificationType,
+} from './ports/release-batch-notification-port.js';
+export {
+  safeDispatchReleaseBatchNotification,
+  DEFAULT_RELEASE_BATCH_NOTIFICATION_TIMEOUT_MS,
+  DEFAULT_RELEASE_BATCH_DRAIN_TIMEOUT_MS,
+} from './ports/release-batch-notification-port.js';
