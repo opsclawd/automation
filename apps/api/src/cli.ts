@@ -424,6 +424,7 @@ export interface RunCliOptions {
   repositoryId?: string;
   executionPolicy?: string;
   strict?: boolean;
+  allowProtectedPath?: string[];
 }
 
 export function resolveCliRepoId(
@@ -722,6 +723,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       '--target-repo-root <path>',
       'Target repository root for worktrees and DB (default: orchestrator repo)',
     )
+    .option(
+      '--allow-protected-path <path>',
+      'Allow modifying protected path in create-pr guard (repeatable)',
+      (val: string, prev: string[] = []) => [...prev, val],
+    )
     .action(async (opts: RunCliOptions & { verbose?: boolean }) => {
       let containerRef: Container | undefined;
       try {
@@ -739,6 +745,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             ...(opts.baseBranch !== undefined ? { baseBranch: opts.baseBranch } : {}),
             ...(opts.model !== undefined ? { model: opts.model } : {}),
             ...(opts.agentCli !== undefined ? { agentCli: opts.agentCli } : {}),
+            ...(opts.allowProtectedPath !== undefined
+              ? { allowProtectedPaths: opts.allowProtectedPath }
+              : {}),
           },
         });
         containerRef = c;
@@ -1883,6 +1892,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           '--target-repo-root <path>',
           'Target repository root for runs DB and worktrees (default: orchestrator repo)',
         )
+        .option(
+          '--allow-protected-path <path>',
+          'Allow modifying protected path in create-pr guard (repeatable)',
+          (val: string, prev: string[] = []) => [...prev, val],
+        )
         .action(
           async (opts: {
             uuid: string;
@@ -1892,6 +1906,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             targetRepoRoot?: string;
             repositoryId?: string;
             disposition?: string;
+            allowProtectedPath?: string[];
           }) => {
             const isCliTestSuite =
               buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
@@ -1906,6 +1921,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               });
               const { c } = composeWithTarget(targetRepoRoot, {
                 ...(buildOpts !== undefined ? { buildOpts } : {}),
+                composeOverrides: {
+                  ...(opts.allowProtectedPath !== undefined
+                    ? { allowProtectedPaths: opts.allowProtectedPath }
+                    : {}),
+                },
               });
               containerRef = c;
 
@@ -2149,6 +2169,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   skip: [],
                   presentArtifacts: [],
                   resumeDisposition: effectiveDisposition,
+                  ...(opts.allowProtectedPath !== undefined
+                    ? { allowProtectedPaths: opts.allowProtectedPath }
+                    : {}),
                 });
 
                 process.stdout.write(

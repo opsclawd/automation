@@ -12,7 +12,7 @@ import {
   isAdditiveOrchestratorConfigChange,
 } from '../../scratch-file-remediation.js';
 import { recordValidationHeadSha } from '../validation-headsha.js';
-import { RunId } from '@ai-sdlc/domain';
+import { RunId, normalizeTaskPath } from '@ai-sdlc/domain';
 import type { RunValidation } from '../../run-validation.js';
 import type { MergeMethod } from '../../ports/github-port.js';
 
@@ -74,11 +74,21 @@ export class CreatePrHandler implements PhaseHandler {
       ctx.executionPolicy === 'legacy';
 
     if (isLeanPolicy && dirtyPaths.length > 0) {
+      const allowedSet = new Set((ctx.allowProtectedPaths ?? []).map(normalizeTaskPath));
       const protectedPaths = dirtyPaths.filter((p) =>
         isProtectedFilePath(p, ctx.governanceProtectedPaths),
       );
       const unapprovedProtected: string[] = [];
       for (const p of protectedPaths) {
+        if (allowedSet.has(normalizeTaskPath(p))) {
+          emit(
+            'create_pr.protected_file_permitted',
+            'info',
+            `permitting explicitly allowed protected path ${p}`,
+            { path: p },
+          );
+          continue;
+        }
         if (p === '.ai-orchestrator.json') {
           const [headContent, worktreeContent] = await Promise.all([
             ctx.git.fileContent(ctx.cwd, 'HEAD', p).catch(() => undefined),
@@ -393,9 +403,19 @@ export class CreatePrHandler implements PhaseHandler {
     if (typeof ctx.git.changedFiles === 'function') {
       try {
         const changedInBranch = await ctx.git.changedFiles(ctx.cwd, baseBranch);
+        const allowedSet = new Set((ctx.allowProtectedPaths ?? []).map(normalizeTaskPath));
         const unapprovedCommittedProtected: string[] = [];
         for (const p of changedInBranch) {
           if (isProtectedFilePath(p, ctx.governanceProtectedPaths)) {
+            if (allowedSet.has(normalizeTaskPath(p))) {
+              emit(
+                'create_pr.protected_file_permitted',
+                'info',
+                `permitting explicitly allowed protected path committed in branch: ${p}`,
+                { path: p },
+              );
+              continue;
+            }
             if (p === '.ai-orchestrator.json') {
               const [baseContent, headContent] = await Promise.all([
                 ctx.git.fileContent(ctx.cwd, baseBranch, p).catch(() => undefined),

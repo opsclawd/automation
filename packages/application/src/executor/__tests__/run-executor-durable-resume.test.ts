@@ -1753,4 +1753,69 @@ describe('RunExecutor durable resume', () => {
     expect(lifecycle.executeCalls).toHaveLength(0);
     expect(implementSpy).not.toHaveBeenCalled();
   });
+
+  it('preserve_working_tree permits protected files when listed in allowProtectedPaths', async () => {
+    const run = makeRun({
+      executionPolicy: 'standard',
+      completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review'],
+    });
+
+    const stepRepo = new FakeStepRepository();
+    stepRepo.upsert({
+      id: 'step-1',
+      runId: run.uuid,
+      phaseId: 'implement',
+      index: 1,
+      title: 'Implement issue',
+      status: 'failed',
+      initialPreStepHead: 'baseline-sha-1111',
+      revertCounts: {},
+    });
+
+    const artifacts = new FakeArtifactStore();
+    await writeCompletedPhaseArtifacts(artifacts, run.uuid);
+
+    const git = new FakeGitPort();
+    git.statusByCwd.set('/tmp/worktree', ' M .gitignore\n M src/helper.ts\n');
+
+    const lifecycle = new FakeWorktreeLifecycle();
+    const eventRepo = new FakeEventRepository();
+    let capturedApprovedPaths: string[] | undefined;
+    const implementSpy = vi.fn().mockImplementation((ctx: PhaseHandlerContext) => {
+      capturedApprovedPaths = ctx.approvedInboundPaths;
+    });
+
+    const registry = new PhaseHandlerRegistry();
+    registerPassThroughHandlers(registry, implementSpy);
+
+    const deps = makeDeps({
+      registry,
+      stepRepository: stepRepo,
+      eventRepository: eventRepo,
+      worktreeLifecycle: lifecycle,
+      contextFactory: (_r) =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          cwd: '/tmp/worktree',
+          artifacts,
+          git,
+          events: { publish: vi.fn(), subscribe: vi.fn().mockReturnValue(() => {}) },
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const executor = new RunExecutor(deps);
+    const result = await executor.execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+      resumeDisposition: 'preserve_working_tree',
+      allowProtectedPaths: ['.gitignore'],
+    });
+    expect(result.run.status).toBe('passed');
+    expect(lifecycle.executeCalls).toHaveLength(0);
+    expect(implementSpy).toHaveBeenCalled();
+    expect(capturedApprovedPaths).toEqual(['.gitignore', 'src/helper.ts']);
+  });
 });

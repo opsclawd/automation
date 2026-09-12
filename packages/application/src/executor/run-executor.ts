@@ -81,6 +81,7 @@ export interface ExecuteRunInput {
   presentArtifacts: string[];
   resumeDisposition?: ResumeDisposition;
   reviewConvergenceMaxIterations?: number;
+  allowProtectedPaths?: string[];
 }
 
 export interface PhaseRecord {
@@ -103,6 +104,7 @@ interface ExecutionState {
   storedArtifacts: Set<string> | undefined;
   phases: PhaseRecord[];
   approvedInboundPaths: string[] | undefined;
+  allowProtectedPaths: string[] | undefined;
   now: () => Date;
 }
 
@@ -145,7 +147,7 @@ export class RunExecutor {
 
       if (firstIncompletePhase) {
         const firstIncompleteDef = PHASE_DEFINITIONS[firstIncompletePhase]!;
-        const ctxForResume = this.deps.contextFactory(run);
+        const ctxForResume = this.buildContext(run, undefined, input.allowProtectedPaths);
 
         const isImplementPhase = firstIncompletePhase === 'implement';
         // Lean's review-convergence loop (validate -> fix-validate ->
@@ -433,8 +435,14 @@ export class RunExecutor {
                 .map(normalizeTaskPath)
                 .filter(Boolean);
 
+              const allowedSet = new Set(
+                (input.allowProtectedPaths ?? ctxForResume.allowProtectedPaths ?? []).map(
+                  normalizeTaskPath,
+                ),
+              );
+
               const unapprovedPaths = dirtySourcePaths.filter(
-                (p) => isProtectedFilePath(p) || isProtectedTaskPath(p),
+                (p) => !allowedSet.has(p) && (isProtectedFilePath(p) || isProtectedTaskPath(p)),
               );
 
               if (unapprovedPaths.length > 0) {
@@ -830,7 +838,7 @@ export class RunExecutor {
       }
     }
 
-    const ctx = this.buildContext(run, approvedInboundPaths);
+    const ctx = this.buildContext(run, approvedInboundPaths, input.allowProtectedPaths);
     // When resuming, the worktree may have been cleaned or artifacts lost
     // (e.g. CancelRun runs git clean). Re-materialize durable artifacts
     // into the worktree before starting the phase loop.
@@ -874,6 +882,7 @@ export class RunExecutor {
       storedArtifacts,
       phases,
       approvedInboundPaths,
+      allowProtectedPaths: input.allowProtectedPaths,
       now,
     };
 
@@ -999,7 +1008,11 @@ export class RunExecutor {
     }
 
     // 4. validate (deterministic validation)
-    const leanCtx = this.buildContext(state.currentRun, state.approvedInboundPaths);
+    const leanCtx = this.buildContext(
+      state.currentRun,
+      state.approvedInboundPaths,
+      state.allowProtectedPaths,
+    );
     const initialValidationFreshness = await verifyValidationFreshness(leanCtx);
     const shouldRunInitialValidation =
       !state.completedSet.has('validate') || !initialValidationFreshness.fresh;
@@ -1059,7 +1072,11 @@ export class RunExecutor {
     if (!prAlreadyCompleted) {
       const specReviewName = PhaseName('spec-review');
       const qualityReviewName = PhaseName('quality-review');
-      const ctx = this.buildContext(state.currentRun, state.approvedInboundPaths);
+      const ctx = this.buildContext(
+        state.currentRun,
+        state.approvedInboundPaths,
+        state.allowProtectedPaths,
+      );
       const maxReviewFixIterations =
         input.reviewConvergenceMaxIterations ?? this.deps.reviewConvergenceMaxIterations ?? 4;
 
@@ -1523,7 +1540,11 @@ export class RunExecutor {
       return { status: 'terminal', terminalResult: { run: cancelled, phases } };
     }
 
-    const ctx = this.buildContext(state.currentRun, state.approvedInboundPaths);
+    const ctx = this.buildContext(
+      state.currentRun,
+      state.approvedInboundPaths,
+      state.allowProtectedPaths,
+    );
     let result: PhaseResult;
     try {
       result = await handler.run(ctx);
@@ -1883,16 +1904,27 @@ export class RunExecutor {
     return { run, phases };
   }
 
-  private buildContext(run: Run, approvedInboundPaths?: string[]): PhaseHandlerContext {
+  private buildContext(
+    run: Run,
+    approvedInboundPaths?: string[],
+    allowProtectedPaths?: string[],
+  ): PhaseHandlerContext {
     const raw = this.deps.contextFactory(run);
-    if (approvedInboundPaths !== undefined) {
-      return {
-        ...raw,
-        approvedInboundPaths,
-        inboundPreserveAllowance: approvedInboundPaths,
-      };
-    }
-    return raw;
+    const effectiveAllowProtected = allowProtectedPaths ?? raw.allowProtectedPaths;
+    return {
+      ...raw,
+      ...(approvedInboundPaths !== undefined
+        ? {
+            approvedInboundPaths,
+            inboundPreserveAllowance: approvedInboundPaths,
+          }
+        : {}),
+      ...(effectiveAllowProtected !== undefined
+        ? {
+            allowProtectedPaths: effectiveAllowProtected,
+          }
+        : {}),
+    };
   }
 
   private needsHumanReviewRun(
