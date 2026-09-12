@@ -176,10 +176,9 @@ export class FollowUpReviewHandler implements PhaseHandler {
     );
 
     const hasUnresolved = hasUnresolvedBlockingFindings(updatedLedger);
-    const effectiveVerdict =
-      parsedResult.verdict.toUpperCase() === 'APPROVE' && !hasUnresolved
-        ? 'APPROVE'
-        : 'REQUEST_CHANGES';
+    const verdictUpper = parsedResult.verdict?.toUpperCase();
+    const isApproved = (verdictUpper === 'APPROVE' || verdictUpper === 'PASS') && !hasUnresolved;
+    const effectiveVerdict = isApproved ? 'APPROVE' : 'REQUEST_CHANGES';
 
     // Update parsedResult so persisted artifact reflects the effective verdict
     parsedResult.verdict = effectiveVerdict;

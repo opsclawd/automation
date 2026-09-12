@@ -503,4 +503,58 @@ describe('FollowUpReviewHandler', () => {
     expect(promptCtx?.vars.validation_critical_files).toContain('packages/api/src/whisperx.ts');
     expect(promptCtx?.vars.validation_critical_files).toContain('pnpm test:whisperx timed out');
   });
+
+  it('handles PASS verdict alias and normalizes to APPROVE (issue #1222 audit)', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('read_issue'),
+      relativePath: 'issue.md',
+      contents: '# Issue 1106',
+    });
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(createFindingLedger([])),
+    });
+
+    agent.enqueue('follow-up-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'follow-up-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'follow-up-review-result.json',
+      contents: JSON.stringify({
+        verdict: 'PASS',
+        evaluations: [],
+        new_findings: [],
+        summary: 'All clear with PASS alias',
+      }),
+    });
+
+    const handler = new FollowUpReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+
+    const rawFollowUp = await artifacts.read('run-1', 'follow-up-review.json');
+    const parsedFollowUp = JSON.parse(rawFollowUp);
+    expect(parsedFollowUp.verdict).toBe('APPROVE');
+  });
 });

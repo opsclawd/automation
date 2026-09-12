@@ -505,4 +505,69 @@ describe('SpecReviewHandler', () => {
     expect(promptCtx?.vars.validation_critical_files).toContain('packages/api/src/whisperx.ts');
     expect(promptCtx?.vars.validation_critical_files).toContain('pnpm test:whisperx timed out');
   });
+
+  it('handles APPROVE verdict alias and normalizes to PASS (issue #1222 audit)', async () => {
+    const { ctx, artifacts, agent, handler, events } = setup();
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 1132\n## Acceptance Criteria\n- [ ] Must preflight capabilities',
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design 1132',
+    });
+    await recordValidationEvidence(ctx, 'validate');
+
+    agent.enqueue('spec-review', async () => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          requirements_checks: [
+            {
+              requirement_id: 'AC-1',
+              requirement: 'Must preflight capabilities',
+              result: 'PASS',
+              evidence: 'Satisfied',
+              counterexample_considered: 'Tested adversarial failure path',
+            },
+          ],
+          findings: [],
+          summary: 'All requirements pass',
+        }),
+      });
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const res = await handler.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    const specJson = await artifacts.read(ctx.runUuid, 'spec-review.json');
+    expect(JSON.parse(specJson).verdict).toBe('PASS');
+
+    expect(events.publish).toHaveBeenCalledWith(
+      'run-1132',
+      expect.objectContaining({
+        type: 'spec_review.completed',
+        metadata: expect.objectContaining({
+          verdict: 'PASS',
+        }),
+      }),
+    );
+  });
 });

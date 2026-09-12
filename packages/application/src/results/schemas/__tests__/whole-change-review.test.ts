@@ -81,6 +81,17 @@ describe('wholeChangeReviewResultSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts PASS and FAIL verdict aliases (issue #1222 audit)', () => {
+    for (const verdict of ['PASS', 'FAIL', 'pass', 'fail'] as const) {
+      const data = {
+        verdict,
+        acceptance_criteria: [],
+      };
+      const parsed = wholeChangeReviewResultSchema.safeParse(data);
+      expect(parsed.success).toBe(true);
+    }
+  });
+
   it('rejects invalid verdict values', () => {
     const data = {
       verdict: 'INVALID_VERDICT',

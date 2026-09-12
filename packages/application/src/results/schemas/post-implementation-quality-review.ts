@@ -30,7 +30,16 @@ export const postImplementationQualityReviewFindingSchema = z.object({
 });
 
 export const postImplementationQualityReviewResultSchema = z.object({
-  verdict: z.enum(['APPROVE', 'REQUEST_CHANGES', 'approve', 'request_changes']),
+  verdict: z.enum([
+    'APPROVE',
+    'REQUEST_CHANGES',
+    'approve',
+    'request_changes',
+    'PASS',
+    'FAIL',
+    'pass',
+    'fail',
+  ]),
   findings: z.array(postImplementationQualityReviewFindingSchema).optional().default([]),
   summary: z.string().optional(),
   review_md: z.string().optional(),
@@ -45,12 +54,12 @@ export type PostImplementationQualityReviewResult = z.infer<
 
 /**
  * Evaluates whether a post-implementation quality review result meets all criteria for approval:
- * 1. verdict is 'APPROVE'
+ * 1. verdict is 'APPROVE' or 'PASS'
  * 2. no blocking findings (blocking === true or severity in ['critical', 'high', 'P0', 'P1'])
  */
 export function isApprovedQualityReview(review: PostImplementationQualityReviewResult): boolean {
   const verdict = review.verdict?.toUpperCase();
-  if (verdict !== 'APPROVE') {
+  if (verdict !== 'APPROVE' && verdict !== 'PASS') {
     return false;
   }
   const hasBlockingFindings = review.findings?.some((f) => {
