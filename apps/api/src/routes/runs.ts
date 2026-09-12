@@ -245,7 +245,25 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
       filter.status = status;
     }
     let { runs, total } = await c.runtimeCatalog.listRuns(filter);
-    if (total === 0) {
+    if (repositoryId === undefined) {
+      const rootResult = c.runRepository.list(filter);
+      if (total === 0) {
+        runs = rootResult.runs;
+        total = rootResult.total;
+      } else {
+        const seenUuids = new Set(runs.map((r) => r.uuid));
+        const combined = [...runs];
+        for (const r of rootResult.runs) {
+          if (!seenUuids.has(r.uuid)) {
+            combined.push(r);
+            seenUuids.add(r.uuid);
+          }
+        }
+        combined.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+        runs = combined.slice(offset, offset + limit);
+        total = Math.max(total, seenUuids.size, rootResult.total);
+      }
+    } else if (total === 0) {
       const rootResult = c.runRepository.list(filter);
       runs = rootResult.runs;
       total = rootResult.total;

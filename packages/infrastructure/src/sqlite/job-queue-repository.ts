@@ -96,6 +96,7 @@ export class JobQueueRepository implements JobQueuePort {
   constructor(
     private readonly db: Db,
     private readonly repos: RepositoryPort,
+    private readonly repoId?: RepositoryId,
   ) {
     this.claimTx = this.db.transaction(
       (
@@ -182,6 +183,9 @@ export class JobQueueRepository implements JobQueuePort {
   }
 
   claimNext(input: ClaimNextInput): Job | undefined {
+    if (this.repoId !== undefined && input.repoId !== this.repoId) {
+      return undefined;
+    }
     return this.claimTx(input.workerId, input.repoId, input.skipJobIds, input.ttlMs);
   }
 
@@ -210,21 +214,44 @@ export class JobQueueRepository implements JobQueuePort {
   }
 
   listForRepo(repoId: RepositoryId): Job[] {
+    if (this.repoId !== undefined && repoId !== this.repoId) {
+      return [];
+    }
     const rows = this.db.prepare('SELECT * FROM jobs WHERE repo_id = ?').all(repoId) as JobRow[];
     return rows.map(toJob);
   }
 
   listForRun(runId: RunId): Job[] {
+    if (this.repoId !== undefined) {
+      const rows = this.db
+        .prepare('SELECT * FROM jobs WHERE run_id = ? AND repo_id = ?')
+        .all(runId, this.repoId) as JobRow[];
+      return rows.map(toJob);
+    }
     const rows = this.db.prepare('SELECT * FROM jobs WHERE run_id = ?').all(runId) as JobRow[];
     return rows.map(toJob);
   }
 
   findById(jobId: JobId): Job | undefined {
+    if (this.repoId !== undefined) {
+      const row = this.db
+        .prepare('SELECT * FROM jobs WHERE id = ? AND repo_id = ?')
+        .get(jobId, this.repoId) as JobRow | undefined;
+      return row ? toJob(row) : undefined;
+    }
     const row = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as JobRow | undefined;
     return row ? toJob(row) : undefined;
   }
 
   listActive(): Job[] {
+    if (this.repoId !== undefined) {
+      const rows = this.db
+        .prepare(
+          "SELECT * FROM jobs WHERE status IN ('queued', 'claimed', 'running') AND repo_id = ?",
+        )
+        .all(this.repoId) as JobRow[];
+      return rows.map(toJob);
+    }
     const rows = this.db
       .prepare("SELECT * FROM jobs WHERE status IN ('queued', 'claimed', 'running')")
       .all() as JobRow[];

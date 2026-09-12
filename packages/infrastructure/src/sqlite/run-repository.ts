@@ -53,6 +53,7 @@ export class RunRepository {
     private readonly configFingerprint: string | null = null,
     private readonly configSourcesJson: string | null = null,
     private readonly defaultExecutionPolicy: ExecutionPolicy = 'standard',
+    private readonly repoId?: RepositoryId,
   ) {}
 
   insert(run: Run, pid?: number): void {
@@ -178,6 +179,12 @@ export class RunRepository {
   }
 
   findByUuid(uuid: string): RunRecord | undefined {
+    if (this.repoId !== undefined) {
+      const row = this.db
+        .prepare('SELECT * FROM runs WHERE uuid = ? AND repo_id = ?')
+        .get(uuid, this.repoId) as RunRow | undefined;
+      return row ? toRecord(row) : undefined;
+    }
     const row = this.db.prepare('SELECT * FROM runs WHERE uuid = ?').get(uuid) as
       | RunRow
       | undefined;
@@ -185,7 +192,7 @@ export class RunRepository {
   }
 
   list(filter?: ListRunsFilter): { runs: RunRecord[]; total: number } {
-    const repoId = filter?.repositoryId ?? null;
+    const repoId = filter?.repositoryId ?? this.repoId ?? null;
     const status = filter?.status ?? null;
     const limit = filter?.limit ?? null;
     const offset = filter?.offset ?? 0;
@@ -303,6 +310,14 @@ export class RunRepository {
   }
 
   findActiveRuns(): RunRecord[] {
+    if (this.repoId !== undefined) {
+      const rows = this.db
+        .prepare(
+          `SELECT * FROM runs WHERE status NOT IN ('passed','failed','cancelled') AND repo_id = ? ORDER BY started_at`,
+        )
+        .all(this.repoId) as RunRow[];
+      return rows.map(toRecord);
+    }
     const rows = this.db
       .prepare(
         `SELECT * FROM runs WHERE status NOT IN ('passed','failed','cancelled') ORDER BY started_at`,
