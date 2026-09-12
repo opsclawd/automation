@@ -1308,17 +1308,20 @@ export function composeRoot(opts: ComposeOptions): Container {
     if (existsSync(centralDbPath)) {
       try {
         const centralDb = openDatabase(centralDbPath);
-        if (resolvedRepoFullName) {
-          existingRow = centralDb
-            .prepare(`SELECT * FROM repositories WHERE full_name = ?`)
-            .get(resolvedRepoFullName) as RepositoryRow | undefined;
+        try {
+          if (resolvedRepoFullName) {
+            existingRow = centralDb
+              .prepare(`SELECT * FROM repositories WHERE full_name = ?`)
+              .get(resolvedRepoFullName) as RepositoryRow | undefined;
+          }
+          if (!existingRow) {
+            existingRow = centralDb
+              .prepare(`SELECT * FROM repositories WHERE local_base_path = ?`)
+              .get(targetRoot) as RepositoryRow | undefined;
+          }
+        } finally {
+          centralDb.close();
         }
-        if (!existingRow) {
-          existingRow = centralDb
-            .prepare(`SELECT * FROM repositories WHERE local_base_path = ?`)
-            .get(targetRoot) as RepositoryRow | undefined;
-        }
-        centralDb.close();
       } catch {
         // Ignore central DB read error
       }
