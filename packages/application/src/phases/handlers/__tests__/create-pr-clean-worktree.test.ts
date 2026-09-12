@@ -297,6 +297,73 @@ describe('CreatePrHandler clean-worktree gate', () => {
       expect(git.pushes).toEqual([]);
       expect(github.createdPrInputs).toEqual([]);
     });
+
+    it('permits dirty protected files when explicitly listed in allowProtectedPaths', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+        allowProtectedPaths: ['.github/workflows/ci.yml'],
+      };
+      git.statusByCwd.set('/tmp/wt', ' M .github/workflows/ci.yml\n M src/app.ts\n');
+
+      const revalidateCalls: string[] = [];
+      const leanHandler = createRevalidateHandler(true, revalidateCalls);
+      const result = await leanHandler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.addCalls).toEqual([
+        { cwd: '/tmp/wt', files: ['.github/workflows/ci.yml', 'src/app.ts'] },
+      ]);
+      expect(git.commits).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+      expect(
+        events.some(
+          (e) =>
+            e.type === 'create_pr.protected_file_permitted' &&
+            (e.metadata as { path?: string })?.path === '.github/workflows/ci.yml',
+        ),
+      ).toBe(true);
+    });
+
+    it('permits allowed protected file while an un-allowed protected file in dirty files still blocks', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+        allowProtectedPaths: ['.github/workflows/ci.yml'],
+      };
+      git.statusByCwd.set('/tmp/wt', ' M .github/workflows/ci.yml\n M .gitignore\n');
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.message).toContain(
+          'PR creation blocked by unpermitted protected files in worktree: .gitignore',
+        );
+        expect(result.failure.message).not.toContain('.github/workflows/ci.yml');
+      }
+      expect(git.commits).toEqual([]);
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+    });
+
+    it('permits multiple protected files when all are listed in allowProtectedPaths', async () => {
+      ctx = {
+        ...ctx,
+        executionPolicy: 'standard',
+        allowProtectedPaths: ['.github/workflows/ci.yml', '.gitignore'],
+      };
+      git.statusByCwd.set('/tmp/wt', ' M .github/workflows/ci.yml\n M .gitignore\n');
+
+      const revalidateCalls: string[] = [];
+      const leanHandler = createRevalidateHandler(true, revalidateCalls);
+      const result = await leanHandler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.commits).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+    });
   });
 
   describe('Stage 3b: committed branch diff inspection', () => {
@@ -356,6 +423,50 @@ describe('CreatePrHandler clean-worktree gate', () => {
       expect(result.outcome).toBe('passed');
       expect(git.pushes).toHaveLength(1);
       expect(github.createdPrInputs).toHaveLength(1);
+    });
+
+    it('permits committed protected file when listed in allowProtectedPaths', async () => {
+      ctx = {
+        ...ctx,
+        allowProtectedPaths: ['.github/workflows/ci.yml'],
+      };
+      git.statusByCwd.set('/tmp/wt', '');
+      git.changedFilesResults.set('main|HEAD', ['.github/workflows/ci.yml']);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.pushes).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+      expect(
+        events.some(
+          (e) =>
+            e.type === 'create_pr.protected_file_permitted' &&
+            (e.metadata as { path?: string })?.path === '.github/workflows/ci.yml',
+        ),
+      ).toBe(true);
+    });
+
+    it('permits allowed committed protected file while un-allowed committed protected file still blocks', async () => {
+      ctx = {
+        ...ctx,
+        allowProtectedPaths: ['.github/workflows/ci.yml'],
+      };
+      git.statusByCwd.set('/tmp/wt', '');
+      git.changedFilesResults.set('main|HEAD', ['.github/workflows/ci.yml', '.gitignore']);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.message).toContain(
+          'PR creation blocked by unpermitted protected files committed in branch: .gitignore',
+        );
+        expect(result.failure.message).not.toContain('.github/workflows/ci.yml');
+      }
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
     });
   });
 });

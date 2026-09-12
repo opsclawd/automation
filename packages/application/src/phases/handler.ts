@@ -50,6 +50,7 @@ export interface PhaseHandlerContext {
   priorPhaseName?: string;
   selfVerifyCommands?: string[] | undefined;
   governanceProtectedPaths?: string[] | undefined;
+  allowProtectedPaths?: string[] | undefined;
 }
 
 export type PhaseOutcome =
@@ -110,6 +111,7 @@ export type PhaseHandlerContextFactory = (
     | 'repair'
     | 'priorPhaseName'
     | 'selfVerifyCommands'
+    | 'allowProtectedPaths'
   >,
   opts?: Partial<
     Pick<
@@ -130,6 +132,7 @@ export type PhaseHandlerContextFactory = (
       | 'repair'
       | 'priorPhaseName'
       | 'selfVerifyCommands'
+      | 'allowProtectedPaths'
     >
   >,
 ) => PhaseHandlerContext;
@@ -153,6 +156,7 @@ export function buildPhaseHandlerContext(
     | 'repair'
     | 'priorPhaseName'
     | 'selfVerifyCommands'
+    | 'allowProtectedPaths'
   >,
   opts?: Partial<
     Pick<
@@ -173,6 +177,7 @@ export function buildPhaseHandlerContext(
       | 'repair'
       | 'priorPhaseName'
       | 'selfVerifyCommands'
+      | 'allowProtectedPaths'
     >
   >,
 ): PhaseHandlerContext {

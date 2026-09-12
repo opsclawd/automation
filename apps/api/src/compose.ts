@@ -743,6 +743,7 @@ export interface ComposeOptions {
   baseBranch?: string;
   model?: string;
   agentCli?: string;
+  allowProtectedPaths?: string[];
   tee?: boolean;
   dbPath?: string;
   runsDir?: string;
@@ -2539,6 +2540,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             baseBranch: run.baseBranch ?? opts.baseBranch ?? defaultBranch,
             ...(startCommitSha ? { startCommitSha } : {}),
             ...(priorPhaseName ? { priorPhaseName } : {}),
+            ...(opts.allowProtectedPaths !== undefined
+              ? { allowProtectedPaths: opts.allowProtectedPaths }
+              : {}),
           },
         );
       };
@@ -2863,6 +2867,9 @@ export function composeRoot(opts: ComposeOptions): Container {
                 skip: [],
                 presentArtifacts: [],
                 ...(resumeDisposition !== undefined ? { resumeDisposition } : {}),
+                ...(opts.allowProtectedPaths !== undefined
+                  ? { allowProtectedPaths: opts.allowProtectedPaths }
+                  : {}),
               });
               return { outcome: runStatusToExecutionOutcome(result.run.status) };
             } finally {
