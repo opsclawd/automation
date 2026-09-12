@@ -1372,6 +1372,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     .command('serve')
     .description('Start the orchestrator HTTP API')
     .option('--port <port>', 'Port to listen on', (v) => parseInt(v, 10), 4319)
+    .option('--host <host>', 'Host/interface to bind to (default: 127.0.0.1)', '127.0.0.1')
+    .option(
+      '--allow-origin <origin>',
+      'Additional CORS origin to allow (repeatable, default: http://127.0.0.1:4310)',
+      (val: string, prev: string[] = []) => [...prev, val],
+    )
     .option('--script <path>', 'Path to Bash script to wrap')
     .option('--repo-root <path>', 'Repository root (default: auto-detect)')
     .option(
@@ -1386,6 +1392,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     .action(
       async (opts: {
         port: number;
+        host: string;
+        allowOrigin?: string[];
         script?: string;
         repoRoot?: string;
         dbPath?: string;
@@ -1503,9 +1511,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           if (isShuttingDown) return;
 
           const { startServer } = await import('./server.js');
-          server = await startServer({ container: c, port: opts.port });
+          const corsOrigins = ['http://127.0.0.1:4310', ...(opts.allowOrigin ?? [])];
+          server = await startServer({
+            container: c,
+            port: opts.port,
+            host: opts.host,
+            corsOrigins,
+          });
           const addr = server.address as { port: number };
-          console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
+          console.error(`orchestrator API listening on http://${opts.host}:${addr.port}`);
           testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
 
           if (isShuttingDown) return;
