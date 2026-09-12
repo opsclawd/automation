@@ -825,21 +825,26 @@ class SingleRepoAdapter implements RepositoryPort {
   constructor(private readonly repo: Repository) {}
 
   findById(id: RepositoryId): Repository | undefined {
-    return this.repo.id === id ? this.repo : undefined;
+    if (!this.repo.fullName) return undefined;
+    return this.repo.id === id || (this.repo.fullName as unknown as RepositoryId) === id
+      ? this.repo
+      : undefined;
   }
 
   findByFullName(fullName: string): Repository | undefined {
+    if (!this.repo.fullName) return undefined;
     return this.repo.fullName === fullName ? this.repo : undefined;
   }
 
   findByLocalPath(localBasePath: string): Repository | undefined {
+    if (!this.repo.fullName) return undefined;
     return this.repo.localBasePath === localBasePath ? this.repo : undefined;
   }
   listAll(): Repository[] {
-    return [this.repo];
+    return this.repo.fullName ? [this.repo] : [];
   }
   listEnabled(): Repository[] {
-    return this.repo.enabled ? [this.repo] : [];
+    return this.repo.fullName && this.repo.enabled ? [this.repo] : [];
   }
 }
 
@@ -1217,8 +1222,11 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const resolver = opts.metadataResolver ?? new RepositoryMetadataResolver();
   let metadata: import('@ai-sdlc/infrastructure').RepositoryMetadata;
+  let probeSucceeded = false;
+  let probeError: string | null = null;
   try {
     metadata = resolver.resolve(targetRoot);
+    probeSucceeded = true;
   } catch (err) {
     // An explicit target is authoritative: never mask its resolution failure
     // with ambient GITHUB_REPOSITORY or placeholder metadata.
@@ -1229,6 +1237,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         { cause: err },
       );
     }
+    probeError = err instanceof Error ? err.message : String(err);
     // Legacy fallback: if resolution fails, try to use GITHUB_REPOSITORY
     // or placeholder values for tests that use non-git tmp dirs.
     const nameWithOwner = opts.repoFullName ?? process.env.GITHUB_REPOSITORY ?? 'unknown/unknown';
@@ -1243,46 +1252,6 @@ export function composeRoot(opts: ComposeOptions): Container {
   const resolvedRepoFullName =
     metadata.nameWithOwner !== 'unknown/unknown' ? metadata.nameWithOwner : undefined;
   const resolvedRemoteUrl = metadata.remoteUrl;
-
-  const repoId = resolvedRepoFullName ? RepositoryId(resolvedRepoFullName) : ('' as RepositoryId);
-
-  const singleRepo: RepositoryPort = resolvedRepoFullName
-    ? new SingleRepoAdapter({
-        id: repoId,
-        owner: resolvedRepoFullName.split('/')[0]!,
-        name: resolvedRepoFullName.split('/')[1]!,
-        fullName: resolvedRepoFullName,
-        defaultBranch: resolvedDefaultBranch,
-        remoteUrl: resolvedRemoteUrl,
-        localBasePath: targetRoot,
-        enabled: true,
-        maxConcurrentRuns: 1 as const,
-        healthStatus: 'unknown',
-        healthError: null,
-        lastHealthCheckAt: null,
-        configMetadata: '{}',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      })
-    : new SingleRepoAdapter({
-        id: repoId,
-        owner: '',
-        name: '',
-        fullName: '',
-        defaultBranch: '',
-        remoteUrl: '',
-        localBasePath: '',
-        enabled: false,
-        maxConcurrentRuns: 1 as const,
-        healthStatus: 'unknown',
-        healthError: null,
-        lastHealthCheckAt: null,
-        configMetadata: '{}',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-  let artifactStoreForRun: (runUuid: string, worktreeRoot: string) => ArtifactStore;
 
   interface RepositoryRow {
     id: string;
@@ -1321,6 +1290,134 @@ export function composeRoot(opts: ComposeOptions): Container {
       updatedAt: new Date(row.updated_at),
     };
   }
+
+  // Probe or read existing registry row for the target repository
+  let existingRow: RepositoryRow | undefined;
+  if (resolvedRepoFullName) {
+    existingRow = db
+      .prepare(`SELECT * FROM repositories WHERE full_name = ?`)
+      .get(resolvedRepoFullName) as RepositoryRow | undefined;
+  }
+  if (!existingRow) {
+    existingRow = db
+      .prepare(`SELECT * FROM repositories WHERE local_base_path = ?`)
+      .get(targetRoot) as RepositoryRow | undefined;
+  }
+  if (!existingRow && effectiveRepoRoot !== targetRoot) {
+    const centralDbPath = join(effectiveRepoRoot, '.ai-runs', 'orchestrator.sqlite');
+    if (existsSync(centralDbPath)) {
+      try {
+        const centralDb = openDatabase(centralDbPath);
+        try {
+          if (resolvedRepoFullName) {
+            existingRow = centralDb
+              .prepare(`SELECT * FROM repositories WHERE full_name = ?`)
+              .get(resolvedRepoFullName) as RepositoryRow | undefined;
+          }
+          if (!existingRow) {
+            existingRow = centralDb
+              .prepare(`SELECT * FROM repositories WHERE local_base_path = ?`)
+              .get(targetRoot) as RepositoryRow | undefined;
+          }
+        } finally {
+          centralDb.close();
+        }
+      } catch {
+        // Ignore central DB read error
+      }
+    }
+  }
+
+  let singleRepoDescriptor: import('@ai-sdlc/domain').Repository;
+  if (existingRow) {
+    const mapped = mapRowToRepo(existingRow);
+    singleRepoDescriptor = {
+      ...mapped,
+      localBasePath: targetRoot,
+      ...(probeSucceeded
+        ? {
+            healthStatus: 'healthy',
+            healthError: null,
+            lastHealthCheckAt: new Date(),
+            defaultBranch: resolvedDefaultBranch,
+            remoteUrl: resolvedRemoteUrl,
+          }
+        : {}),
+    };
+    try {
+      db.prepare(
+        `INSERT OR IGNORE INTO repositories (
+          id, full_name, owner, name, local_base_path, default_branch, remote_url,
+          enabled, max_concurrent_runs, config_metadata, health_status, health_error,
+          last_health_check_at, created_at, updated_at
+        ) VALUES (
+          @id, @full_name, @owner, @name, @local_base_path, @default_branch, @remote_url,
+          @enabled, @max_concurrent_runs, @config_metadata, @health_status, @health_error,
+          @last_health_check_at, @created_at, @updated_at
+        )`,
+      ).run({
+        id: singleRepoDescriptor.id,
+        full_name: singleRepoDescriptor.fullName,
+        owner: singleRepoDescriptor.owner,
+        name: singleRepoDescriptor.name,
+        local_base_path: singleRepoDescriptor.localBasePath,
+        default_branch: singleRepoDescriptor.defaultBranch,
+        remote_url: singleRepoDescriptor.remoteUrl,
+        enabled: singleRepoDescriptor.enabled ? 1 : 0,
+        max_concurrent_runs: 1,
+        config_metadata: singleRepoDescriptor.configMetadata,
+        health_status: singleRepoDescriptor.healthStatus,
+        health_error: singleRepoDescriptor.healthError,
+        last_health_check_at: singleRepoDescriptor.lastHealthCheckAt?.toISOString() ?? null,
+        created_at: singleRepoDescriptor.createdAt.toISOString(),
+        updated_at: singleRepoDescriptor.updatedAt.toISOString(),
+      });
+    } catch {
+      // Best effort sync
+    }
+  } else if (resolvedRepoFullName) {
+    const repoId = RepositoryId(resolvedRepoFullName);
+    singleRepoDescriptor = {
+      id: repoId,
+      owner: resolvedRepoFullName.split('/')[0]!,
+      name: resolvedRepoFullName.split('/')[1]!,
+      fullName: resolvedRepoFullName,
+      defaultBranch: resolvedDefaultBranch,
+      remoteUrl: resolvedRemoteUrl,
+      localBasePath: targetRoot,
+      enabled: true,
+      maxConcurrentRuns: 1 as const,
+      healthStatus: probeSucceeded ? 'healthy' : 'unknown',
+      healthError: probeSucceeded ? null : probeError,
+      lastHealthCheckAt: probeSucceeded ? new Date() : null,
+      configMetadata: '{}',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  } else {
+    singleRepoDescriptor = {
+      id: '' as RepositoryId,
+      owner: '',
+      name: '',
+      fullName: '',
+      defaultBranch: '',
+      remoteUrl: '',
+      localBasePath: '',
+      enabled: false,
+      maxConcurrentRuns: 1 as const,
+      healthStatus: 'unknown',
+      healthError: null,
+      lastHealthCheckAt: null,
+      configMetadata: '{}',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  }
+
+  const singleRepo: RepositoryPort = new SingleRepoAdapter(singleRepoDescriptor);
+  const repoId = singleRepoDescriptor.id;
+
+  let artifactStoreForRun: (runUuid: string, worktreeRoot: string) => ArtifactStore;
 
   const registryReadRepo: RepositoryPort = {
     findById: (id) => {
