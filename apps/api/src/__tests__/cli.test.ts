@@ -40,11 +40,11 @@ import { composeWithTarget } from '../cli/compose-with-target.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const apiRoot = join(__dirname, '..', '..');
 const require = createRequire(join(apiRoot, 'package.json'));
-const tsxEsmPath = require.resolve('tsx/esm');
+const tsxPath = require.resolve('tsx');
 const cliPath = join(apiRoot, 'src', 'cli.ts');
 
 function spawnOrchestrator(args: string[], cwd: string, envOverrides?: Record<string, string>) {
-  return spawn('node', ['--conditions=development', '--import', tsxEsmPath, cliPath, ...args], {
+  return spawn('node', ['--conditions=development', '--import', tsxPath, cliPath, ...args], {
     cwd,
     env: {
       ...process.env,

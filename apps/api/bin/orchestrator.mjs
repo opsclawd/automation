@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const pkgDir = join(__dirname, '..');
 const require = createRequire(join(pkgDir, 'package.json'));
-const tsxPath = require.resolve('tsx/esm');
+const tsxPath = require.resolve('tsx');
 const cliPath = join(pkgDir, 'src', 'cli.ts');
 
 try {
