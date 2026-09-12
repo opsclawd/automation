@@ -679,6 +679,76 @@ describe('ValidateHandler', () => {
       const skipped = events.filter((e) => e.type === 'validate.narrowing_skipped');
       expect(skipped).toHaveLength(1);
     });
+
+    it('narrows custom validation commands using commandScopes on review-fix iterations (#1207)', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx, artifacts, events } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha');
+      ctx.git.changedFilesResults.set('base-sha|head-sha', [
+        'packages/application/src/ffmpeg/encoder.ts',
+      ]);
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'fix-review',
+        relativePath: 'review-convergence.json',
+        contents: JSON.stringify({ iteration: 2, subStep: 'validate', verdict: 'REQUEST_CHANGES' }),
+      });
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build', 'pnpm test:assembly', 'pnpm test:db'],
+        commandScopes: {
+          'pnpm test:assembly': ['packages/application/src/ffmpeg'],
+          'pnpm test:db': ['packages/application/src/db'],
+        },
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+        discoverWorkspacePackages: singlePackageDiscovery(),
+      }).run({ ...ctx, startCommitSha: 'base-sha' });
+
+      expect(result.outcome).toBe('passed');
+      // test:assembly matches and is included; test:db does not match and is skipped
+      expect(validation.lastInput!.commands).toEqual([
+        'pnpm --filter @ai-sdlc/application build',
+        'pnpm test:assembly',
+      ]);
+      const planned = events.filter((e) => e.type === 'validate.scope_planned');
+      expect(planned).toHaveLength(1);
+      expect(planned[0].metadata).toMatchObject({ mode: 'narrow' });
+    });
+
+    it('falls back to full validation when a command is not classified and has no declared scope (#1207)', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx, artifacts, events } = makeCtx();
+      ctx.git.headByCwd.set('/tmp/wt', 'head-sha');
+      ctx.git.changedFilesResults.set('base-sha|head-sha', ['packages/application/src/foo.ts']);
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'fix-review',
+        relativePath: 'review-convergence.json',
+        contents: JSON.stringify({ iteration: 2, subStep: 'validate', verdict: 'REQUEST_CHANGES' }),
+      });
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build', 'pnpm test:unknown'],
+        commandScopes: {
+          'pnpm test:other': ['packages/application'],
+        },
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+        discoverWorkspacePackages: singlePackageDiscovery(),
+      }).run({ ...ctx, startCommitSha: 'base-sha' });
+
+      expect(result.outcome).toBe('passed');
+      // Runs full suite because test:unknown had no scope declared
+      expect(validation.lastInput!.commands).toEqual(['pnpm build', 'pnpm test:unknown']);
+      const planned = events.filter((e) => e.type === 'validate.scope_planned');
+      expect(planned).toHaveLength(1);
+      expect(planned[0].metadata).toMatchObject({ mode: 'full', reason: 'unknown_command' });
+    });
   });
 
   describe('error handling', () => {

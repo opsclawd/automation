@@ -83,6 +83,7 @@ export interface ValidateHandlerOpts {
    * validation runs the full configured set exactly as before.
    */
   discoverWorkspacePackages?: (cwd: string) => Promise<ValidateWorkspaceDiscoveryResult>;
+  commandScopes?: Record<string, string[]>;
 }
 
 export class ValidateHandler implements PhaseHandler {
@@ -338,6 +339,7 @@ export class ValidateHandler implements PhaseHandler {
         descriptors: discovery.descriptors,
         commands: this.opts.commands as ValidationCommand[],
         ...(this.opts.tiers ? { tiers: this.opts.tiers } : {}),
+        ...(this.opts.commandScopes ? { commandScopes: this.opts.commandScopes } : {}),
       });
 
       emit('validate.scope_planned', 'info', `validation scope: ${plan.mode}`, {

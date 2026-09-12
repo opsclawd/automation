@@ -548,3 +548,60 @@ describe('phases.architectureReview configuration', () => {
     expect(() => loadLayeredConfig({ automationRoot })).toThrow();
   });
 });
+
+describe('validation.commandScopes layered configuration (#1207)', () => {
+  it('inherits commandScopes from automation layer when target omits them', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: {
+          commands: ['pnpm test:assembly', 'pnpm test:db'],
+          commandScopes: {
+            'pnpm test:assembly': ['packages/infrastructure/src/ffmpeg'],
+          },
+        },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: { timeout: 600 },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+    expect(result.config.validation.commandScopes).toEqual({
+      'pnpm test:assembly': ['packages/infrastructure/src/ffmpeg'],
+    });
+  });
+
+  it('merges commandScopes dictionaries across layers without array index corruption', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: {
+          commands: ['pnpm test:assembly', 'pnpm test:db'],
+          commandScopes: {
+            'pnpm test:assembly': ['packages/infrastructure/src/ffmpeg', 'packages/old'],
+            'pnpm test:db': ['packages/infrastructure/src/db'],
+          },
+        },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        validation: {
+          commandScopes: {
+            // Replaces whole array for pnpm test:assembly, does not merge index-by-index with packages/old
+            'pnpm test:assembly': ['packages/infrastructure/src/ffmpeg-new'],
+            'pnpm test:piper': ['packages/infrastructure/src/piper'],
+          },
+        },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+    expect(result.config.validation.commandScopes).toEqual({
+      'pnpm test:assembly': ['packages/infrastructure/src/ffmpeg-new'],
+      'pnpm test:db': ['packages/infrastructure/src/db'],
+      'pnpm test:piper': ['packages/infrastructure/src/piper'],
+    });
+  });
+});

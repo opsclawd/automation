@@ -2628,6 +2628,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           runValidation,
           commands: config.validation.commands,
           ...(config.validation.tiers ? { tiers: config.validation.tiers } : {}),
+          ...(config.validation.commandScopes
+            ? { commandScopes: config.validation.commandScopes }
+            : {}),
           timeoutSeconds: config.validation.timeout,
           logDir: join(runsDir, 'validate'),
           fixValidateEnabled: config.phases.fixValidate?.enabled !== false,
