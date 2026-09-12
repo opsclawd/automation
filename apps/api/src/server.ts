@@ -13,8 +13,6 @@ import { registerRepositoriesRoutes } from './routes/repositories.js';
 export interface ServerOptions {
   container: Container;
   port?: number;
-  host?: string;
-  corsOrigins?: string[];
   // Test-only: destroy all sockets (including in-flight responses) on stop.
   // Production leaves this false so SIGINT/SIGTERM does not truncate artifact
   // downloads or future SSE streams; tests set it so afterEach does not block
@@ -23,13 +21,9 @@ export interface ServerOptions {
   logger?: boolean;
 }
 
-export async function buildServer(
-  container: Container,
-  logger: boolean = false,
-  corsOrigins: string[] = ['http://127.0.0.1:4310'],
-) {
+export async function buildServer(container: Container, logger: boolean = false) {
   const app = Fastify({ logger, forceCloseConnections: 'idle' });
-  await app.register(cors, { origin: corsOrigins });
+  await app.register(cors, { origin: ['http://127.0.0.1:4310'] });
   await runsRoutes(app, container);
   await artifactsRoutes(app, container);
   await eventsRoutes(app, container);
@@ -44,8 +38,8 @@ export async function buildServer(
 export async function startServer(
   opts: ServerOptions,
 ): Promise<{ stop: () => Promise<void>; address: { port: number } }> {
-  const app = await buildServer(opts.container, opts.logger ?? true, opts.corsOrigins);
-  await app.listen({ port: opts.port ?? 4319, host: opts.host ?? '127.0.0.1' });
+  const app = await buildServer(opts.container, opts.logger ?? true);
+  await app.listen({ port: opts.port ?? 4319, host: '127.0.0.1' });
   const address = app.server.address() as { port: number };
   return {
     stop: async () => {
