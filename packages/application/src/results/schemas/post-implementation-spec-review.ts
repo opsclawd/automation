@@ -18,7 +18,16 @@ export const postImplementationRequirementCheckSchema = z.object({
 });
 
 export const postImplementationSpecReviewResultSchema = z.object({
-  verdict: z.enum(['PASS', 'FAIL', 'pass', 'fail']),
+  verdict: z.enum([
+    'PASS',
+    'FAIL',
+    'pass',
+    'fail',
+    'APPROVE',
+    'REQUEST_CHANGES',
+    'approve',
+    'request_changes',
+  ]),
   requirements_checks: z.array(postImplementationRequirementCheckSchema).default([]),
   findings: z.array(wholeChangeReviewFindingSchema).optional().default([]),
   summary: z.string().optional(),
@@ -34,7 +43,7 @@ export type PostImplementationSpecReviewResult = z.infer<
 
 /**
  * Evaluates whether a post-implementation spec review result meets all criteria for approval:
- * 1. verdict is 'PASS'
+ * 1. verdict is 'PASS' or 'APPROVE'
  * 2. requirements_checks is present, non-empty, and every check has result 'PASS'
  * 3. if a requirements ledger is provided:
  *    - every ledger ID must appear exactly once in requirements_checks
@@ -48,7 +57,7 @@ export function isApprovedSpecReview(
   ledger?: RequirementsLedger,
 ): boolean {
   const verdict = review.verdict?.toUpperCase();
-  if (verdict !== 'PASS') {
+  if (verdict !== 'PASS' && verdict !== 'APPROVE') {
     return false;
   }
   if (!review.requirements_checks || review.requirements_checks.length === 0) {

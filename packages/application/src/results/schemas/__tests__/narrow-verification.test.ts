@@ -50,6 +50,24 @@ describe('narrowVerificationResultSchema', () => {
     }
   });
 
+  it('parses valid APPROVE and REQUEST_CHANGES verdict aliases (issue #1222 audit)', () => {
+    for (const verdict of [
+      'APPROVE',
+      'REQUEST_CHANGES',
+      'approve',
+      'request_changes',
+      'pass',
+      'fail',
+    ] as const) {
+      const data = {
+        verdict,
+        findings_evaluations: [],
+      };
+      const parsed = narrowVerificationResultSchema.safeParse(data);
+      expect(parsed.success).toBe(true);
+    }
+  });
+
   it('rejects invalid verdicts', () => {
     const invalid = {
       verdict: 'UNKNOWN_VERDICT',

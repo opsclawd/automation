@@ -738,6 +738,30 @@ describe('readWholeChangeReviewVerdict', () => {
     }
   });
 
+  it('accepts PASS verdict alias and normalizes to APPROVE for whole-change-review (issue #1222 audit)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'PASS',
+        acceptance_criteria: [{ criterion: 'Criterion 1', result: 'PASS', evidence: 'Verified' }],
+        findings: [],
+        summary: 'All good',
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readWholeChangeReviewVerdict(
+      invocation('whole-change-review', 'result.json'),
+      { artifacts, agent },
+      { issueBodyPresent: true },
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('APPROVE');
+    }
+  });
+
   it('forces REQUEST_CHANGES on empty acceptance criteria when issueBodyPresent is true', async () => {
     const artifacts = new FakeArtifactStore();
     await artifacts.write({
@@ -885,6 +909,36 @@ describe('readNarrowVerificationVerdict', () => {
       expect(v.overridden).toBeUndefined();
       expect(v.evaluations).toHaveLength(1);
       expect(v.evaluations[0]?.resolved).toBe(true);
+    }
+  });
+
+  it('accepts APPROVE verdict alias and normalizes to PASS for narrow-verification (issue #1222 audit)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        findings_evaluations: [
+          {
+            finding: 'Null check missing in review-fix handler',
+            resolved: true,
+            evidence: 'Added optional chaining and null check in review-fix.ts:42',
+          },
+        ],
+        obvious_regressions: [],
+        summary: 'All findings verified resolved',
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readNarrowVerificationVerdict(
+      invocation('narrow-verification', 'result.json'),
+      { artifacts, agent },
+      { originalFindingsCount: 1 },
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.verdict).toBe('PASS');
     }
   });
 

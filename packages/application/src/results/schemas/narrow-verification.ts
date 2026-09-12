@@ -8,7 +8,16 @@ export const findingEvaluationSchema = z.object({
 });
 
 export const narrowVerificationResultSchema = z.object({
-  verdict: z.enum(['PASS', 'FAIL', 'pass', 'fail']),
+  verdict: z.enum([
+    'PASS',
+    'FAIL',
+    'pass',
+    'fail',
+    'APPROVE',
+    'REQUEST_CHANGES',
+    'approve',
+    'request_changes',
+  ]),
   findings_evaluations: z.array(findingEvaluationSchema).default([]),
   obvious_regressions: z.array(z.string()).default([]),
   summary: z.string().optional(),

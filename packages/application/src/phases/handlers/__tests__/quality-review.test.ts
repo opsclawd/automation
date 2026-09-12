@@ -400,4 +400,121 @@ describe('QualityReviewHandler', () => {
     expect(promptCtx?.vars.validation_critical_files).toContain('packages/api/src/whisperx.ts');
     expect(promptCtx?.vars.validation_critical_files).toContain('pnpm test:whisperx timed out');
   });
+
+  it('handles FAIL verdict without hard-failing and records REQUEST_CHANGES (issue #1222)', async () => {
+    const { ctx, artifacts, agent, handler, events } = setup();
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 1222',
+    });
+    await recordValidationEvidence(ctx, 'validate');
+
+    agent.enqueue('quality-review', async () => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'FAIL',
+          findings: [
+            {
+              category: 'reliability',
+              severity: 'high',
+              files: ['src/worker.ts'],
+              evidence: 'Unbounded queue',
+              rationale: 'OOM risk',
+              minimal_correction: 'Add bounded capacity',
+              blocking: true,
+            },
+          ],
+          summary: 'Defects identified',
+        }),
+      });
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const res = await handler.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    const qualJson = await artifacts.read(ctx.runUuid, 'quality-review.json');
+    expect(JSON.parse(qualJson).verdict).toBe('REQUEST_CHANGES');
+
+    const qualMd = await artifacts.read(ctx.runUuid, 'quality-review.md');
+    expect(qualMd).toContain('**Verdict:** REQUEST_CHANGES');
+    expect(qualMd).toContain('Unbounded queue');
+
+    expect(events.publish).toHaveBeenCalledWith(
+      'run-1132',
+      expect.objectContaining({
+        type: 'quality_review.changes_requested',
+        metadata: expect.objectContaining({
+          verdict: 'REQUEST_CHANGES',
+          findingsCount: 1,
+        }),
+      }),
+    );
+  });
+
+  it('handles PASS verdict alias and normalizes to APPROVE (issue #1222)', async () => {
+    const { ctx, artifacts, agent, handler, events } = setup();
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: '# Issue 1222',
+    });
+    await recordValidationEvidence(ctx, 'validate');
+
+    agent.enqueue('quality-review', async () => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          findings: [],
+          summary: 'Everything is sound',
+        }),
+      });
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const res = await handler.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    const qualJson = await artifacts.read(ctx.runUuid, 'quality-review.json');
+    expect(JSON.parse(qualJson).verdict).toBe('APPROVE');
+
+    expect(events.publish).toHaveBeenCalledWith(
+      'run-1132',
+      expect.objectContaining({
+        type: 'quality_review.completed',
+        metadata: expect.objectContaining({
+          verdict: 'APPROVE',
+        }),
+      }),
+    );
+  });
 });

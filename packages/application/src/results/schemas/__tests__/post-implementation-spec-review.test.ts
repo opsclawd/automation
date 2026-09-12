@@ -66,6 +66,33 @@ describe('postImplementationSpecReviewResultSchema', () => {
     const parsed = postImplementationSpecReviewResultSchema.safeParse(invalid);
     expect(parsed.success).toBe(false);
   });
+
+  it('parses valid spec review with APPROVE and REQUEST_CHANGES verdict aliases', () => {
+    for (const verdict of [
+      'APPROVE',
+      'REQUEST_CHANGES',
+      'approve',
+      'request_changes',
+      'fail',
+      'pass',
+    ] as const) {
+      const parsed = postImplementationSpecReviewResultSchema.safeParse({
+        verdict,
+        requirements_checks: [],
+        findings: [],
+      });
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  it('rejects unrecognized verdict values', () => {
+    const parsed = postImplementationSpecReviewResultSchema.safeParse({
+      verdict: 'UNKNOWN',
+      requirements_checks: [],
+      findings: [],
+    });
+    expect(parsed.success).toBe(false);
+  });
 });
 
 describe('isApprovedSpecReview', () => {
@@ -136,6 +163,80 @@ describe('isApprovedSpecReview', () => {
     };
 
     expect(isApprovedSpecReview(review, ledger)).toBe(false);
+  });
+
+  it('approves when verdict is APPROVE and all requirements pass', () => {
+    const review: PostImplementationSpecReviewResult = {
+      verdict: 'APPROVE',
+      requirements_checks: [
+        {
+          requirement_id: 'AC-1',
+          requirement: 'Must verify all inputs',
+          result: 'PASS',
+          evidence: 'Verified input validation implementation',
+          counterexample_considered: 'Tested invalid payload - properly rejected with 400',
+        },
+        {
+          requirement_id: 'REQ-DESIGN-1',
+          requirement: 'Two review gates',
+          result: 'PASS',
+          evidence: 'Both review gates implemented',
+        },
+      ],
+      findings: [],
+    };
+
+    expect(isApprovedSpecReview(review, ledger)).toBe(true);
+  });
+
+  it('approves when verdict is lowercase pass or approve', () => {
+    const baseReview: PostImplementationSpecReviewResult = {
+      verdict: 'pass',
+      requirements_checks: [
+        {
+          requirement_id: 'AC-1',
+          requirement: 'Must verify all inputs',
+          result: 'PASS',
+          evidence: 'Verified',
+          counterexample_considered: 'Tested bad input',
+        },
+        {
+          requirement_id: 'REQ-DESIGN-1',
+          requirement: 'Two review gates',
+          result: 'PASS',
+          evidence: 'Wired',
+        },
+      ],
+      findings: [],
+    };
+
+    expect(isApprovedSpecReview(baseReview, ledger)).toBe(true);
+    expect(isApprovedSpecReview({ ...baseReview, verdict: 'approve' }, ledger)).toBe(true);
+  });
+
+  it('rejects when verdict is REQUEST_CHANGES or lowercase request_changes', () => {
+    const review: PostImplementationSpecReviewResult = {
+      verdict: 'REQUEST_CHANGES',
+      requirements_checks: [
+        {
+          requirement_id: 'AC-1',
+          requirement: 'Must verify all inputs',
+          result: 'PASS',
+          evidence: 'Verified',
+          counterexample_considered: 'Tested adversarial',
+        },
+        {
+          requirement_id: 'REQ-DESIGN-1',
+          requirement: 'Two review gates',
+          result: 'PASS',
+          evidence: 'Wired',
+        },
+      ],
+      findings: [],
+    };
+
+    expect(isApprovedSpecReview(review, ledger)).toBe(false);
+    expect(isApprovedSpecReview({ ...review, verdict: 'request_changes' }, ledger)).toBe(false);
   });
 
   it('rejects when hard-gate requirement is missing counterexample_considered', () => {

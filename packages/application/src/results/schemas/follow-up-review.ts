@@ -9,7 +9,16 @@ export const followUpFindingEvaluationSchema = z.object({
 });
 
 export const followUpReviewResultSchema = z.object({
-  verdict: z.enum(['APPROVE', 'REQUEST_CHANGES', 'approve', 'request_changes']),
+  verdict: z.enum([
+    'APPROVE',
+    'REQUEST_CHANGES',
+    'approve',
+    'request_changes',
+    'PASS',
+    'FAIL',
+    'pass',
+    'fail',
+  ]),
   evaluations: z.array(followUpFindingEvaluationSchema).default([]),
   new_findings: z.array(wholeChangeReviewFindingSchema).optional().default([]),
   summary: z.string().optional(),

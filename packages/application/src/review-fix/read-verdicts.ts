@@ -251,8 +251,9 @@ export function evaluateWholeChangeReviewVerdict(
   raw: WholeChangeReviewResult,
   opts?: { issueBodyPresent?: boolean },
 ): EvaluatedWholeChangeVerdict {
+  const verdictUpper = raw.verdict?.toUpperCase();
   const normalizedVerdict =
-    raw.verdict?.toUpperCase() === 'APPROVE' ? 'APPROVE' : 'REQUEST_CHANGES';
+    verdictUpper === 'APPROVE' || verdictUpper === 'PASS' ? 'APPROVE' : 'REQUEST_CHANGES';
   const acceptanceCriteria = raw.acceptance_criteria ?? [];
   const findings = raw.findings ?? [];
   const summary = raw.summary;
@@ -394,7 +395,8 @@ export function evaluateNarrowVerificationVerdict(
   raw: NarrowVerificationResult,
   opts?: { originalFindingsCount?: number },
 ): EvaluatedNarrowVerificationVerdict {
-  const normalizedVerdict = raw.verdict?.toUpperCase() === 'PASS' ? 'PASS' : 'FAIL';
+  const verdictUpper = raw.verdict?.toUpperCase();
+  const normalizedVerdict = verdictUpper === 'PASS' || verdictUpper === 'APPROVE' ? 'PASS' : 'FAIL';
   const evaluations = raw.findings_evaluations ?? [];
   const regressions = raw.obvious_regressions ?? [];
   const summary = raw.summary;

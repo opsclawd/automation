@@ -18,7 +18,16 @@ export const acceptanceCriterionCheckSchema = z.object({
 });
 
 export const wholeChangeReviewResultSchema = z.object({
-  verdict: z.enum(['APPROVE', 'REQUEST_CHANGES', 'approve', 'request_changes']),
+  verdict: z.enum([
+    'APPROVE',
+    'REQUEST_CHANGES',
+    'approve',
+    'request_changes',
+    'PASS',
+    'FAIL',
+    'pass',
+    'fail',
+  ]),
   acceptance_criteria: z.array(acceptanceCriterionCheckSchema).default([]),
   findings: z.array(wholeChangeReviewFindingSchema).optional().default([]),
   summary: z.string().optional(),

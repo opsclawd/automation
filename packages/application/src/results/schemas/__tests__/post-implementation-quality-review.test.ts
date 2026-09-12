@@ -53,6 +53,24 @@ describe('postImplementationQualityReviewResultSchema', () => {
     const parsed = postImplementationQualityReviewResultSchema.safeParse(valid);
     expect(parsed.success).toBe(true);
   });
+
+  it('parses valid quality review with PASS and FAIL verdict aliases', () => {
+    for (const verdict of ['PASS', 'FAIL', 'pass', 'fail', 'approve', 'request_changes'] as const) {
+      const parsed = postImplementationQualityReviewResultSchema.safeParse({
+        verdict,
+        findings: [],
+      });
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  it('rejects unrecognized verdict values', () => {
+    const parsed = postImplementationQualityReviewResultSchema.safeParse({
+      verdict: 'UNKNOWN',
+      findings: [],
+    });
+    expect(parsed.success).toBe(false);
+  });
 });
 
 describe('isApprovedQualityReview', () => {
@@ -73,6 +91,20 @@ describe('isApprovedQualityReview', () => {
     expect(isApprovedQualityReview(review)).toBe(true);
   });
 
+  it('approves when verdict is PASS and no blocking findings exist', () => {
+    const review: PostImplementationQualityReviewResult = {
+      verdict: 'PASS',
+      findings: [],
+    };
+
+    expect(isApprovedQualityReview(review)).toBe(true);
+  });
+
+  it('approves when verdict is lowercase pass or approve and no blocking findings exist', () => {
+    expect(isApprovedQualityReview({ verdict: 'pass' })).toBe(true);
+    expect(isApprovedQualityReview({ verdict: 'approve' })).toBe(true);
+  });
+
   it('rejects when verdict is REQUEST_CHANGES', () => {
     const review: PostImplementationQualityReviewResult = {
       verdict: 'REQUEST_CHANGES',
@@ -80,6 +112,11 @@ describe('isApprovedQualityReview', () => {
     };
 
     expect(isApprovedQualityReview(review)).toBe(false);
+  });
+
+  it('rejects when verdict is FAIL or lowercase fail', () => {
+    expect(isApprovedQualityReview({ verdict: 'FAIL', findings: [] })).toBe(false);
+    expect(isApprovedQualityReview({ verdict: 'fail', findings: [] })).toBe(false);
   });
 
   it('rejects when critical/high severity findings exist even if verdict is APPROVE', () => {
@@ -91,6 +128,22 @@ describe('isApprovedQualityReview', () => {
           evidence: 'Data integrity hazard',
           rationale: 'Corrupts state',
           minimal_correction: 'Wrap in transaction',
+        },
+      ],
+    };
+
+    expect(isApprovedQualityReview(review)).toBe(false);
+  });
+
+  it('rejects when critical/high severity findings exist even if verdict is PASS', () => {
+    const review: PostImplementationQualityReviewResult = {
+      verdict: 'PASS',
+      findings: [
+        {
+          severity: 'high',
+          evidence: 'Security risk',
+          rationale: 'Unsanitized input',
+          minimal_correction: 'Sanitize input',
         },
       ],
     };
