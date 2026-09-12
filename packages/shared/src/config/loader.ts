@@ -277,7 +277,8 @@ function mergeValidationPolicy(
       k !== 'commands' &&
       k !== 'additionalCommands' &&
       k !== 'selfVerifyCommands' &&
-      k !== 'tiers'
+      k !== 'tiers' &&
+      k !== 'commandScopes'
     ) {
       outValidation[k] = v;
     }
@@ -287,7 +288,8 @@ function mergeValidationPolicy(
       k !== 'commands' &&
       k !== 'additionalCommands' &&
       k !== 'selfVerifyCommands' &&
-      k !== 'tiers'
+      k !== 'tiers' &&
+      k !== 'commandScopes'
     ) {
       outValidation[k] = genericMerge(outValidation[k], v);
     }
@@ -303,6 +305,19 @@ function mergeValidationPolicy(
     outValidation.selfVerifyCommands = overrideValidation.selfVerifyCommands;
   } else if (baseValObj.selfVerifyCommands !== undefined) {
     outValidation.selfVerifyCommands = baseValObj.selfVerifyCommands;
+  }
+
+  if (isPlainObject(baseValObj.commandScopes) || isPlainObject(overrideValidation.commandScopes)) {
+    const baseScopes = isPlainObject(baseValObj.commandScopes)
+      ? (baseValObj.commandScopes as Record<string, unknown>)
+      : {};
+    const overrideScopes = isPlainObject(overrideValidation.commandScopes)
+      ? (overrideValidation.commandScopes as Record<string, unknown>)
+      : {};
+    outValidation.commandScopes = {
+      ...baseScopes,
+      ...overrideScopes,
+    };
   }
 
   if (resolvedCommands !== undefined) {

@@ -20,7 +20,8 @@ export type FullValidationReason =
   | 'invalid_descriptor'
   | 'unresolved_dependency'
   | 'cyclic_dependency'
-  | 'unknown_command';
+  | 'unknown_command'
+  | 'empty_narrowed_commands';
 
 export type RevalidationPlan =
   | {
@@ -45,6 +46,7 @@ export interface PlanRevalidationInput {
   descriptors: WorkspacePackageDescriptor[];
   commands: ValidationCommand[];
   tiers?: string[][];
+  commandScopes?: Record<string, string[]>;
 }
 
 const INELIGIBLE_UPSTREAM_PACKAGES = new Set(['@ai-sdlc/shared', '@ai-sdlc/domain']);
@@ -90,9 +92,50 @@ type CommandSemanticRole =
   | { role: 'typecheck' }
   | { role: 'test' }
   | { role: 'bash_test' }
-  | { role: 'boundaries' };
+  | { role: 'boundaries' }
+  | { role: 'scoped'; scopes: string[] };
 
-function classifyCommand(cmd: ValidationCommand): CommandSemanticRole | null {
+function normalizeCommandString(cmd: ValidationCommand): string {
+  const tokens = Array.isArray(cmd)
+    ? cmd.map((t) => t.trim()).filter(Boolean)
+    : cmd.trim().split(/\s+/).filter(Boolean);
+  return tokens.join(' ');
+}
+
+function isPathInScope(
+  normPath: string,
+  scope: string,
+  descriptorMap: Map<string, WorkspacePackageDescriptor>,
+): boolean {
+  const pkgDesc = descriptorMap.get(scope);
+  if (pkgDesc) {
+    const pkgDir = pkgDesc.directory;
+    if (normPath === pkgDir || normPath.startsWith(pkgDir + '/')) {
+      return true;
+    }
+  }
+
+  const normScope = normalizeRepoRelativePath(scope);
+  if (!normScope) {
+    return false;
+  }
+
+  return (
+    normPath === normScope ||
+    normPath.startsWith(normScope + '/') ||
+    normScope.startsWith(normPath + '/')
+  );
+}
+
+function classifyCommand(
+  cmd: ValidationCommand,
+  normalizedCommandScopes?: Map<string, string[]>,
+): CommandSemanticRole | null {
+  const normKey = normalizeCommandString(cmd);
+  if (normalizedCommandScopes?.has(normKey)) {
+    return { role: 'scoped', scopes: normalizedCommandScopes.get(normKey)! };
+  }
+
   const tokens = Array.isArray(cmd)
     ? cmd.map((t) => t.trim()).filter(Boolean)
     : cmd.trim().split(/\s+/).filter(Boolean);
@@ -149,6 +192,7 @@ function rewriteCommand(
   narrowedPackages: string[],
   descriptorMap: Map<string, WorkspacePackageDescriptor>,
   hasBatsInClosure: boolean,
+  changedPaths: string[],
 ): ValidationCommand | null {
   const isLeaf = narrowedPackages.length === 1 && narrowedPackages[0] === seedPackage;
   const filter = isLeaf ? seedPackage : `...${seedPackage}`;
@@ -184,6 +228,19 @@ function rewriteCommand(
 
     case 'boundaries':
       return cmd;
+
+    case 'scoped': {
+      const intersects = role.scopes.some((scope) =>
+        changedPaths.some((rawPath) => {
+          const normPath = normalizeRepoRelativePath(rawPath);
+          return normPath !== null && isPathInScope(normPath, scope, descriptorMap);
+        }),
+      );
+      if (!intersects) {
+        return null;
+      }
+      return cmd;
+    }
   }
 }
 
@@ -193,8 +250,25 @@ function rewriteCommand(
  * workspace package and its reverse transitive dependents, or whether it must fall back to full validation.
  */
 export function planRevalidation(input: PlanRevalidationInput): RevalidationPlan {
-  const { changedPaths, iterationIndex, hasStepBaseline, isPrReady, descriptors, commands, tiers } =
-    input;
+  const {
+    changedPaths,
+    iterationIndex,
+    hasStepBaseline,
+    isPrReady,
+    descriptors,
+    commands,
+    tiers,
+    commandScopes,
+  } = input;
+
+  const normalizedCommandScopes = new Map<string, string[]>();
+  if (commandScopes) {
+    for (const [key, scopes] of Object.entries(commandScopes)) {
+      if (Array.isArray(scopes)) {
+        normalizedCommandScopes.set(normalizeCommandString(key), scopes);
+      }
+    }
+  }
 
   const fullPlan = (reason: FullValidationReason): RevalidationPlan => ({
     mode: 'full',
@@ -411,7 +485,7 @@ export function planRevalidation(input: PlanRevalidationInput): RevalidationPlan
   // 11. Classify and rewrite configured validation commands
   const rewrittenCommands: ValidationCommand[] = [];
   for (const cmd of commands) {
-    const classification = classifyCommand(cmd);
+    const classification = classifyCommand(cmd, normalizedCommandScopes);
     if (!classification) {
       return fullPlan('unknown_command');
     }
@@ -422,10 +496,15 @@ export function planRevalidation(input: PlanRevalidationInput): RevalidationPlan
       narrowedPackages,
       descriptorMap,
       hasBatsInClosure,
+      changedPaths,
     );
     if (rewritten !== null) {
       rewrittenCommands.push(rewritten);
     }
+  }
+
+  if (rewrittenCommands.length === 0) {
+    return fullPlan('empty_narrowed_commands');
   }
 
   // 12. Classify and rewrite tiers if present
@@ -435,7 +514,7 @@ export function planRevalidation(input: PlanRevalidationInput): RevalidationPlan
     for (const tier of tiers) {
       const tierCommands: string[] = [];
       for (const cmd of tier) {
-        const classification = classifyCommand(cmd);
+        const classification = classifyCommand(cmd, normalizedCommandScopes);
         if (!classification) {
           return fullPlan('unknown_command');
         }
@@ -446,6 +525,7 @@ export function planRevalidation(input: PlanRevalidationInput): RevalidationPlan
           narrowedPackages,
           descriptorMap,
           hasBatsInClosure,
+          changedPaths,
         );
         if (rewritten !== null) {
           if (Array.isArray(rewritten)) {

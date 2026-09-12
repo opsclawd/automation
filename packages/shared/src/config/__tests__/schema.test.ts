@@ -366,3 +366,57 @@ describe('governance config (#1142)', () => {
     ]);
   });
 });
+
+describe('validation commandScopes (#1207)', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: { skip: [] },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
+
+  it('allows commandScopes to be omitted', () => {
+    const parsed = orchestratorConfigSchema.parse(baseConfig);
+    expect(parsed.validation.commandScopes).toBeUndefined();
+  });
+
+  it('accepts valid validation.commandScopes dictionary', () => {
+    const parsed = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      validation: {
+        ...baseConfig.validation,
+        commandScopes: {
+          'pnpm test:assembly': ['packages/infrastructure/src/ffmpeg'],
+          'pnpm test:db': ['packages/infrastructure/src/db', '@ai-sdlc/infrastructure'],
+        },
+      },
+    });
+    expect(parsed.validation.commandScopes).toEqual({
+      'pnpm test:assembly': ['packages/infrastructure/src/ffmpeg'],
+      'pnpm test:db': ['packages/infrastructure/src/db', '@ai-sdlc/infrastructure'],
+    });
+  });
+
+  it('rejects blank command scope entry strings', () => {
+    const result = orchestratorConfigSchema.safeParse({
+      ...baseConfig,
+      validation: {
+        ...baseConfig.validation,
+        commandScopes: {
+          'pnpm test:assembly': ['   '],
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects non-object commandScopes', () => {
+    const result = orchestratorConfigSchema.safeParse({
+      ...baseConfig,
+      validation: {
+        ...baseConfig.validation,
+        commandScopes: ['packages/infrastructure'],
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+});

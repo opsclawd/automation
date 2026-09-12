@@ -15,6 +15,7 @@ const validationSchema = z.object({
   timeout: z.number().int().positive(),
   forbiddenArtifactPaths: z.array(z.string().trim().min(1)).optional(),
   narrowByChangedFiles: z.boolean().default(true),
+  commandScopes: z.record(z.string().trim().min(1), z.array(z.string().trim().min(1))).optional(),
 });
 
 const phasesSchema = z.object({
