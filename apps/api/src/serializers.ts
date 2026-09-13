@@ -20,6 +20,7 @@ export function serializeRun(r: RunItem) {
     failureReason: r.failureReason !== undefined ? r.failureReason : null,
     repoId: r.repoId,
     executionPolicy: r.executionPolicy ?? 'standard',
+    pinnedRuntime: r.pinnedRuntime ?? null,
   };
 }
 

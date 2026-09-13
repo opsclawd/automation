@@ -1,5 +1,5 @@
 import { RepositoryId } from '@ai-sdlc/domain';
-import type { Run, RunStatus, ExecutionPolicy } from '@ai-sdlc/domain';
+import type { Run, RunStatus, ExecutionPolicy, PinnedRuntime } from '@ai-sdlc/domain';
 import type { RunRepositoryUpdatePatch, ListRunsFilter } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
@@ -24,6 +24,7 @@ interface RunRow {
   config_fingerprint: string | null;
   config_sources_json: string | null;
   execution_policy: string | null;
+  pinned_runtime: string | null;
 }
 
 /**
@@ -44,6 +45,7 @@ export interface RunRecord extends Run {
   configFingerprint?: string;
   configSourcesJson?: string;
   executionPolicy?: ExecutionPolicy;
+  pinnedRuntime?: PinnedRuntime;
 }
 
 /** Implements RunRepositoryPort (@ai-sdlc/application). */
@@ -60,9 +62,9 @@ export class RunRepository {
     this.db
       .prepare(
         `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase,
-        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha, base_branch, config_fingerprint, config_sources_json, execution_policy)
+        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha, base_branch, config_fingerprint, config_sources_json, execution_policy, pinned_runtime)
          VALUES (@uuid, @display_id, @repo_id, @issue_number, @type, @status, @current_phase,
-           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha, @base_branch, @config_fingerprint, @config_sources_json, @execution_policy)`,
+           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha, @base_branch, @config_fingerprint, @config_sources_json, @execution_policy, @pinned_runtime)`,
       )
       .run({
         uuid: run.uuid,
@@ -83,6 +85,7 @@ export class RunRepository {
         config_fingerprint: (run as RunRecord).configFingerprint ?? this.configFingerprint ?? null,
         config_sources_json: (run as RunRecord).configSourcesJson ?? this.configSourcesJson ?? null,
         execution_policy: run.executionPolicy ?? this.defaultExecutionPolicy ?? 'standard',
+        pinned_runtime: (run as RunRecord).pinnedRuntime ?? null,
       });
   }
 
@@ -168,6 +171,10 @@ export class RunRepository {
     if (patch.executionPolicy !== undefined) {
       fields.push('execution_policy = @execution_policy');
       params.execution_policy = patch.executionPolicy;
+    }
+    if (patch.pinnedRuntime !== undefined) {
+      fields.push('pinned_runtime = @pinned_runtime');
+      params.pinned_runtime = patch.pinnedRuntime;
     }
     if (fields.length === 0) return false;
     const result = this.db
@@ -289,6 +296,10 @@ export class RunRepository {
     if (patch.executionPolicy !== undefined) {
       fields.push('execution_policy = @execution_policy');
       params.execution_policy = patch.executionPolicy;
+    }
+    if (patch.pinnedRuntime !== undefined) {
+      fields.push('pinned_runtime = @pinned_runtime');
+      params.pinned_runtime = patch.pinnedRuntime;
     }
     if (fields.length === 0) return;
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid`).run(params);
@@ -439,5 +450,8 @@ function toRecord(row: RunRow): RunRecord {
     ...(row.config_fingerprint !== null ? { configFingerprint: row.config_fingerprint } : {}),
     ...(row.config_sources_json !== null ? { configSourcesJson: row.config_sources_json } : {}),
     executionPolicy: (row.execution_policy as ExecutionPolicy) ?? 'standard',
+    ...(row.pinned_runtime !== null && row.pinned_runtime !== undefined
+      ? { pinnedRuntime: row.pinned_runtime as PinnedRuntime }
+      : {}),
   };
 }

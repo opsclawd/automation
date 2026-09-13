@@ -13,6 +13,9 @@ import {
   canResume,
   resumeRun,
   RunStateError,
+  PINNED_RUNTIMES,
+  isPinnedRuntime,
+  type PinnedRuntime,
 } from '../run.js';
 
 const base = {
@@ -311,6 +314,70 @@ describe('Run state machine', () => {
         'user cancelled',
       );
       expect(cancelled.executionPolicy).toBe('strict');
+    });
+  });
+
+  describe('pinnedRuntime', () => {
+    it('leaves pinnedRuntime undefined when omitted in createRun', () => {
+      const r = createRun(base);
+      expect(r.pinnedRuntime).toBeUndefined();
+    });
+
+    it('accepts and preserves valid pinned runtimes in createRun', () => {
+      for (const runtime of PINNED_RUNTIMES) {
+        const r = createRun({ ...base, pinnedRuntime: runtime });
+        expect(r.pinnedRuntime).toBe(runtime);
+        expect(isPinnedRuntime(r.pinnedRuntime)).toBe(true);
+      }
+    });
+
+    it('throws RunStateError on invalid pinnedRuntime value', () => {
+      expect(() =>
+        createRun({ ...base, pinnedRuntime: 'invalid-runtime' as PinnedRuntime }),
+      ).toThrow(RunStateError);
+      expect(() =>
+        createRun({ ...base, pinnedRuntime: 'invalid-runtime' as PinnedRuntime }),
+      ).toThrow("invalid pinnedRuntime: 'invalid-runtime'");
+    });
+
+    it('preserves pinnedRuntime across phase transitions and terminal states', () => {
+      let r = createRun({ ...base, pinnedRuntime: 'claude-code' });
+      r = startPhase(r, 'plan');
+      expect(r.pinnedRuntime).toBe('claude-code');
+      r = completePhase(r, 'plan');
+      expect(r.pinnedRuntime).toBe('claude-code');
+      r = startPhase(r, 'implement');
+      r = skipPhase(r, 'implement');
+      expect(r.pinnedRuntime).toBe('claude-code');
+
+      const passed = passRun(createRun({ ...base, pinnedRuntime: 'antigravity' }), new Date());
+      expect(passed.pinnedRuntime).toBe('antigravity');
+
+      const failed = failRun(createRun({ ...base, pinnedRuntime: 'codex' }), 'error');
+      expect(failed.pinnedRuntime).toBe('codex');
+
+      const blocked = blockRun(createRun({ ...base, pinnedRuntime: 'opencode' }), 'blocked');
+      expect(blocked.pinnedRuntime).toBe('opencode');
+
+      const review = markRunNeedsHumanReview(
+        createRun({ ...base, pinnedRuntime: 'claude-code' }),
+        'check',
+      );
+      expect(review.pinnedRuntime).toBe('claude-code');
+
+      const cancelled = cancelRun(
+        createRun({ ...base, pinnedRuntime: 'antigravity' }),
+        'user cancelled',
+      );
+      expect(cancelled.pinnedRuntime).toBe('antigravity');
+    });
+
+    it('preserves pinnedRuntime across resumeRun', () => {
+      const failed = failRun(createRun({ ...base, pinnedRuntime: 'claude-code' }), 'error');
+      const resumed = resumeRun(failed, 'implement');
+      expect(resumed.pinnedRuntime).toBe('claude-code');
+      expect(resumed.status).toBe('running');
+      expect(resumed.currentPhase).toBe('implement');
     });
   });
 });

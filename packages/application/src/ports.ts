@@ -6,6 +6,7 @@ import type {
   RunId,
   RepositoryId,
   ExecutionPolicy,
+  PinnedRuntime,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
@@ -29,6 +30,7 @@ export interface RunRecord extends Run {
   configFingerprint?: string;
   configSourcesJson?: string;
   executionPolicy?: ExecutionPolicy;
+  pinnedRuntime?: PinnedRuntime;
 }
 
 export interface RunRepositoryUpdatePatch {
@@ -46,6 +48,7 @@ export interface RunRepositoryUpdatePatch {
   configFingerprint?: string;
   configSourcesJson?: string;
   executionPolicy?: ExecutionPolicy;
+  pinnedRuntime?: PinnedRuntime;
 }
 
 export type ListRunsFilter = {

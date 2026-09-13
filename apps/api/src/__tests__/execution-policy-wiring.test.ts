@@ -67,6 +67,31 @@ describe('serializeRun with executionPolicy', () => {
   });
 });
 
+describe('serializeRun with pinnedRuntime', () => {
+  it('serializes pinnedRuntime when set', () => {
+    const runPinned = createRun({
+      uuid: 'u-pin-1',
+      displayId: 'issue-1-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 1,
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+      pinnedRuntime: 'claude-code',
+    });
+    expect(serializeRun(runPinned).pinnedRuntime).toBe('claude-code');
+  });
+
+  it('serializes pinnedRuntime as null when omitted', () => {
+    const runUnset = createRun({
+      uuid: 'u-pin-2',
+      displayId: 'issue-2-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 2,
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    expect(serializeRun(runUnset).pinnedRuntime).toBeNull();
+  });
+});
+
 describe('Execution Policy API and Composition Wiring', () => {
   it('loads executionPolicy from repository config and reflects on Container', () => {
     const dir = createTempDir();

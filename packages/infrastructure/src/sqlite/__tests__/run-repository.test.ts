@@ -34,6 +34,36 @@ describe('RunRepository', () => {
     expect(found?.repoId).toBe('owner/repo');
     expect(found?.exitCode).toBeUndefined();
     expect(found?.durationMs).toBeUndefined();
+    expect(found?.pinnedRuntime).toBeUndefined();
+    db.close();
+  });
+
+  it('inserts and reads a run with pinnedRuntime round-trip', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u-pin',
+      displayId: 'issue-1-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+      pinnedRuntime: 'claude-code',
+    });
+    const found = repo.findByUuid('u-pin');
+    expect(found?.pinnedRuntime).toBe('claude-code');
+
+    repo.update('u-pin', { pinnedRuntime: 'antigravity' });
+    const updated = repo.findByUuid('u-pin');
+    expect(updated?.pinnedRuntime).toBe('antigravity');
+
+    const atomicUpdated = repo.atomicUpdateByUuid('u-pin', { pinnedRuntime: 'codex' }, 'running');
+    expect(atomicUpdated).toBe(true);
+    const afterAtomic = repo.findByUuid('u-pin');
+    expect(afterAtomic?.pinnedRuntime).toBe('codex');
+
     db.close();
   });
 
