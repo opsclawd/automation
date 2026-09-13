@@ -11,6 +11,7 @@ import {
   JobId,
   IssueNumber,
   type ExecutionPolicy,
+  type PinnedRuntime,
   type Repository,
   RepositoryNotApprovedError,
   RepositoryValidationError,
@@ -66,6 +67,7 @@ export interface StartReleaseBatchDeps {
   eventBus: EventBusPort;
   eventRepository?: EventRepositoryPort | EventRepositoryFactory | undefined;
   executionPolicy?: ExecutionPolicy | undefined;
+  pinnedRuntime?: PinnedRuntime | undefined;
   now?: (() => Date) | undefined;
   logger?:
     | {
@@ -83,6 +85,7 @@ export interface StartReleaseBatchInput {
   releaseBranch?: string | undefined;
   batchId?: ReleaseBatchId | undefined;
   executionPolicy?: ExecutionPolicy | undefined;
+  pinnedRuntime?: PinnedRuntime | undefined;
 }
 
 export interface StartReleaseBatchOutput {
@@ -375,6 +378,7 @@ export class StartReleaseBatch {
         const ids = newRunId({ issueNumber: initialIssue, now: startedAt });
         runUuid = ids.uuid;
         runDisplayId = ids.displayId;
+        const effectivePinnedRuntime = input.pinnedRuntime ?? this.deps.pinnedRuntime;
         runToAdmit = createRun({
           uuid: ids.uuid,
           displayId: ids.displayId,
@@ -383,6 +387,7 @@ export class StartReleaseBatch {
           startedAt,
           executionPolicy: input.executionPolicy ?? this.deps.executionPolicy ?? 'standard',
           baseBranch: releaseBranch,
+          ...(effectivePinnedRuntime ? { pinnedRuntime: effectivePinnedRuntime } : {}),
         });
         this.deps.runRepository.insertIfNoActive(runToAdmit);
       }

@@ -182,4 +182,88 @@ describe('GetReleaseBatchStatus', () => {
     expect(status.blocker.runStatus).toBe('failed');
     expect(status.blocker.action).toContain('runs resume --uuid');
   });
+
+  it('includes pinnedRuntime in items, currentItem, and formattedLines when run has pin', async () => {
+    const batchId = ReleaseBatchId('batch-pin');
+    const runUuid = 'uuid-run-pin';
+    const run = createRun({
+      uuid: runUuid,
+      displayId: 'issue-101-001',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 101,
+      startedAt: new Date(),
+    });
+    run.status = 'running';
+    run.currentPhase = 'plan';
+    run.pinnedRuntime = 'antigravity';
+    runRepo.insertIfNoActive(run);
+
+    batchRepo.insert({
+      id: batchId,
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-main-0',
+      releaseBranch: 'release/batch-pin',
+      status: 'building',
+      currentPosition: 1,
+      createdAt: new Date(),
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'active',
+          runUuid,
+          startedAt: new Date(),
+        },
+      ],
+    });
+
+    const status = await useCase.execute({ batchId });
+
+    expect(status.items[0]?.pinnedRuntime).toBe('antigravity');
+    expect(status.currentItem?.pinnedRuntime).toBe('antigravity');
+    expect(status.formattedLines.some((l) => /Runtime Pin:\s+antigravity/.test(l))).toBe(true);
+    expect(status.formattedLines.some((l) => l.includes('pin=antigravity'))).toBe(true);
+  });
+
+  it('reports Runtime Pin as unpinned when run has no pin', async () => {
+    const batchId = ReleaseBatchId('batch-no-pin');
+    const runUuid = 'uuid-run-no-pin';
+    const run = createRun({
+      uuid: runUuid,
+      displayId: 'issue-101-002',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 101,
+      startedAt: new Date(),
+    });
+    run.status = 'running';
+    run.currentPhase = 'plan';
+    runRepo.insertIfNoActive(run);
+
+    batchRepo.insert({
+      id: batchId,
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-main-0',
+      releaseBranch: 'release/batch-no-pin',
+      status: 'building',
+      currentPosition: 1,
+      createdAt: new Date(),
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'active',
+          runUuid,
+          startedAt: new Date(),
+        },
+      ],
+    });
+
+    const status = await useCase.execute({ batchId });
+
+    expect(status.items[0]?.pinnedRuntime).toBeUndefined();
+    expect(status.currentItem?.pinnedRuntime).toBeUndefined();
+    expect(status.formattedLines.some((l) => /Runtime Pin:\s+unpinned/.test(l))).toBe(true);
+  });
 });

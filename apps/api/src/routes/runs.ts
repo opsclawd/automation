@@ -4,6 +4,7 @@ import { serializeRun, serializeFailure, serializeJob } from '../serializers.js'
 import {
   WorkerId,
   RunId,
+  ReleaseBatchId,
   RepositoryId,
   RepositoryNotFoundError,
   RunStatus,
@@ -13,6 +14,8 @@ import {
   RunRepositoryMissingError,
   type ResumeDisposition,
   type ExecutionPolicy,
+  type PinnedRuntime,
+  isPinnedRuntime,
 } from '@ai-sdlc/domain';
 import {
   planRunRecoveryAction,
@@ -106,6 +109,8 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
       repo?: string;
       baseBranch?: string;
       executionPolicy?: unknown;
+      runtime?: unknown;
+      pinnedRuntime?: unknown;
     };
   }>('/api/runs', async (req, reply) => {
     const body = req.body ?? {};
@@ -119,6 +124,12 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         !(EXECUTION_POLICIES as readonly string[]).includes(body.executionPolicy)
       ) {
         return reply.code(400).send({ error: 'invalid_execution_policy' });
+      }
+    }
+    const runtimeVal = body.runtime !== undefined ? body.runtime : body.pinnedRuntime;
+    if (runtimeVal !== undefined) {
+      if (typeof runtimeVal !== 'string' || !isPinnedRuntime(runtimeVal)) {
+        return reply.code(400).send({ error: 'invalid_runtime' });
       }
     }
     const ctx = resolveRepoContext(
@@ -153,6 +164,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         repoId: repositoryId,
         baseBranch: typeof body.baseBranch === 'string' ? body.baseBranch : undefined,
         executionPolicy: (body.executionPolicy as ExecutionPolicy | undefined) ?? c.executionPolicy,
+        pinnedRuntime: runtimeVal as PinnedRuntime | undefined,
       });
       return reply.code(201).send({ run });
     } catch (err) {
@@ -161,6 +173,97 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
       }
       if (err instanceof RepositoryValidationError) {
         return reply.code(400).send({ error: 'missing_repository_id', message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.post<{
+    Body: {
+      issues?: unknown;
+      issueNumbers?: unknown;
+      repositoryId?: string;
+      repo?: string;
+      sourceBranch?: string;
+      releaseBranch?: string;
+      batchId?: string;
+      executionPolicy?: unknown;
+      runtime?: unknown;
+      pinnedRuntime?: unknown;
+    };
+  }>('/api/release-batches', async (req, reply) => {
+    const body = req.body ?? {};
+    const rawIssues = body.issues ?? body.issueNumbers;
+    let issueNumbers: number[] = [];
+    if (Array.isArray(rawIssues)) {
+      issueNumbers = rawIssues.map((n) => Number(n));
+    } else if (typeof rawIssues === 'string') {
+      issueNumbers = rawIssues
+        .split(',')
+        .map((s) => Number(s.trim()))
+        .filter((n) => !isNaN(n));
+    }
+    if (issueNumbers.length === 0 || issueNumbers.some((n) => !Number.isInteger(n) || n <= 0)) {
+      return reply.code(400).send({ error: 'invalid_issues' });
+    }
+    if (body.executionPolicy !== undefined) {
+      if (
+        typeof body.executionPolicy !== 'string' ||
+        !(EXECUTION_POLICIES as readonly string[]).includes(body.executionPolicy)
+      ) {
+        return reply.code(400).send({ error: 'invalid_execution_policy' });
+      }
+    }
+    const runtimeVal = body.runtime !== undefined ? body.runtime : body.pinnedRuntime;
+    if (runtimeVal !== undefined) {
+      if (typeof runtimeVal !== 'string' || !isPinnedRuntime(runtimeVal)) {
+        return reply.code(400).send({ error: 'invalid_runtime' });
+      }
+    }
+    const ctx = resolveRepoContext(
+      { headers: req.headers, query: (req.query ?? {}) as Record<string, unknown> },
+      c,
+      { allowFallback: false },
+    );
+    let repositoryId =
+      ctx.repositoryId ?? (body.repositoryId ? RepositoryId(body.repositoryId) : undefined);
+    const fullName = ctx.fullName ?? body.repo;
+    if (!repositoryId && fullName) {
+      try {
+        const repo = c.inspectRepository.executeByFullName(fullName);
+        repositoryId = repo.id;
+      } catch (err) {
+        if (err instanceof RepositoryNotFoundError) {
+          return reply.code(404).send({ error: 'repository_not_found' });
+        }
+        throw err;
+      }
+    }
+    try {
+      const result = await c.startReleaseBatch.execute({
+        repoId: repositoryId,
+        issueNumbers,
+        sourceBranch: typeof body.sourceBranch === 'string' ? body.sourceBranch : undefined,
+        releaseBranch: typeof body.releaseBranch === 'string' ? body.releaseBranch : undefined,
+        batchId: typeof body.batchId === 'string' ? ReleaseBatchId(body.batchId) : undefined,
+        executionPolicy: (body.executionPolicy as ExecutionPolicy | undefined) ?? c.executionPolicy,
+        pinnedRuntime: runtimeVal as PinnedRuntime | undefined,
+      });
+      return reply.code(201).send({
+        batch: result.batch,
+        batchId: result.batchId,
+        runUuid: result.runUuid,
+        releaseBranch: result.releaseBranch,
+      });
+    } catch (err) {
+      if (err instanceof RepositoryNotApprovedError) {
+        return reply.code(409).send({ error: 'repository_not_approved', message: err.message });
+      }
+      if (err instanceof RepositoryValidationError) {
+        return reply.code(400).send({ error: 'missing_repository_id', message: err.message });
+      }
+      if (err instanceof Error) {
+        return reply.code(400).send({ error: 'batch_start_failed', message: err.message });
       }
       throw err;
     }
