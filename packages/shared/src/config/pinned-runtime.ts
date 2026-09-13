@@ -49,6 +49,7 @@ export const DEFAULT_PHASE_ROLE_MAPPING: Readonly<Record<string, PhaseRoleName>>
   'follow-up-review': 'critic',
   'fix-review': 'fixer',
   'fix-validate': 'fixer',
+  'whole-pr-fix-review': 'fixer',
   compound: 'task-agent',
   'create-pr': 'task-agent',
   'result-writer': 'critic',
@@ -180,6 +181,10 @@ export function resolvePinnedProfileForPhase(opts: ResolvePinnedProfileForPhaseO
     role = config.phaseProfiles[PHASE_FALLBACKS[phaseName]]!.role;
   } else {
     role = DEFAULT_PHASE_ROLE_MAPPING[phaseName];
+  }
+
+  if (!role && PHASE_FALLBACKS[phaseName]) {
+    role = DEFAULT_PHASE_ROLE_MAPPING[PHASE_FALLBACKS[phaseName]];
   }
 
   if (!role) {

@@ -40,6 +40,7 @@ export const DEFAULT_PHASE_TO_ROLE: Readonly<Record<string, PhaseRole>> = Object
   'follow-up-review': 'critic',
   'fix-review': 'fixer',
   'fix-validate': 'fixer',
+  'whole-pr-fix-review': 'fixer',
   compound: 'task-agent',
   'create-pr': 'task-agent',
   'result-writer': 'critic',

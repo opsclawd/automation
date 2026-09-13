@@ -37,6 +37,7 @@ describe('phase-role domain definitions', () => {
       'follow-up-review',
       'fix-review',
       'fix-validate',
+      'whole-pr-fix-review',
       'compound',
       'create-pr',
       'result-writer',

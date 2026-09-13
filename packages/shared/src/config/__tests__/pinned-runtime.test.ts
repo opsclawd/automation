@@ -168,6 +168,7 @@ describe('pinned-runtime defaults & mapping', () => {
       'follow-up-review',
       'fix-review',
       'fix-validate',
+      'whole-pr-fix-review',
       'compound',
       'create-pr',
       'result-writer',
@@ -337,6 +338,13 @@ describe('resolvePinnedProfileForPhase', () => {
       config,
     });
     expect(resolved).toBe('codex-reviewer');
+
+    const resolvedFallback = resolvePinnedProfileForPhase({
+      pinnedRuntime: 'opencode',
+      phaseName: 'whole-pr-fix-review',
+      config,
+    });
+    expect(resolvedFallback).toBe('builder');
   });
 
   it('fails loudly for unknown phase without role', () => {
