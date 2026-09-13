@@ -1343,4 +1343,67 @@ describe('ReleaseBatchCoordinator', () => {
       ).rejects.toThrow(ReleaseBatchStateError);
     });
   });
+
+  describe('Runtime pin inheritance', () => {
+    it('inherits pinnedRuntime from prior item when admitting successor', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const initialRun = runRepository.findByUuid('run-item-1')!;
+      runRepository.runs.set('run-item-1', {
+        ...initialRun,
+        pinnedRuntime: 'claude-code',
+      });
+
+      const result = await coordinator.certifyItemMerged({
+        batchId,
+        position: 1,
+        mergedCommitSha: 'sha-commit-101',
+        now: t2,
+      });
+
+      expect(result.actions).toContain('successor_admitted');
+      const saved = releaseBatchRepository.findById(batchId)!;
+      const run2 = runRepository.findByUuid(saved.items[1]?.runUuid!);
+      expect(run2?.pinnedRuntime).toBe('claude-code');
+    });
+
+    it('inherits pinnedRuntime from deps fallback when prior item has no pinnedRuntime', async () => {
+      const coordinatorWithPin = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        jobQueue,
+        repositoryPort,
+        eventBus,
+        now: () => t1,
+        pinnedRuntime: 'codex',
+      });
+
+      const { batchId } = setupFiveItemBatch();
+      const result = await coordinatorWithPin.certifyItemMerged({
+        batchId,
+        position: 1,
+        mergedCommitSha: 'sha-commit-101',
+        now: t2,
+      });
+
+      expect(result.actions).toContain('successor_admitted');
+      const saved = releaseBatchRepository.findById(batchId)!;
+      const run2 = runRepository.findByUuid(saved.items[1]?.runUuid!);
+      expect(run2?.pinnedRuntime).toBe('codex');
+    });
+
+    it('leaves pinnedRuntime undefined when neither prior item nor deps specify one', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const result = await coordinator.certifyItemMerged({
+        batchId,
+        position: 1,
+        mergedCommitSha: 'sha-commit-101',
+        now: t2,
+      });
+
+      expect(result.actions).toContain('successor_admitted');
+      const saved = releaseBatchRepository.findById(batchId)!;
+      const run2 = runRepository.findByUuid(saved.items[1]?.runUuid!);
+      expect(run2?.pinnedRuntime).toBeUndefined();
+    });
+  });
 });

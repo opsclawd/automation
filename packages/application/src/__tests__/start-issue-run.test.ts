@@ -1394,4 +1394,88 @@ describe('StartIssueRun repository resolution', () => {
     expect(inserted?.executionPolicy).toBe('standard');
     expect(capturedEnv?.AI_EXECUTION_POLICY).toBe('standard');
   });
+
+  it('sets pinnedRuntime on the admitted run and returns it in output', async () => {
+    const repo = {
+      id: RepositoryId('a'.repeat(64)),
+      fullName: 'owner/repo-a',
+      enabled: true,
+      healthStatus: 'healthy',
+      localBasePath: '/repos/a',
+    } as unknown as Repository;
+    const runRepo = new FakeRunRepository();
+    baseDeps({
+      runRepository: runRepo,
+      repositoryPort: {
+        findById: (id) => (id === repo.id ? repo : undefined),
+        listEnabled: () => [repo],
+      },
+    });
+
+    const out = await startIssueRun.execute({
+      issueNumber: 42,
+      repoId: repo.id,
+      pinnedRuntime: 'claude-code',
+    });
+
+    const inserted = runRepo.inserted[0];
+    expect(inserted).toBeDefined();
+    expect(inserted?.pinnedRuntime).toBe('claude-code');
+    expect(out.pinnedRuntime).toBe('claude-code');
+  });
+
+  it('falls back to deps.pinnedRuntime when input does not specify pinnedRuntime', async () => {
+    const repo = {
+      id: RepositoryId('a'.repeat(64)),
+      fullName: 'owner/repo-a',
+      enabled: true,
+      healthStatus: 'healthy',
+      localBasePath: '/repos/a',
+    } as unknown as Repository;
+    const runRepo = new FakeRunRepository();
+    baseDeps({
+      runRepository: runRepo,
+      pinnedRuntime: 'antigravity',
+      repositoryPort: {
+        findById: (id) => (id === repo.id ? repo : undefined),
+        listEnabled: () => [repo],
+      },
+    });
+
+    const out = await startIssueRun.execute({
+      issueNumber: 42,
+      repoId: repo.id,
+    });
+
+    const inserted = runRepo.inserted[0];
+    expect(inserted?.pinnedRuntime).toBe('antigravity');
+    expect(out.pinnedRuntime).toBe('antigravity');
+  });
+
+  it('leaves pinnedRuntime undefined and returns null when omitted', async () => {
+    const repo = {
+      id: RepositoryId('a'.repeat(64)),
+      fullName: 'owner/repo-a',
+      enabled: true,
+      healthStatus: 'healthy',
+      localBasePath: '/repos/a',
+    } as unknown as Repository;
+    const runRepo = new FakeRunRepository();
+    baseDeps({
+      runRepository: runRepo,
+      repositoryPort: {
+        findById: (id) => (id === repo.id ? repo : undefined),
+        listEnabled: () => [repo],
+      },
+    });
+
+    const out = await startIssueRun.execute({
+      issueNumber: 42,
+      repoId: repo.id,
+    });
+
+    const inserted = runRepo.inserted[0];
+    expect(inserted?.pinnedRuntime).toBeUndefined();
+    expect(out.pinnedRuntime).toBeNull();
+  });
 });

@@ -10,6 +10,7 @@ import {
   IssueNumber,
   type Run,
   type ExecutionPolicy,
+  type PinnedRuntime,
   type Repository,
   createRun,
   createJob,
@@ -90,6 +91,7 @@ export interface ReleaseBatchCoordinatorDeps {
   maintenanceService?: InterItemMaintenanceService;
   resolvePrMetadata?: (run: Run) => Promise<{ prNumber: number } | undefined>;
   executionPolicy?: ExecutionPolicy | undefined;
+  pinnedRuntime?: PinnedRuntime | undefined;
   releaseBatchNotification?: ReleaseBatchNotificationPort | undefined;
   now?: (() => Date) | undefined;
   logger?: {
@@ -1230,6 +1232,15 @@ export class ReleaseBatchCoordinator {
       runUuid = ids.uuid;
       runDisplayId = ids.displayId;
 
+      let pinnedRuntime = this.deps.pinnedRuntime;
+      if (!pinnedRuntime) {
+        const priorItem = batch.items.find((i) => i.runUuid);
+        if (priorItem?.runUuid) {
+          const priorRun = this.deps.runRepository.findByUuid(priorItem.runUuid);
+          pinnedRuntime = priorRun?.pinnedRuntime;
+        }
+      }
+
       const run = createRun({
         uuid: ids.uuid,
         displayId: ids.displayId,
@@ -1238,6 +1249,7 @@ export class ReleaseBatchCoordinator {
         startedAt: now,
         executionPolicy: this.deps.executionPolicy ?? 'standard',
         baseBranch: batch.releaseBranch,
+        ...(pinnedRuntime ? { pinnedRuntime } : {}),
       });
 
       try {
