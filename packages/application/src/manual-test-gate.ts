@@ -372,8 +372,11 @@ export class PromoteReleaseBatch {
         },
       });
 
-      // Request auto-merge
-      if (input.autoMerge !== false) {
+      // Request auto-merge only when explicitly opted in. Promoting a release
+      // batch merges the release branch into main/source -- auto-merging that
+      // without a human reviewing the promotion PR first is too risky to be
+      // the default; require an explicit `autoMerge: true`.
+      if (input.autoMerge === true) {
         try {
           await this.deps.github.requestAutoMerge(
             repo.fullName,
