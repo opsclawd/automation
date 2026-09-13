@@ -36,9 +36,9 @@ describe('serve config', () => {
     timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
   };
 
-  it('defaults sweepIntervalSeconds to 0 when serve is absent', () => {
+  it('defaults sweepIntervalSeconds to 60 when serve is absent', () => {
     const result = orchestratorConfigSchema.parse(baseConfig);
-    expect(result.serve.sweepIntervalSeconds).toBe(0);
+    expect(result.serve.sweepIntervalSeconds).toBe(60);
   });
 
   it('accepts an explicit positive sweepIntervalSeconds', () => {
