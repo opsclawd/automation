@@ -345,6 +345,68 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'failed', failure };
   }
 
+  const candidateDestinations = resolvedResultJsonPath
+    ? [
+        'result.json',
+        'fix-review-result.json',
+        'fix-validate-result.json',
+        'follow-up-review-result.json',
+      ].filter((p) => p !== resolvedResultJsonPath)
+    : [];
+  const hasCandidateOnDisk = () =>
+    candidateDestinations.some((p) => {
+      try {
+        const full = join(ctx.cwd, p);
+        return existsSync(full) && statSync(full).size > 0;
+      } catch {
+        return false;
+      }
+    });
+
+  const isEmptyResponseViolation = (r: AgentInvocationResult) =>
+    !config.skipResultExtraction &&
+    r.outcome === 'contract_violation' &&
+    r.contractViolations.length > 0 &&
+    r.contractViolations.every((v) => v === CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT) &&
+    r.endCommitSha === startCommitSha &&
+    !hasCandidateOnDisk();
+
+  // Bounded single retry for a genuinely empty agent response: the runtime exited
+  // successfully but produced no required artifacts, no rescueable candidate file, and
+  // made no git changes at all — the model spent its whole output budget without ever
+  // emitting a final response (#1241). Retry once with the identical request before
+  // falling through to the existing extraction-rescue / failure handling below.
+  if (isEmptyResponseViolation(agentResult)) {
+    emit(
+      'agent.retry_after_empty_response',
+      'warn',
+      `agent invocation [${invocationId}] for ${config.phase} produced no artifacts and no git changes; retrying once`,
+      { profile: config.profile },
+    );
+    const retryInvocationId = AgentInvocationId(ctx.idFactory?.() || randomUUID());
+    try {
+      agentResult = await ctx.agent.invoke({
+        ...request,
+        id: retryInvocationId,
+        fallbackOfInvocationId: invocationId,
+        fallbackReason: 'empty_response_retry',
+        metadata: { ...request.metadata, invocation_type: 'empty_response_retry' },
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        'command_failed',
+        `Agent invocation [${retryInvocationId}] (empty-response retry) failed: ${message}`,
+        true,
+        'Check agent infrastructure configuration, then retry.',
+      );
+      emit(`${String(config.phase)}.failed`, 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+  }
+
   // Emit remediation warnings if the runner auto-corrected misplaced artifacts
   if (agentResult.remediatedArtifacts?.length) {
     for (const r of agentResult.remediatedArtifacts) {
@@ -360,23 +422,6 @@ export async function runSingleShotAgentPhase(
     }
   }
 
-  const candidateDestinations = resolvedResultJsonPath
-    ? [
-        'result.json',
-        'fix-review-result.json',
-        'fix-validate-result.json',
-        'follow-up-review-result.json',
-      ].filter((p) => p !== resolvedResultJsonPath)
-    : [];
-  const hasCandidateOnDisk = candidateDestinations.some((p) => {
-    try {
-      const full = join(ctx.cwd, p);
-      return existsSync(full) && statSync(full).size > 0;
-    } catch {
-      return false;
-    }
-  });
-
   const canAttemptExtractionRescue =
     !config.skipResultExtraction &&
     agentResult.outcome === 'contract_violation' &&
@@ -385,7 +430,7 @@ export async function runSingleShotAgentPhase(
       (v) => v === CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
     ) &&
     ctx.repair !== undefined &&
-    hasCandidateOnDisk;
+    hasCandidateOnDisk();
 
   if (agentResult.outcome !== 'success' && !canAttemptExtractionRescue) {
     const kind: Failure['kind'] =

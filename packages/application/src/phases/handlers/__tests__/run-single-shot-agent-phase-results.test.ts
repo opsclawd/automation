@@ -597,4 +597,111 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('auto-retries once when the agent produces no artifacts and no git changes at all (#1241)', async () => {
+    await artifacts.write({
+      runId: 'run-1128',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        evaluations: [],
+        new_findings: [],
+        summary: 'Retried successfully',
+      }),
+    });
+
+    agent.enqueue('follow-up-review', () => ({
+      runtime: 'antigravity',
+      provider: 'google',
+      model: 'gemini-3.8-flash-high',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout-empty',
+      stderrPath: '/tmp/stderr',
+      contractViolations: ['missing_required_artifact'],
+      outcome: 'contract_violation',
+      endCommitSha: '0'.repeat(40),
+    }));
+    agent.enqueue('follow-up-review', () => ({
+      runtime: 'antigravity',
+      provider: 'google',
+      model: 'gemini-3.8-flash-high',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const result = await runSingleShotAgentPhase<FollowUpReviewResult>(ctx, {
+      phase: PhaseName('follow-up-review'),
+      profile: AgentProfileName('follow-up-review'),
+      step: 'follow-up-review',
+      vars: { cwd: ctx.cwd },
+      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+    });
+
+    expect(result.outcome).toBe('passed');
+    expect(agent.invocations).toHaveLength(2);
+    expect(agent.invocations[1]?.fallbackOfInvocationId).toBe(agent.invocations[0]?.id);
+    expect(agent.invocations[1]?.fallbackReason).toBe('empty_response_retry');
+  });
+
+  it('does not auto-retry when a rescueable candidate result file exists on disk (#1241)', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'no-retry-when-rescueable-'));
+    const stdoutPath = join(tempDir, 'stdout.log');
+    writeFileSync(stdoutPath, 'evidence with {"result":"done_with_fixes"}\n');
+    ctx.cwd = tempDir;
+
+    try {
+      const repairPort: StructuredResultRepairPort = {
+        repairStructuredResult: async (
+          params: StructuredResultRepairInput,
+        ): Promise<StructuredResultRepairResult> => {
+          await artifacts.write({
+            runId: params.runId,
+            relativePath: params.destination,
+            contents: JSON.stringify({ result: 'done_with_fixes' }),
+          });
+          return {
+            outcome: 'repaired',
+            repairInvocationId: 'inv-repair-rescue' as AgentInvocationId,
+          };
+        },
+      };
+      ctx.repair = repairPort;
+
+      agent.enqueue('fix-review', () => {
+        writeFileSync(join(tempDir, 'result.json'), '{"result":"done_with_fixes"}');
+        return {
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-20250514',
+          exitCode: 0,
+          durationMs: 1000,
+          stdoutPath,
+          stderrPath: '/tmp/stderr',
+          contractViolations: ['missing_required_artifact'],
+          outcome: 'contract_violation',
+          endCommitSha: '0'.repeat(40),
+        };
+      });
+
+      const result = await runSingleShotAgentPhase(ctx, {
+        phase: PhaseName('fix-review'),
+        profile: AgentProfileName('fix-review'),
+        step: 'fix-review',
+        vars: { cwd: ctx.cwd },
+        resultJsonPath: 'fix-review-result.json',
+        agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+      });
+
+      expect(result.outcome).toBe('passed');
+      expect(agent.invocations).toHaveLength(1);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
