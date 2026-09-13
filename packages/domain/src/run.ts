@@ -2,6 +2,14 @@ import type { RepositoryId } from './ids.js';
 
 export type ExecutionPolicy = 'legacy' | 'standard' | 'strict';
 
+export const PINNED_RUNTIMES = ['claude-code', 'antigravity', 'codex', 'opencode'] as const;
+
+export type PinnedRuntime = (typeof PINNED_RUNTIMES)[number];
+
+export function isPinnedRuntime(val: unknown): val is PinnedRuntime {
+  return typeof val === 'string' && (PINNED_RUNTIMES as readonly string[]).includes(val);
+}
+
 export type RunStatus =
   | 'queued'
   | 'running'
@@ -22,6 +30,7 @@ export interface Run {
   type: 'issue_to_pr' | 'pr_review' | 'consolidate';
   baseBranch?: string;
   executionPolicy?: ExecutionPolicy;
+  pinnedRuntime?: PinnedRuntime;
   status: RunStatus;
   currentPhase?: string;
   completedPhases: string[];
@@ -40,6 +49,7 @@ export interface CreateRunInput {
   type?: 'issue_to_pr' | 'pr_review' | 'consolidate';
   baseBranch?: string;
   executionPolicy?: ExecutionPolicy;
+  pinnedRuntime?: PinnedRuntime;
 }
 
 export class RunStateError extends Error {
@@ -50,6 +60,9 @@ export class RunStateError extends Error {
 }
 
 export function createRun(input: CreateRunInput): Run {
+  if (input.pinnedRuntime !== undefined && !isPinnedRuntime(input.pinnedRuntime)) {
+    throw new RunStateError(`invalid pinnedRuntime: '${String(input.pinnedRuntime)}'`);
+  }
   return {
     uuid: input.uuid,
     displayId: input.displayId,
@@ -58,6 +71,7 @@ export function createRun(input: CreateRunInput): Run {
     type: input.type ?? 'issue_to_pr',
     ...(input.baseBranch !== undefined ? { baseBranch: input.baseBranch } : {}),
     ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
+    ...(input.pinnedRuntime !== undefined ? { pinnedRuntime: input.pinnedRuntime } : {}),
     status: 'running',
     completedPhases: [],
     skippedPhases: [],

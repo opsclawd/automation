@@ -263,4 +263,16 @@ describe('RetryFailedPhase', () => {
       (await import('../resume-run.js')).ResumeDispositionRequiredError,
     );
   });
+
+  it('preserves initial pinnedRuntime when retrying a failed run', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ pinnedRuntime: 'codex' }));
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
+    expect(resumeRun.calls).toHaveLength(1);
+    const existing = runRepo.findByUuid('run-rp-1');
+    expect(existing?.pinnedRuntime).toBe('codex');
+  });
 });

@@ -884,4 +884,30 @@ describe('ResumeRun', () => {
     expect(resumed.status).toBe('running');
     expect(resumed.executionPolicy).toBe('standard');
   });
+
+  it('preserves initial pinnedRuntime across run resume', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'failed', pinnedRuntime: 'claude-code' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      now: fixedNow,
+    });
+
+    await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    const resumed = runRepo.findByUuid('run-1')!;
+    expect(resumed.status).toBe('running');
+    expect(resumed.pinnedRuntime).toBe('claude-code');
+  });
 });

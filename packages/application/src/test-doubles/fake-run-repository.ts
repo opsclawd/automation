@@ -42,6 +42,7 @@ export class FakeRunRepository implements RunRepositoryPort {
       ...run,
       ...(run.baseBranch !== undefined ? { baseBranch: run.baseBranch } : {}),
       executionPolicy: run.executionPolicy ?? 'legacy',
+      ...(run.pinnedRuntime !== undefined ? { pinnedRuntime: run.pinnedRuntime } : {}),
     } as RunRecord);
   }
 
@@ -79,6 +80,7 @@ export class FakeRunRepository implements RunRepositoryPort {
     if (patch.pid !== undefined) r.pid = patch.pid;
     if (patch.baseBranch !== undefined) r.baseBranch = patch.baseBranch;
     if (patch.executionPolicy !== undefined) r.executionPolicy = patch.executionPolicy;
+    if (patch.pinnedRuntime !== undefined) r.pinnedRuntime = patch.pinnedRuntime;
   }
 
   findByUuid(uuid: string): RunRecord | undefined {
@@ -273,6 +275,7 @@ export class FakeRunRepository implements RunRepositoryPort {
     if (patch.pid !== undefined) r.pid = patch.pid;
     if (patch.baseBranch !== undefined) r.baseBranch = patch.baseBranch;
     if (patch.executionPolicy !== undefined) r.executionPolicy = patch.executionPolicy;
+    if (patch.pinnedRuntime !== undefined) r.pinnedRuntime = patch.pinnedRuntime;
     this.updates.push({ uuid, patch });
     return true;
   }
