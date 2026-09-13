@@ -4,6 +4,8 @@ import {
   ReleaseBatchId,
   createReleaseBatch,
   admitItem,
+  markItemMerged,
+  ReleaseBatchStateError,
   type Repository,
 } from '@ai-sdlc/domain';
 import { ReleaseBatchCoordinator } from '../release-batch-coordinator.js';
@@ -1212,6 +1214,133 @@ describe('ReleaseBatchCoordinator', () => {
       expect(saved.status).toBe('completed');
       expect(saved.promotionCommitSha).toBe(promotionSha);
       expect(saved.completedAt).toBeDefined();
+    });
+  });
+
+  describe('successor base SHA safety and git failure handling (#1224)', () => {
+    it('blocks batch with base_sha_unresolvable if git.fetch fails during successor admission', async () => {
+      const fakeGit = new FakeGitPort();
+      fakeGit.fetch = vi.fn().mockRejectedValue(new Error('network connection timed out'));
+      const coordWithGit = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        repositoryPort,
+        jobQueue,
+        eventBus,
+        git: fakeGit,
+      });
+
+      const { batchId } = setupFiveItemBatch();
+
+      // Certify item 1 merged
+      const batch = releaseBatchRepository.findById(batchId)!;
+      const updated = markItemMerged(batch, 1, { mergedCommitSha: 'sha-m1', now: t2 });
+      releaseBatchRepository.update(updated);
+
+      // Reconcile item 2 admission
+      const result = await coordWithGit.reconcile(batchId);
+      expect(result.batchStatus).toBe('blocked');
+      expect(result.actions).toContain('blocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.blockedReason).toContain('base_sha_unresolvable');
+      expect(saved.blockedReason).toContain('network connection timed out');
+
+      // Item 2 was NOT admitted
+      expect(saved.items[1]?.status).toBe('pending');
+      expect(saved.items[1]?.runUuid).toBeUndefined();
+
+      // Event was emitted
+      const blockedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.blocked' && p.event.metadata?.position === 2,
+      );
+      expect(blockedEvent).toBeDefined();
+    });
+
+    it('blocks batch with base_sha_unresolvable when prior item has no mergedCommitSha and git is unavailable', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      // Manually set item 1 to merged without mergedCommitSha (e.g. database anomaly or legacy record)
+      const batch = releaseBatchRepository.findById(batchId)!;
+      const items = [...batch.items];
+      items[0] = { ...items[0]!, status: 'merged', mergedCommitSha: undefined };
+      releaseBatchRepository.update({ ...batch, items });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.batchStatus).toBe('blocked');
+      expect(result.actions).toContain('blocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.blockedReason).toContain('base_sha_unresolvable');
+      expect(saved.blockedReason).toContain('no mergedCommitSha');
+
+      // Item 2 was NOT admitted
+      expect(saved.items[1]?.status).toBe('pending');
+      expect(saved.items[1]?.runUuid).toBeUndefined();
+    });
+
+    it('automatically unblocks from base_sha_unresolvable once git resolves successfully', async () => {
+      const fakeGit = new FakeGitPort();
+      fakeGit.fetch = vi.fn().mockRejectedValueOnce(new Error('temporary git lock'));
+      const coordWithGit = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        repositoryPort,
+        jobQueue,
+        eventBus,
+        git: fakeGit,
+      });
+
+      const { batchId } = setupFiveItemBatch();
+      const batch = releaseBatchRepository.findById(batchId)!;
+      const updated = markItemMerged(batch, 1, { mergedCommitSha: 'sha-m1', now: t2 });
+      releaseBatchRepository.update(updated);
+
+      // 1. First reconcile fails due to git error and blocks
+      const res1 = await coordWithGit.reconcile(batchId);
+      expect(res1.batchStatus).toBe('blocked');
+      expect(res1.batch.blockedReason).toContain('temporary git lock');
+
+      // 2. Fix git fetch and set remote ref
+      fakeGit.fetch = vi.fn().mockResolvedValue(undefined);
+      fakeGit.remoteRefs.set(`origin/${batch.releaseBranch}`, 'sha-remote-item-1-tip');
+
+      // 3. Next reconcile unblocks and admits successor with fresh remote SHA
+      const res2 = await coordWithGit.reconcile(batchId);
+      expect(res2.actions).toContain('unblocked');
+      expect(res2.actions).toContain('successor_admitted');
+      expect(res2.batchStatus).toBe('building');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('building');
+      expect(saved.blockedReason).toBeUndefined();
+      expect(saved.items[1]?.status).toBe('active');
+      expect(saved.items[1]?.baseSha).toBe('sha-remote-item-1-tip');
+
+      const run2 = runRepository.findByUuid(saved.items[1]?.runUuid!);
+      expect(run2?.startCommitSha).toBe('sha-remote-item-1-tip');
+    });
+
+    it('throws ReleaseBatchStateError if admitSuccessor is called with sourceStartSha for position > 1', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const batch = releaseBatchRepository.findById(batchId)!;
+
+      // Access private admitSuccessor for direct assertion
+      const admitSuccessorFn = (
+        coordinator as unknown as {
+          admitSuccessor: (
+            batch: typeof batch,
+            item: (typeof batch.items)[number],
+            now: Date,
+            baseSha?: string,
+          ) => Promise<void>;
+        }
+      ).admitSuccessor.bind(coordinator);
+      await expect(
+        admitSuccessorFn(batch, batch.items[1], new Date(), batch.sourceStartSha),
+      ).rejects.toThrow(ReleaseBatchStateError);
     });
   });
 });

@@ -566,12 +566,15 @@ export class ReleaseBatchCoordinator {
         };
       }
 
-      // Precondition: if batch is blocked, check if we can retry maintenance if it was an environment blocker
+      // Precondition: if batch is blocked, check if we can retry maintenance if it was an environment blocker,
+      // or re-attempt ref resolution if it was blocked on an unresolvable base SHA
       if (batch.status === 'blocked') {
         const isEnvBlocker =
           batch.blockedReason?.startsWith('environment_unhealthy') ||
           batch.blockedReason?.startsWith('Disk free space') ||
           batch.blockedReason?.startsWith('Available memory');
+
+        const isBaseShaBlocker = batch.blockedReason?.startsWith('base_sha_unresolvable');
 
         if (isEnvBlocker && this.deps.maintenanceService && currentItem.position > 1) {
           const repo = this.deps.repositoryPort.findById(batch.repoId);
@@ -607,6 +610,57 @@ export class ReleaseBatchCoordinator {
                 batch,
               };
             }
+          } else {
+            return {
+              batchId: batch.id,
+              batchStatus: batch.status,
+              currentPosition: batch.currentPosition,
+              actions: ['idle'],
+              batch,
+            };
+          }
+        } else if (isBaseShaBlocker && currentItem.position > 1) {
+          const repo = this.deps.repositoryPort.findById(batch.repoId);
+          let canUnblock = false;
+          let resolvedSha: string | undefined;
+          if (this.deps.git && repo) {
+            try {
+              await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
+              resolvedSha = await this.deps.git.resolveRef(
+                repo.localBasePath,
+                `origin/${batch.releaseBranch}`,
+              );
+              if (resolvedSha && resolvedSha !== batch.sourceStartSha) {
+                canUnblock = true;
+              }
+            } catch {
+              // still failing
+            }
+          } else {
+            const fallbackSha = this.resolveBaseShaForPosition(batch, currentItem.position);
+            if (fallbackSha && fallbackSha !== batch.sourceStartSha) {
+              canUnblock = true;
+              resolvedSha = fallbackSha;
+            }
+          }
+
+          if (canUnblock && resolvedSha) {
+            const { blockedReason: _br, ...unblockedBatch } = batch;
+            void _br;
+            batch = { ...unblockedBatch, status: 'building' };
+            this.deps.releaseBatchRepository.update(batch);
+            actions.push('unblocked');
+            this.publishEvent(batch, {
+              type: 'release_batch.unblocked',
+              level: 'info',
+              message: `release-batch ${batch.id} unblocked: base SHA successfully resolved (${resolvedSha})`,
+              timestamp: now,
+              metadata: {
+                releaseBatchId: batch.id,
+                position: currentItem.position,
+                baseSha: resolvedSha,
+              },
+            });
           } else {
             return {
               batchId: batch.id,
@@ -682,9 +736,11 @@ export class ReleaseBatchCoordinator {
       }
 
       // Fresh release-base certification: fetch origin/<releaseBranch> and resolve exact SHA
-      let freshBaseSha =
+      let freshBaseSha: string | undefined =
         currentItem.baseSha ?? this.resolveBaseShaForPosition(batch, currentItem.position);
       const repo = this.deps.repositoryPort.findById(batch.repoId);
+      let gitFetchFailed = false;
+      let gitFetchErrorMsg = '';
       if (this.deps.git && repo) {
         try {
           await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
@@ -694,13 +750,45 @@ export class ReleaseBatchCoordinator {
           );
           if (remoteSha) {
             freshBaseSha = remoteSha;
+          } else {
+            gitFetchFailed = true;
+            gitFetchErrorMsg = `could not resolve ref origin/${batch.releaseBranch}`;
           }
         } catch (err) {
+          gitFetchFailed = true;
+          gitFetchErrorMsg = err instanceof Error ? err.message : String(err);
           this.deps.logger?.warn?.(
-            `Failed to fetch or resolve origin/${batch.releaseBranch}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
+            `Failed to fetch or resolve origin/${batch.releaseBranch}: ${gitFetchErrorMsg}`,
           );
+        }
+      }
+
+      if (currentItem.position > 1) {
+        if (gitFetchFailed || !freshBaseSha || freshBaseSha === batch.sourceStartSha) {
+          const reason = gitFetchFailed
+            ? `base_sha_unresolvable: failed to fetch origin/${batch.releaseBranch}: ${gitFetchErrorMsg}`
+            : `base_sha_unresolvable: prior item #${currentItem.position - 1} has no mergedCommitSha`;
+          batch = this.blockBatchAndNotify(batch, reason);
+          this.deps.releaseBatchRepository.update(batch);
+          actions.push('blocked');
+          this.publishEvent(batch, {
+            type: 'release_batch.blocked',
+            level: 'warn',
+            message: `release-batch ${batch.id} blocked: ${reason}`,
+            timestamp: now,
+            metadata: {
+              releaseBatchId: batch.id,
+              position: currentItem.position,
+              blockedReason: reason,
+            },
+          });
+          return {
+            batchId: batch.id,
+            batchStatus: batch.status,
+            currentPosition: batch.currentPosition,
+            actions,
+            batch,
+          };
         }
       }
 
@@ -726,16 +814,60 @@ export class ReleaseBatchCoordinator {
         batch.releaseBranch,
       );
       if (existingRun) {
+        const resolvedBase =
+          currentItem.baseSha ?? this.resolveBaseShaForPosition(batch, currentItem.position);
+        if (currentItem.position > 1 && (!resolvedBase || resolvedBase === batch.sourceStartSha)) {
+          const reason = `base_sha_unresolvable: cannot adopt run for item #${currentItem.issueNumber}: baseSha could not be resolved`;
+          batch = this.blockBatchAndNotify(batch, reason);
+          this.deps.releaseBatchRepository.update(batch);
+          actions.push('blocked');
+          return {
+            batchId: batch.id,
+            batchStatus: batch.status,
+            currentPosition: batch.currentPosition,
+            actions,
+            batch,
+          };
+        }
         batch = admitItem(batch, currentItem.position, {
           runUuid: existingRun.uuid,
-          baseSha:
-            currentItem.baseSha ?? this.resolveBaseShaForPosition(batch, currentItem.position),
+          ...(resolvedBase ? { baseSha: resolvedBase } : {}),
           now,
         });
         this.deps.releaseBatchRepository.update(batch);
         actions.push('run_adopted');
       } else {
-        const admissionResult = await this.admitSuccessor(batch, currentItem, now);
+        let freshBaseSha: string | undefined =
+          currentItem.baseSha ?? this.resolveBaseShaForPosition(batch, currentItem.position);
+        const repo = this.deps.repositoryPort.findById(batch.repoId);
+        if (this.deps.git && repo) {
+          try {
+            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
+            const remoteSha = await this.deps.git.resolveRef(
+              repo.localBasePath,
+              `origin/${batch.releaseBranch}`,
+            );
+            if (remoteSha) {
+              freshBaseSha = remoteSha;
+            }
+          } catch {
+            // best effort
+          }
+        }
+        if (currentItem.position > 1 && (!freshBaseSha || freshBaseSha === batch.sourceStartSha)) {
+          const reason = `base_sha_unresolvable: failed to resolve base SHA for position ${currentItem.position}`;
+          batch = this.blockBatchAndNotify(batch, reason);
+          this.deps.releaseBatchRepository.update(batch);
+          actions.push('blocked');
+          return {
+            batchId: batch.id,
+            batchStatus: batch.status,
+            currentPosition: batch.currentPosition,
+            actions,
+            batch,
+          };
+        }
+        const admissionResult = await this.admitSuccessor(batch, currentItem, now, freshBaseSha);
         batch = admissionResult.batch;
         actions.push(...admissionResult.actions);
         return {
@@ -1055,14 +1187,15 @@ export class ReleaseBatchCoordinator {
     return results;
   }
 
-  private resolveBaseShaForPosition(batch: ReleaseBatch, position: number): string {
-    if (position > 1) {
-      const prev = batch.items.find((i) => i.position === position - 1);
-      if (prev && prev.mergedCommitSha) {
-        return prev.mergedCommitSha;
-      }
+  private resolveBaseShaForPosition(batch: ReleaseBatch, position: number): string | undefined {
+    if (position === 1) {
+      return batch.sourceStartSha;
     }
-    return batch.sourceStartSha;
+    const prev = batch.items.find((i) => i.position === position - 1);
+    if (prev && prev.mergedCommitSha) {
+      return prev.mergedCommitSha;
+    }
+    return undefined;
   }
 
   private findMatchingRun(
@@ -1133,6 +1266,16 @@ export class ReleaseBatchCoordinator {
 
     const baseSha =
       explicitBaseSha ?? item.baseSha ?? this.resolveBaseShaForPosition(batch, item.position);
+    if (!baseSha) {
+      throw new ReleaseBatchStateError(
+        `cannot admit item at position ${item.position}: baseSha could not be resolved`,
+      );
+    }
+    if (item.position > 1 && baseSha === batch.sourceStartSha) {
+      throw new ReleaseBatchStateError(
+        `cannot admit item at position ${item.position}: successor item cannot use batch sourceStartSha as base`,
+      );
+    }
     this.deps.runRepository.update(runUuid, { startCommitSha: baseSha });
 
     const updatedBatch = admitItem(batch, item.position, {

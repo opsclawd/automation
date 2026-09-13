@@ -584,7 +584,14 @@ function buildSchedulerDeps(
         const repoRootPath = repo.localBasePath;
         const repoDefaultBranch = repo.defaultBranch;
         const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
-        const baseBranch = r.baseBranch ?? repoDefaultBranch;
+        const baseBranch = r.startCommitSha ?? r.baseBranch ?? repoDefaultBranch;
+        if (r.baseBranch && c.git) {
+          try {
+            await c.git.fetch(repoRootPath, 'origin', r.baseBranch);
+          } catch {
+            // best-effort fetch
+          }
+        }
         await c.git.createWorktree({
           repoLocalBasePath: repoRootPath,
           worktreePath,
@@ -594,8 +601,10 @@ function buildSchedulerDeps(
         if ('seedArtifactExcludes' in c.git) {
           await (c.git as unknown as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
         }
-        const sha = await c.git.headCommitSha(worktreePath);
-        runtime.runRepository.update(r.uuid, { startCommitSha: sha });
+        if (!r.startCommitSha) {
+          const sha = await c.git.headCommitSha(worktreePath);
+          runtime.runRepository.update(r.uuid, { startCommitSha: sha });
+        }
         return { cwd: worktreePath };
       },
       resetWorktree: (repoId) => {
@@ -607,7 +616,7 @@ function buildSchedulerDeps(
         const repoRootPath = repo.localBasePath;
         const repoDefaultBranch = repo.defaultBranch;
         const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
-        const baseBranch = r.baseBranch ?? repoDefaultBranch;
+        const baseBranch = r.startCommitSha ?? r.baseBranch ?? repoDefaultBranch;
         c.git.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
       },
       isWorkerAlive: (wId) => {
