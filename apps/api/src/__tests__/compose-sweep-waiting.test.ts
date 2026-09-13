@@ -102,11 +102,11 @@ describe('composeRoot — SweepWaitingRuns wiring', () => {
 });
 
 describe('composeRoot — serve sweep wiring', () => {
-  it('defaults serveSweepIntervalSeconds to 0 when config omits serve', async () => {
+  it('defaults serveSweepIntervalSeconds to 60 when config omits serve', async () => {
     const { composeRoot } = await import('../compose.js');
     const repoRoot = makeRepo();
     const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
-    expect(c.serveSweepIntervalSeconds).toBe(0);
+    expect(c.serveSweepIntervalSeconds).toBe(60);
   });
 
   it('exposes buildWaitingRunsSweeper that constructs a working WaitingRunsSweeper', async () => {

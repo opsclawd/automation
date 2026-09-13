@@ -316,16 +316,20 @@ export const orchestratorConfigSchema = z.strictObject({
     .object({
       /**
        * Interval, in seconds, at which `orchestrator serve` re-runs
-       * SweepWaitingRuns and drives any reactivated run with the worker
-       * loop. 0 (the default) disables the periodic sweep entirely —
-       * `serve` behaves exactly as it does today (a single startup sweep,
-       * no periodic re-check). A positive value is clamped to a minimum
-       * of 30s by the CLI wiring (Task 6) to avoid hammering the GitHub
-       * API/DB if misconfigured.
+       * SweepWaitingRuns, orphan recovery, and release-batch reconciliation
+       * with the worker loop. Defaults to 60s so unattended `serve`
+       * deployments self-heal (recover orphaned/waiting runs, advance
+       * release batches once an item's PR merges) without requiring a
+       * manual `release-batch resume` or a `serve` restart after every
+       * single event (see #1227). Set to 0 to disable the periodic sweep
+       * entirely — `serve` then only runs a single startup sweep, with no
+       * periodic re-check. A positive value is clamped to a minimum of 30s
+       * by the CLI wiring (Task 6) to avoid hammering the GitHub API/DB if
+       * misconfigured.
        */
-      sweepIntervalSeconds: z.number().int().nonnegative().default(0),
+      sweepIntervalSeconds: z.number().int().nonnegative().default(60),
     })
-    .default({ sweepIntervalSeconds: 0 }),
+    .default({ sweepIntervalSeconds: 60 }),
   features: z
     .object({
       scopeContractEnforcement: z.boolean().default(true),

@@ -1607,7 +1607,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const reapOrphanedTestWorkers = new ReapOrphanedTestWorkers({ listProcesses, killProcess });
 
   let readyMaxDays = 7;
-  let serveSweepIntervalSeconds = 0;
+  let serveSweepIntervalSeconds = 60;
   try {
     const cacheKey = `${effectiveRepoRoot}|${effectiveTargetRepoRoot ?? ''}`;
     let sweepLayered = layeredConfigCache.get(cacheKey);
@@ -1621,7 +1621,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     readyMaxDays = sweepLayered.config.timeouts.readyMaxDays;
     serveSweepIntervalSeconds = sweepLayered.config.serve.sweepIntervalSeconds;
   } catch {
-    // Fallback to default 7 / disabled.
+    // Fallback to default 7 / 60s periodic sweep.
   }
 
   let schedulerConfig = { globalConcurrency: 1, pollIntervalMs: 2000, shutdownGraceMs: 30_000 };
