@@ -12,6 +12,7 @@ import type {
   RepositoryId,
   Repository,
   ExecutionPolicy,
+  PinnedRuntime,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
@@ -56,6 +57,7 @@ export interface StartIssueRunDeps {
   model?: string;
   agentCli?: string;
   executionPolicy?: ExecutionPolicy;
+  pinnedRuntime?: PinnedRuntime;
   tee?: boolean;
   now?: () => Date;
   logger?: { error: (msg: string, err?: unknown) => void };
@@ -68,6 +70,7 @@ export interface StartIssueRunInput {
   repoId?: RepositoryId | undefined;
   baseBranch?: string | undefined;
   executionPolicy?: ExecutionPolicy | undefined;
+  pinnedRuntime?: PinnedRuntime | undefined;
 }
 
 export interface StartIssueRunOutput {
@@ -77,6 +80,7 @@ export interface StartIssueRunOutput {
   status: 'passed' | 'failed' | 'cancelled';
   repoId: RepositoryId;
   executionPolicy?: ExecutionPolicy;
+  pinnedRuntime?: PinnedRuntime | null;
 }
 
 export class StartIssueRun {
@@ -136,6 +140,7 @@ export class StartIssueRun {
     const logger = this.deps.logger ?? { error: (m, e) => console.error(m, e) };
     const startedAt = now();
     const ids = newRunId({ issueNumber: input.issueNumber, now: startedAt });
+    const effectivePinnedRuntime = input.pinnedRuntime ?? this.deps.pinnedRuntime;
     const run = createRun({
       uuid: ids.uuid,
       displayId: ids.displayId,
@@ -143,6 +148,7 @@ export class StartIssueRun {
       startedAt,
       repoId,
       executionPolicy: input.executionPolicy ?? this.deps.executionPolicy ?? 'standard',
+      ...(effectivePinnedRuntime ? { pinnedRuntime: effectivePinnedRuntime } : {}),
     });
     this.deps.runRepository.insertIfNoActive(run);
 
@@ -486,6 +492,7 @@ export class StartIssueRun {
           status: finalStatus,
           repoId,
           ...(run.executionPolicy !== undefined ? { executionPolicy: run.executionPolicy } : {}),
+          pinnedRuntime: run.pinnedRuntime ?? null,
         };
       } finally {
         try {

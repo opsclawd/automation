@@ -1899,6 +1899,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     tmpDirectoryFactory,
     repositoryPort: registryBackedRepo,
     runNotification,
+    ...(opts.pinnedRuntime ? { pinnedRuntime: opts.pinnedRuntime } : {}),
   };
   if (opts.baseBranch !== undefined) deps.baseBranch = opts.baseBranch;
   if (opts.model !== undefined) deps.model = opts.model;
@@ -1929,6 +1930,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       eventBus: persistingEventBus,
       eventRepository,
       executionPolicy,
+      pinnedRuntime: opts.pinnedRuntime,
     });
   const interItemMaintenanceService =
     opts.interItemMaintenanceService ??
@@ -1948,6 +1950,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       eventBus: persistingEventBus,
       eventRepository,
       executionPolicy,
+      pinnedRuntime: opts.pinnedRuntime,
       releaseBatchNotification,
       git: gitAdapter,
       github: ghPortForReleaseBatch,

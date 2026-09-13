@@ -256,4 +256,45 @@ describe('routes', () => {
     const body7 = (await res7.json()) as { error: string };
     expect(body7.error).toBe('repository_not_found');
   });
+
+  it('POST /api/runs creates run with valid pinned runtime and surfaces it in GET /api/runs/:runId', async () => {
+    const { baseUrl } = await bootServer();
+    const res = await fetch(`${baseUrl}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ issueNumber: 10, runtime: 'claude-code' }),
+    });
+    expect(res.status).toBe(201);
+    const data = (await res.json()) as { run: { uuid: string; pinnedRuntime: string } };
+    expect(data.run.pinnedRuntime).toBe('claude-code');
+
+    const getRes = await fetch(`${baseUrl}/api/runs/${data.run.uuid}`);
+    expect(getRes.status).toBe(200);
+    const getData = (await getRes.json()) as { run: { pinnedRuntime: string } };
+    expect(getData.run.pinnedRuntime).toBe('claude-code');
+  });
+
+  it('POST /api/runs rejects invalid runtime with 400 invalid_runtime', async () => {
+    const { baseUrl } = await bootServer();
+    const res = await fetch(`${baseUrl}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ issueNumber: 10, runtime: 'invalid-runtime' }),
+    });
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe('invalid_runtime');
+  });
+
+  it('POST /api/release-batches rejects invalid runtime with 400 invalid_runtime', async () => {
+    const { baseUrl } = await bootServer();
+    const res = await fetch(`${baseUrl}/api/release-batches`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ issues: [101, 102], runtime: 'unsupported-runtime' }),
+    });
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe('invalid_runtime');
+  });
 });

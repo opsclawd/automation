@@ -402,4 +402,43 @@ describe('StartReleaseBatch', () => {
 
     expect(releaseBatchRepository.listForRepo(defaultRepo.id)).toHaveLength(0);
   });
+
+  it('propagates pinnedRuntime from execute input to admitted run', async () => {
+    const result = await startReleaseBatch.execute({
+      issueNumbers: [101, 102],
+      pinnedRuntime: 'claude-code',
+    });
+
+    const run = runRepository.findByUuid(result.runUuid);
+    expect(run?.pinnedRuntime).toBe('claude-code');
+  });
+
+  it('propagates pinnedRuntime from deps when input does not specify one', async () => {
+    const batchUseCase = new StartReleaseBatch({
+      releaseBatchRepository,
+      runRepository,
+      jobQueue,
+      repositoryPort,
+      git,
+      github,
+      eventBus,
+      pinnedRuntime: 'antigravity',
+    });
+
+    const result = await batchUseCase.execute({
+      issueNumbers: [101, 102],
+    });
+
+    const run = runRepository.findByUuid(result.runUuid);
+    expect(run?.pinnedRuntime).toBe('antigravity');
+  });
+
+  it('leaves pinnedRuntime undefined when neither input nor deps specify one', async () => {
+    const result = await startReleaseBatch.execute({
+      issueNumbers: [101, 102],
+    });
+
+    const run = runRepository.findByUuid(result.runUuid);
+    expect(run?.pinnedRuntime).toBeUndefined();
+  });
 });

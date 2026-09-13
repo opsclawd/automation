@@ -22,6 +22,7 @@ export interface ReleaseBatchItemStatusView {
   blockedReason?: string;
   runPhase?: string;
   runStatus?: string;
+  pinnedRuntime?: string;
 }
 
 export interface ReleaseBatchStatusView {
@@ -42,6 +43,7 @@ export interface ReleaseBatchStatusView {
     runUuid?: string;
     currentPhase?: string;
     runStatus?: string;
+    pinnedRuntime?: string;
     prNumber?: number;
     prMergeState?: string;
   };
@@ -122,12 +124,14 @@ export class GetReleaseBatchStatus {
     const itemsView: ReleaseBatchItemStatusView[] = batch.items.map((item) => {
       let runPhase: string | undefined;
       let runStatus: string | undefined;
+      let pinnedRuntime: string | undefined;
 
       if (item.runUuid) {
         const run = this.deps.runRepository.findByUuid(item.runUuid);
         if (run) {
           runPhase = run.currentPhase ?? undefined;
           runStatus = run.status;
+          pinnedRuntime = run.pinnedRuntime ?? undefined;
           if (item.position === batch.currentPosition || item.status === 'active') {
             currentItemRun = run;
           }
@@ -145,6 +149,7 @@ export class GetReleaseBatchStatus {
         ...(item.blockedReason ? { blockedReason: item.blockedReason } : {}),
         ...(runPhase ? { runPhase } : {}),
         ...(runStatus ? { runStatus } : {}),
+        ...(pinnedRuntime ? { pinnedRuntime } : {}),
       };
     });
 
@@ -175,6 +180,7 @@ export class GetReleaseBatchStatus {
         ...(currentItemRecord.runUuid ? { runUuid: currentItemRecord.runUuid } : {}),
         ...(currentItemRun?.currentPhase ? { currentPhase: currentItemRun.currentPhase } : {}),
         ...(currentItemRun?.status ? { runStatus: currentItemRun.status } : {}),
+        ...(currentItemRun?.pinnedRuntime ? { pinnedRuntime: currentItemRun.pinnedRuntime } : {}),
         ...(currentItemRecord.prNumber ? { prNumber: currentItemRecord.prNumber } : {}),
         ...(prMergeState ? { prMergeState } : {}),
       };
@@ -261,6 +267,7 @@ export class GetReleaseBatchStatus {
         `  ${item.position}. #${item.issueNumber} [${item.status}]`,
         item.runUuid ? `run=${item.runUuid}` : null,
         item.runPhase ? `phase=${item.runPhase}` : null,
+        item.pinnedRuntime ? `pin=${item.pinnedRuntime}` : null,
         item.prNumber ? `pr=#${item.prNumber}` : null,
         item.mergedCommitSha ? `merged=${item.mergedCommitSha.slice(0, 8)}` : null,
         item.blockedReason ? `blocked=(${item.blockedReason})` : null,
@@ -277,6 +284,7 @@ export class GetReleaseBatchStatus {
         lines.push(`  Run UUID:       ${currentItemView.runUuid}`);
         lines.push(`  Run Phase:      ${currentItemView.currentPhase ?? 'unknown'}`);
         lines.push(`  Run Status:     ${currentItemView.runStatus ?? 'unknown'}`);
+        lines.push(`  Runtime Pin:    ${currentItemView.pinnedRuntime ?? 'unpinned'}`);
       }
       if (currentItemView.prNumber) {
         lines.push(

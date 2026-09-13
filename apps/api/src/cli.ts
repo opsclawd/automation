@@ -24,8 +24,12 @@ import {
   runStatusToExecutionOutcome,
   type ResumeDisposition,
   type ExecutionPolicy,
+  type PinnedRuntime,
   ReleaseBatchId,
+  PINNED_RUNTIMES,
+  isPinnedRuntime,
 } from '@ai-sdlc/domain';
+import { serializeRun } from './serializers.js';
 import { newRunId, EXECUTION_POLICIES } from '@ai-sdlc/shared';
 import {
   planRunRecoveryAction,
@@ -419,6 +423,7 @@ export interface RunCliOptions {
   baseBranch?: string;
   model?: string;
   agentCli?: string;
+  runtime?: string;
   executor?: string;
   targetRepoRoot?: string;
   repositoryId?: string;
@@ -733,6 +738,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       'Target repository root for worktrees and DB (default: orchestrator repo)',
     )
     .option(
+      '--runtime <runtime>',
+      'Pinned agent runtime: claude-code | antigravity | codex | opencode',
+    )
+    .option(
       '--allow-protected-path <path>',
       'Allow modifying protected path in create-pr guard (repeatable)',
       (val: string, prev: string[] = []) => [...prev, val],
@@ -768,6 +777,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         // --- executor validation ---
         if (opts.executor && !['bash', 'ts'].includes(opts.executor)) {
           console.error(`Error: --executor must be "bash" or "ts", got "${opts.executor}"`);
+          await drainAndExit(c, EXIT_USER_ERROR);
+          return;
+        }
+
+        // --- runtime pin validation ---
+        if (opts.runtime !== undefined && !isPinnedRuntime(opts.runtime)) {
+          console.error(
+            `Error: --runtime must be one of: ${PINNED_RUNTIMES.join(', ')}, got "${opts.runtime}"`,
+          );
           await drainAndExit(c, EXIT_USER_ERROR);
           return;
         }
@@ -880,6 +898,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             startedAt,
             executionPolicy: effectiveExecutionPolicy,
             ...(effectiveBaseBranch ? { baseBranch: effectiveBaseBranch } : {}),
+            ...(opts.runtime ? { pinnedRuntime: opts.runtime as PinnedRuntime } : {}),
           });
 
           if (callerRepoId) {
@@ -892,6 +911,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
           const effectivePhases = resolvePhaseOrder(effectiveExecutionPolicy);
           console.error(`Execution policy: ${effectiveExecutionPolicy.toUpperCase()}`);
+          console.error(`Runtime pin: ${run.pinnedRuntime ?? 'unpinned'}`);
           console.error('Phase graph:');
           for (const p of effectivePhases) {
             console.error(`  ${p}`);
@@ -1199,10 +1219,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           );
 
           try {
+            console.error(`Runtime pin: ${opts.runtime ?? 'unpinned'}`);
             const out = await c.startIssueRun.execute({
               issueNumber: opts.issue,
               repoId,
               executionPolicy: effectiveExecutionPolicy,
+              pinnedRuntime: opts.runtime as PinnedRuntime | undefined,
             });
             // Use process.stdout.write with a callback (not console.log) because
             // process.exit() does not wait for stdout to flush.
@@ -1577,6 +1599,130 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
   program
     .command('runs')
     .description('Manage orchestrator runs')
+    .addCommand(
+      new Command('status')
+        .description('Inspect run status, execution policy, and runtime pin')
+        .option('--issue <number>', 'GitHub issue number', (v) => {
+          if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
+          const n = parseInt(v, 10);
+          if (n < 1) throw new Error(`--issue must be >= 1, got: ${v}`);
+          return n;
+        })
+        .option('--uuid <uuid>', 'Run UUID')
+        .option('--repository-id <id|owner/name>', 'Repository ID or owner/name')
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .option('--json', 'Output full run record as JSON')
+        .action(
+          async (opts: {
+            issue?: number;
+            uuid?: string;
+            repositoryId?: string;
+            targetRepoRoot?: string;
+            json?: boolean;
+          }) => {
+            if (!opts.issue && !opts.uuid) {
+              console.error('Error: specify --issue or --uuid');
+              await drainAndExit(undefined, EXIT_USER_ERROR);
+              return;
+            }
+            if (opts.issue && opts.uuid) {
+              console.error('Error: specify --issue or --uuid, not both');
+              await drainAndExit(undefined, EXIT_USER_ERROR);
+              return;
+            }
+            let containerRef: Container | undefined;
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+                runStartupSweeps: false,
+              });
+              containerRef = c;
+              const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
+              let uuid: string;
+              if (opts.uuid) {
+                uuid = opts.uuid;
+              } else {
+                const repoId = callerRepoId
+                  ? (callerRepoId as RepositoryId)
+                  : c.repoFullName
+                    ? RepositoryId(c.repoFullName)
+                    : undefined;
+                if (!repoId) {
+                  console.error('Error: could not determine repository name.');
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
+                }
+                const run = c.runRepository.findByIssueNumber(repoId, opts.issue!);
+                if (!run) {
+                  console.error(`No run found for issue ${opts.issue}`);
+                  await drainAndExit(c, EXIT_USER_ERROR);
+                  return;
+                }
+                uuid = run.uuid;
+              }
+              const run = c.runRepository.findByUuid(uuid);
+              if (!run) {
+                console.error(`No run found for uuid ${uuid}`);
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+              if (callerRepoId) {
+                c.loadRepositoryForRun.execute({
+                  run,
+                  callerRepoId: callerRepoId as RepositoryId,
+                  strictMatch: false,
+                });
+              }
+
+              if (opts.json) {
+                await new Promise<void>((resolve, reject) =>
+                  process.stdout.write(JSON.stringify(serializeRun(run), null, 2) + '\n', (err) =>
+                    err ? reject(err) : resolve(),
+                  ),
+                );
+              } else {
+                const lines = [
+                  `Run UUID:        ${run.uuid}`,
+                  `Display ID:      ${run.displayId}`,
+                  `Issue:           #${run.issueNumber}`,
+                  `Repository:      ${run.repoId}`,
+                  `Status:          ${run.status}`,
+                  `Current Phase:   ${run.currentPhase ?? 'none'}`,
+                  `Execution Policy:${run.executionPolicy ?? 'standard'}`,
+                  `Runtime Pin:     ${run.pinnedRuntime ?? 'unpinned'}`,
+                  `Started:         ${run.startedAt.toISOString()}`,
+                  ...(run.completedAt ? [`Completed:       ${run.completedAt.toISOString()}`] : []),
+                  ...(run.failureReason ? [`Failure Reason:  ${run.failureReason}`] : []),
+                ];
+                await new Promise<void>((resolve, reject) =>
+                  process.stdout.write(lines.join('\n') + '\n', (err) =>
+                    err ? reject(err) : resolve(),
+                  ),
+                );
+              }
+
+              const isCliTestSuite =
+                buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+              if (!isCliTestSuite) {
+                await drainAndExit(c, 0);
+              } else {
+                await c.drainStartupSweeps?.(DEFAULT_DRAIN_TIMEOUT_MS);
+                await c.runNotification?.drain?.(DEFAULT_DRAIN_TIMEOUT_MS);
+              }
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              await drainAndExit(containerRef, EXIT_USER_ERROR);
+            }
+          },
+        ),
+    )
     .addCommand(
       new Command('cancel')
         .description('Cancel an active run')
@@ -2407,6 +2553,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           'standard',
         )
         .option(
+          '--runtime <runtime>',
+          'Pinned agent runtime: claude-code | antigravity | codex | opencode',
+        )
+        .option(
           '--target-repo-root <path>',
           'Target repository root for runs DB and worktrees (default: orchestrator repo)',
         )
@@ -2419,6 +2569,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             id?: string;
             batchId?: string;
             executionPolicy?: string;
+            runtime?: string;
             targetRepoRoot?: string;
           }) => {
             let containerRef: Container | undefined;
@@ -2479,6 +2630,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 executionPolicy = opts.executionPolicy as ExecutionPolicy;
               }
 
+              if (opts.runtime !== undefined && !isPinnedRuntime(opts.runtime)) {
+                console.error(
+                  `Error: --runtime must be one of: ${PINNED_RUNTIMES.join(', ')}, got "${opts.runtime}"`,
+                );
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
               const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
               const repoId = callerRepoId
                 ? (callerRepoId as RepositoryId)
@@ -2494,12 +2653,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 releaseBranch: opts.releaseBranch,
                 batchId: chosenBatchId ? ReleaseBatchId(chosenBatchId) : undefined,
                 executionPolicy,
+                pinnedRuntime: opts.runtime as PinnedRuntime | undefined,
               });
 
               const outputLines = [
                 `Release batch ${result.batchId} created successfully:`,
                 `  Release Branch: ${result.releaseBranch}`,
                 `  Source Branch:  ${result.sourceBranch} (${result.sourceStartSha})`,
+                `  Runtime Pin:    ${opts.runtime ?? 'unpinned'}`,
                 `  Issues (${result.batch.items.length}):    ${result.batch.items.map((i: { issueNumber: number }) => `#${i.issueNumber}`).join(', ')}`,
                 `  Admitted Item:  #${result.batch.items[0]?.issueNumber} (Run UUID: ${result.runUuid})`,
                 `  Initial Job ID: ${result.jobId}`,
