@@ -98,6 +98,18 @@
         "model": "opus",
         "timeoutMinutes": 30
       },
+      "claude-sonnet": {
+        "runtime": "claude-code",
+        "provider": "anthropic",
+        "model": "sonnet",
+        "timeoutMinutes": 30
+      },
+      "claude-haiku": {
+        "runtime": "claude-code",
+        "provider": "anthropic",
+        "model": "haiku",
+        "timeoutMinutes": 30
+      },
       "gemini": {
         "runtime": "antigravity",
         "provider": "google",
@@ -172,6 +184,40 @@
       "compound": { "role": "task-agent" },
       "create-pr": { "role": "task-agent" },
       "result-writer": { "role": "critic" }
+    },
+    "pinnedRuntimeProfiles": {
+      "claude-code": {
+        "planner": "claude",
+        "pr-reviewer": "claude",
+        "implementer": "claude-sonnet",
+        "fixer": "claude-sonnet",
+        "critic": "claude-sonnet",
+        "task-agent": "claude-haiku"
+      },
+      "antigravity": {
+        "planner": "gemini",
+        "pr-reviewer": "reviewer",
+        "implementer": "gemini",
+        "fixer": "gemini",
+        "critic": "task-reviewer",
+        "task-agent": "task-reviewer"
+      },
+      "codex": {
+        "planner": "codex-writer",
+        "pr-reviewer": "codex-reviewer",
+        "implementer": "codex-writer",
+        "fixer": "codex-writer",
+        "critic": "codex-reviewer",
+        "task-agent": "codex-writer"
+      },
+      "opencode": {
+        "planner": "architect",
+        "pr-reviewer": "senior",
+        "implementer": "qwen",
+        "fixer": "builder",
+        "critic": "junior",
+        "task-agent": "junior"
+      }
     }
   }
 }

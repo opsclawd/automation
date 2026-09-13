@@ -357,6 +357,102 @@ describe('phaseProfiles role references', () => {
   });
 });
 
+describe('pinnedRuntimeProfiles schema validation', () => {
+  function baseWithProfiles() {
+    return {
+      validation: { commands: ['pnpm test'], timeout: 60 },
+      phases: { skip: [], reviewFix: { maxIterations: 10 }, implement: { maxIterations: 5 } },
+      timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      agent: {
+        defaultProfile: 'builder',
+        profiles: {
+          builder: {
+            runtime: 'opencode' as const,
+            provider: 'minimax',
+            model: 'm1',
+            timeoutMinutes: 30,
+          },
+          senior: {
+            runtime: 'opencode' as const,
+            provider: 'ollama',
+            model: 'm2',
+            timeoutMinutes: 30,
+          },
+          claude: {
+            runtime: 'claude-code' as const,
+            provider: 'anthropic',
+            model: 'opus',
+            timeoutMinutes: 30,
+          },
+          reviewer: {
+            runtime: 'antigravity' as const,
+            provider: 'google',
+            model: 'flash',
+            timeoutMinutes: 30,
+          },
+          codex: {
+            runtime: 'codex' as const,
+            provider: 'openai',
+            model: 'default',
+            timeoutMinutes: 45,
+          },
+        },
+        phaseProfiles: {
+          'plan-design': { profile: 'builder' },
+        },
+        pinnedRuntimeProfiles: {
+          opencode: {
+            planner: 'builder',
+          },
+          'claude-code': {
+            planner: 'claude',
+          },
+          antigravity: {
+            planner: 'reviewer',
+          },
+          codex: {
+            planner: 'codex',
+          },
+        },
+      },
+    };
+  }
+
+  it('accepts valid pinnedRuntimeProfiles configuration', () => {
+    const cfg = baseWithProfiles();
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
+
+  it('rejects invalid pinned runtime name (such as pi or unknown)', () => {
+    const cfg = baseWithProfiles();
+    cfg.agent.pinnedRuntimeProfiles = {
+      pi: {
+        planner: 'builder',
+      },
+    } as unknown as typeof cfg.agent.pinnedRuntimeProfiles;
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(
+      /pinnedRuntimeProfiles has invalid pinned runtime 'pi'/,
+    );
+  });
+
+  it('rejects target profile that is not defined in profiles', () => {
+    const cfg = baseWithProfiles();
+    cfg.agent.pinnedRuntimeProfiles.opencode.planner = 'non-existent-profile';
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(
+      /pinnedRuntimeProfiles\.opencode\.planner references profile 'non-existent-profile' which is not defined in profiles/,
+    );
+  });
+
+  it('rejects target profile whose runtime mismatches the pinned runtime key', () => {
+    const cfg = baseWithProfiles();
+    // builder has runtime 'opencode', but is configured under 'codex'
+    cfg.agent.pinnedRuntimeProfiles.codex.planner = 'builder';
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(
+      /pinnedRuntimeProfiles\.codex\.planner references profile 'builder' with runtime 'opencode', expected 'codex'/,
+    );
+  });
+});
+
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
     const text = readFileSync(
