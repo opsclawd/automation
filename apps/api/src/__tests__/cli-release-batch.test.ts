@@ -265,7 +265,7 @@ describe('CLI release-batch command', () => {
     expect(fullStdout).toContain('Items (3):  #101, #104, #105');
   });
 
-  it('invokes promoteReleaseBatch with parsed options and writes formatted output', async () => {
+  it('invokes promoteReleaseBatch with auto-merge off by default and writes formatted output', async () => {
     const mockPromote = {
       execute: vi.fn().mockResolvedValue({
         batch: {
@@ -293,7 +293,7 @@ describe('CLI release-batch command', () => {
 
     expect(mockPromote.execute).toHaveBeenCalledWith({
       batchId: ReleaseBatchId('batch-001'),
-      autoMerge: true,
+      autoMerge: false,
     });
 
     const fullStdout = stdoutOutput.join('');
@@ -301,6 +301,43 @@ describe('CLI release-batch command', () => {
     expect(fullStdout).toContain('Status:               promoting');
     expect(fullStdout).toContain('Promotion PR:         #99');
     expect(fullStdout).toContain('Approved Candidate:   sha-approved-xyz');
+    expect(fullStdout).toContain('Auto-merge Requested: no');
+  });
+
+  it('requests auto-merge when --auto-merge is explicitly passed', async () => {
+    const mockPromote = {
+      execute: vi.fn().mockResolvedValue({
+        batch: {
+          id: ReleaseBatchId('batch-001'),
+          status: 'promoting',
+          approvedCandidateSha: 'sha-approved-xyz',
+        },
+        prNumber: 99,
+      }),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        promoteReleaseBatch:
+          mockPromote as unknown as import('@ai-sdlc/application').PromoteReleaseBatch,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['promote', '--batch-id', 'batch-001', '--auto-merge'], {
+      from: 'user',
+    });
+
+    expect(mockPromote.execute).toHaveBeenCalledWith({
+      batchId: ReleaseBatchId('batch-001'),
+      autoMerge: true,
+    });
+
+    const fullStdout = stdoutOutput.join('');
     expect(fullStdout).toContain('Auto-merge Requested: yes');
   });
 
