@@ -9,7 +9,7 @@ import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
 import { AgentRuntimeRouter } from '@ai-sdlc/infrastructure';
 import { AgentInvocationId } from '@ai-sdlc/domain';
 import { resolveProfileForPhase } from '../compose.js';
-import { ConfigError } from '@ai-sdlc/shared';
+import { ConfigError, PinnedRuntimeResolutionError } from '@ai-sdlc/shared';
 
 const baseConfig = {
   defaultProfile: 'opencode-frontier' as const,
@@ -138,6 +138,69 @@ describe('resolveProfileForPhase', () => {
 
   it('throws ConfigError when whole-pr-fix-review has no fallback', () => {
     expect(() => resolveProfileForPhase(baseConfig, 'whole-pr-fix-review')).toThrow(ConfigError);
+  });
+
+  it('resolves pinned profiles for phases and roles when pinnedRuntime is provided', () => {
+    const multiRuntimeConfig = {
+      defaultProfile: 'builder' as const,
+      profiles: {
+        builder: {
+          runtime: 'opencode' as const,
+          provider: 'minimax',
+          model: 'm1',
+          timeoutMinutes: 30,
+        },
+        'claude-sonnet': {
+          runtime: 'claude-code' as const,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-20250514',
+          timeoutMinutes: 30,
+        },
+        'claude-haiku': {
+          runtime: 'claude-code' as const,
+          provider: 'anthropic',
+          model: 'claude-haiku-3-5',
+          timeoutMinutes: 15,
+        },
+      },
+      phaseProfiles: {
+        'plan-design': { profile: 'builder' },
+        'spec-review': { profile: 'builder' },
+      },
+    };
+
+    // Resolves phase with pinnedRuntime
+    const phaseProfile = resolveProfileForPhase(multiRuntimeConfig, 'spec-review', 'claude-code');
+    expect(phaseProfile).toBe(AgentProfileName('claude-sonnet'));
+
+    // Resolves direct role with pinnedRuntime
+    const roleProfile = resolveProfileForPhase(multiRuntimeConfig, 'critic', 'claude-code');
+    expect(roleProfile).toBe(AgentProfileName('claude-sonnet'));
+
+    // Preserves unpinned routing when pinnedRuntime is undefined
+    const unpinnedProfile = resolveProfileForPhase(multiRuntimeConfig, 'spec-review', undefined);
+    expect(unpinnedProfile).toBe(AgentProfileName('builder'));
+  });
+
+  it('throws PinnedRuntimeResolutionError when pinnedRuntime cannot resolve profile', () => {
+    const configWithoutClaude = {
+      defaultProfile: 'builder' as const,
+      profiles: {
+        builder: {
+          runtime: 'opencode' as const,
+          provider: 'minimax',
+          model: 'm1',
+          timeoutMinutes: 30,
+        },
+      },
+      phaseProfiles: {
+        'spec-review': { profile: 'builder' },
+      },
+    };
+
+    expect(() => resolveProfileForPhase(configWithoutClaude, 'spec-review', 'claude-code')).toThrow(
+      PinnedRuntimeResolutionError,
+    );
   });
 });
 

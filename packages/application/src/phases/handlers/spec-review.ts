@@ -1,4 +1,5 @@
 import { PhaseName, AgentProfileName, type Failure, type FailureKind } from '@ai-sdlc/domain';
+import { PinnedRuntimeResolutionError } from '@ai-sdlc/shared';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
@@ -157,7 +158,10 @@ export class SpecReviewHandler implements PhaseHandler {
     const resolve = (p: string) => {
       try {
         return ctx.resolveProfile?.(p);
-      } catch {
+      } catch (err) {
+        if (err instanceof PinnedRuntimeResolutionError) {
+          throw err;
+        }
         return undefined;
       }
     };
