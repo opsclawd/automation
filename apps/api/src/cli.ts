@@ -3103,7 +3103,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         .option('-i, --id <id>', 'Release batch ID (alias for --batch-id)')
         .option('--batch-id <id>', 'Release batch ID')
         .option('--confirm', 'Confirm release batch promotion')
-        .option('--no-auto-merge', 'Do not request auto-merge on promotion PR')
+        .option(
+          '--auto-merge',
+          'Request GitHub auto-merge on the promotion PR (default: off — the PR is opened for manual review/merge)',
+        )
         .option(
           '--target-repo-root <path>',
           'Target repository root for runs DB and worktrees (default: orchestrator repo)',
@@ -3135,7 +3138,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 return;
               }
 
-              const autoMerge = opts.autoMerge !== false;
+              const autoMerge = opts.autoMerge === true;
               const result = await c.promoteReleaseBatch.execute({
                 batchId: ReleaseBatchId(batchId),
                 autoMerge,
