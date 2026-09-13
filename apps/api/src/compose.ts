@@ -3008,6 +3008,13 @@ export function composeRoot(opts: ComposeOptions): Container {
             const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
             const baseBranch =
               r.startCommitSha ?? r.baseBranch ?? opts.baseBranch ?? repoDefaultBranch;
+            if (r.baseBranch) {
+              try {
+                await gitAdapter.fetch(repoRootPath, 'origin', r.baseBranch);
+              } catch {
+                // best-effort fetch
+              }
+            }
             await gitAdapter.createWorktree({
               repoLocalBasePath: repoRootPath,
               worktreePath,
@@ -3032,7 +3039,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             const repoRootPath = repo ? repo.localBasePath : targetRoot;
             const repoDefaultBranch = repo ? repo.defaultBranch : resolvedDefaultBranch;
             const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
-            const baseBranch = r.baseBranch ?? opts.baseBranch ?? repoDefaultBranch;
+            const baseBranch =
+              r.startCommitSha ?? r.baseBranch ?? opts.baseBranch ?? repoDefaultBranch;
             gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
           },
           isWorkerAlive: (workerId) => {

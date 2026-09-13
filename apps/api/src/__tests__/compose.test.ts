@@ -1078,6 +1078,89 @@ exit 1
     vi.restoreAllMocks();
   });
 
+  it('workerLoopDeps.prepareWorktree preserves existing startCommitSha and uses it as baseBranch (#1224)', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'compose-prepare-wt-sha-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      repoFullName: 'owner/repo',
+      runStartupSweeps: false,
+    });
+    expect(container.workerLoopDeps).toBeDefined();
+
+    const existingSha = '1111222233334444555566667777888899990000';
+    container.runRepository.insertIfNoActive({
+      uuid: 'prepare-wt-existing-sha-uuid',
+      displayId: 'issue-72-20260622-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 72,
+      type: 'issue_to_pr',
+      status: 'running',
+      baseBranch: 'release/batch-1',
+      startCommitSha: existingSha,
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    });
+
+    const createWorktreeSpy = vi
+      .spyOn(GitWorktreeAdapter.prototype, 'createWorktree')
+      .mockResolvedValue(undefined);
+    vi.spyOn(GitWorktreeAdapter.prototype, 'seedArtifactExcludes').mockResolvedValue(undefined);
+    const fetchSpy = vi.spyOn(GitWorktreeAdapter.prototype, 'fetch').mockResolvedValue(undefined);
+    const headCommitShaSpy = vi
+      .spyOn(GitWorktreeAdapter.prototype, 'headCommitSha')
+      .mockResolvedValue('unexpected-different-sha');
+
+    const ac = new AbortController();
+    const result = await container.workerLoopDeps!(RepositoryId('owner/repo')).prepareWorktree({
+      repoId: RepositoryId('owner/repo'),
+      runId: RunId('prepare-wt-existing-sha-uuid'),
+      signal: ac.signal,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(root, 'origin', 'release/batch-1');
+    expect(createWorktreeSpy).toHaveBeenCalledOnce();
+    expect(createWorktreeSpy.mock.calls[0][0]).toMatchObject({
+      worktreePath: path.join(root, '.ai-worktrees', 'issue-72'),
+      branch: 'ai/issue-72',
+      baseBranch: existingSha,
+    });
+    expect(headCommitShaSpy).not.toHaveBeenCalled();
+
+    const updated = container.runRepository.findByUuid('prepare-wt-existing-sha-uuid');
+    expect(updated?.startCommitSha).toBe(existingSha);
+    expect(result.cwd).toBe(path.join(root, '.ai-worktrees', 'issue-72'));
+
+    createWorktreeSpy.mockRestore();
+    headCommitShaSpy.mockRestore();
+    fetchSpy.mockRestore();
+    vi.restoreAllMocks();
+  });
+
   it('buildRunContext populates promptsRoot and expectedBranch from repoRoot and issueNumber', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     writeFileSync(
