@@ -347,12 +347,18 @@ export class PromoteReleaseBatch {
 
     let prNumber = batch.promotionPrNumber;
     if (!prNumber && this.deps.github) {
+      const issueNumbers = [...new Set(batch.items.map((i) => i.issueNumber))];
+      const closesLines = issueNumbers.map((num) => `Closes #${num}`).join('\n');
+      const body = closesLines
+        ? `Autonomous release batch promotion for ${batch.id}.\nApproved Candidate SHA: \`${batch.approvedCandidateSha}\`\n\n${closesLines}`
+        : `Autonomous release batch promotion for ${batch.id}.\nApproved Candidate SHA: \`${batch.approvedCandidateSha}\``;
+
       const pr = await this.deps.github.createPullRequest({
         repoFullName: repo.fullName,
         headBranch: batch.releaseBranch,
         baseBranch: batch.sourceBranch,
         title: `Release ${batch.id}: ${batch.items.map((i) => `#${i.issueNumber}`).join(', ')}`,
-        body: `Autonomous release batch promotion for ${batch.id}.\nApproved Candidate SHA: \`${batch.approvedCandidateSha}\``,
+        body,
       });
       prNumber = pr.number;
       batch = attachPromotionPr(batch, prNumber);
