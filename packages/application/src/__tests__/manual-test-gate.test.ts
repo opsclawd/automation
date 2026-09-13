@@ -396,6 +396,69 @@ describe('ManualTestGate use cases', () => {
       expect(createdPr?.headRefName).toBe('release/2026-09-11-cand');
       expect(github.autoMergeRequests).toHaveLength(1);
       expect(github.autoMergeRequests[0]?.prNumber).toBe(result.prNumber);
+      expect(github.createdPrInputs[0]?.body).toBe(
+        `Autonomous release batch promotion for ${batchId}.\nApproved Candidate SHA: \`${candidateSha}\`\n\nCloses #101`,
+      );
+    });
+
+    it('includes Closes #N for all batch items in promotion PR body', async () => {
+      const batchId = ReleaseBatchId('batch-gate-multi');
+      const candidateSha = 'sha-cand-multi';
+      let batch = createReleaseBatch({
+        id: batchId,
+        repoId: defaultRepo.id,
+        sourceBranch: 'main',
+        sourceStartSha: 'sha-main-001',
+        releaseBranch: 'release/2026-09-11-multi',
+        items: [
+          { position: 1, issueNumber: 201 },
+          { position: 2, issueNumber: 202 },
+          { position: 3, issueNumber: 203 },
+        ],
+        createdAt: new Date('2026-09-11T12:00:00.000Z'),
+      });
+
+      batch = admitItem(batch, 1, { runUuid: 'run-201', baseSha: 'sha-main-001' });
+      batch = markItemMerged(batch, 1, { mergedCommitSha: 'sha-m-201' });
+      batch = admitItem(batch, 2, { runUuid: 'run-202', baseSha: 'sha-m-201' });
+      batch = markItemMerged(batch, 2, { mergedCommitSha: 'sha-m-202' });
+      batch = admitItem(batch, 3, { runUuid: 'run-203', baseSha: 'sha-m-202' });
+      batch = markItemMerged(batch, 3, { mergedCommitSha: candidateSha });
+
+      batch = {
+        ...batch,
+        status: 'approved',
+        candidateSha,
+        approvedCandidateSha: candidateSha,
+      };
+      batchRepo.insert(batch);
+
+      git.remoteRefs.set('origin/release/2026-09-11-multi', candidateSha);
+      git.remoteRefs.set('origin/main', 'sha-main-001');
+      git.ancestorResults.set(`sha-main-001|${candidateSha}`, true);
+      git.ancestorResults.set(`sha-m-201|${candidateSha}`, true);
+      git.ancestorResults.set(`sha-m-202|${candidateSha}`, true);
+      git.ancestorResults.set(`${candidateSha}|${candidateSha}`, true);
+
+      const promoteUseCase = new PromoteReleaseBatch({
+        releaseBatchRepository: batchRepo,
+        repositoryPort: repoPort,
+        git,
+        github,
+        now,
+      });
+
+      const result = await promoteUseCase.execute({
+        batchId,
+        autoMerge: true,
+      });
+
+      expect(result.batch.status).toBe('promoting');
+      expect(github.createdPrInputs).toHaveLength(1);
+      expect(github.createdPrInputs[0]?.title).toBe('Release batch-gate-multi: #201, #202, #203');
+      expect(github.createdPrInputs[0]?.body).toBe(
+        `Autonomous release batch promotion for batch-gate-multi.\nApproved Candidate SHA: \`sha-cand-multi\`\n\nCloses #201\nCloses #202\nCloses #203`,
+      );
     });
 
     it('rejects promotion if batch is not approved', async () => {
