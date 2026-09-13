@@ -174,6 +174,9 @@ import {
   resolvePhaseProfileEntry,
   type AgentConfig,
   type ExecutionPolicy,
+  resolvePinnedProfile,
+  resolvePinnedProfileForPhase,
+  type PinnedRuntimeName,
 } from '@ai-sdlc/shared';
 
 interface SchedulerConfig {
@@ -193,6 +196,8 @@ import {
   runStatusToExecutionOutcome,
   type PrReviewComment,
   type ValidationCommandOutcome,
+  isPhaseRole,
+  type PinnedRuntime,
 } from '@ai-sdlc/domain';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- forward reference for Task 5 runtime factory
 import type { RepositoryRuntimePaths } from './repository-runtime-paths.js';
@@ -605,9 +610,33 @@ export async function maybeRetryTransientRevalidationFlake(
 
 /**
  * Resolve the agent profile name for a given phase.
+ * If pinnedRuntime is provided, resolves via the pinned runtime mapping (#1231).
+ * When pinnedRuntime is unset, falls back to default per-phase profile routing.
+ * Throws `PinnedRuntimeResolutionError` on unmapped/invalid pinned runtime.
  * Throws `ConfigError` if the phase is not configured or agent config is absent.
  */
-export function resolveProfileForPhase(agent: AgentConfig, phaseName: string): AgentProfileName {
+export function resolveProfileForPhase(
+  agent: AgentConfig,
+  phaseName: string,
+  pinnedRuntime?: PinnedRuntime | string,
+): AgentProfileName {
+  if (pinnedRuntime) {
+    if (isPhaseRole(phaseName)) {
+      const profile = resolvePinnedProfile({
+        pinnedRuntime: pinnedRuntime as PinnedRuntimeName,
+        role: phaseName,
+        config: agent,
+      });
+      return AgentProfileName(profile);
+    }
+    const profile = resolvePinnedProfileForPhase({
+      pinnedRuntime: pinnedRuntime as PinnedRuntimeName,
+      phaseName,
+      config: agent,
+    });
+    return AgentProfileName(profile);
+  }
+
   let entry = agent.phaseProfiles[phaseName];
   if (!entry) {
     const fallback = PHASE_FALLBACKS[phaseName];
@@ -698,7 +727,10 @@ export interface Container {
   eventBus: EventBusPort;
   /** @deprecated Use `resolveProfileForPhase()` instead */
   agentRuntime?: AgentRuntimeRouter;
-  resolveProfileForPhase: (phaseName: string) => AgentProfileName;
+  resolveProfileForPhase: (
+    phaseName: string,
+    pinnedRuntime?: PinnedRuntime | string,
+  ) => AgentProfileName;
   buildPhaseHandlerContext: PhaseHandlerContextFactory;
   validateFixLoop?: ValidateFixLoop;
   buildPrReviewPoller: (opts: {
@@ -742,6 +774,7 @@ export interface ComposeOptions {
    */
   targetRepoRoot?: string;
   scriptPath: string;
+  pinnedRuntime?: PinnedRuntime;
   baseBranch?: string;
   model?: string;
   agentCli?: string;
@@ -2161,15 +2194,16 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventBus: persistingEventBus,
       });
       const agent = config.agent;
-      // Non-optional local so closures below can reference it
-      // without a guard (the outer `let` stays `| undefined` for other consumers).
-      const resolveProfileBound = (phaseName: string) => {
-        try {
-          resolveProfileForPhase(agent, 'result-writer');
-        } catch {
-          throw new ConfigError("unknown phase 'result-writer'");
+      const resolveProfileBound = (phaseName: string, pinnedRuntime?: PinnedRuntime | string) => {
+        const effectivePin = pinnedRuntime ?? opts.pinnedRuntime;
+        if (!effectivePin) {
+          try {
+            resolveProfileForPhase(agent, 'result-writer');
+          } catch {
+            throw new ConfigError("unknown phase 'result-writer'");
+          }
         }
-        return resolveProfileForPhase(agent, phaseName);
+        return resolveProfileForPhase(agent, phaseName, effectivePin);
       };
       resolveProfileForPhaseBound = resolveProfileBound;
 
@@ -2227,10 +2261,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         ...(resultWriterProfile ? { repairProfile: resultWriterProfile } : {}),
       });
       phaseContextRepair = structuredResultRepair;
-      const fixProfileName: string =
-        config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier';
-      const fixFallbackProfileName: string | undefined =
-        config.agent.phaseProfiles['fix-review']?.fallbackProfile;
+      const composePinnedRuntime = opts.pinnedRuntime;
+      const fixProfileName: string = composePinnedRuntime
+        ? resolveProfileForPhase(agent, 'fix-review', composePinnedRuntime)
+        : (config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier');
+      const fixFallbackProfileName: string | undefined = composePinnedRuntime
+        ? undefined
+        : config.agent.phaseProfiles['fix-review']?.fallbackProfile;
 
       const newestInvocationId = (runUuid: string): string => {
         const list = agentInvocationRepository.listByRun(RunId(runUuid));
@@ -2251,7 +2288,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const runFix = async (
         ctx: ValidateFixStepContext,
-        opts: import('@ai-sdlc/application').FixStepOptions & {
+        stepOpts: import('@ai-sdlc/application').FixStepOptions & {
           fixProfileOverride?: string;
           fixFallbackProfileOverride?: string;
           extraPromptSections?: string[];
@@ -2259,25 +2296,35 @@ export function composeRoot(opts: ComposeOptions): Container {
           attemptKind?: 'standard' | 'deterministic';
         },
       ): Promise<RunFixResult> => {
-        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
-        const fallbackProfile = opts.fixFallbackProfileOverride ?? fixFallbackProfileName;
-        const primaryProfile = opts.fixProfileOverride ?? fixProfileName;
-        const profile = opts.useFallback && fallbackProfile ? fallbackProfile : primaryProfile;
+        const runRecord = runRepository.findByUuid(String(ctx.runId));
+        const effectivePin = runRecord?.pinnedRuntime ?? composePinnedRuntime;
+        let resolvedFixProfile = fixProfileName;
+        if (effectivePin) {
+          resolvedFixProfile = resolveProfileForPhase(agent, 'fix-review', effectivePin);
+        }
+        const runDir = runRecord?.displayId ?? String(ctx.runId);
+        const fallbackProfile = effectivePin
+          ? undefined
+          : (stepOpts.fixFallbackProfileOverride ?? fixFallbackProfileName);
+        const primaryProfile = stepOpts.fixProfileOverride ?? resolvedFixProfile;
+        const profile = stepOpts.useFallback && fallbackProfile ? fallbackProfile : primaryProfile;
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `fix-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
         const fixPrompt = buildReviewFixFixPrompt({
           cwd: ctx.cwd,
           repoId: ctx.repoId,
-          useFallback: opts.useFallback,
-          ...(opts.allowedFiles ? { allowedFiles: opts.allowedFiles } : {}),
-          ...(opts.historyContext ? { historyContext: opts.historyContext } : {}),
-          ...(opts.extraPromptSections ? { extraPromptSections: opts.extraPromptSections } : {}),
-          ...(opts.deterministicDiagnostic
-            ? { deterministicDiagnostic: opts.deterministicDiagnostic }
+          useFallback: stepOpts.useFallback,
+          ...(stepOpts.allowedFiles ? { allowedFiles: stepOpts.allowedFiles } : {}),
+          ...(stepOpts.historyContext ? { historyContext: stepOpts.historyContext } : {}),
+          ...(stepOpts.extraPromptSections
+            ? { extraPromptSections: stepOpts.extraPromptSections }
             : {}),
-          ...(opts.reconciliationContext
-            ? { reconciliationContext: opts.reconciliationContext }
+          ...(stepOpts.deterministicDiagnostic
+            ? { deterministicDiagnostic: stepOpts.deterministicDiagnostic }
+            : {}),
+          ...(stepOpts.reconciliationContext
+            ? { reconciliationContext: stepOpts.reconciliationContext }
             : {}),
         });
         writeFileSync(promptPath, fixPrompt, 'utf-8');
@@ -2287,11 +2334,11 @@ export function composeRoot(opts: ComposeOptions): Container {
           .toString()
           .trim();
         const isDeterministic =
-          opts.attemptKind === 'deterministic' || !!opts.deterministicDiagnostic;
+          stepOpts.attemptKind === 'deterministic' || !!stepOpts.deterministicDiagnostic;
         // Only loop-owned semantic retries carry retryIntent; deterministic
         // fixes stay tagged separately so the router never treats them as
         // semantic duplicates.
-        const isSemanticRetry = ctx.iterationIndex > 1 && !opts.useFallback && !isDeterministic;
+        const isSemanticRetry = ctx.iterationIndex > 1 && !stepOpts.useFallback && !isDeterministic;
         const result = await artifactAgent.invoke({
           profile: AgentProfileName(profile),
           promptPath,
@@ -2301,9 +2348,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           repoId: ctx.repoId,
           phaseId: 'fix-review',
           startCommitSha,
-          ...(opts.useFallback && opts.previousInvocationId
+          ...(stepOpts.useFallback && stepOpts.previousInvocationId
             ? {
-                fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
+                fallbackOfInvocationId: AgentInvocationId(stepOpts.previousInvocationId),
                 fallbackReason: 'use_case_escalation',
                 metadata: {
                   iteration: ctx.iterationIndex,
@@ -2562,9 +2609,19 @@ export function composeRoot(opts: ComposeOptions): Container {
         },
       };
 
+      const fixValidateProfileName: string = composePinnedRuntime
+        ? resolveProfileForPhase(agent, 'fix-validate', composePinnedRuntime)
+        : (config.agent.phaseProfiles['fix-validate']?.profile ??
+          config.agent.phaseProfiles['fix-review']?.profile ??
+          'opencode-frontier');
+      const fixValidateFallbackProfileName: string | undefined = composePinnedRuntime
+        ? undefined
+        : (config.agent.phaseProfiles['fix-validate']?.fallbackProfile ??
+          config.agent.phaseProfiles['fix-review']?.fallbackProfile);
+
       const validateFixRunFix = async (
         ctx: import('@ai-sdlc/application').ValidateFixStepContext,
-        opts: import('@ai-sdlc/application').FixStepOptions,
+        fixOpts: import('@ai-sdlc/application').FixStepOptions,
       ): Promise<import('@ai-sdlc/application').ValidateFixAgentResult> => {
         let failureContext: string[] = [];
         try {
@@ -2580,11 +2637,17 @@ export function composeRoot(opts: ComposeOptions): Container {
         } catch {
           // failure.json may not exist — skip
         }
+        const runRecord = runRepository.findByUuid(String(ctx.runId));
+        const effectivePin = runRecord?.pinnedRuntime ?? composePinnedRuntime;
+        const effectiveFixValidateProfile = effectivePin
+          ? resolveProfileForPhase(agent, 'fix-validate', effectivePin)
+          : fixValidateProfileName;
+        const effectiveFallbackProfile = effectivePin ? undefined : fixValidateFallbackProfileName;
         const result = await runFix(ctx, {
-          ...opts,
-          fixProfileOverride: fixValidateProfileName,
-          ...(fixValidateFallbackProfileName
-            ? { fixFallbackProfileOverride: fixValidateFallbackProfileName }
+          ...fixOpts,
+          fixProfileOverride: effectiveFixValidateProfile,
+          ...(effectiveFallbackProfile
+            ? { fixFallbackProfileOverride: effectiveFallbackProfile }
             : {}),
           extraPromptSections: failureContext,
         });
@@ -2603,14 +2666,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           ...(result.headBeforeFix !== undefined ? { headBeforeFix: result.headBeforeFix } : {}),
         };
       };
-
-      const fixValidateProfileName: string =
-        config.agent.phaseProfiles['fix-validate']?.profile ??
-        config.agent.phaseProfiles['fix-review']?.profile ??
-        'opencode-frontier';
-      const fixValidateFallbackProfileName: string | undefined =
-        config.agent.phaseProfiles['fix-validate']?.fallbackProfile ??
-        config.agent.phaseProfiles['fix-review']?.fallbackProfile;
 
       const validateFixLoopInstance = new ValidateFixLoop({
         runFix: validateFixRunFix,
@@ -2638,6 +2693,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
         const startCommitSha = runRepository.findByUuid(run.uuid)?.startCommitSha;
         const priorPhaseName = run.completedPhases[run.completedPhases.length - 1];
+        const effectivePin = run.pinnedRuntime ?? opts.pinnedRuntime;
         return composeBuildPhaseHandlerContext(
           {
             runId: run.displayId,
@@ -2662,6 +2718,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             ...(opts.allowProtectedPaths !== undefined
               ? { allowProtectedPaths: opts.allowProtectedPaths }
               : {}),
+            resolveProfile: (phaseName: string) =>
+              resolveProfileForPhase(agent, phaseName, effectivePin),
           },
         );
       };
@@ -2669,12 +2727,15 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       // Wire remaining phase handlers that require agent dependencies
       phaseRegistry.register(new PlanDesignHandler());
+      const defaultArchReviewProfile = composePinnedRuntime
+        ? resolveProfileForPhase(agent, 'architecture-review', composePinnedRuntime)
+        : (config.agent.phaseProfiles?.['architecture-review']?.profile ??
+          config.agent.phaseProfiles?.['plan-design']?.profile ??
+          'opencode-frontier');
+
       phaseRegistry.register(
         new ArchitectureReviewHandler({
-          profileName:
-            config.agent.phaseProfiles?.['architecture-review']?.profile ??
-            config.agent.phaseProfiles?.['plan-design']?.profile ??
-            'opencode-frontier',
+          profileName: defaultArchReviewProfile,
           maxCorrections: config.phases.architectureReview?.maxCorrections ?? 2,
         }),
       );
@@ -2766,16 +2827,25 @@ export function composeRoot(opts: ComposeOptions): Container {
       if (config.phases.fixValidate?.enabled !== false) {
         phaseRegistry.register(
           new FixValidateHandler({
+            profileName: fixValidateProfileName,
             runLoop: async (ctx) => {
+              const runRecord = runRepository.findByUuid(String(ctx.runUuid));
+              const effectivePin = runRecord?.pinnedRuntime ?? composePinnedRuntime;
+              const loopFixProfile = ctx.resolveProfile
+                ? ctx.resolveProfile('fix-validate')
+                : effectivePin
+                  ? resolveProfileForPhase(agent, 'fix-validate', effectivePin)
+                  : fixValidateProfileName;
+              const loopFallbackProfile = effectivePin ? undefined : fixValidateFallbackProfileName;
               const result = await validateFixLoopInstance.execute({
                 runId: RunId(ctx.runUuid),
                 phaseId: PhaseName('fix-validate'),
                 repoId: ctx.repoFullName,
                 cwd: ctx.cwd,
                 maxIterations: config.phases.fixValidate?.maxIterations ?? 3,
-                fixProfile: AgentProfileName(fixValidateProfileName),
-                ...(fixValidateFallbackProfileName
-                  ? { fixFallbackProfile: AgentProfileName(fixValidateFallbackProfileName) }
+                fixProfile: AgentProfileName(loopFixProfile),
+                ...(loopFallbackProfile
+                  ? { fixFallbackProfile: AgentProfileName(loopFallbackProfile) }
                   : {}),
                 scopeContractEnforcement: config.features?.scopeContractEnforcement ?? true,
               });
@@ -2790,33 +2860,36 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       phaseRegistry.register(
         new SpecReviewHandler({
-          profileName:
-            (config.agent &&
-              resolvePhaseProfileEntry(config.agent.phaseProfiles, 'spec-review')?.profile) ??
-            'opencode-frontier',
+          profileName: composePinnedRuntime
+            ? resolveProfileForPhase(agent, 'spec-review', composePinnedRuntime)
+            : (resolvePhaseProfileEntry(agent.phaseProfiles, 'spec-review')?.profile ??
+              'opencode-frontier'),
         }),
       );
 
       phaseRegistry.register(
         new QualityReviewHandler({
-          profileName:
-            (config.agent &&
-              resolvePhaseProfileEntry(config.agent.phaseProfiles, 'quality-review')?.profile) ??
-            'opencode-frontier',
+          profileName: composePinnedRuntime
+            ? resolveProfileForPhase(agent, 'quality-review', composePinnedRuntime)
+            : (resolvePhaseProfileEntry(agent.phaseProfiles, 'quality-review')?.profile ??
+              'opencode-frontier'),
         }),
       );
 
       phaseRegistry.register(
         new FixReviewHandler({
-          profileName: config.agent.phaseProfiles?.['fix-review']?.profile ?? 'opencode-frontier',
+          profileName: composePinnedRuntime
+            ? resolveProfileForPhase(agent, 'fix-review', composePinnedRuntime)
+            : (agent.phaseProfiles?.['fix-review']?.profile ?? 'opencode-frontier'),
           selfVerifyCommands: config.validation.selfVerifyCommands,
         }),
       );
 
       phaseRegistry.register(
         new FollowUpReviewHandler({
-          profileName:
-            config.agent.phaseProfiles?.['follow-up-review']?.profile ?? 'opencode-frontier',
+          profileName: composePinnedRuntime
+            ? resolveProfileForPhase(agent, 'follow-up-review', composePinnedRuntime)
+            : (agent.phaseProfiles?.['follow-up-review']?.profile ?? 'opencode-frontier'),
         }),
       );
 
