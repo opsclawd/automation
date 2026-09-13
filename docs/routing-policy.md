@@ -79,6 +79,74 @@ To override per-repo, edit `.ai-orchestrator.json`:
 }
 ```
 
+## Runtime Pinning & Role Profile Mapping
+
+> **Status:** Introduced in Issues #1229, #1230, and #1231.
+
+### Motivation
+
+By default, the orchestrator routes phases independently based on `agent.phaseProfiles`. While flexible, this can cause a single run to switch providers mid-flight (e.g. `plan-design` on Claude, `architecture-review` on Gemini, `implement` on Qwen/MiniMax). Cross-phase switching causes:
+- **Contract drift**: different LLMs formatting responses with subtle syntactic or structural differences.
+- **Lost cache continuity**: switching runtimes discards prompt cache state built up during previous phases.
+- **Debugging complexity**: failure root causes cannot be isolated to a single agent runtime.
+
+To eliminate these issues, runs can optionally pin a single runtime (`claude-code`, `antigravity`, `codex`, or `opencode`) for their entire lifecycle.
+
+### Canonical Phase Roles
+
+Phase handlers resolve agent profiles using canonical role identities:
+
+| Phase Role | Description / Relevant Phases |
+|---|---|
+| `planner` | Planning, design decomposition, and architecture plan repair (`plan-design`, `architecture-fix`) |
+| `pr-reviewer` | High-stakes architecture review and pre-implementation gates (`architecture-review`) |
+| `implementer` | Code authoring and implementation tasks (`implement`) |
+| `fixer` | Repair loops and validation failure fixes (`fix-review`, `fix-validate`) |
+| `critic` | Spec, quality, and follow-up code review; prose synthesis (`spec-review`, `quality-review`, `follow-up-review`, `result-writer`) |
+| `task-agent` | Single-shot utility and maintenance phases (`compound`, `create-pr`) |
+
+### Runtime x Role Profile Matrix
+
+When a run is pinned, every phase resolves its role against that runtime's profile variant:
+
+| Phase Role | `claude-code` | `antigravity` | `codex` | `opencode` |
+|---|---|---|---|---|
+| `planner` | `claude` *(opus)* | `gemini` *(flash-high)* | `codex-writer` *(default)* | `architect` *(glm-5.1)* |
+| `pr-reviewer` | `claude` *(opus)* | `reviewer` *(flash-high)* | `codex-reviewer` *(default)* | `senior` *(glm-5.1)* |
+| `implementer` | `claude-sonnet` *(sonnet)* | `gemini` *(flash-high)* | `codex-writer` *(default)* | `qwen` *(qwen3.6-27b)* |
+| `fixer` | `claude-sonnet` *(sonnet)* | `gemini` *(flash-high)* | `codex-writer` *(default)* | `builder` *(MiniMax-M2.7)* |
+| `critic` | `claude-sonnet` *(sonnet)* | `task-reviewer` *(flash-low)* | `codex-reviewer` *(default)* | `junior` *(deepseek-v4)* |
+| `task-agent` | `claude-haiku` *(haiku)* | `task-reviewer` *(flash-low)* | `codex-writer` *(default)* | `junior` *(deepseek-v4)* |
+
+### Fallback Behavior: Fail Loudly
+
+When a run has a pinned runtime and encounters a phase role with no mapped profile (or a profile whose configured runtime does not match the pin), the orchestrator **fails loudly** by throwing `PinnedRuntimeResolutionError`.
+
+**Why fail loudly instead of falling back to the unpinned default?**
+Silently falling back to an unpinned profile would defeat the entire purpose of runtime pinning by quietly re-introducing provider switching, cache loss, and contract drift without operator visibility. Loud failure enforces configuration integrity and keeps execution predictable.
+
+### Customizing Pinned Profiles
+
+Repositories can override the default role mappings per runtime in `.ai-orchestrator.json`:
+
+```json
+{
+  "agent": {
+    "pinnedRuntimeProfiles": {
+      "opencode": {
+        "planner": "senior",
+        "implementer": "builder"
+      }
+    }
+  }
+}
+```
+
+Config validation strictly ensures:
+1. Every pinned runtime key is one of `claude-code`, `antigravity`, `codex`, `opencode`.
+2. Every target profile exists in `agent.profiles`.
+3. Every target profile has `runtime` matching the pinned runtime key (preventing cross-runtime leaks).
+
 ## Measuring Impact
 
 Use the compare-runs CLI to compare routing strategies and measure efficiency:

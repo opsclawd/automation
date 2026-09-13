@@ -145,6 +145,9 @@ const agentSchema = z
     profiles: z.record(recordKeySchema, agentProfileSchema),
     roles: z.record(recordKeySchema, roleEntrySchema).optional(),
     phaseProfiles: z.record(recordKeySchema, phaseProfileEntrySchema),
+    pinnedRuntimeProfiles: z
+      .record(recordKeySchema, z.record(recordKeySchema, nonBlankString))
+      .optional(),
   })
   .superRefine((agent, ctx) => {
     const profileNames = new Set(Object.keys(agent.profiles));
@@ -282,6 +285,39 @@ const agentSchema = z
             path: ['phaseProfiles', phaseName, 'fallbackTriggers'],
             message: `phaseProfiles.${phaseName} has fallbackTriggers but no fallbackProfile, fallbackRole, or role-level fallback; triggers require a fallback to be useful`,
           });
+        }
+      }
+    }
+
+    if (agent.pinnedRuntimeProfiles) {
+      const allowedPinnedRuntimes = new Set(['claude-code', 'antigravity', 'codex', 'opencode']);
+      for (const [runtimeKey, roleMap] of Object.entries(agent.pinnedRuntimeProfiles)) {
+        if (!allowedPinnedRuntimes.has(runtimeKey)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['pinnedRuntimeProfiles', runtimeKey],
+            message: `pinnedRuntimeProfiles has invalid pinned runtime '${runtimeKey}'; must be one of: 'claude-code', 'antigravity', 'codex', 'opencode'`,
+          });
+          continue;
+        }
+
+        for (const [roleName, targetProfile] of Object.entries(roleMap)) {
+          if (!profileNames.has(targetProfile)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['pinnedRuntimeProfiles', runtimeKey, roleName],
+              message: `pinnedRuntimeProfiles.${runtimeKey}.${roleName} references profile '${targetProfile}' which is not defined in profiles`,
+            });
+          } else {
+            const profile = agent.profiles[targetProfile]!;
+            if (profile.runtime !== runtimeKey) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['pinnedRuntimeProfiles', runtimeKey, roleName],
+                message: `pinnedRuntimeProfiles.${runtimeKey}.${roleName} references profile '${targetProfile}' with runtime '${profile.runtime}', expected '${runtimeKey}'`,
+              });
+            }
+          }
         }
       }
     }
