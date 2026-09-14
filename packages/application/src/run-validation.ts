@@ -37,6 +37,7 @@ export interface RunValidationInputUC {
   logPathPrefix?: string;
   env?: Record<string, string>;
   validationScope?: ValidationScopeSummary;
+  maxTierConcurrency?: number;
 }
 
 export interface RunValidationOutput {
@@ -81,6 +82,9 @@ export class RunValidation {
       ...(input.logPathPrefix ? { logPathPrefix: input.logPathPrefix } : {}),
       ...(input.env ? { env: input.env } : {}),
       ...(input.validationScope ? { validationScope: input.validationScope } : {}),
+      ...(input.maxTierConcurrency !== undefined
+        ? { maxTierConcurrency: input.maxTierConcurrency }
+        : {}),
     });
 
     const commands: ValidationCommandRecord[] = results.map((r) => ({

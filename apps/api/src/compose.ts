@@ -2818,6 +2818,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           ...(config.validation.commandScopes
             ? { commandScopes: config.validation.commandScopes }
             : {}),
+          ...(config.validation.maxTierConcurrency !== undefined
+            ? { maxTierConcurrency: config.validation.maxTierConcurrency }
+            : {}),
           timeoutSeconds: config.validation.timeout,
           logDir: join(runsDir, 'validate'),
           fixValidateEnabled: config.phases.fixValidate?.enabled !== false,

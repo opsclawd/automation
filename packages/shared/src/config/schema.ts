@@ -16,6 +16,16 @@ const validationSchema = z.object({
   forbiddenArtifactPaths: z.array(z.string().trim().min(1)).optional(),
   narrowByChangedFiles: z.boolean().default(true),
   commandScopes: z.record(z.string().trim().min(1), z.array(z.string().trim().min(1))).optional(),
+  /**
+   * Max validation commands run concurrently within a single tier. Defaults
+   * to the host's available CPU core count when unset (see
+   * ProcessValidationAdapter). Repos whose tiers group several commands with
+   * significant fixed per-process overhead (e.g. multiple standalone vitest
+   * configs, each booting its own transform pipeline) even when that count
+   * is under the core count can still oversubscribe the host if launched
+   * simultaneously — set this lower than the tier width to bound that.
+   */
+  maxTierConcurrency: z.number().int().positive().optional(),
 });
 
 const phasesSchema = z.object({

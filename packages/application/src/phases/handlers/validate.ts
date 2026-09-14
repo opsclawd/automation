@@ -84,6 +84,7 @@ export interface ValidateHandlerOpts {
    */
   discoverWorkspacePackages?: (cwd: string) => Promise<ValidateWorkspaceDiscoveryResult>;
   commandScopes?: Record<string, string[]>;
+  maxTierConcurrency?: number;
 }
 
 export class ValidateHandler implements PhaseHandler {
@@ -190,6 +191,9 @@ export class ValidateHandler implements PhaseHandler {
         logDir: this.opts.logDir,
         commands: plannedCommands,
         ...(plannedTiers ? { tiers: plannedTiers } : {}),
+        ...(this.opts.maxTierConcurrency !== undefined
+          ? { maxTierConcurrency: this.opts.maxTierConcurrency }
+          : {}),
         timeoutSeconds: this.opts.timeoutSeconds,
         env: {
           GITHUB_REPOSITORY: ctx.repoFullName,
