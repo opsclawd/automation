@@ -60,13 +60,14 @@ export class GhCliAdapter implements GitHubPort {
     }
   }
 
-  private async run(args: string[]): Promise<string> {
+  private async run(args: string[], input?: string): Promise<string> {
     let lastErr: unknown;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
         const { stdout } = await execa(this.gh, args, {
           reject: true,
           env: { ...process.env, ...this.env },
+          ...(input !== undefined ? { input } : {}),
         });
         return stdout;
       } catch (err) {
@@ -541,6 +542,65 @@ export class GhCliAdapter implements GitHubPort {
       return out.trim() === 'true';
     } catch {
       return false;
+    }
+  }
+
+  async mirrorBranchProtection(
+    repoFullName: string,
+    sourceBranch: string,
+    targetBranch: string,
+  ): Promise<{ applied: boolean; reason?: string }> {
+    let sourceProtection: {
+      required_status_checks?: { strict?: boolean; contexts?: string[] } | null;
+    };
+    try {
+      const out = await this.run([
+        'api',
+        `repos/${repoFullName}/branches/${encodeURIComponent(sourceBranch)}/protection`,
+      ]);
+      sourceProtection = this.safeJsonParse(
+        out,
+        `gh api repos/${repoFullName}/branches/${sourceBranch}/protection`,
+      );
+    } catch (err) {
+      const reason = err instanceof GitHubFailedError ? err.stderr : String(err);
+      return { applied: false, reason: `source branch has no protection to mirror: ${reason}` };
+    }
+
+    const contexts = sourceProtection.required_status_checks?.contexts ?? [];
+    if (contexts.length === 0) {
+      return {
+        applied: false,
+        reason: 'source branch protection has no required status checks',
+      };
+    }
+
+    const body = JSON.stringify({
+      required_status_checks: {
+        strict: sourceProtection.required_status_checks?.strict ?? true,
+        contexts,
+      },
+      enforce_admins: null,
+      required_pull_request_reviews: null,
+      restrictions: null,
+    });
+
+    try {
+      await this.run(
+        [
+          'api',
+          '--method',
+          'PUT',
+          `repos/${repoFullName}/branches/${encodeURIComponent(targetBranch)}/protection`,
+          '--input',
+          '-',
+        ],
+        body,
+      );
+      return { applied: true };
+    } catch (err) {
+      const reason = err instanceof GitHubFailedError ? err.stderr : String(err);
+      return { applied: false, reason: `failed to apply protection to target branch: ${reason}` };
     }
   }
 }

@@ -320,6 +320,37 @@ export class StartReleaseBatch {
         branch: releaseBranch,
         remote: 'origin',
       });
+
+      // 10b. Mirror the source branch's required-status-check protection onto
+      // the new release branch. A freshly created branch starts with no
+      // branch protection at all, so item PRs' GitHub `--auto` merge (see
+      // create-pr.ts's requestAutoMerge) has nothing to wait on and will
+      // merge as soon as it's mergeable regardless of whether CI has
+      // finished or failed. Best-effort and non-fatal: if the source branch
+      // has no protection to mirror, or the operation isn't permitted, the
+      // batch proceeds exactly as before this existed.
+      if (this.deps.github.mirrorBranchProtection) {
+        try {
+          const result = await this.deps.github.mirrorBranchProtection(
+            repo.fullName,
+            sourceBranch,
+            releaseBranch,
+          );
+          if (!result.applied) {
+            logger.warn?.(
+              `Could not mirror branch protection onto release branch '${releaseBranch}': ${
+                result.reason ?? 'unknown reason'
+              }`,
+            );
+          }
+        } catch (err) {
+          logger.warn?.(
+            `Failed to mirror branch protection onto release branch '${releaseBranch}': ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
     }
 
     // 11. Persist ReleaseBatch aggregate (or reuse existing on retry)

@@ -116,4 +116,21 @@ export interface GitHubPort {
   searchIssues?(repoFullName: string, query: string): Promise<GitHubIssue[]>;
   verifyCapabilities?(repoFullName: string): Promise<{ canWrite: boolean; permission: string }>;
   isAutoMergeAllowed?(repoFullName: string): Promise<boolean>;
+  /**
+   * Best-effort: copies `sourceBranch`'s required-status-check branch
+   * protection onto `targetBranch`, if `sourceBranch` has any configured.
+   * Branches created dynamically by the orchestrator (e.g. release-batch
+   * branches) start with no branch protection at all, which means GitHub's
+   * native `--auto` merge (see `requestAutoMerge`) has nothing to wait on
+   * and will merge as soon as the PR is mergeable, regardless of whether
+   * CI has finished or failed. Mirroring the source branch's required
+   * checks (typically the default branch) restores the intended gate.
+   * `applied: false` is not an error — the source branch may simply have
+   * no protection to mirror, or the operation may not be permitted.
+   */
+  mirrorBranchProtection?(
+    repoFullName: string,
+    sourceBranch: string,
+    targetBranch: string,
+  ): Promise<{ applied: boolean; reason?: string }>;
 }

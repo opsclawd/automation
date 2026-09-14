@@ -165,3 +165,36 @@ describe('GhCliAdapter verifyCapabilities', () => {
     await expect(bad.verifyCapabilities('o/r')).rejects.toBeInstanceOf(GitHubFailedError);
   });
 });
+
+describe('GhCliAdapter mirrorBranchProtection (#1247)', () => {
+  it('applies the source branch required status checks to the target branch', async () => {
+    const log = join(tmpdir(), `fake-gh-log-${Date.now()}-${Math.random()}.txt`);
+    try {
+      const adapter = new GhCliAdapter({
+        ghPath: join(fixtures, 'fake-gh-success.sh'),
+        maxRetries: 0,
+        env: { FAKE_GH_LOG: log },
+      });
+      const result = await adapter.mirrorBranchProtection('o/r', 'protected-source', 'release/x');
+      expect(result).toEqual({ applied: true });
+      const calls = readFileSync(log, 'utf-8');
+      expect(calls).toContain('branches/protected-source/protection');
+      expect(calls).toContain('--method PUT');
+      expect(calls).toContain('branches/release%2Fx/protection');
+    } finally {
+      rmSync(log, { force: true });
+    }
+  });
+
+  it('reports applied: false with a reason when the source branch has no protection', async () => {
+    const result = await ok.mirrorBranchProtection('o/r', 'unprotected-source', 'release/x');
+    expect(result.applied).toBe(false);
+    expect(result.reason).toContain('source branch has no protection to mirror');
+  });
+
+  it('reports applied: false with a reason when the GitHub API is entirely unavailable', async () => {
+    const result = await bad.mirrorBranchProtection('o/r', 'main', 'release/x');
+    expect(result.applied).toBe(false);
+    expect(result.reason).toBeDefined();
+  });
+});
