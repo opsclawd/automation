@@ -18,6 +18,13 @@ case "$1 ${2:-}" in
     # REST: pulls/.../comments listing or replies post
     if [[ "$*" == *".allow_auto_merge"* ]]; then
       echo 'true'
+    elif [[ "$*" == *"--method PUT"* && "$*" == *"/branches/"*"/protection"* ]]; then
+      echo '{"required_status_checks":{"strict":true,"contexts":["quality-gates"]}}'
+    elif [[ "$*" == *"/branches/protected-source/protection"* ]]; then
+      echo '{"required_status_checks":{"strict":true,"contexts":["quality-gates"]}}'
+    elif [[ "$*" == *"/branches/"*"/protection"* ]]; then
+      echo '{"message":"Branch not protected","status":"404"}' >&2
+      exit 1
     elif [[ "$*" == *"/replies"* ]]; then
       echo '{"id":9002,"path":"a.ts","line":3,"user":{"login":"octocat"},"body":"thanks","created_at":"2026-06-04T00:00:00Z","in_reply_to_id":9001}'
     elif [[ "$*" == *"/issues/"* ]]; then

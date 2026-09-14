@@ -207,6 +207,58 @@ describe('StartReleaseBatch', () => {
     ]);
   });
 
+  it('mirrors the source branch required-status-check protection onto the new release branch (#1247)', async () => {
+    const result = await startReleaseBatch.execute({
+      issueNumbers: [101, 102, 103, 104, 105],
+    });
+
+    expect(github.mirrorBranchProtectionCalls).toEqual([
+      {
+        repoFullName: 'test-org/test-repo',
+        sourceBranch: 'main',
+        targetBranch: result.releaseBranch,
+      },
+    ]);
+  });
+
+  it('does not fail batch creation when mirroring branch protection is not applied', async () => {
+    github.mirrorBranchProtectionResult = {
+      applied: false,
+      reason: 'source branch has no protection to mirror',
+    };
+
+    const result = await startReleaseBatch.execute({
+      issueNumbers: [101, 102],
+    });
+
+    expect(result.batchId).toBeDefined();
+    expect(github.mirrorBranchProtectionCalls).toHaveLength(1);
+  });
+
+  it('does not fail batch creation when mirroring branch protection throws', async () => {
+    github.mirrorBranchProtection = () => {
+      throw new Error('boom');
+    };
+
+    const result = await startReleaseBatch.execute({
+      issueNumbers: [101, 102],
+    });
+
+    expect(result.batchId).toBeDefined();
+  });
+
+  it('does not attempt to mirror branch protection when the release branch already exists', async () => {
+    git.remoteRefs.set('origin/main', 'sha-main-123');
+    git.remoteRefs.set('origin/release/v2.0.0', 'sha-main-123');
+
+    await startReleaseBatch.execute({
+      issueNumbers: [101, 102],
+      releaseBranch: 'release/v2.0.0',
+    });
+
+    expect(github.mirrorBranchProtectionCalls).toHaveLength(0);
+  });
+
   it('allows idempotent retry when release branch already exists pointing to the exact sourceStartSha', async () => {
     git.remoteRefs.set('origin/main', 'sha-main-123');
     // Release branch already points to the same sha

@@ -41,6 +41,12 @@ export class FakeGitHubPort implements GitHubPort {
   isAutoMergeAllowedCalls: string[] = [];
   viewerPermissionByRepo = new Map<string, string>();
   verifyCapabilitiesCalls: string[] = [];
+  mirrorBranchProtectionCalls: Array<{
+    repoFullName: string;
+    sourceBranch: string;
+    targetBranch: string;
+  }> = [];
+  mirrorBranchProtectionResult: { applied: boolean; reason?: string } = { applied: true };
 
   async getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue> {
     const i = this.issues.get(`${repoFullName}/${issueNumber}`);
@@ -202,5 +208,14 @@ export class FakeGitHubPort implements GitHubPort {
   async isAutoMergeAllowed(repoFullName: string): Promise<boolean> {
     this.isAutoMergeAllowedCalls.push(repoFullName);
     return this.autoMergeAllowedByRepo.get(repoFullName) ?? this.defaultAutoMergeAllowed;
+  }
+
+  async mirrorBranchProtection(
+    repoFullName: string,
+    sourceBranch: string,
+    targetBranch: string,
+  ): Promise<{ applied: boolean; reason?: string }> {
+    this.mirrorBranchProtectionCalls.push({ repoFullName, sourceBranch, targetBranch });
+    return this.mirrorBranchProtectionResult;
   }
 }
