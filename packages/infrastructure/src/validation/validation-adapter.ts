@@ -1,6 +1,7 @@
 import { execa, type Options } from 'execa';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { availableParallelism } from 'node:os';
 import type {
   ValidationPort,
   RunValidationInput,
@@ -99,7 +100,57 @@ function isShellParseError(command: ValidationCommand, exitCode: number, stderr:
   );
 }
 
+/**
+ * Runs `items` through `worker` with at most `concurrency` in flight at once.
+ * Unlike `Promise.all(items.map(worker))`, this never launches more
+ * concurrent work than `concurrency` regardless of how many items there are.
+ * Order of `results` matches `items`; each worker's own thrown error rejects
+ * the whole call once all in-flight workers have settled (mirrors
+ * Promise.all's fail-fast-on-result semantics closely enough for this
+ * adapter's needs, where individual command failures are captured as
+ * ValidationCommandResult values rather than thrown).
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const effectiveConcurrency = Math.max(1, Math.min(concurrency, items.length) || 1);
+
+  async function runNext(): Promise<void> {
+    const index = nextIndex++;
+    if (index >= items.length) return;
+    results[index] = await worker(items[index] as T, index);
+    await runNext();
+  }
+
+  await Promise.all(Array.from({ length: effectiveConcurrency }, () => runNext()));
+  return results;
+}
+
 export class ProcessValidationAdapter implements ValidationPort {
+  /**
+   * Max validation commands run concurrently within a single tier. Defaults
+   * to the machine's available CPU cores: running more heavyweight
+   * commands in parallel than there are cores to service them (each
+   * command, e.g. a vitest suite, typically spawns its own multi-worker
+   * pool sized to core count) causes severe oversubscription and can
+   * starve everything else on the host — see the incident this fixes
+   * where a single `validate` tier of 6 commands (lint/typecheck/test/
+   * test:bash/boundaries/check:control-plane, or a second tier of 6 more
+   * hardware-bound test suites) launched fully unbounded via
+   * `Promise.all`, exhausting system memory and killing unrelated
+   * processes (including the orchestrator's own web UI and an in-flight
+   * `runs resume`).
+   */
+  private readonly maxTierConcurrency: number;
+
+  constructor(opts: { maxTierConcurrency?: number } = {}) {
+    this.maxTierConcurrency = opts.maxTierConcurrency ?? Math.max(1, availableParallelism());
+  }
+
   private async executeSingleCommand(
     command: ValidationCommand,
     index: number,
@@ -249,8 +300,10 @@ export class ProcessValidationAdapter implements ValidationPort {
           index: globalIndex++,
         }));
 
-        const tierResults = await Promise.all(
-          tierIndexed.map(({ command, index }) => this.executeSingleCommand(command, index, input)),
+        const tierResults = await mapWithConcurrency(
+          tierIndexed,
+          this.maxTierConcurrency,
+          ({ command, index }) => this.executeSingleCommand(command, index, input),
         );
 
         for (let t = 0; t < tierIndexed.length; t++) {

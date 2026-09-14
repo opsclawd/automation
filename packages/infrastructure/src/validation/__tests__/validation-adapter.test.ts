@@ -452,6 +452,39 @@ describe('ProcessValidationAdapter', () => {
       expect(results[0].outcome).toBe('passed');
       expect(results[1].outcome).toBe('passed');
     });
+
+    it('bounds in-tier concurrency to maxTierConcurrency instead of launching every command at once (#1243)', async () => {
+      const logDir = freshDir();
+      // maxTierConcurrency: 1 forces full serialization regardless of core count.
+      const adapter = new ProcessValidationAdapter({ maxTierConcurrency: 1 });
+      const startedAt = Date.now();
+      const results = await adapter.run({
+        cwd: process.cwd(),
+        commands: ['sleep 0.2', 'sleep 0.2', 'sleep 0.2'],
+        tiers: [['sleep 0.2', 'sleep 0.2', 'sleep 0.2']],
+        timeoutSeconds: 30,
+        logDir,
+      });
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(results.every((r) => r.outcome === 'passed')).toBe(true);
+      // Fully serialized: >= 3 * 200ms. Unbounded parallel would finish in ~200ms.
+      expect(elapsedMs).toBeGreaterThanOrEqual(550);
+    });
+
+    it('defaults maxTierConcurrency to the machine core count when not configured', async () => {
+      const logDir = freshDir();
+      const adapter = new ProcessValidationAdapter();
+      const results = await adapter.run({
+        cwd: process.cwd(),
+        commands: ['echo cmd1', 'echo cmd2'],
+        tiers: [['echo cmd1', 'echo cmd2']],
+        timeoutSeconds: 30,
+        logDir,
+      });
+
+      expect(results.every((r) => r.outcome === 'passed')).toBe(true);
+    });
   });
 
   describe('validation scope metadata artifact serialization', () => {
