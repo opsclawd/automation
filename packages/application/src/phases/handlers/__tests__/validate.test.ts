@@ -1017,4 +1017,35 @@ describe('ValidateHandler', () => {
       expect(warnEvents.length).toBeGreaterThan(0);
     });
   });
+
+  describe('maxTierConcurrency passthrough (#1243)', () => {
+    it('forwards a configured maxTierConcurrency to the validation port', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx } = makeCtx();
+
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        maxTierConcurrency: 2,
+      }).run(ctx);
+
+      expect(validation.lastInput?.maxTierConcurrency).toBe(2);
+    });
+
+    it('omits maxTierConcurrency from the validation port input when not configured', async () => {
+      const { runValidation, validation } = deps('passed');
+      const { ctx } = makeCtx();
+
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      expect(validation.lastInput?.maxTierConcurrency).toBeUndefined();
+    });
+  });
 });

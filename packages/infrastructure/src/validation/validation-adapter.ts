@@ -293,6 +293,7 @@ export class ProcessValidationAdapter implements ValidationPort {
         effectiveTiers.push(extraCommands);
       }
 
+      const effectiveConcurrency = input.maxTierConcurrency ?? this.maxTierConcurrency;
       let globalIndex = 0;
       for (const tier of effectiveTiers) {
         const tierIndexed = tier.map((command) => ({
@@ -302,7 +303,7 @@ export class ProcessValidationAdapter implements ValidationPort {
 
         const tierResults = await mapWithConcurrency(
           tierIndexed,
-          this.maxTierConcurrency,
+          effectiveConcurrency,
           ({ command, index }) => this.executeSingleCommand(command, index, input),
         );
 
