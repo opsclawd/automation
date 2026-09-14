@@ -431,7 +431,16 @@ function publishBatchEvent(
     metadata: Record<string, unknown>;
   },
 ): void {
-  const runUuid = (event.metadata['runUuid'] as string | undefined) ?? batch.id;
+  // events.run_uuid is a NOT NULL foreign key into `runs` — a release batch has
+  // no row of its own there, so a batch-level event (approve/reject/promote)
+  // must borrow a real item run's uuid or the insert fails closed with a
+  // foreign-key violation (silently dropping the event, since the write is
+  // best-effort). Prefer the most recently touched item, since it's the one
+  // most relevant to the batch's current lifecycle stage.
+  const fallbackRunUuid = [...batch.items]
+    .reverse()
+    .find((item) => item.runUuid !== undefined)?.runUuid;
+  const runUuid = (event.metadata['runUuid'] as string | undefined) ?? fallbackRunUuid ?? batch.id;
   const runDisplayId =
     (event.metadata['runDisplayId'] as string | undefined) ?? `batch-${batch.id}`;
 
