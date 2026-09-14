@@ -21,6 +21,7 @@ import { FakeReleaseBatchRepository } from '../test-doubles/fake-release-batch-r
 import { FakeGitPort } from '../test-doubles/fake-git-port.js';
 import { FakeGitHubPort } from '../test-doubles/fake-github-port.js';
 import { FakeRepositoryPort } from '../test-doubles/fake-repository-port.js';
+import { FakeEventBus } from '../test-doubles/fake-event-bus.js';
 
 function createTestRepo(overrides?: Partial<Repository>): Repository {
   return {
@@ -121,6 +122,26 @@ describe('ManualTestGate use cases', () => {
 
       const persisted = batchRepo.findById(batchId);
       expect(persisted?.status).toBe('approved');
+    });
+
+    it('publishes its event under a real item run uuid, not the batch id (#1249)', async () => {
+      const { batchId, candidateSha } = setupAwaitingBatch();
+      const eventBus = new FakeEventBus();
+      const approveUseCase = new ApproveReleaseBatchCandidate({
+        releaseBatchRepository: batchRepo,
+        repositoryPort: repoPort,
+        git,
+        eventBus,
+        now,
+      });
+
+      await approveUseCase.execute({ batchId, candidateSha });
+
+      expect(eventBus.published.length).toBeGreaterThan(0);
+      for (const { runUuid } of eventBus.published) {
+        expect(runUuid).toBe('run-001');
+        expect(runUuid).not.toBe(batchId);
+      }
     });
 
     it('rejects approval if candidateSha argument does not match batch candidateSha', async () => {
@@ -459,6 +480,60 @@ describe('ManualTestGate use cases', () => {
       expect(github.createdPrInputs[0]?.body).toBe(
         `Autonomous release batch promotion for batch-gate-multi.\nApproved Candidate SHA: \`sha-cand-multi\`\n\nCloses #201\nCloses #202\nCloses #203`,
       );
+    });
+
+    it('publishes its event under the most recent item run uuid, not the batch id (#1249)', async () => {
+      const batchId = ReleaseBatchId('batch-gate-event');
+      const candidateSha = 'sha-cand-event';
+      let batch = createReleaseBatch({
+        id: batchId,
+        repoId: defaultRepo.id,
+        sourceBranch: 'main',
+        sourceStartSha: 'sha-main-001',
+        releaseBranch: 'release/2026-09-11-event',
+        items: [
+          { position: 1, issueNumber: 201 },
+          { position: 2, issueNumber: 202 },
+        ],
+        createdAt: new Date('2026-09-11T12:00:00.000Z'),
+      });
+
+      batch = admitItem(batch, 1, { runUuid: 'run-201', baseSha: 'sha-main-001' });
+      batch = markItemMerged(batch, 1, { mergedCommitSha: 'sha-m-201' });
+      batch = admitItem(batch, 2, { runUuid: 'run-202', baseSha: 'sha-m-201' });
+      batch = markItemMerged(batch, 2, { mergedCommitSha: candidateSha });
+
+      batch = {
+        ...batch,
+        status: 'approved',
+        candidateSha,
+        approvedCandidateSha: candidateSha,
+      };
+      batchRepo.insert(batch);
+
+      git.remoteRefs.set('origin/release/2026-09-11-event', candidateSha);
+      git.remoteRefs.set('origin/main', 'sha-main-001');
+      git.ancestorResults.set(`sha-main-001|${candidateSha}`, true);
+      git.ancestorResults.set(`sha-m-201|${candidateSha}`, true);
+      git.ancestorResults.set(`${candidateSha}|${candidateSha}`, true);
+
+      const eventBus = new FakeEventBus();
+      const promoteUseCase = new PromoteReleaseBatch({
+        releaseBatchRepository: batchRepo,
+        repositoryPort: repoPort,
+        git,
+        github,
+        eventBus,
+        now,
+      });
+
+      await promoteUseCase.execute({ batchId, autoMerge: true });
+
+      expect(eventBus.published.length).toBeGreaterThan(0);
+      for (const { runUuid } of eventBus.published) {
+        expect(runUuid).toBe('run-202');
+        expect(runUuid).not.toBe(batchId);
+      }
     });
 
     it('rejects promotion if batch is not approved', async () => {
