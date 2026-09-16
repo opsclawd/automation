@@ -125,6 +125,42 @@ error domain-only-shared: packages/domain/src/index.ts → packages/application/
 
 For the test command, confirm it is not passing on an empty suite (`vitest run --passWithNoTests` on a repository with no tests is green and meaningless).
 
+### 7. Branch protection must require the CI job by name
+
+Nothing about `repo register`, `.ai-orchestrator.json`, or a green CI run actually blocks a bad merge unless the target branch has branch protection configured. A brand-new repository typically has none:
+
+```bash
+gh api repos/<owner>/<repo>/branches/main/protection
+# {"message":"Branch not protected", ..., "status":404}
+```
+
+Without it, GitHub's native `--auto` merge (used by `create-pr`'s `requestAutoMerge`, see `packages/application/src/phases/handlers/create-pr.ts`) has nothing to wait on and merges as soon as the PR is otherwise mergeable — regardless of whether CI passed, failed, or hasn't finished. This is also why release-batch branches need their own protection mirrored onto them (`GitHubPort.mirrorBranchProtection`, added for #1247) — a release branch created with no protection has the identical gap.
+
+**The required-check context name is the CI job's human-readable `name:` field, not its job id.** Confirm it from a real run rather than guessing from the workflow YAML:
+
+```bash
+SHA=$(gh api repos/<owner>/<repo>/commits/main --jq '.sha')
+gh api repos/<owner>/<repo>/commits/$SHA/check-runs --jq '.check_runs[].name'
+```
+
+Then apply it:
+
+```bash
+cat <<'EOF' | gh api --method PUT repos/<owner>/<repo>/branches/main/protection --input -
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": ["<exact check name from check-runs, e.g. Build, Unit & Browser Test Suite>"]
+  },
+  "enforce_admins": null,
+  "required_pull_request_reviews": null,
+  "restrictions": null
+}
+EOF
+```
+
+`-f`/`-F` flags on `gh api` fight the API's boolean/array typing for this endpoint (`strict` arrives as the string `"true"` and gets rejected); piping a JSON body via `--input -` avoids it.
+
 ## Bootstrap repositories need a hand-seed
 
 Validation is the only gate in the pipeline that is not an agent judging an agent. On a greenfield repository it cannot run, because the scripts it invokes do not exist until the first issue creates them.
@@ -140,6 +176,20 @@ Running that first issue through the orchestrator means running it with its only
 - **one real package** with a real export and a real test, so the gates are exercised rather than vacuously green, and so later packages have a worked example
 
 Then amend the issue to state what is pre-seeded, pin the exact script names, and forbid restructuring the seeded config. Leave the remaining scope — the other packages, fixtures proving the boundaries, and documentation — to the run.
+
+## Retrofitting quality gates onto an already-substantial codebase
+
+A different, more common case than the greenfield bootstrap above: the target repository already has real code, a real `build`/`test` setup, and a working CI job — it is simply missing lint, typecheck-as-an-independent-check, formatting, or dependency-boundary tooling. Onboarding this kind of repository is not a hand-seed problem; it is a first-retrofit-pass problem, and it has its own failure modes.
+
+**Expect real violations on the first lint pass, and budget for triage, not blanket suppression.** Running ESLint against years of un-linted code will surface real findings. Fix genuine ones (a stray `any` that should have been a concrete type, dead state that's assigned but never read, a manual cast that should have been an `instanceof` check) rather than reflexively disabling the rule — but a strict, precise type is not always available or worth the risk: a third-party plugin API (e.g. a Babel plugin's untyped `path`/`types` visitor arguments) is a legitimate place for a narrowly `eslint-disable`d `any` with a one-line comment explaining why, rather than forcing a fragile type onto code you don't control.
+
+**Exclude adversarial/deliberately-malformed test fixtures from lint and format, not just from the type system.** A security test suite that feeds intentionally-broken syntax or attacker-shaped payloads to the code under test is not violating your style guide — it is doing its job. ESLint and Prettier will both hard-fail (not just warn) on a fixture that is deliberately unparseable, which looks like a tooling bug until you notice the fixture's own comment says `// Intentional malformed JSX syntax error`. Exclude `**/test/fixtures/**` (or the repository's equivalent) from both configs rather than trying to make adversarial test data lint-clean.
+
+**Relax specific rules for test code deliberately, not by accident.** Tests that execute dynamically-constructed code (`new Function(...)`) or read ad-hoc properties injected onto `window` by an attacker-payload fixture have a legitimate, idiomatic need for `any` that application `src/` does not. A `files: ['**/test/**/*.ts']` override turning off `no-explicit-any` for test code while keeping it an error in `src/` is more maintainable than scattering per-line suppressions, and keeps the signal strong where it matters.
+
+**Auto-fix formatting in `validate` instead of failing on drift.** A `format`-as-`prettier --check` gate turns any formatting inconsistency into a wasted `fix-validate` iteration for something entirely mechanical. Run `prettier --write` (`format:fix`) as its own leading tier, before anything else touches the working tree — alone, not bundled into a parallel tier with `build`/`test`/`lint`, or a command reading a file mid-rewrite risks a torn read — then keep the `--check` version afterward as a cheap idempotency proof. `create-pr`'s staging step commits whatever is in the worktree at PR time regardless of which phase produced the change, so files `format:fix` touches during `validate` are captured automatically. This is exactly the migration `opsclawd/comfy-content-orchestrator` made (see its `git log` for "auto-fix prettier drift in validate instead of failing on it").
+
+**Defer dependency-boundary rules (`dependency-cruiser` or equivalent) until the package structure they constrain actually exists.** Writing a boundary ruleset against directories a foundational issue hasn't created yet is speculative and risks rework once the real layout lands. If a target repository's own design docs already commit to a fixed layering (e.g. a domain package with zero external dependencies), that specific invariant is worth enforcing mechanically as soon as the creating issue merges — but the full cross-package ruleset should wait for the internal structure (which files hold ports vs. adapters, where the application/infrastructure split actually falls) to be concrete, not guessed at from a design doc. Track it as an explicit follow-up issue rather than folding tooling-infrastructure work into the issue that creates the domain code itself — bundling the two makes the domain PR harder to review and removes the independent check that catches a real violation instead of a loosened rule.
 
 ## Pre-flight
 
@@ -180,4 +230,6 @@ git -C /path/to/target status --porcelain                # empty
 - [ ] Effective validation list verified with `loadLayeredConfig` and `targetRoot`; target layer `present: true`
 - [ ] Every command in the effective target-owned list exits 0 in a clean worktree
 - [ ] Each gate proven to fail on a real violation, not merely to pass
+- [ ] Branch protection on the default branch requires the CI job by its real `check-runs` name, verified with `gh api .../branches/main/protection`
 - [ ] For a greenfield repository: gates seeded by hand, and the bootstrap issue amended to say so
+- [ ] For a repository with pre-existing code but no lint/typecheck/format/boundary tooling: first-pass violations triaged (real fixes vs. legitimate suppressions), adversarial test fixtures excluded from lint/format, and boundary rules deferred until the structure they constrain exists
