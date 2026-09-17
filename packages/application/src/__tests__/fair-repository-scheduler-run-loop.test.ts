@@ -296,6 +296,54 @@ describe('FairRepositoryScheduler run loop', () => {
         runController.abort();
       }
     });
+
+    it('no_work outcome does not wake run loop before poll interval', async () => {
+      const { FairRepositoryScheduler } = await import('../fair-repository-scheduler.js');
+
+      const r1 = mkRepo('r1');
+
+      const source = new FakeRepositoryWorkSourcePort();
+      const dispatch = new FakeRepositoryDispatchPort();
+      const telemetry = new FakeSchedulerTelemetryPort();
+
+      source.setResult('r1', { available: true, queueDepth: 1, activeCount: 0 });
+
+      const fakeRepos = {
+        listEnabled() {
+          return [r1];
+        },
+      };
+
+      let slept = false;
+      const mockSleep = async (_ms: number, _signal?: AbortSignal) => {
+        slept = true;
+        await sleep(10);
+      };
+
+      const scheduler = new FairRepositoryScheduler({
+        globalConcurrency: 1,
+        pollIntervalMs: 10000,
+        repos: fakeRepos as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+        workSource: source,
+        dispatch,
+        telemetry,
+        workerIdFactory: makeWorkerIdFactory(),
+        sleep: mockSleep,
+        now: () => new Date(),
+        logger: { error: () => {} },
+      });
+
+      dispatch.setResult('r1', 'no_work');
+
+      const runController = new AbortController();
+      try {
+        void scheduler.run(runController.signal);
+        await sleep(50);
+        expect(slept).toBe(true);
+      } finally {
+        runController.abort();
+      }
+    });
   });
 
   describe('worker_identity_is_repository_immutable', () => {

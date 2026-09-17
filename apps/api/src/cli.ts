@@ -639,7 +639,11 @@ function buildSchedulerDeps(
       ...(signal && { outerSignal: signal }),
     };
 
-    await runClaimedJob(workerId, job, fullDeps);
+    const outcome = await runClaimedJob(workerId, job, fullDeps);
+    if (outcome === 'lease_conflict') {
+      return 'no_work';
+    }
+    return 'completed';
   };
 
   const dispatchAdapter = new RepositorySchedulerAdapter({
