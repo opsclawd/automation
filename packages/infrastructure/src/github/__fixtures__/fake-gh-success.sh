@@ -6,7 +6,7 @@ set -uo pipefail
 
 case "$1 ${2:-}" in
   "issue view")
-    echo '{"number":7,"title":"T","body":"B","labels":[{"name":"bug"}]}' ;;
+    echo '{"number":7,"title":"T","body":"B","labels":[{"name":"bug"}],"state":"OPEN"}' ;;
   "repo view")
     echo '{"viewerPermission":"ADMIN"}' ;;
   "pr view")
