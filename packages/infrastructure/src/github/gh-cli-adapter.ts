@@ -105,7 +105,7 @@ export class GhCliAdapter implements GitHubPort {
       title: j.title,
       body: j.body,
       labels: j.labels.map((l) => l.name),
-      ...(j.state !== undefined ? { state: j.state } : {}),
+      ...(j.state !== undefined ? { state: j.state.toLowerCase() } : {}),
     };
   }
 

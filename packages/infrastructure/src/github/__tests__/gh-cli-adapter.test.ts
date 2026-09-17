@@ -21,6 +21,11 @@ describe('GhCliAdapter reads', () => {
     expect(issue.labels).toEqual(['bug']);
   });
 
+  it('normalises issue state to lowercase, matching PR state normalisation', async () => {
+    const issue = await ok.getIssue('o/r', 7);
+    expect(issue.state).toBe('open');
+  });
+
   it('parses issue comments from REST shape', async () => {
     const cs = await ok.listIssueComments('o/r', 7);
     expect(cs).toHaveLength(1);
