@@ -482,5 +482,95 @@ describe('RepositorySchedulerAdapter', () => {
 
       expect(deregisteredWorkerIds).toContain(workerId);
     });
+
+    it('returns activeCount >= 1 when checkActiveLease is true even if runningJobs is empty', async () => {
+      const { RepositorySchedulerAdapter } = await import('../repository-scheduler-adapter.js');
+
+      const repo = {
+        id: 'owner/repo' as import('@ai-sdlc/domain').RepositoryId,
+        name: 'repo',
+        fullName: 'owner/repo',
+        enabled: true,
+        healthStatus: 'healthy' as const,
+        maxConcurrentRuns: 1,
+      };
+
+      const runtime = {
+        repository: repo,
+        jobQueue: {
+          listForRepo: vi.fn(() => [{ id: 'j1', status: 'queued' }]),
+        },
+        workerLeaseRepository: {
+          checkActiveLease: vi.fn(() => true),
+        },
+        close: vi.fn(),
+      };
+
+      const factory = vi.fn(() =>
+        Promise.resolve(
+          runtime as unknown as import('../repository-runtime-factory.js').RepositoryRuntime,
+        ),
+      );
+      const adapter = new RepositorySchedulerAdapter({
+        runtimeFactory: factory,
+        logger: mockLogger,
+      });
+
+      const result = await adapter.inspect(repo);
+      expect(result).toEqual({
+        available: true,
+        queueDepth: 1,
+        activeCount: 1,
+      });
+    });
+
+    it('returns no_work when workerLoop returns no_work', async () => {
+      const { RepositorySchedulerAdapter } = await import('../repository-scheduler-adapter.js');
+
+      const repo = {
+        id: 'owner/repo' as import('@ai-sdlc/domain').RepositoryId,
+        name: 'repo',
+        fullName: 'owner/repo',
+        enabled: true,
+        healthStatus: 'healthy' as const,
+        maxConcurrentRuns: 1,
+      };
+
+      const runtime = {
+        repository: repo,
+        workerRegistry: {
+          register: vi.fn(),
+          heartbeat: vi.fn(),
+          deregister: vi.fn(),
+        },
+        workerLeaseRepository: {
+          checkActiveLease: vi.fn(() => false),
+        },
+        jobQueue: {
+          listForRepo: vi.fn(() => [{ id: 'j1', status: 'queued' }]),
+          claimNext: vi.fn(() => ({ id: 'j1', runId: 'run-1', repoId: repo.id })),
+        },
+        close: vi.fn(),
+      };
+
+      const factory = vi.fn(() =>
+        Promise.resolve(
+          runtime as unknown as import('../repository-runtime-factory.js').RepositoryRuntime,
+        ),
+      );
+      const workerLoop = vi.fn().mockResolvedValue('no_work');
+
+      const adapter = new RepositorySchedulerAdapter({
+        runtimeFactory: factory,
+        logger: mockLogger,
+        workerLoop,
+      });
+
+      const workerId = 'w-test-1' as import('@ai-sdlc/domain').WorkerId;
+      const result = await adapter.runOne({ repository: repo, workerId });
+
+      expect(result).toBe('no_work');
+      expect(workerLoop).toHaveBeenCalledTimes(1);
+    });
   });
 });

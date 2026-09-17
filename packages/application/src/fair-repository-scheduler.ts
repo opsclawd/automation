@@ -182,7 +182,6 @@ export class FairRepositoryScheduler {
           this.deps.dispatch.runOne({ repository: repo, workerId, signal: abortController.signal }),
         ).finally(() => {
           this.inFlight.delete(workerId);
-          this.notifyCompletion(repo.id);
         });
         this.inFlight.get(workerId)!.dispatchPromise = dispatchPromise;
 
@@ -190,6 +189,7 @@ export class FairRepositoryScheduler {
           (outcome) => {
             if (outcome === 'completed') {
               this.recordDispatchCompleted(repo, workerId);
+              this.notifyCompletion(repo.id);
             }
           },
           (err) => {
@@ -230,7 +230,14 @@ export class FairRepositoryScheduler {
       }
 
       try {
-        await Promise.race([this.deps.sleep(this.deps.pollIntervalMs, signal), completionPromise]);
+        if (this.inFlight.size > 0) {
+          await Promise.race([
+            this.deps.sleep(this.deps.pollIntervalMs, signal),
+            completionPromise,
+          ]);
+        } else {
+          await this.deps.sleep(this.deps.pollIntervalMs, signal);
+        }
       } finally {
         if (listenerRef) {
           this.removeCompletionListener(listenerRef);

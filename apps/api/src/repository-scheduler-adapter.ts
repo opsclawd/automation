@@ -8,6 +8,7 @@ import type { Repository, RepositoryId, WorkerId, RunId, Worker } from '@ai-sdlc
 import {
   LeaseOwnershipLostError,
   JobOwnershipLostError,
+  WorkerLeaseConflictError,
   generateJobOwnership,
 } from '@ai-sdlc/domain';
 import type { RepositoryRuntime } from './repository-runtime-factory.js';
@@ -18,7 +19,7 @@ export interface RepositorySchedulerAdapterDeps {
   workerLoop?: (
     deps: RepositoryRuntime,
     input: { workerId: WorkerId; runId: RunId; signal?: AbortSignal },
-  ) => Promise<void>;
+  ) => Promise<'completed' | 'no_work' | void>;
 }
 
 export class RepositorySchedulerAdapter
@@ -106,7 +107,9 @@ export class RepositorySchedulerAdapter
     const jobs = runtime.jobQueue.listForRepo(repo.id);
     const queuedJobs = jobs.filter((j) => j.status === 'queued');
     const runningJobs = jobs.filter((j) => j.status === 'running');
-    const activeCount = runningJobs.length;
+    const hasActiveLease =
+      runtime.workerLeaseRepository?.checkActiveLease(repo.id, new Date()) ?? false;
+    const activeCount = Math.max(runningJobs.length, hasActiveLease ? 1 : 0);
 
     return {
       available: true,
@@ -167,7 +170,10 @@ export class RepositorySchedulerAdapter
           workerLoopInput.signal = signal;
         }
         const workerLoopFn = this.deps.workerLoop ?? defaultWorkerLoop;
-        await workerLoopFn(runtime, workerLoopInput);
+        const outcome = await workerLoopFn(runtime, workerLoopInput);
+        if (outcome === 'no_work') {
+          return 'no_work';
+        }
 
         return 'completed';
       } finally {
@@ -214,7 +220,7 @@ export class RepositorySchedulerAdapter
 async function defaultWorkerLoop(
   runtime: RepositoryRuntime,
   input: { workerId: WorkerId; runId: RunId; signal?: AbortSignal },
-): Promise<void> {
+): Promise<'completed' | 'no_work'> {
   const { runRepository, jobQueue, workerLeaseRepository } = runtime;
   const { workerId, runId, signal } = input;
 
@@ -222,7 +228,7 @@ async function defaultWorkerLoop(
     .listForRun(runId)
     .find((j) => j.claimedBy === workerId && j.status === 'claimed');
   if (!job) {
-    return;
+    return 'no_work';
   }
 
   if (signal?.aborted) {
@@ -233,7 +239,7 @@ async function defaultWorkerLoop(
         if (!(err instanceof JobOwnershipLostError)) throw err;
       }
     }
-    return;
+    return 'no_work';
   }
 
   const run = runRepository.findByUuid(String(runId));
@@ -245,17 +251,32 @@ async function defaultWorkerLoop(
         if (!(err instanceof JobOwnershipLostError)) throw err;
       }
     }
-    return;
+    return 'no_work';
   }
 
   const now = new Date();
-  const acquiredLease = workerLeaseRepository.acquire({
-    repoId: job.repoId,
-    workerId: input.workerId,
-    runId,
-    now,
-    ttlMs: 120_000,
-  });
+  let acquiredLease;
+  try {
+    acquiredLease = workerLeaseRepository.acquire({
+      repoId: job.repoId,
+      workerId: input.workerId,
+      runId,
+      now,
+      ttlMs: 120_000,
+    });
+  } catch (err) {
+    if (err instanceof WorkerLeaseConflictError) {
+      if (job.claimedBy && job.claimToken) {
+        try {
+          jobQueue.releaseClaim(generateJobOwnership(job, job.claimedBy));
+        } catch (e) {
+          if (!(e instanceof JobOwnershipLostError)) throw e;
+        }
+      }
+      return 'no_work';
+    }
+    throw err;
+  }
 
   try {
     if (job.claimedBy && job.claimToken) {
@@ -265,6 +286,7 @@ async function defaultWorkerLoop(
         if (!(err instanceof JobOwnershipLostError)) throw err;
       }
     }
+    return 'completed';
   } finally {
     try {
       workerLeaseRepository.release({
