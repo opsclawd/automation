@@ -42,6 +42,8 @@ describe('GhCliAdapter reads', () => {
     expect(pr.headRefName).toBe('feat-x');
     expect(pr.baseRefName).toBe('main');
     expect(pr.state).toBe('open');
+    expect(pr.title).toBe('T');
+    expect(pr.body).toBe('B');
   });
 
   it('parses PR merge readiness including baseRefName, mergedAt, and mergeCommitSha', async () => {
@@ -133,6 +135,28 @@ describe('GhCliAdapter writes', () => {
     });
     expect(pr.number).toBe(99);
     expect(pr.state).toBe('open');
+  });
+
+  it('updates a PR title and body via gh pr edit', async () => {
+    const log = join(tmpdir(), `gh-log-${Date.now()}.txt`);
+    writeFileSync(log, '');
+    try {
+      const adapter = new GhCliAdapter({
+        ghPath: join(fixtures, 'fake-gh-success.sh'),
+        maxRetries: 0,
+        env: { FAKE_GH_LOG: log },
+      });
+      await adapter.updatePullRequest({
+        repoFullName: 'o/r',
+        prNumber: 99,
+        title: 'New Title',
+        body: 'New Body',
+      });
+      const calls = readFileSync(log, 'utf-8');
+      expect(calls).toContain('pr edit 99 --repo o/r --title New Title --body New Body');
+    } finally {
+      rmSync(log, { force: true });
+    }
   });
 
   it('requests auto-merge with the given method and reports the flag used', async () => {

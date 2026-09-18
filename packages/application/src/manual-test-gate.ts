@@ -23,6 +23,7 @@ import type {
 import type { EventRepositoryFactory } from './start-issue-run.js';
 import type { ReleaseBatchCoordinator } from './release-batch-coordinator.js';
 import { assemblePromotionPr } from './assemble-promotion-pr.js';
+import { refreshPromotionPr } from './refresh-promotion-pr.js';
 
 export interface ManualTestGateDeps {
   releaseBatchRepository: ReleaseBatchRepositoryPort;
@@ -400,6 +401,22 @@ export class PromoteReleaseBatch {
         }
       }
     } else if (prNumber) {
+      if (this.deps.github) {
+        try {
+          await refreshPromotionPr({
+            github: this.deps.github,
+            repoFullName: repo.fullName,
+            prNumber,
+            batch,
+            candidateSha: batch.approvedCandidateSha,
+          });
+        } catch (err) {
+          this.deps.logger?.warn?.(
+            `Failed to refresh promotion PR #${prNumber} for batch ${batch.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
       if (batch.status !== 'promoting') {
         batch = attachPromotionPr(batch, prNumber);
         this.deps.releaseBatchRepository.update(batch);

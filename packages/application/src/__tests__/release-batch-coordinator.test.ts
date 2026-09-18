@@ -5,6 +5,7 @@ import {
   createReleaseBatch,
   admitItem,
   markItemMerged,
+  appendRemediationItems,
   ReleaseBatchStateError,
   type Repository,
 } from '@ai-sdlc/domain';
@@ -1192,6 +1193,62 @@ describe('ReleaseBatchCoordinator', () => {
       expect(secondResult.actions).not.toContain('promotion_pr_created');
       // Still exactly 1 PR created, no duplicate
       expect(fakeGitHub.createdPrInputs).toHaveLength(1);
+    });
+
+    it('refreshes existing promotion PR body on reconciliation candidate capture (#1258)', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const finalSha1 = 'sha-commit-105';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', finalSha1);
+      fakeGit.remoteRefs.set('origin/main', 'sha-root-000');
+      fakeGit.treeShaResults.set(finalSha1, 'tree-105');
+      fakeGit.ancestorResults.set(`sha-root-000|${finalSha1}`, true);
+
+      // Certify all 5 items merged -> creates PR #1
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t1,
+        });
+      }
+
+      expect(fakeGitHub.createdPrInputs).toHaveLength(1);
+      const prNumber = fakeGitHub.createdPrs[0]?.number!;
+      const initialPr = await fakeGitHub.getPr('test-org/test-repo', prNumber);
+      expect(initialPr.body).toContain('| **Candidate SHA** | `sha-commit-105` |');
+
+      // Append remediation item 106 and transition to test_failed -> building
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = { ...batch, status: 'test_failed' };
+      releaseBatchRepository.update(batch);
+
+      batch = appendRemediationItems(batch, [106]);
+      releaseBatchRepository.update(batch);
+
+      // Admit item 6 and merge it
+      batch = admitItem(batch, 6, { runUuid: 'run-item-6', baseSha: finalSha1, now: t2 });
+      releaseBatchRepository.update(batch);
+
+      const finalSha2 = 'sha-commit-106';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', finalSha2);
+      fakeGit.treeShaResults.set(finalSha2, 'tree-106');
+      fakeGit.ancestorResults.set(`sha-root-000|${finalSha2}`, true);
+      fakeGit.ancestorResults.set(`${finalSha1}|${finalSha2}`, true);
+
+      await coordinator.certifyItemMerged({
+        batchId,
+        position: 6,
+        mergedCommitSha: finalSha2,
+        now: t2,
+      });
+
+      // Coordinator candidate capture should have refreshed PR #1, not created PR #2
+      expect(fakeGitHub.createdPrInputs).toHaveLength(1);
+      const refreshedPr = await fakeGitHub.getPr('test-org/test-repo', prNumber);
+      expect(refreshedPr.body).toContain('| **Candidate SHA** | `sha-commit-106` |');
+      expect(refreshedPr.body).not.toContain('| **Candidate SHA** | `sha-commit-105` |');
+      expect(refreshedPr.body).toContain('Closes #106');
     });
 
     it('blocks candidate capture with source_branch_advanced when source branch drifted ahead', async () => {

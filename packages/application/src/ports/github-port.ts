@@ -23,6 +23,8 @@ export interface PullRequest {
 export interface PullRequestDetail extends PullRequest {
   headRefName: string;
   baseRefName?: string;
+  title?: string;
+  body?: string;
 }
 
 /** Raw GitHub review comment (wire shape from REST API).
@@ -48,6 +50,13 @@ export interface CreatePullRequestInput {
   title: string;
   body: string;
   draft?: boolean;
+}
+
+export interface UpdatePullRequestInput {
+  repoFullName: string;
+  prNumber: number;
+  title?: string | undefined;
+  body?: string | undefined;
 }
 
 export interface PullRequestReview {
@@ -113,6 +122,7 @@ export interface GitHubPort {
     labels: { add?: string[]; remove?: string[] },
   ): Promise<void>;
   listReviews(repoFullName: string, prNumber: number): Promise<PullRequestReview[]>;
+  updatePullRequest?(input: UpdatePullRequestInput): Promise<void>;
   searchIssues?(repoFullName: string, query: string): Promise<GitHubIssue[]>;
   verifyCapabilities?(repoFullName: string): Promise<{ canWrite: boolean; permission: string }>;
   isAutoMergeAllowed?(repoFullName: string): Promise<boolean>;

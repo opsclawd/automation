@@ -17,6 +17,7 @@ export type {
   PullRequestReview,
   GitHubReviewComment,
   CreatePullRequestInput,
+  UpdatePullRequestInput,
   PrMergeReadiness,
   MergeMethod,
   RequestAutoMergeResult,
