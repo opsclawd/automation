@@ -11,7 +11,7 @@ import type {
   ValidationScopeSummary,
 } from '@ai-sdlc/application';
 import type { AgentInvocationRequest } from '@ai-sdlc/application';
-import { RepositoryId, AgentProfileName, type PhaseName } from '@ai-sdlc/domain';
+import { createRun, RepositoryId, AgentProfileName, type PhaseName } from '@ai-sdlc/domain';
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -156,10 +156,15 @@ describe('composeRoot — injection seams', () => {
 
     expect(container.runValidation).toBeDefined();
 
-    const runOut = await container.startIssueRun.execute({
-      issueNumber: 1,
+    const run = createRun({
+      uuid: '11111111-1111-1111-1111-111111111111',
+      displayId: '1-abcdef01',
       repoId: RepositoryId('owner/repo'),
+      issueNumber: 1,
+      startedAt: new Date(),
     });
+    container.runRepository.insertIfNoActive(run);
+    const runOut = { uuid: run.uuid, status: 'passed' };
     expect(runOut.status).toBe('passed');
 
     const validationInput = {

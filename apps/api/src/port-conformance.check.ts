@@ -3,7 +3,6 @@ import type {
   EventRepositoryPort,
   FailureRepositoryPort,
   AgentInvocationPort,
-  RunBashScriptFn,
   WorkerRegistryPort,
 } from '@ai-sdlc/application';
 import type {
@@ -13,7 +12,6 @@ import type {
   AgentInvocationRepository,
   WorkerRegistryRepository,
 } from '@ai-sdlc/infrastructure';
-import type { runBashScript } from '@ai-sdlc/infrastructure';
 
 // Type-level conformance assertions — each assigns the adapter type to the
 // port type. If structural typing diverges, tsc --noEmit will error here.
@@ -23,6 +21,5 @@ import type { runBashScript } from '@ai-sdlc/infrastructure';
 const _runRepository: RunRepositoryPort = null as unknown as RunRepository;
 const _eventRepository: EventRepositoryPort = null as unknown as EventRepository;
 const _failureRepository: FailureRepositoryPort = null as unknown as FailureRepository;
-const _runBashScript: RunBashScriptFn = null as unknown as typeof runBashScript;
 const _agentInvocationRepo: AgentInvocationPort = null as unknown as AgentInvocationRepository;
 const _workerRegistry: WorkerRegistryPort = null as unknown as WorkerRegistryRepository;

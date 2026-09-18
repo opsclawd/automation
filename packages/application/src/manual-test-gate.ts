@@ -18,9 +18,9 @@ import type {
   GitHubPort,
   EventBusPort,
   EventRepositoryPort,
+  EventRepositoryFactory,
   MergeMethod,
 } from './ports.js';
-import type { EventRepositoryFactory } from './start-issue-run.js';
 import type { ReleaseBatchCoordinator } from './release-batch-coordinator.js';
 import { assemblePromotionPr } from './assemble-promotion-pr.js';
 import { refreshPromotionPr } from './refresh-promotion-pr.js';

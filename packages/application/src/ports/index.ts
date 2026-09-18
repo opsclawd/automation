@@ -161,7 +161,7 @@ export type {
 } from './revert-scope-files-port.js';
 export type { ReadWorktreeFilePort } from './read-worktree-file-port.js';
 export type { DeleteWorktreeFilePort } from './delete-worktree-file-port.js';
-export type { EventRepositoryPort } from './event-repository-port.js';
+export type { EventRepositoryPort, EventRepositoryFactory } from './event-repository-port.js';
 export type {
   WorktreeLifecyclePort,
   WorktreeLifecycleMode,

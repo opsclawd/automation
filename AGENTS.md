@@ -66,14 +66,8 @@ shared  <--  domain  <--  application  <--  apps/api (composition root)
 **Common red flag:** if you find yourself adding `@ai-sdlc/infrastructure` back
 to `packages/application/package.json`, stop — you are about to break the layer
 rule. Define a port instead. See `packages/application/src/ports.ts` for the
-existing pattern (`RunRepositoryPort`, `RunDirectoryFactory`, `RunBashScriptFn`).
+existing pattern (`RunRepositoryPort`, `RunDirectoryFactory`).
 
 **Verifying locally before pushing:** see "Before opening a PR" at the top of
 this file — also add `pnpm boundaries` (layer + circular-dep check) when
 touching imports across `packages/`/`apps/` boundaries.
-
-**Shell tests** for `scripts/` belong in `scripts/lib/__tests__/*.bats` — anything
-else is silently ignored by `pnpm test:bash`. See
-`docs/solutions/orchestrator/shell-test-location-2026-05-19.md`.
-
-**Test Parallelism Cap:** `pnpm test:bash` runs `bats` with `--jobs 4` to parallelize execution across `.bats` files. This fixed cap matches Vitest's `maxForks: 4` ceiling (`vitest.config.ts`) to avoid host memory/CPU pressure on 16GB CI runners. The `test:bash` parallelism cap should track the Vitest fork cap to keep host pressure predictable.

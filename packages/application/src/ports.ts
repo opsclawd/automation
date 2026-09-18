@@ -105,35 +105,7 @@ export interface RunDirectoryHandle {
 
 export type RunDirectoryFactory = (input: { rootDir: string; run: Run }) => RunDirectoryHandle;
 
-export interface RunBashScriptInput {
-  scriptPath: string;
-  args: string[];
-  env: Record<string, string>;
-  cwd?: string;
-  stdoutPath: string;
-  stderrPath: string;
-  combinedPath: string;
-  tee?: boolean;
-}
-
-export interface RunBashScriptResult {
-  exitCode: number;
-  durationMs: number;
-}
-
-export type RunBashScriptFn = (input: RunBashScriptInput) => Promise<RunBashScriptResult>;
-
 export type { ReadWorktreeFilePort } from './ports/read-worktree-file-port.js';
-
-export interface TmpDirectoryHandle {
-  readonly tmpDir: string;
-  remove(): void;
-}
-
-export type TmpDirectoryFactory = (input: {
-  baseTmpDir: string;
-  runId: string;
-}) => TmpDirectoryHandle;
 
 export type { RepositoryPort } from './ports/repository-port.js';
 export type {
@@ -247,7 +219,7 @@ export interface FileTailerPort {
   stop(): Promise<void>;
 }
 
-export type { EventRepositoryPort } from './ports/event-repository-port.js';
+export type { EventRepositoryPort, EventRepositoryFactory } from './ports/event-repository-port.js';
 export type {
   WorktreeLifecyclePort,
   WorktreeLifecycleMode,

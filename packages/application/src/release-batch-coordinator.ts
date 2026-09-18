@@ -35,6 +35,7 @@ import type {
   JobQueuePort,
   EventBusPort,
   EventRepositoryPort,
+  EventRepositoryFactory,
   GitPort,
   GitHubPort,
   PrMergeReadiness,
@@ -42,7 +43,6 @@ import type {
   ReleaseBatchNotificationType,
 } from './ports.js';
 import { safeDispatchReleaseBatchNotification } from './ports.js';
-import type { EventRepositoryFactory } from './start-issue-run.js';
 import type { InterItemMaintenanceService } from './inter-item-maintenance.js';
 import { assemblePromotionPr } from './assemble-promotion-pr.js';
 import { refreshPromotionPr } from './refresh-promotion-pr.js';

@@ -14,8 +14,97 @@ TIMEOUT_SEC="${TIMEOUT_SEC:-900}"
 LOG_FILE="${LOG_FILE:-${REPO_ROOT}/ai/consolidate-$(date -u +%Y%m%dT%H%M%SZ).log}"
 mkdir -p "$(dirname "$LOG_FILE")"
 
-# shellcheck source=lib/consolidate_helpers.sh
-source "${REPO_ROOT}/scripts/lib/consolidate_helpers.sh"
+# discover_inputs — emit one path per line of compound files that should be
+# considered for this consolidation pass.
+#
+# Modes (mutually exclusive):
+#   discover_inputs                — all compound files newer than the newest
+#                                    commit touching docs/solutions/ (or all
+#                                    files if no such commit exists)
+#   discover_inputs --since <ref>  — all compound files newer than <ref>
+#   discover_inputs --issues a,b,c — only ai/issues/<a>/compound.md etc.
+#                                    (poll-pr files excluded in issue mode)
+discover_inputs() {
+  local mode=auto since_ref="" issues=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --since) [[ -n "$2" && "$2" != -* ]] || { echo "discover_inputs: --since requires a non-flag value" >&2; return 2; }; mode=since; since_ref="$2"; shift 2 ;;
+      --issues) [[ -n "$2" && "$2" != -* ]] || { echo "discover_inputs: --issues requires a non-flag value" >&2; return 2; }; mode=issues; issues="$2"; shift 2 ;;
+      *) echo "discover_inputs: unknown arg $1" >&2; return 2 ;;
+    esac
+  done
+
+  cd "$REPO_ROOT" || return 1
+
+  if [[ "$mode" == "issues" ]]; then
+    local IFS=','
+    for n in $issues; do
+      [[ -f "ai/issues/${n}/compound.md" ]] && echo "ai/issues/${n}/compound.md"
+    done
+    return 0
+  fi
+
+  # auto: resolve the since-ref from git log on docs/solutions/
+  if [[ "$mode" == "auto" ]]; then
+    since_ref=$(git log -1 --format=%H --basic-regexp --grep='^docs(solutions): consolidate compound artifacts' -- docs/solutions/ 2>/dev/null || echo "")
+  fi
+
+  local all_files
+  all_files=$(find ai/issues -name 'compound.md' -type f 2>/dev/null; \
+              find ai/ -path '*/poll-pr-*/compound-*.md' -type f 2>/dev/null) || true
+
+  if [[ -z "$since_ref" ]]; then
+    echo "$all_files" | sed -n '/^$/!p' | sort
+    return 0
+  fi
+
+  git rev-parse --verify "$since_ref" >/dev/null 2>&1 || {
+    warn "Invalid --since ref: '${since_ref}'. Use a valid commit, tag, or branch name."
+    return 2
+  }
+
+  local since_ts
+  since_ts=$(git log -1 --format=%ct "$since_ref")
+
+  echo "$all_files" | sed -n '/^$/!p' | while IFS= read -r f; do
+    local file_ts
+    file_ts=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
+    [[ "$file_ts" -gt "$since_ts" ]] && echo "$f"
+  done | sort
+}
+
+# diff_and_confirm — show the working-tree diff under docs/solutions/ and ask
+# the user to confirm. Returns 0 on yes, 1 on no, 0 with a note when nothing
+# changed (so the caller can exit clean on a zero-output run).
+diff_and_confirm() {
+  cd "$REPO_ROOT" || return 1
+  if git diff --quiet -- docs/solutions/ && [[ -z "$(git status --porcelain -- docs/solutions/)" ]]; then
+    echo "Nothing to commit under docs/solutions/."
+    return 0
+  fi
+  echo "--- Proposed changes under docs/solutions/ ---"
+  git status --short -- docs/solutions/
+  echo
+  git diff HEAD -- docs/solutions/
+  echo
+  read -r -p "Commit these changes? [y/N] " answer
+  case "$answer" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# commit_consolidation — stage docs/solutions/ and commit with a standard message.
+commit_consolidation() {
+  cd "$REPO_ROOT" || return 1
+  if git diff --quiet -- docs/solutions/ && [[ -z "$(git status --porcelain -- docs/solutions/)" ]]; then
+    return 0
+  fi
+  git add docs/solutions/
+  git commit -m "docs(solutions): consolidate compound artifacts
+
+Curated from ai/issues/*/compound.md and ai/poll-pr-*/compound-*.md."
+}
 
 log()  { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "$LOG_FILE" >&2; }
 warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "$LOG_FILE" >&2; }

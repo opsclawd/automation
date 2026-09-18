@@ -25,3 +25,5 @@ export interface EventRepositoryPort {
     timestamp: Date;
   }>;
 }
+
+export type EventRepositoryFactory = (repoId: RepositoryId) => EventRepositoryPort;

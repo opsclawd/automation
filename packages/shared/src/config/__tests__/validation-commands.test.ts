@@ -25,7 +25,6 @@ describe('validation commands drift guard (#514)', () => {
       'pnpm lint',
       'pnpm -r typecheck',
       'pnpm test',
-      'pnpm test:bash',
       'pnpm boundaries',
     ];
 

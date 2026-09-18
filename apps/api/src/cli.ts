@@ -1,12 +1,11 @@
 import { realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { Command } from 'commander';
-import { isAbsolute, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import {
-  Run,
   RunId,
   RunStatus,
   createRun,
@@ -419,16 +418,13 @@ export { findRepoRoot };
 
 export interface RunCliOptions {
   issue: number;
-  script: string;
   baseBranch?: string;
-  model?: string;
-  agentCli?: string;
   runtime?: string;
-  executor?: string;
   targetRepoRoot?: string;
   repositoryId?: string;
   executionPolicy?: string;
   strict?: boolean;
+  verbose?: boolean;
   allowProtectedPath?: string[];
 }
 
@@ -719,22 +715,6 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       '--base-branch <branch>',
       'Base branch (default: target repository default branch). Used for worktree creation, PR target, and PR-review polling.',
     )
-    .option(
-      '--model <model>',
-      'AI_AGENT_MODEL env var (Bash executor only). Rejected for --executor ts.',
-    )
-    .option(
-      '--agent-cli <cli>',
-      'AI_RUNTIME env var (Bash executor only). Rejected for --executor ts.',
-    )
-    .option('--script <path>', 'Path to Bash script to wrap')
-    .option('--verbose', 'Stream script stdout/stderr to terminal (default: auto when TTY)')
-    .option('--no-verbose', 'Suppress streaming script output to terminal')
-    .option(
-      '--executor <executor>',
-      'Execution engine: ts (default, TypeScript RunExecutor) or bash (legacy, emergency use only)',
-      'ts',
-    )
     .option('--execution-policy <policy>', 'Execution policy: standard | strict | legacy')
     .option('--strict', 'Convenience shortcut for --execution-policy strict')
     .option(
@@ -745,12 +725,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       '--runtime <runtime>',
       'Pinned agent runtime: claude-code | antigravity | codex | opencode',
     )
+    .option('--verbose', 'Stream runner output to terminal (default: auto when TTY)')
+    .option('--no-verbose', 'Suppress streaming runner output to terminal')
     .option(
       '--allow-protected-path <path>',
       'Allow modifying protected path in create-pr guard (repeatable)',
       (val: string, prev: string[] = []) => [...prev, val],
     )
-    .action(async (opts: RunCliOptions & { verbose?: boolean }) => {
+    .action(async (opts: RunCliOptions) => {
       let containerRef: Container | undefined;
       try {
         const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
@@ -760,30 +742,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         const tee = opts.verbose ?? Boolean(process.stdout.isTTY);
         const { c, repoRoot } = composeWithTarget(targetRepoRoot, {
           ...(buildOpts !== undefined ? { buildOpts } : {}),
-          ...(opts.script !== undefined ? { scriptPath: opts.script } : {}),
           runStartupSweeps: true,
           composeOverrides: {
             tee,
             ...(opts.baseBranch !== undefined ? { baseBranch: opts.baseBranch } : {}),
-            ...(opts.model !== undefined ? { model: opts.model } : {}),
-            ...(opts.agentCli !== undefined ? { agentCli: opts.agentCli } : {}),
             ...(opts.allowProtectedPath !== undefined
               ? { allowProtectedPaths: opts.allowProtectedPath }
               : {}),
           },
         });
         containerRef = c;
-        if (tee) c.runRepository; // tee consumed below by run command's existing logic
-        if (opts.baseBranch !== undefined && c.runRepository) {
-          // baseBranch is propagated via the helper, no extra wiring needed
-        }
-
-        // --- executor validation ---
-        if (opts.executor && !['bash', 'ts'].includes(opts.executor)) {
-          console.error(`Error: --executor must be "bash" or "ts", got "${opts.executor}"`);
-          await drainAndExit(c, EXIT_USER_ERROR);
-          return;
-        }
 
         // --- runtime pin validation ---
         if (opts.runtime !== undefined && !isPinnedRuntime(opts.runtime)) {
@@ -821,443 +789,353 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
         const effectiveExecutionPolicy = resolvedExecutionPolicy ?? c.executionPolicy ?? 'standard';
 
-        // --- flag-combination validation ---
-        if (opts.executor === 'ts' && (opts.model !== undefined || opts.agentCli !== undefined)) {
-          const conflicting = [
-            ...(opts.model !== undefined ? ['--model'] : []),
-            ...(opts.agentCli !== undefined ? ['--agent-cli'] : []),
-          ];
+        if (!c.runExecutor) {
           console.error(
-            `Error: ${conflicting.join(' and ')} only apply to --executor bash. ` +
-              `The TypeScript executor selects model and runtime from configured phase profiles. ` +
-              `Re-run without ${conflicting.join(' and ')}, or pass --executor bash to use the legacy path.`,
+            'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
           );
           await drainAndExit(c, EXIT_USER_ERROR);
           return;
         }
 
-        const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
+        const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
+        const repoId = callerRepoId
+          ? (callerRepoId as RepositoryId)
+          : c.repoFullName
+            ? RepositoryId(c.repoFullName)
+            : undefined;
+        if (!repoId) {
+          console.error(
+            'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
+          );
+          await drainAndExit(c, EXIT_USER_ERROR);
+          return;
+        }
 
-        // --- TS executor path ---
-        if (opts.executor === 'ts') {
-          if (!c.runExecutor) {
+        if (!c.workerRegistry || !c.workerLoopDeps) {
+          console.error(
+            'Error: worker registry not available. Ensure agent config is present in .ai-orchestrator.json.',
+          );
+          await drainAndExit(c, EXIT_USER_ERROR);
+          return;
+        }
+
+        const startedAt = new Date();
+        const ids = newRunId({ issueNumber: opts.issue, now: startedAt });
+
+        // Resolve the effective base branch and validate it exists on the
+        // target repo's remote before creating any worktree/job/run state.
+        // resolvedDefaultBranch comes from composeWithTarget's gh-based
+        // resolution; opts.baseBranch, when provided, wins.
+        const effectiveBaseBranch = opts.baseBranch ?? c.repoDefaultBranch ?? '';
+        if (effectiveBaseBranch) {
+          const exists = await c.git.remoteRef({
+            cwd: repoRoot,
+            remote: 'origin',
+            ref: effectiveBaseBranch,
+          });
+          if (exists === undefined) {
             console.error(
-              'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
+              `Error: --base-branch "${effectiveBaseBranch}" was not found on origin of ${repoRoot}. ` +
+                `Check the branch name, fetch from origin, or omit --base-branch to use the repository's default branch.`,
             );
             await drainAndExit(c, EXIT_USER_ERROR);
             return;
           }
+        }
 
-          const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
-          const repoId = callerRepoId
-            ? (callerRepoId as RepositoryId)
-            : c.repoFullName
-              ? RepositoryId(c.repoFullName)
-              : undefined;
-          if (!repoId) {
-            console.error(
-              'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
-            );
-            await drainAndExit(c, EXIT_USER_ERROR);
-            return;
-          }
+        const run = createRun({
+          uuid: ids.uuid,
+          displayId: ids.displayId,
+          repoId,
+          issueNumber: opts.issue,
+          startedAt,
+          executionPolicy: effectiveExecutionPolicy,
+          ...(effectiveBaseBranch ? { baseBranch: effectiveBaseBranch } : {}),
+          ...(opts.runtime ? { pinnedRuntime: opts.runtime as PinnedRuntime } : {}),
+        });
 
-          if (!c.workerRegistry || !c.workerLoopDeps) {
-            console.error(
-              'Error: worker registry not available. Ensure agent config is present in .ai-orchestrator.json.',
-            );
-            await drainAndExit(c, EXIT_USER_ERROR);
-            return;
-          }
+        if (callerRepoId) {
+          c.loadRepositoryForRun.execute({
+            run,
+            callerRepoId: callerRepoId as RepositoryId,
+            strictMatch: false,
+          });
+        }
 
-          const startedAt = new Date();
-          const ids = newRunId({ issueNumber: opts.issue, now: startedAt });
+        const effectivePhases = resolvePhaseOrder(effectiveExecutionPolicy);
+        console.error(`Execution policy: ${effectiveExecutionPolicy.toUpperCase()}`);
+        console.error(`Runtime pin: ${run.pinnedRuntime ?? 'unpinned'}`);
+        console.error('Phase graph:');
+        for (const p of effectivePhases) {
+          console.error(`  ${p}`);
+        }
 
-          // Resolve the effective base branch and validate it exists on the
-          // target repo's remote before creating any worktree/job/run state.
-          // resolvedDefaultBranch comes from composeWithTarget's gh-based
-          // resolution; opts.baseBranch, when provided, wins.
-          const effectiveBaseBranch = opts.baseBranch ?? c.repoDefaultBranch ?? '';
-          if (effectiveBaseBranch) {
-            const exists = await c.git.remoteRef({
-              cwd: repoRoot,
-              remote: 'origin',
-              ref: effectiveBaseBranch,
-            });
-            if (exists === undefined) {
-              console.error(
-                `Error: --base-branch "${effectiveBaseBranch}" was not found on origin of ${repoRoot}. ` +
-                  `Check the branch name, fetch from origin, or omit --base-branch to use the repository's default branch.`,
-              );
-              await drainAndExit(c, EXIT_USER_ERROR);
-              return;
-            }
-          }
+        const jobId = JobId(randomUUID());
+        const workerId = WorkerId(`cli-${process.pid}`);
+        const abortController = new AbortController();
 
-          const run = createRun({
-            uuid: ids.uuid,
-            displayId: ids.displayId,
-            repoId,
-            issueNumber: opts.issue,
-            startedAt,
-            executionPolicy: effectiveExecutionPolicy,
-            ...(effectiveBaseBranch ? { baseBranch: effectiveBaseBranch } : {}),
-            ...(opts.runtime ? { pinnedRuntime: opts.runtime as PinnedRuntime } : {}),
+        let unsubscribe: (() => void) | undefined;
+        let sigintHandler: (() => void) | undefined;
+        let sigtermHandler: (() => void) | undefined;
+        let workerHeartbeat: { stop: () => void } | undefined;
+        let testWorkerReaper: { stop: () => void } | undefined;
+
+        try {
+          c.runRepository.insertIfNoActive(run);
+
+          c.eventBus.publish(run.uuid, {
+            runId: run.displayId,
+            level: 'info',
+            type: 'run.config',
+            message: `run.config: executor=ts executionPolicy=${run.executionPolicy ?? 'standard'} baseBranch=${effectiveBaseBranch || '(default)'}`,
+            timestamp: startedAt.toISOString(),
+            metadata: {
+              executor: 'ts',
+              executionPolicy: run.executionPolicy ?? 'standard',
+              baseBranch: effectiveBaseBranch || null,
+            },
           });
 
-          if (callerRepoId) {
-            c.loadRepositoryForRun.execute({
-              run,
-              callerRepoId: callerRepoId as RepositoryId,
-              strictMatch: false,
-            });
-          }
-
-          const effectivePhases = resolvePhaseOrder(effectiveExecutionPolicy);
-          console.error(`Execution policy: ${effectiveExecutionPolicy.toUpperCase()}`);
-          console.error(`Runtime pin: ${run.pinnedRuntime ?? 'unpinned'}`);
-          console.error('Phase graph:');
-          for (const p of effectivePhases) {
-            console.error(`  ${p}`);
-          }
-
-          const jobId = JobId(randomUUID());
-          const workerId = WorkerId(`cli-${process.pid}`);
-          const abortController = new AbortController();
-
-          let unsubscribe: (() => void) | undefined;
-          let sigintHandler: (() => void) | undefined;
-          let sigtermHandler: (() => void) | undefined;
-          let workerHeartbeat: { stop: () => void } | undefined;
-          let testWorkerReaper: { stop: () => void } | undefined;
-
-          try {
-            c.runRepository.insertIfNoActive(run);
-
-            c.eventBus.publish(run.uuid, {
-              runId: run.displayId,
-              level: 'info',
-              type: 'run.config',
-              message: `run.config: executor=ts executionPolicy=${run.executionPolicy ?? 'standard'} baseBranch=${effectiveBaseBranch || '(default)'}`,
-              timestamp: startedAt.toISOString(),
-              metadata: {
-                executor: 'ts',
-                executionPolicy: run.executionPolicy ?? 'standard',
-                baseBranch: effectiveBaseBranch || null,
-              },
-            });
-
-            const job = createJob({
-              id: jobId,
-              runId: RunId(run.uuid),
-              repoId,
-              issueNumber: IssueNumber(opts.issue),
-              priority: 0,
-              createdAt: startedAt,
-            });
-            c.jobQueue.enqueue({ job });
-
-            c.workerRegistry.register(
-              createWorker({
-                id: workerId,
-                repoId,
-                hostname: os.hostname(),
-                processId: process.pid,
-                now: startedAt,
-              }),
-            );
-
-            workerHeartbeat = startWorkerRegistryHeartbeat(
-              c.workerRegistry,
-              workerId,
-              repoId,
-              buildOpts?.lease?.heartbeatIntervalMs ??
-                DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS,
-            );
-            testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
-
-            if (tee) {
-              unsubscribe = c.eventBus.subscribe(ids.uuid, (event) => {
-                if (shouldStreamEventToCli(event)) {
-                  console.error(`[ts] ${event.message}`);
-                }
-              });
-            }
-
-            const handleSignal = async (signal: string, exitCode: number) => {
-              try {
-                abortController.abort();
-                testWorkerReaper?.stop();
-                const currentJob = c.jobQueue.findById(jobId);
-                if (currentJob) {
-                  if (
-                    currentJob.status === 'claimed' &&
-                    currentJob.claimedBy &&
-                    currentJob.claimToken
-                  ) {
-                    try {
-                      const ownership = generateJobOwnership(currentJob, currentJob.claimedBy);
-                      c.jobQueue.releaseClaim(ownership);
-                    } catch (err) {
-                      console.error(
-                        `releaseClaim on signal failed: ${err instanceof Error ? err.message : String(err)}`,
-                      );
-                    }
-                  } else if (
-                    currentJob.status === 'running' &&
-                    currentJob.claimedBy &&
-                    currentJob.claimToken
-                  ) {
-                    try {
-                      const ownership = generateJobOwnership(currentJob, currentJob.claimedBy);
-                      c.jobQueue.markCancelled(ownership, new Date());
-                    } catch (err) {
-                      console.error(
-                        `markCancelled on signal failed: ${err instanceof Error ? err.message : String(err)}`,
-                      );
-                    }
-                  }
-                  // 'queued' is a no-op: the workerLoop's first tick will reclaim naturally.
-                }
-                workerHeartbeat?.stop();
-                // eslint-disable-next-line no-console
-                console.debug(
-                  'terminal status write starting',
-                  `runUuid=${run.uuid}`,
-                  'status=cancelled',
-                );
-                let applied = true;
-                try {
-                  applied = c.runRepository.atomicUpdateByUuid(
-                    run.uuid,
-                    {
-                      status: 'cancelled',
-                      completedAt: new Date(),
-                      failureReason: `interrupted by ${signal}`,
-                    },
-                    'running',
-                  );
-                  // eslint-disable-next-line no-console
-                  console.debug(
-                    'terminal status write completed',
-                    `runUuid=${run.uuid}`,
-                    'status=cancelled',
-                    `applied=${applied}`,
-                  );
-                } catch (err) {
-                  console.error('Terminal status write failed', err);
-                  applied = false;
-                }
-                unsubscribe?.();
-              } finally {
-                await drainAndExit(c, exitCode);
-              }
-            };
-
-            sigintHandler = () => {
-              void handleSignal('SIGINT', EXIT_SIGINT);
-            };
-            sigtermHandler = () => {
-              void handleSignal('SIGTERM', EXIT_SIGTERM);
-            };
-            process.once('SIGINT', sigintHandler);
-            process.once('SIGTERM', sigtermHandler);
-
-            const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps(repoId));
-
-            await scheduler.runUntilComplete(jobId, abortController.signal);
-
-            if (abortController.signal.aborted) {
-              const finalJobAfterAbort = c.jobQueue.findById(jobId);
-              const finalRunAfterAbort = c.runRepository.findByUuid(run.uuid);
-              if (
-                finalRunAfterAbort &&
-                finalRunAfterAbort.status === 'running' &&
-                finalJobAfterAbort &&
-                !['succeeded', 'failed', 'cancelled'].includes(finalJobAfterAbort.status)
-              ) {
-                // eslint-disable-next-line no-console
-                console.debug(
-                  'terminal status write starting',
-                  `runUuid=${run.uuid}`,
-                  'status=cancelled',
-                );
-                let applied = true;
-                try {
-                  applied = c.runRepository.atomicUpdateByUuid(
-                    run.uuid,
-                    {
-                      status: 'cancelled',
-                      completedAt: new Date(),
-                      failureReason: 'aborted during scheduler run',
-                    },
-                    'running',
-                  );
-                  // eslint-disable-next-line no-console
-                  console.debug(
-                    'terminal status write completed',
-                    `runUuid=${run.uuid}`,
-                    'status=cancelled',
-                    `applied=${applied}`,
-                  );
-                } catch (err) {
-                  console.error('Terminal status write failed', err);
-                  applied = false;
-                }
-              }
-            }
-
-            if (sigintHandler) process.off('SIGINT', sigintHandler);
-            if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
-            workerHeartbeat?.stop();
-
-            const finalJob = c.jobQueue.findById(jobId);
-            let finalRun = c.runRepository.findByUuid(run.uuid) ?? run;
-
-            // If the job reached a terminal failed/cancelled state but the run
-            // record is still 'running' (e.g. workerLoop failed before
-            // RunExecutor could persist a terminal status), finalize it now so
-            // insertIfNoActive doesn't reject the next attempt for this repo/issue.
-            // atomicUpdateByUuid guards against a concurrent cancel webhook
-            // overwriting a just-set 'cancelled' status.
-            if (
-              finalRun.status === 'running' &&
-              (finalJob?.status === 'failed' || finalJob?.status === 'cancelled')
-            ) {
-              reconcileStrandedRun(
-                run,
-                c.runRepository,
-                'worker loop terminated without finalizing run',
-                c.runNotification,
-              );
-              finalRun = c.runRepository.findByUuid(run.uuid) ?? finalRun;
-            }
-
-            if (finalRun.status === 'passed') {
-              const worktreePath = join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`);
-              try {
-                await c.git.removeWorktree(worktreePath);
-              } catch {
-                // best-effort
-              }
-            }
-
-            const phases = c.phaseRepository.listByRun(run.uuid);
-            await new Promise<void>((resolve, reject) =>
-              process.stdout.write(
-                JSON.stringify({ jobId, workerId, run: finalRun, phases }) + '\n',
-                (err) => (err ? reject(err) : resolve()),
-              ),
-            );
-
-            testWorkerReaper?.stop();
-            unsubscribe?.();
-            const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
-            const nonSuccessStatuses: RunStatus[] = [
-              'blocked',
-              'needs_human_review',
-              'failed',
-              'cancelled',
-            ];
-            const isSuccess =
-              finalRun.status === 'passed' ||
-              pausedStatuses.includes(finalRun.status) ||
-              (finalJob?.status === 'succeeded' && !nonSuccessStatuses.includes(finalRun.status));
-            if (!isSuccess) {
-              printRunFailureSummary(finalRun.uuid, finalRun.failureReason, finalRun.status);
-            }
-            await drainAndExit(c, isSuccess ? 0 : EXIT_USER_ERROR);
-            return;
-          } catch (err) {
-            if (sigintHandler) process.off('SIGINT', sigintHandler);
-            if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
-            workerHeartbeat?.stop();
-            testWorkerReaper?.stop();
-            unsubscribe?.();
-            // Finalize a stale 'running' run so insertIfNoActive doesn't block
-            // the next attempt. atomicUpdateByUuid is a no-op if the run was
-            // never inserted or was already finalized by workerLoop.
-            const failureReason = err instanceof Error ? err.message : String(err);
-            reconcileStrandedRun(run, c.runRepository, failureReason, c.runNotification);
-            // Only suggest resuming if the run row actually exists —
-            // insertIfNoActive may have thrown before inserting it.
-            if (c.runRepository.findByUuid(run.uuid)) {
-              printRunFailureSummary(run.uuid, failureReason, run.status);
-            } else {
-              console.error(`Run failed: ${failureReason}`);
-            }
-            await drainAndExit(c, EXIT_USER_ERROR);
-            return;
-          }
-        } else {
-          // --- Bash executor path ---
-          const callerRepoId = resolveRepoIdForCli({ repositoryId: opts.repositoryId }, c);
-          const repoId = callerRepoId
-            ? (callerRepoId as RepositoryId)
-            : c.repoFullName
-              ? RepositoryId(c.repoFullName)
-              : undefined;
-          if (!repoId) {
-            console.error(
-              'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
-            );
-            await drainAndExit(c, EXIT_USER_ERROR);
-            return;
-          }
-
-          if (callerRepoId) {
-            const dummyRun = { repoId, uuid: '' } as Run;
-            c.loadRepositoryForRun.execute({
-              run: dummyRun,
-              callerRepoId: callerRepoId as RepositoryId,
-              strictMatch: false,
-            });
-          }
-
-          const signalHandlers = installSignalHandlers(
-            c.runRepository,
+          const job = createJob({
+            id: jobId,
+            runId: RunId(run.uuid),
             repoId,
-            opts.issue,
-            undefined,
-            (exitCode) => drainAndExit(c, exitCode),
+            issueNumber: IssueNumber(opts.issue),
+            priority: 0,
+            createdAt: startedAt,
+          });
+          c.jobQueue.enqueue({ job });
+
+          c.workerRegistry.register(
+            createWorker({
+              id: workerId,
+              repoId,
+              hostname: os.hostname(),
+              processId: process.pid,
+              now: startedAt,
+            }),
           );
 
-          try {
-            console.error(`Runtime pin: ${opts.runtime ?? 'unpinned'}`);
-            const out = await c.startIssueRun.execute({
-              issueNumber: opts.issue,
-              repoId,
-              executionPolicy: effectiveExecutionPolicy,
-              pinnedRuntime: opts.runtime as PinnedRuntime | undefined,
+          workerHeartbeat = startWorkerRegistryHeartbeat(
+            c.workerRegistry,
+            workerId,
+            repoId,
+            buildOpts?.lease?.heartbeatIntervalMs ?? DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS,
+          );
+          testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
+
+          if (tee) {
+            unsubscribe = c.eventBus.subscribe(ids.uuid, (event) => {
+              if (shouldStreamEventToCli(event)) {
+                console.error(`[ts] ${event.message}`);
+              }
             });
-            // Use process.stdout.write with a callback (not console.log) because
-            // process.exit() does not wait for stdout to flush.
-            await new Promise<void>((resolve, reject) =>
-              process.stdout.write(JSON.stringify(out) + '\n', (err) =>
-                err ? reject(err) : resolve(),
-              ),
-            );
-            // Remove handlers before process.exit (which bypasses finally). No
-            // persistent state leaks on this path (the bash run holds no
-            // WorkerLease), so this is consistency/defensive only — but it keeps
-            // the same discipline as the TS path. The finally still covers the
-            // throw case, where it does run before the error propagates.
-            signalHandlers.remove();
-            const isSuccess =
-              out.status === 'passed' || pausedStatuses.includes(out.status as RunStatus);
-            if (!isSuccess) {
-              const finalRun = c.runRepository.findByUuid(out.uuid);
-              printRunFailureSummary(
-                out.uuid,
-                finalRun?.failureReason,
-                finalRun?.status ?? (out.status as RunStatus),
-              );
-            }
-            await drainAndExit(c, isSuccess ? 0 : EXIT_USER_ERROR);
-            return;
-          } finally {
-            signalHandlers.remove();
           }
+
+          const handleSignal = async (signal: string, exitCode: number) => {
+            try {
+              abortController.abort();
+              testWorkerReaper?.stop();
+              const currentJob = c.jobQueue.findById(jobId);
+              if (currentJob) {
+                if (
+                  currentJob.status === 'claimed' &&
+                  currentJob.claimedBy &&
+                  currentJob.claimToken
+                ) {
+                  try {
+                    const ownership = generateJobOwnership(currentJob, currentJob.claimedBy);
+                    c.jobQueue.releaseClaim(ownership);
+                  } catch (err) {
+                    console.error(
+                      `releaseClaim on signal failed: ${err instanceof Error ? err.message : String(err)}`,
+                    );
+                  }
+                } else if (
+                  currentJob.status === 'running' &&
+                  currentJob.claimedBy &&
+                  currentJob.claimToken
+                ) {
+                  try {
+                    const ownership = generateJobOwnership(currentJob, currentJob.claimedBy);
+                    c.jobQueue.markCancelled(ownership, new Date());
+                  } catch (err) {
+                    console.error(
+                      `markCancelled on signal failed: ${err instanceof Error ? err.message : String(err)}`,
+                    );
+                  }
+                }
+                // 'queued' is a no-op: the workerLoop's first tick will reclaim naturally.
+              }
+              workerHeartbeat?.stop();
+              // eslint-disable-next-line no-console
+              console.debug(
+                'terminal status write starting',
+                `runUuid=${run.uuid}`,
+                'status=cancelled',
+              );
+              let applied = true;
+              try {
+                applied = c.runRepository.atomicUpdateByUuid(
+                  run.uuid,
+                  {
+                    status: 'cancelled',
+                    completedAt: new Date(),
+                    failureReason: `interrupted by ${signal}`,
+                  },
+                  'running',
+                );
+                // eslint-disable-next-line no-console
+                console.debug(
+                  'terminal status write completed',
+                  `runUuid=${run.uuid}`,
+                  'status=cancelled',
+                  `applied=${applied}`,
+                );
+              } catch (err) {
+                console.error('Terminal status write failed', err);
+                applied = false;
+              }
+              unsubscribe?.();
+            } finally {
+              await drainAndExit(c, exitCode);
+            }
+          };
+
+          sigintHandler = () => {
+            void handleSignal('SIGINT', EXIT_SIGINT);
+          };
+          sigtermHandler = () => {
+            void handleSignal('SIGTERM', EXIT_SIGTERM);
+          };
+          process.once('SIGINT', sigintHandler);
+          process.once('SIGTERM', sigtermHandler);
+
+          const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps(repoId));
+
+          await scheduler.runUntilComplete(jobId, abortController.signal);
+
+          if (abortController.signal.aborted) {
+            const finalJobAfterAbort = c.jobQueue.findById(jobId);
+            const finalRunAfterAbort = c.runRepository.findByUuid(run.uuid);
+            if (
+              finalRunAfterAbort &&
+              finalRunAfterAbort.status === 'running' &&
+              finalJobAfterAbort &&
+              !['succeeded', 'failed', 'cancelled'].includes(finalJobAfterAbort.status)
+            ) {
+              // eslint-disable-next-line no-console
+              console.debug(
+                'terminal status write starting',
+                `runUuid=${run.uuid}`,
+                'status=cancelled',
+              );
+              let applied = true;
+              try {
+                applied = c.runRepository.atomicUpdateByUuid(
+                  run.uuid,
+                  {
+                    status: 'cancelled',
+                    completedAt: new Date(),
+                    failureReason: 'aborted during scheduler run',
+                  },
+                  'running',
+                );
+                // eslint-disable-next-line no-console
+                console.debug(
+                  'terminal status write completed',
+                  `runUuid=${run.uuid}`,
+                  'status=cancelled',
+                  `applied=${applied}`,
+                );
+              } catch (err) {
+                console.error('Terminal status write failed', err);
+                applied = false;
+              }
+            }
+          }
+
+          if (sigintHandler) process.off('SIGINT', sigintHandler);
+          if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
+          workerHeartbeat?.stop();
+
+          const finalJob = c.jobQueue.findById(jobId);
+          let finalRun = c.runRepository.findByUuid(run.uuid) ?? run;
+
+          // If the job reached a terminal failed/cancelled state but the run
+          // record is still 'running' (e.g. workerLoop failed before
+          // RunExecutor could persist a terminal status), finalize it now so
+          // insertIfNoActive doesn't reject the next attempt for this repo/issue.
+          // atomicUpdateByUuid guards against a concurrent cancel webhook
+          // overwriting a just-set 'cancelled' status.
+          if (
+            finalRun.status === 'running' &&
+            (finalJob?.status === 'failed' || finalJob?.status === 'cancelled')
+          ) {
+            reconcileStrandedRun(
+              run,
+              c.runRepository,
+              'worker loop terminated without finalizing run',
+              c.runNotification,
+            );
+            finalRun = c.runRepository.findByUuid(run.uuid) ?? finalRun;
+          }
+
+          if (finalRun.status === 'passed') {
+            const worktreePath = join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`);
+            try {
+              await c.git.removeWorktree(worktreePath);
+            } catch {
+              // best-effort
+            }
+          }
+
+          const phases = c.phaseRepository.listByRun(run.uuid);
+          await new Promise<void>((resolve, reject) =>
+            process.stdout.write(
+              JSON.stringify({ jobId, workerId, run: finalRun, phases }) + '\n',
+              (err) => (err ? reject(err) : resolve()),
+            ),
+          );
+
+          testWorkerReaper?.stop();
+          unsubscribe?.();
+          const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
+          const nonSuccessStatuses: RunStatus[] = [
+            'blocked',
+            'needs_human_review',
+            'failed',
+            'cancelled',
+          ];
+          const isSuccess =
+            finalRun.status === 'passed' ||
+            pausedStatuses.includes(finalRun.status) ||
+            (finalJob?.status === 'succeeded' && !nonSuccessStatuses.includes(finalRun.status));
+          if (!isSuccess) {
+            printRunFailureSummary(finalRun.uuid, finalRun.failureReason, finalRun.status);
+          }
+          await drainAndExit(c, isSuccess ? 0 : EXIT_USER_ERROR);
+          return;
+        } catch (err) {
+          if (sigintHandler) process.off('SIGINT', sigintHandler);
+          if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
+          workerHeartbeat?.stop();
+          testWorkerReaper?.stop();
+          unsubscribe?.();
+          // Finalize a stale 'running' run so insertIfNoActive doesn't block
+          // the next attempt. atomicUpdateByUuid is a no-op if the run was
+          // never inserted or was already finalized by workerLoop.
+          const failureReason = err instanceof Error ? err.message : String(err);
+          reconcileStrandedRun(run, c.runRepository, failureReason, c.runNotification);
+          // Only suggest resuming if the run row actually exists —
+          // insertIfNoActive may have thrown before inserting it.
+          if (c.runRepository.findByUuid(run.uuid)) {
+            printRunFailureSummary(run.uuid, failureReason, run.status);
+          } else {
+            console.error(`Run failed: ${failureReason}`);
+          }
+          await drainAndExit(c, EXIT_USER_ERROR);
+          return;
         }
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
@@ -1292,10 +1170,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     )
     .action(async (opts: { globalConcurrency?: number; pollIntervalMs?: number }) => {
       const targetRepoRoot = findRepoRoot(process.cwd());
-      const scriptPath = join(targetRepoRoot, 'scripts', 'legacy', 'ai-run-issue-v2');
       const composeOpts: ComposeOptions = {
         repoRoot: targetRepoRoot,
-        scriptPath,
         runStartupSweeps: false,
         ...buildOpts?.composeOverrides,
       };
@@ -1441,14 +1317,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         });
 
         const repoRoot = opts.repoRoot ?? findRepoRoot(process.cwd());
-        const scriptPath = opts.script
-          ? isAbsolute(opts.script)
-            ? opts.script
-            : resolve(repoRoot, opts.script)
-          : join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2');
         const composeOpts: ComposeOptions = {
           repoRoot,
-          scriptPath,
           runStartupSweeps: false, // NEW: disable legacy un-leased startup sweeps
           ...buildOpts?.composeOverrides,
         };

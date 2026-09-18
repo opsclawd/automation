@@ -1,10 +1,11 @@
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot, type Container } from '../compose.js';
 import { startServer } from '../server.js';
-import { RepositoryId } from '@ai-sdlc/domain';
+import { RepositoryId, RunId, createRun } from '@ai-sdlc/domain';
+import { newRunId } from '@ai-sdlc/shared';
 
 async function bootServer(opts: { withRun?: boolean } = {}): Promise<{
   baseUrl: string;
@@ -13,12 +14,27 @@ async function bootServer(opts: { withRun?: boolean } = {}): Promise<{
 }> {
   const repoRoot = mkdtempSync(join(tmpdir(), 'ai-orch-api-'));
   tempDirs.push(repoRoot);
-  const scriptPath = join(repoRoot, 'fake.sh');
-  writeFileSync(scriptPath, '#!/usr/bin/env bash\necho ok\nexit 0\n');
-  chmodSync(scriptPath, 0o755);
-  const container = composeRoot({ repoRoot, scriptPath, repoFullName: 'owner/repo' });
-  if (opts.withRun)
-    await container.startIssueRun.execute({ issueNumber: 1, repoId: RepositoryId('owner/repo') });
+  const container = composeRoot({ repoRoot, repoFullName: 'owner/repo' });
+  if (opts.withRun) {
+    const startedAt = new Date();
+    const ids = newRunId({ issueNumber: 1, now: startedAt });
+    const runDir = join(container.runsDir, ids.displayId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, 'combined.log'), 'ok\n');
+    const run = {
+      ...createRun({
+        uuid: ids.uuid,
+        displayId: ids.displayId,
+        issueNumber: 1,
+        startedAt,
+        repoId: RepositoryId('owner/repo'),
+      }),
+      status: 'passed' as const,
+      completedAt: startedAt,
+      exitCode: 0,
+    };
+    container.runRepository.insertIfNoActive(run);
+  }
   const server = await startServer({ container, port: 0, forceCloseAllOnStop: true });
   stoppers.push(server.stop);
   const address = server.address as { port: number };
@@ -49,7 +65,21 @@ describe('routes', () => {
   it('GET /api/runs accepts limit/offset and returns total', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
     for (let i = 2; i <= 4; i++) {
-      await container.startIssueRun.execute({ issueNumber: i, repoId: RepositoryId('owner/repo') });
+      const startedAt = new Date();
+      const ids = newRunId({ issueNumber: i, now: startedAt });
+      const run = {
+        ...createRun({
+          uuid: ids.uuid,
+          displayId: ids.displayId,
+          issueNumber: i,
+          startedAt,
+          repoId: RepositoryId('owner/repo'),
+        }),
+        status: 'passed' as const,
+        completedAt: startedAt,
+        exitCode: 0,
+      };
+      container.runRepository.insertIfNoActive(run);
     }
     const r = await fetch(`${baseUrl}/api/runs?limit=2&offset=1`);
     expect(r.status).toBe(200);
@@ -199,10 +229,21 @@ describe('routes', () => {
     });
 
     // Add a run for this repository
-    await container.startIssueRun.execute({
-      issueNumber: 42,
-      repoId: RepositoryId('1234567890123456789012345678901234567890123456789012345678901234'),
-    });
+    const startedAt = new Date();
+    const ids = newRunId({ issueNumber: 42, now: startedAt });
+    const run = {
+      ...createRun({
+        uuid: ids.uuid,
+        displayId: ids.displayId,
+        issueNumber: 42,
+        startedAt,
+        repoId: RepositoryId('1234567890123456789012345678901234567890123456789012345678901234'),
+      }),
+      status: 'passed' as const,
+      completedAt: startedAt,
+      exitCode: 0,
+    };
+    container.runRepository.insertIfNoActive(run);
 
     // 1. Filter by status 'running'
     const res1 = await fetch(`${baseUrl}/api/runs?status=running`);
@@ -296,5 +337,143 @@ describe('routes', () => {
     expect(res.status).toBe(400);
     const data = (await res.json()) as { error: string };
     expect(data.error).toBe('invalid_runtime');
+  });
+
+  it('POST /api/runs enqueues a job into jobQueue and returns 201 with serialized run', async () => {
+    const { baseUrl, container } = await bootServer();
+    const res = await fetch(`${baseUrl}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ issueNumber: 15 }),
+    });
+    expect(res.status).toBe(201);
+    const data = (await res.json()) as {
+      run: { uuid: string; issueNumber: number; status: string };
+    };
+    expect(data.run.issueNumber).toBe(15);
+    expect(data.run.status).toBe('running');
+
+    const jobs = container.jobQueue.listForRun(RunId(data.run.uuid));
+    expect(jobs.length).toBe(1);
+    expect(jobs[0]?.issueNumber).toBe(15);
+  });
+
+  it('POST /api/runs returns 400 for invalid issue number', async () => {
+    const { baseUrl } = await bootServer();
+    const res = await fetch(`${baseUrl}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ issueNumber: -5 }),
+    });
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe('invalid_issue_number');
+  });
+
+  it('POST /api/runs returns 404 when repository is not found', async () => {
+    const { baseUrl } = await bootServer();
+    const res = await fetch(
+      `${baseUrl}/api/runs?repositoryId=0000000000000000000000000000000000000000000000000000000000000000`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ issueNumber: 1 }),
+      },
+    );
+    expect(res.status).toBe(404);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe('repository_not_found');
+  });
+
+  it('POST /api/runs returns 409 when repository is disabled', async () => {
+    const { baseUrl, container } = await bootServer();
+    const disabledRepoId = RepositoryId(
+      '1111111111111111111111111111111111111111111111111111111111111111',
+    );
+    container.repositoryRegistry.insert({
+      id: disabledRepoId,
+      fullName: 'test/disabled-repo',
+      owner: 'test',
+      name: 'disabled-repo',
+      localBasePath: '/tmp/test-disabled',
+      defaultBranch: 'main',
+      remoteUrl: 'git@github.com:test/disabled-repo.git',
+      enabled: false,
+      maxConcurrentRuns: 1,
+      healthStatus: 'healthy',
+      healthError: null,
+      lastHealthCheckAt: new Date(),
+      configMetadata: '{}',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const res = await fetch(`${baseUrl}/api/runs?repositoryId=${disabledRepoId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ issueNumber: 1 }),
+    });
+    expect(res.status).toBe(409);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe('repository_not_approved');
+  });
+
+  it('POST /api/runs returns 409 when repository is degraded', async () => {
+    const { baseUrl, container } = await bootServer();
+    const degradedRepoId = RepositoryId(
+      '2222222222222222222222222222222222222222222222222222222222222222',
+    );
+    container.repositoryRegistry.insert({
+      id: degradedRepoId,
+      fullName: 'test/degraded-repo',
+      owner: 'test',
+      name: 'degraded-repo',
+      localBasePath: '/tmp/test-degraded',
+      defaultBranch: 'main',
+      remoteUrl: 'git@github.com:test/degraded-repo.git',
+      enabled: true,
+      maxConcurrentRuns: 1,
+      healthStatus: 'degraded',
+      healthError: 'disk full',
+      lastHealthCheckAt: new Date(),
+      configMetadata: '{}',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const res = await fetch(`${baseUrl}/api/runs?repositoryId=${degradedRepoId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ issueNumber: 1 }),
+    });
+    expect(res.status).toBe(409);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe('repository_not_approved');
+  });
+
+  it('POST /api/runs returns 409 when an active run already exists for the repository', async () => {
+    const { baseUrl, container } = await bootServer();
+    const startedAt = new Date();
+    const ids = newRunId({ issueNumber: 99, now: startedAt });
+    const activeRun = {
+      ...createRun({
+        uuid: ids.uuid,
+        displayId: ids.displayId,
+        issueNumber: 99,
+        startedAt,
+        repoId: RepositoryId('owner/repo'),
+      }),
+      status: 'running' as const,
+    };
+    container.runRepository.insertIfNoActive(activeRun);
+
+    const res = await fetch(`${baseUrl}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ issueNumber: 99 }),
+    });
+    expect(res.status).toBe(409);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe('active_run_conflict');
   });
 });

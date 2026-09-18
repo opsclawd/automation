@@ -1,6 +1,5 @@
 import type {
   RepositoryId,
-  IssueNumber,
   RunId,
   JobId,
   WorkerId,
@@ -9,14 +8,6 @@ import type {
   PinnedRuntime,
 } from '@ai-sdlc/domain';
 import type { AbortResult } from './ports/run-abort-port.js';
-
-export interface StartIssueRunUseCase {
-  /** Enqueues a Job; never executes the phase pipeline inline. */
-  execute(input: {
-    repoId: RepositoryId;
-    issueNumber: IssueNumber;
-  }): Promise<{ runId: RunId; jobId: JobId }>;
-}
 
 export interface ResumeRunUseCase {
   execute(input: {
