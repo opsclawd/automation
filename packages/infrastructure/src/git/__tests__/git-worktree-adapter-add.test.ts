@@ -52,4 +52,55 @@ describe('GitWorktreeAdapter.add', () => {
     const staged = await git(repo, ['diff', '--cached', '--name-only']);
     expect(staged.split('\n').filter(Boolean).sort()).toEqual([':memory:.ses', 'valid.ts']);
   });
+
+  it('does not throw when staging a file that is already staged as deleted', async () => {
+    const repo = await makeRepository();
+    await git(repo, ['rm', 'declared.ts']);
+    await expect(new GitWorktreeAdapter().add(repo, ['declared.ts'])).resolves.not.toThrow();
+
+    const staged = await git(repo, ['diff', '--cached', '--name-only']);
+    expect(staged.split('\n').filter(Boolean)).toEqual(['declared.ts']);
+  });
+
+  it('stages remaining dirty files when one file is an already-staged deletion', async () => {
+    const repo = await makeRepository();
+    await git(repo, ['rm', 'declared.ts']);
+    await writeFile(join(repo, 'unrelated.ts'), 'updated\n');
+
+    await new GitWorktreeAdapter().add(repo, ['declared.ts', 'unrelated.ts']);
+
+    const staged = await git(repo, ['diff', '--cached', '--name-only']);
+    expect(staged.split('\n').filter(Boolean).sort()).toEqual(['declared.ts', 'unrelated.ts']);
+
+    const sha = await new GitWorktreeAdapter().commit(repo, 'feat: commit all dirty', [
+      'declared.ts',
+      'unrelated.ts',
+    ]);
+    expect(sha).toBeDefined();
+    const status = await git(repo, ['status', '--porcelain']);
+    expect(status).toBe('');
+  });
+
+  it('stages unstaged deletions within the requested file list', async () => {
+    const repo = await makeRepository();
+    await rm(join(repo, 'declared.ts'));
+
+    const statusBefore = await git(repo, ['status', '--porcelain']);
+    expect(statusBefore).toContain(' D declared.ts');
+
+    await new GitWorktreeAdapter().add(repo, ['declared.ts']);
+
+    const statusAfter = await git(repo, ['status', '--porcelain']);
+    expect(statusAfter).toContain('D  declared.ts');
+  });
+
+  it('throws GitFailedError on non-existent files that are not staged deletions', async () => {
+    const repo = await makeRepository();
+    await expect(new GitWorktreeAdapter().add(repo, ['nonexistent.ts'])).rejects.toThrow();
+  });
+
+  it('is a no-op when files list is empty', async () => {
+    const repo = await makeRepository();
+    await expect(new GitWorktreeAdapter().add(repo, [])).resolves.not.toThrow();
+  });
 });

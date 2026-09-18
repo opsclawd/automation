@@ -565,6 +565,42 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(res.outcome).toBe('passed');
   });
 
+  it('succeeds and commits when dirtyPaths includes an already-staged deletion', async () => {
+    const { git, github, ctx, events } = await build({
+      executionPolicy: 'standard',
+    });
+    git.statusByCwd.set(ctx.cwd, 'D  apps/orchestrator/reports/evaluation-report-v1.0.json\n');
+    const handler = new CreatePrHandler({
+      headBranch: () => 'feat/issue-7',
+      revalidate: {
+        runValidation: {
+          execute: async () => ({
+            passed: true,
+            validationRun: { commands: [] },
+          }),
+        } as never,
+        commands: ['pnpm test'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/revalidate',
+      },
+    });
+
+    const res = await handler.run(ctx);
+
+    expect(res.outcome).toBe('passed');
+    expect(git.addCalls).toHaveLength(1);
+    expect(git.addCalls[0].files).toEqual([
+      'apps/orchestrator/reports/evaluation-report-v1.0.json',
+    ]);
+    expect(
+      git.commits.some((c) =>
+        c.files?.includes('apps/orchestrator/reports/evaluation-report-v1.0.json'),
+      ),
+    ).toBe(true);
+    expect(events.some((e) => e.type === 'create_pr.staging')).toBe(true);
+    expect(github.createdPrInputs).toHaveLength(1);
+  });
+
   it('fails with status missing/empty when validation.result is empty', async () => {
     const { artifacts, ctx, git, github } = await build();
     await artifacts.write({

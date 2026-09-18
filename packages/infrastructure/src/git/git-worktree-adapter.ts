@@ -1,5 +1,5 @@
 import { access, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
-import { dirname, resolve, join, isAbsolute } from 'node:path';
+import { dirname, resolve, join, isAbsolute, relative } from 'node:path';
 import type {
   CreateWorktreeInput,
   GitPort,
@@ -108,7 +108,42 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
   }
 
   async add(cwd: string, files: string[]): Promise<void> {
-    await git(cwd, ['add', '--', ...files.map(toLiteralGitPathspec)]);
+    if (files.length === 0) return;
+    try {
+      await git(cwd, ['add', '-A', '--', ...files.map(toLiteralGitPathspec)]);
+    } catch (err) {
+      if (err instanceof GitFailedError) {
+        const raw = await git(cwd, ['diff', '-z', '--name-only', '--cached', '--diff-filter=D']);
+        const stagedDeletions = new Set(raw.split('\0').filter(Boolean));
+        if (stagedDeletions.size > 0) {
+          const filesToStage: string[] = [];
+          for (const file of files) {
+            const normalized = isAbsolute(file) ? relative(cwd, file) : file.replace(/^\.\//, '');
+            if (stagedDeletions.has(normalized)) {
+              let exists = false;
+              try {
+                await access(resolve(cwd, file));
+                exists = true;
+              } catch {
+                exists = false;
+              }
+              if (!exists) {
+                continue;
+              }
+            }
+            filesToStage.push(file);
+          }
+          if (filesToStage.length === 0) {
+            return;
+          }
+          if (filesToStage.length < files.length) {
+            await git(cwd, ['add', '-A', '--', ...filesToStage.map(toLiteralGitPathspec)]);
+            return;
+          }
+        }
+      }
+      throw err;
+    }
   }
 
   async addAll(cwd: string): Promise<void> {
