@@ -23,6 +23,7 @@ import {
   markItemBlocked,
   markBatchBlocked,
   transitionToAwaitingManualTest,
+  recordPromotionPr,
   recordPromotionCommit,
   completeBatch,
   ReleaseBatchStateError,
@@ -43,6 +44,7 @@ import type {
 import { safeDispatchReleaseBatchNotification } from './ports.js';
 import type { EventRepositoryFactory } from './start-issue-run.js';
 import type { InterItemMaintenanceService } from './inter-item-maintenance.js';
+import { assemblePromotionPr } from './assemble-promotion-pr.js';
 
 export type ReconciliationAction =
   | 'idle'
@@ -57,6 +59,7 @@ export type ReconciliationAction =
   | 'item_merged'
   | 'maintenance_run'
   | 'candidate_captured'
+  | 'promotion_pr_created'
   | 'source_drift_detected'
   | 'source_drift_integrated'
   | 'promotion_completed';
@@ -158,6 +161,82 @@ export class ReleaseBatchCoordinator {
       this.dispatchNotification(updated, 'blocked', { reason });
     }
     return updated;
+  }
+
+  private async ensurePromotionPr(
+    batch: ReleaseBatch,
+    candidateSha: string,
+    now: Date,
+    actions: ReconciliationAction[],
+  ): Promise<ReleaseBatch> {
+    if (batch.promotionPrNumber) {
+      return batch;
+    }
+    if (!this.deps.github) {
+      return batch;
+    }
+
+    const repo = this.deps.repositoryPort.findById(batch.repoId);
+    if (!repo) {
+      return batch;
+    }
+
+    try {
+      const { title, body } = await assemblePromotionPr({
+        batch,
+        repoFullName: repo.fullName,
+        candidateSha,
+        localBasePath: repo.localBasePath,
+        github: this.deps.github,
+        git: this.deps.git,
+      });
+
+      const pr = await this.deps.github.createPullRequest({
+        repoFullName: repo.fullName,
+        baseBranch: batch.sourceBranch,
+        headBranch: batch.releaseBranch,
+        title,
+        body,
+      });
+
+      if (this.deps.github.mirrorBranchProtection) {
+        try {
+          await this.deps.github.mirrorBranchProtection(
+            repo.fullName,
+            batch.sourceBranch,
+            batch.releaseBranch,
+          );
+        } catch (err) {
+          this.deps.logger?.warn?.(
+            `Failed to mirror branch protection for batch ${batch.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      batch = recordPromotionPr(batch, pr.number);
+      this.deps.releaseBatchRepository.update(batch);
+      actions.push('promotion_pr_created');
+
+      this.publishEvent(batch, {
+        type: 'release_batch.promotion_pr_created',
+        level: 'info',
+        message: `release-batch ${batch.id} opened promotion PR #${pr.number} to ${batch.sourceBranch}`,
+        timestamp: now,
+        metadata: {
+          releaseBatchId: batch.id,
+          prNumber: pr.number,
+          releaseBranch: batch.releaseBranch,
+          sourceBranch: batch.sourceBranch,
+          candidateSha,
+        },
+      });
+    } catch (err) {
+      this.deps.logger?.warn?.(
+        `Failed to create promotion PR for batch ${batch.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    return batch;
   }
 
   async reconcile(batchId: ReleaseBatchId): Promise<ReconcileBatchResult> {
@@ -285,9 +364,6 @@ export class ReleaseBatchCoordinator {
               );
               batch = transitionToAwaitingManualTest(batch, remoteReleaseSha, candidateTreeSha);
               this.deps.releaseBatchRepository.update(batch);
-              this.dispatchNotification(batch, 'awaiting_manual_test', {
-                candidateSha: remoteReleaseSha,
-              });
               actions.push('candidate_captured');
 
               this.publishEvent(batch, {
@@ -300,6 +376,15 @@ export class ReleaseBatchCoordinator {
                   candidateSha: remoteReleaseSha,
                   candidateTreeSha,
                 },
+              });
+
+              batch = await this.ensurePromotionPr(batch, remoteReleaseSha, now, actions);
+
+              this.dispatchNotification(batch, 'awaiting_manual_test', {
+                candidateSha: remoteReleaseSha,
+                ...(batch.promotionPrNumber !== undefined
+                  ? { promotionPrNumber: batch.promotionPrNumber }
+                  : {}),
               });
 
               return {
@@ -356,6 +441,16 @@ export class ReleaseBatchCoordinator {
                 batch = transitionToAwaitingManualTest(batch, remoteReleaseSha, candidateTreeSha);
                 this.deps.releaseBatchRepository.update(batch);
                 actions.push('unblocked', 'candidate_captured');
+
+                batch = await this.ensurePromotionPr(batch, remoteReleaseSha, now, actions);
+
+                this.dispatchNotification(batch, 'awaiting_manual_test', {
+                  candidateSha: remoteReleaseSha,
+                  ...(batch.promotionPrNumber !== undefined
+                    ? { promotionPrNumber: batch.promotionPrNumber }
+                    : {}),
+                });
+
                 return {
                   batchId: batch.id,
                   batchStatus: batch.status,
@@ -437,6 +532,14 @@ export class ReleaseBatchCoordinator {
           } catch (err) {
             this.deps.logger?.warn?.(`Failed drift check in ${batch.status}: ${err}`);
           }
+        }
+
+        if (
+          batch.status === 'awaiting_manual_test' &&
+          !batch.promotionPrNumber &&
+          batch.candidateSha
+        ) {
+          batch = await this.ensurePromotionPr(batch, batch.candidateSha, now, actions);
         }
       }
 

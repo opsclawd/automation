@@ -17,6 +17,7 @@ import {
   rejectBatchCandidate,
   appendRemediationItems,
   attachPromotionPr,
+  recordPromotionPr,
   recordPromotionCommit,
   promoteBatch,
   completeBatch,
@@ -519,6 +520,46 @@ describe('ReleaseBatch domain model & invariants', () => {
 
       batch = recordPromotionCommit(batch, 'promotion-commit-sha-456');
       expect(batch.promotionCommitSha).toBe('promotion-commit-sha-456');
+    });
+
+    it('records promotion PR while preserving awaiting_manual_test status', () => {
+      let batch = createFullyMergedAwaitingBatch();
+      expect(batch.status).toBe('awaiting_manual_test');
+      expect(batch.promotionPrNumber).toBeUndefined();
+
+      batch = recordPromotionPr(batch, 42);
+      expect(batch.status).toBe('awaiting_manual_test');
+      expect(batch.promotionPrNumber).toBe(42);
+
+      // Idempotent assignment
+      const idempotent = recordPromotionPr(batch, 42);
+      expect(idempotent).toBe(batch);
+
+      expect(() => recordPromotionPr(batch, 0)).toThrow(ReleaseBatchStateError);
+      expect(() => recordPromotionPr(batch, -5)).toThrow(ReleaseBatchStateError);
+    });
+
+    it('preserves or accepts promotionPrNumber in transitionToAwaitingManualTest', () => {
+      let batch = createSampleBatch();
+      for (let pos = 1; pos <= 5; pos++) {
+        batch = admitItem(batch, pos, { runUuid: `run-${pos}`, now: t1 });
+        batch = markItemMerged(batch, pos, { mergedCommitSha: `sha-${pos}`, now: t2 });
+      }
+
+      const transitioned = transitionToAwaitingManualTest(
+        batch,
+        'candidate-sha-123',
+        'tree-sha-abc',
+        777,
+      );
+      expect(transitioned.status).toBe('awaiting_manual_test');
+      expect(transitioned.candidateSha).toBe('candidate-sha-123');
+      expect(transitioned.candidateTreeSha).toBe('tree-sha-abc');
+      expect(transitioned.promotionPrNumber).toBe(777);
+
+      expect(() =>
+        transitionToAwaitingManualTest(batch, 'candidate-sha-123', 'tree-sha-abc', -1),
+      ).toThrow(ReleaseBatchStateError);
     });
 
     it('rejectBatchCandidate validates candidateSha when provided', () => {
