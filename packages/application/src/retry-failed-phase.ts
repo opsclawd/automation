@@ -1,4 +1,4 @@
-import type { Phase, RunId, WorkerId, ResumeDisposition } from '@ai-sdlc/domain';
+import type { Phase, RunId, WorkerId, ResumeDisposition, PinnedRuntime } from '@ai-sdlc/domain';
 import type { RunRepositoryPort, PhaseRepositoryPort } from './ports.js';
 import type { RetryFailedPhaseUseCase } from './use-cases.js';
 import type { ResumeRun, ResumeTransitionState } from './resume-run.js';
@@ -16,6 +16,7 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
     runId: RunId;
     workerId: WorkerId;
     resumeDisposition?: ResumeDisposition;
+    pinnedRuntime?: PinnedRuntime;
   }): Promise<ResumeTransitionState> {
     const run = this.deps.runRepository.findByUuid(input.runId);
     if (!run) throw new Error(`No run found for ${input.runId}`);
@@ -54,6 +55,7 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
       ...(input.resumeDisposition !== undefined
         ? { resumeDisposition: input.resumeDisposition }
         : {}),
+      ...(input.pinnedRuntime !== undefined ? { pinnedRuntime: input.pinnedRuntime } : {}),
     });
   }
 }

@@ -35,6 +35,7 @@ interface ResumeRunUseCaseWithJob {
     workerId: WorkerId;
     attempt?: number;
     resumeDisposition?: ResumeDisposition;
+    pinnedRuntime?: PinnedRuntime;
   }): Promise<{ jobId: import('@ai-sdlc/domain').JobId; jobStatus: string }>;
 }
 
@@ -476,6 +477,12 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         return reply.code(400).send({ error: 'invalid_body' });
       }
     }
+    const runtimeVal = body.runtime !== undefined ? body.runtime : body.pinnedRuntime;
+    if (runtimeVal !== undefined) {
+      if (typeof runtimeVal !== 'string' || !isPinnedRuntime(runtimeVal)) {
+        return reply.code(400).send({ error: 'invalid_runtime' });
+      }
+    }
     const disposition = (body.disposition ?? body.resumeDisposition) as
       | ResumeDisposition
       | undefined;
@@ -509,6 +516,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         ...(plan.targetPhase !== undefined ? { fromPhase: plan.targetPhase } : {}),
         ...(plan.attempt !== undefined ? { attempt: plan.attempt } : {}),
         ...(disposition !== undefined ? { resumeDisposition: disposition } : {}),
+        ...(runtimeVal !== undefined ? { pinnedRuntime: runtimeVal as PinnedRuntime } : {}),
       });
 
       const refetchedRun = c.runRepository.findByUuid(req.params.runId);
@@ -582,6 +590,12 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         return reply.code(400).send({ error: 'invalid_body' });
       }
     }
+    const runtimeVal = body.runtime !== undefined ? body.runtime : body.pinnedRuntime;
+    if (runtimeVal !== undefined) {
+      if (typeof runtimeVal !== 'string' || !isPinnedRuntime(runtimeVal)) {
+        return reply.code(400).send({ error: 'invalid_runtime' });
+      }
+    }
     const disposition = (body.disposition ?? body.resumeDisposition) as
       | ResumeDisposition
       | undefined;
@@ -621,6 +635,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         ...(hasFromPhase && plan.targetPhase !== undefined ? { fromPhase: plan.targetPhase } : {}),
         ...(hasFromPhase && plan.attempt !== undefined ? { attempt: plan.attempt } : {}),
         ...(disposition !== undefined ? { resumeDisposition: disposition } : {}),
+        ...(runtimeVal !== undefined ? { pinnedRuntime: runtimeVal as PinnedRuntime } : {}),
       });
 
       const refetchedRun = c.runRepository.findByUuid(req.params.runId);

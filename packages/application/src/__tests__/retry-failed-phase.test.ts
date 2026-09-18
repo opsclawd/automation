@@ -275,4 +275,19 @@ describe('RetryFailedPhase', () => {
     const existing = runRepo.findByUuid('run-rp-1');
     expect(existing?.pinnedRuntime).toBe('codex');
   });
+
+  it('forwards explicit pinnedRuntime to resumeRun.transition when provided in input', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ pinnedRuntime: 'claude-code' }));
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({
+      runId: rid('run-rp-1'),
+      workerId: wid('w-1'),
+      pinnedRuntime: 'antigravity',
+    });
+    expect(resumeRun.calls).toHaveLength(1);
+    expect(resumeRun.calls[0]!.pinnedRuntime).toBe('antigravity');
+  });
 });

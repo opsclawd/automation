@@ -2078,6 +2078,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           '--disposition <mode>',
           'Resume disposition: preserve_working_tree | reset_to_baseline',
         )
+        .option(
+          '--runtime <runtime>',
+          'Pinned agent runtime: claude-code | antigravity | codex | opencode',
+        )
         .option('--confirm', 'Confirm retry/resume of an unsafe phase')
         .option('--verbose', 'Stream progress to terminal (default: auto when TTY)')
         .option('--no-verbose', 'Suppress streaming progress to terminal')
@@ -2094,6 +2098,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           async (opts: {
             uuid: string;
             fromPhase?: string;
+            runtime?: string;
             confirm?: boolean;
             verbose?: boolean;
             targetRepoRoot?: string;
@@ -2121,6 +2126,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 },
               });
               containerRef = c;
+
+              if (opts.runtime !== undefined && !isPinnedRuntime(opts.runtime)) {
+                console.error(
+                  `Error: --runtime must be one of: ${PINNED_RUNTIMES.join(', ')}, got "${opts.runtime}"`,
+                );
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
 
               if (opts.disposition !== undefined) {
                 if (
@@ -2218,6 +2231,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const effectivePhases = resolvePhaseOrder(reconciledRun.executionPolicy);
               console.error(`Execution policy: ${runPolicy}`);
               console.error(`Resuming from phase: ${resumePhase}`);
+              if (opts.runtime) {
+                if (reconciledRun.pinnedRuntime && reconciledRun.pinnedRuntime !== opts.runtime) {
+                  console.error(
+                    `Runtime pin: ${opts.runtime} (re-pinned from ${reconciledRun.pinnedRuntime} at resume)`,
+                  );
+                } else {
+                  console.error(`Runtime pin: ${opts.runtime} (pinned at resume)`);
+                }
+              } else {
+                console.error(`Runtime pin: ${reconciledRun.pinnedRuntime ?? 'unpinned'}`);
+              }
               console.error('Phase graph:');
               for (const p of effectivePhases) {
                 console.error(`  ${p}`);
@@ -2329,6 +2353,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                     ...(opts.disposition
                       ? { resumeDisposition: opts.disposition as ResumeDisposition }
                       : {}),
+                    ...(opts.runtime ? { pinnedRuntime: opts.runtime as PinnedRuntime } : {}),
                   });
                   effectiveDisposition = transitionState.effectiveDisposition;
                 } else {
@@ -2338,6 +2363,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                     ...(opts.disposition
                       ? { resumeDisposition: opts.disposition as ResumeDisposition }
                       : {}),
+                    ...(opts.runtime ? { pinnedRuntime: opts.runtime as PinnedRuntime } : {}),
                   });
                   if (
                     transitionState &&
@@ -2766,10 +2792,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     .addCommand(
       new Command('resume')
         .description(
-          'Resume or reconcile a blocked release batch (fails closed on Run-owned blockers)',
+          'Resume or reconcile a blocked release batch (fails closed on Run-owned blockers; runtime overrides must be performed via runs resume --uuid <uuid> --runtime <runtime>)',
         )
         .option('-i, --id <id>', 'Release batch ID (alias for --batch-id)')
         .option('--batch-id <id>', 'Release batch ID')
+        .option(
+          '--runtime <runtime>',
+          'Runtime pin override (note: must be applied directly to run via runs resume --uuid <uuid> --runtime <runtime>)',
+        )
         .option('--confirm', 'Confirm resuming the release batch')
         .option(
           '--target-repo-root <path>',
@@ -2779,6 +2809,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           async (opts: {
             id?: string;
             batchId?: string;
+            runtime?: string;
             confirm?: boolean;
             targetRepoRoot?: string;
           }) => {
@@ -2797,6 +2828,31 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const batchId = opts.id ?? opts.batchId;
               if (!batchId) {
                 console.error('Error: --batch-id (or -i, --id) is required');
+                await drainAndExit(c, EXIT_USER_ERROR);
+                return;
+              }
+
+              if (opts.runtime !== undefined) {
+                let runUuidHint = '<uuid>';
+                try {
+                  const batch = c.releaseBatchRepository.findById(ReleaseBatchId(batchId));
+                  if (batch) {
+                    const blockedItem =
+                      batch.items.find(
+                        (it) => it.runUuid && (it.status === 'blocked' || it.status === 'active'),
+                      ) ?? batch.items.find((it) => it.runUuid && it.status !== 'merged');
+                    if (blockedItem?.runUuid) {
+                      runUuidHint = blockedItem.runUuid;
+                    }
+                  }
+                } catch {}
+                console.error(
+                  `Error: release-batch resume does not support --runtime directly.\n` +
+                    `Runtime overrides must be applied to the specific blocked run:\n` +
+                    `  runs resume --uuid ${runUuidHint} --runtime ${opts.runtime}\n` +
+                    `Then resume the release batch with:\n` +
+                    `  release-batch resume --id ${batchId}`,
+                );
                 await drainAndExit(c, EXIT_USER_ERROR);
                 return;
               }
@@ -2832,7 +2888,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   console.error(
                     `Error: Release batch ${resumeErr.batchId}${resumeErr.issueNumber !== undefined ? ` item #${resumeErr.issueNumber}` : ''} is blocked by run ${resumeErr.runUuid} (${resumeErr.runStatus}${resumeErr.runPhase ? ` / ${resumeErr.runPhase}` : ''}).\n` +
                       `Run recovery must be performed via Run CLI:\n` +
-                      `  runs resume --uuid ${resumeErr.runUuid}`,
+                      `  runs resume --uuid ${resumeErr.runUuid} [--runtime <runtime>]`,
                   );
                   await drainAndExit(c, EXIT_USER_ERROR);
                   return;

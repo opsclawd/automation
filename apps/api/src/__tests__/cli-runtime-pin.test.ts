@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildProgram } from '../cli.js';
 import { ReleaseBatchId, JobId } from '@ai-sdlc/domain';
+import { RunExecutor } from '@ai-sdlc/application';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 
 vi.setConfig({ testTimeout: 30000 });
@@ -344,6 +345,277 @@ describe('CLI runtime pin admission and status', () => {
         '--runtime must be one of: claude-code, antigravity, codex, opencode',
       );
       expect(allStderr).toContain('got "bad-runtime"');
+    });
+  });
+
+  describe('orchestrator runs resume --runtime', () => {
+    it('rejects invalid runtime pin fast on runs resume', async () => {
+      const program = buildProgram({
+        isCliTestSuite: true,
+        composeOverrides: { repoFullName: 'owner/repo' },
+      });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+
+      await runsCmd.parseAsync(
+        ['resume', '--uuid', '00000000-0000-0000-0000-000000000010', '--runtime', 'bad-runtime'],
+        { from: 'user' },
+      );
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      const allStderr = stderrOutput.join('\n');
+      expect(allStderr).toContain(
+        '--runtime must be one of: claude-code, antigravity, codex, opencode',
+      );
+      expect(allStderr).toContain('got "bad-runtime"');
+    });
+
+    it('pins unpinned failed run when resuming with --runtime and updates record', async () => {
+      const dbPath = createTestDb();
+      const db = openDatabase(dbPath);
+      const uuid = '00000000-0000-0000-0000-000000000010';
+      db.prepare(
+        `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase, completed_phases, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        uuid,
+        'issue-10-run',
+        'owner/repo',
+        10,
+        'issue_to_pr',
+        'failed',
+        'implement',
+        '["read_issue","plan"]',
+        new Date('2026-09-11T12:00:00Z').toISOString(),
+      );
+      db.close();
+
+      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid,
+          status: 'passed' as const,
+          displayId: 'issue-10-run',
+          issueNumber: 10,
+          type: 'issue_to_pr' as const,
+          completedPhases: ['read_issue', 'plan', 'implement'],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [],
+      });
+
+      try {
+        const program = buildProgram({
+          isCliTestSuite: true,
+          composeOverrides: {
+            repoFullName: 'owner/repo',
+            dbPath,
+          },
+        });
+
+        const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+        runsCmd.exitOverride();
+
+        await runsCmd.parseAsync(['resume', '--uuid', uuid, '--runtime', 'antigravity'], {
+          from: 'user',
+        });
+
+        const allStderr = stderrOutput.join('\n');
+        expect(allStderr).toContain('Runtime pin: antigravity (pinned at resume)');
+
+        const verifyDb = openDatabase(dbPath);
+        const row = verifyDb
+          .prepare('SELECT pinned_runtime, status FROM runs WHERE uuid = ?')
+          .get(uuid) as {
+          pinned_runtime: string;
+          status: string;
+        };
+        verifyDb.close();
+        expect(row.pinned_runtime).toBe('antigravity');
+      } finally {
+        executeSpy.mockRestore();
+      }
+    });
+
+    it('explicitly re-pins an already-pinned failed run when resuming with new --runtime', async () => {
+      const dbPath = createTestDb();
+      const db = openDatabase(dbPath);
+      const uuid = '00000000-0000-0000-0000-000000000011';
+      db.prepare(
+        `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase, completed_phases, started_at, pinned_runtime)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        uuid,
+        'issue-11-run',
+        'owner/repo',
+        11,
+        'issue_to_pr',
+        'failed',
+        'implement',
+        '["read_issue","plan"]',
+        new Date('2026-09-11T12:00:00Z').toISOString(),
+        'claude-code',
+      );
+      db.close();
+
+      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid,
+          status: 'passed' as const,
+          displayId: 'issue-11-run',
+          issueNumber: 11,
+          type: 'issue_to_pr' as const,
+          completedPhases: ['read_issue', 'plan', 'implement'],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [],
+      });
+
+      try {
+        const program = buildProgram({
+          isCliTestSuite: true,
+          composeOverrides: {
+            repoFullName: 'owner/repo',
+            dbPath,
+          },
+        });
+
+        const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+        runsCmd.exitOverride();
+
+        await runsCmd.parseAsync(['resume', '--uuid', uuid, '--runtime', 'codex'], {
+          from: 'user',
+        });
+
+        const allStderr = stderrOutput.join('\n');
+        expect(allStderr).toContain('Runtime pin: codex (re-pinned from claude-code at resume)');
+
+        const verifyDb = openDatabase(dbPath);
+        const row = verifyDb
+          .prepare('SELECT pinned_runtime, status FROM runs WHERE uuid = ?')
+          .get(uuid) as {
+          pinned_runtime: string;
+          status: string;
+        };
+        verifyDb.close();
+        expect(row.pinned_runtime).toBe('codex');
+      } finally {
+        executeSpy.mockRestore();
+      }
+    });
+
+    it('preserves existing pin when resuming without --runtime', async () => {
+      const dbPath = createTestDb();
+      const db = openDatabase(dbPath);
+      const uuid = '00000000-0000-0000-0000-000000000012';
+      db.prepare(
+        `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase, completed_phases, started_at, pinned_runtime)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        uuid,
+        'issue-12-run',
+        'owner/repo',
+        12,
+        'issue_to_pr',
+        'failed',
+        'implement',
+        '["read_issue","plan"]',
+        new Date('2026-09-11T12:00:00Z').toISOString(),
+        'claude-code',
+      );
+      db.close();
+
+      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid,
+          status: 'passed' as const,
+          displayId: 'issue-12-run',
+          issueNumber: 12,
+          type: 'issue_to_pr' as const,
+          completedPhases: ['read_issue', 'plan', 'implement'],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [],
+      });
+
+      try {
+        const program = buildProgram({
+          isCliTestSuite: true,
+          composeOverrides: {
+            repoFullName: 'owner/repo',
+            dbPath,
+          },
+        });
+
+        const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+        runsCmd.exitOverride();
+
+        await runsCmd.parseAsync(['resume', '--uuid', uuid], { from: 'user' });
+
+        const allStderr = stderrOutput.join('\n');
+        expect(allStderr).toContain('Runtime pin: claude-code');
+
+        const verifyDb = openDatabase(dbPath);
+        const row = verifyDb
+          .prepare('SELECT pinned_runtime FROM runs WHERE uuid = ?')
+          .get(uuid) as {
+          pinned_runtime: string;
+        };
+        verifyDb.close();
+        expect(row.pinned_runtime).toBe('claude-code');
+      } finally {
+        executeSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('orchestrator release-batch resume --runtime', () => {
+    it('rejects --runtime flag on release-batch resume fast with actionable guidance', async () => {
+      const dbPath = createTestDb();
+      const db = openDatabase(dbPath);
+      const batchId = 'batch-2026-09-18-001';
+      const runUuid = '00000000-0000-0000-0000-000000000099';
+      db.prepare(
+        `INSERT INTO release_batches (id, repo_id, source_branch, release_branch, source_start_sha, status, current_position, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        batchId,
+        'owner/repo',
+        'main',
+        'release/2026-09-18-001',
+        'start-sha',
+        'blocked',
+        1,
+        new Date().toISOString(),
+      );
+      db.prepare(
+        `INSERT INTO release_batch_items (release_batch_id, position, issue_number, status, run_uuid)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(batchId, 1, 99, 'blocked', runUuid);
+      db.close();
+
+      const program = buildProgram({
+        isCliTestSuite: true,
+        composeOverrides: {
+          repoFullName: 'owner/repo',
+          dbPath,
+        },
+      });
+
+      const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+      batchCmd.exitOverride();
+
+      await batchCmd.parseAsync(['resume', '-i', batchId, '--runtime', 'antigravity'], {
+        from: 'user',
+      });
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      const allStderr = stderrOutput.join('\n');
+      expect(allStderr).toContain('release-batch resume does not support --runtime directly');
+      expect(allStderr).toContain(`runs resume --uuid ${runUuid} --runtime antigravity`);
+      expect(allStderr).toContain(`release-batch resume --id ${batchId}`);
     });
   });
 });

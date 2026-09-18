@@ -372,12 +372,40 @@ describe('Run state machine', () => {
       expect(cancelled.pinnedRuntime).toBe('antigravity');
     });
 
-    it('preserves pinnedRuntime across resumeRun', () => {
+    it('preserves pinnedRuntime across resumeRun when omitted in opts', () => {
       const failed = failRun(createRun({ ...base, pinnedRuntime: 'claude-code' }), 'error');
       const resumed = resumeRun(failed, 'implement');
       expect(resumed.pinnedRuntime).toBe('claude-code');
       expect(resumed.status).toBe('running');
       expect(resumed.currentPhase).toBe('implement');
+
+      const unpinnedFailed = failRun(createRun(base), 'error');
+      const unpinnedResumed = resumeRun(unpinnedFailed, 'implement');
+      expect(unpinnedResumed.pinnedRuntime).toBeUndefined();
+    });
+
+    it('pins an unpinned run when opts.pinnedRuntime is provided to resumeRun', () => {
+      const failed = failRun(createRun(base), 'error');
+      const resumed = resumeRun(failed, 'implement', { pinnedRuntime: 'antigravity' });
+      expect(resumed.pinnedRuntime).toBe('antigravity');
+      expect(resumed.status).toBe('running');
+    });
+
+    it('explicitly re-pins an already pinned run when opts.pinnedRuntime is provided to resumeRun', () => {
+      const failed = failRun(createRun({ ...base, pinnedRuntime: 'claude-code' }), 'error');
+      const resumed = resumeRun(failed, 'implement', { pinnedRuntime: 'codex' });
+      expect(resumed.pinnedRuntime).toBe('codex');
+      expect(resumed.status).toBe('running');
+    });
+
+    it('throws RunStateError on invalid opts.pinnedRuntime in resumeRun', () => {
+      const failed = failRun(createRun(base), 'error');
+      expect(() =>
+        resumeRun(failed, 'implement', { pinnedRuntime: 'not-a-runtime' as PinnedRuntime }),
+      ).toThrow(RunStateError);
+      expect(() =>
+        resumeRun(failed, 'implement', { pinnedRuntime: 'not-a-runtime' as PinnedRuntime }),
+      ).toThrow('invalid pinned runtime: not-a-runtime');
     });
   });
 });

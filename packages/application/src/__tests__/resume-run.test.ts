@@ -910,4 +910,97 @@ describe('ResumeRun', () => {
     expect(resumed.status).toBe('running');
     expect(resumed.pinnedRuntime).toBe('claude-code');
   });
+
+  it('sets pinnedRuntime when overriding an unpinned run at resume', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'failed' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      now: fixedNow,
+    });
+
+    await usecase.execute({
+      runId: rid('run-1'),
+      workerId: wid('w-1'),
+      pinnedRuntime: 'antigravity',
+    });
+    const resumed = runRepo.findByUuid('run-1')!;
+    expect(resumed.status).toBe('running');
+    expect(resumed.pinnedRuntime).toBe('antigravity');
+  });
+
+  it('explicitly re-pins pinnedRuntime when overriding an already-pinned run at resume', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'failed', pinnedRuntime: 'claude-code' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      now: fixedNow,
+    });
+
+    await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1'), pinnedRuntime: 'codex' });
+    const resumed = runRepo.findByUuid('run-1')!;
+    expect(resumed.status).toBe('running');
+    expect(resumed.pinnedRuntime).toBe('codex');
+  });
+
+  it('restores previous pinnedRuntime on rollback if transition fails', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'failed', pinnedRuntime: 'claude-code' }));
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const leases = new FakeWorkerLeasePort();
+    const queue = new FakeJobQueuePort(repos);
+    const stepRepo = new FakeStepRepository();
+    const phaseRepo = new FakePhaseRepository();
+    vi.spyOn(phaseRepo, 'insert').mockImplementationOnce(() => {
+      throw new Error('phase insert failed');
+    });
+
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      now: fixedNow,
+    });
+
+    await expect(
+      usecase.transition({
+        runId: rid('run-1'),
+        workerId: wid('w-1'),
+        fromPhase: 'phase-1',
+        pinnedRuntime: 'antigravity',
+      }),
+    ).rejects.toThrow('phase insert failed');
+
+    const restored = runRepo.findByUuid('run-1')!;
+    expect(restored.status).toBe('failed');
+    expect(restored.pinnedRuntime).toBe('claude-code');
+  });
 });

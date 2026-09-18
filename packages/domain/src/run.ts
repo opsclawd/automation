@@ -232,6 +232,10 @@ export function canResume(run: Run): boolean {
   );
 }
 
+export interface ResumeRunOptions {
+  pinnedRuntime?: PinnedRuntime;
+}
+
 /**
  * Resume a failed or cancelled run.
  *
@@ -239,24 +243,33 @@ export function canResume(run: Run): boolean {
  * specific phase — prior completed and skipped phases are preserved.
  * When `phase` is omitted (full restart), completed and skipped phases are
  * also preserved and the run restarts from the first phase.
+ *
+ * If `opts.pinnedRuntime` is provided, the run's runtime pin is explicitly
+ * set or re-pinned for remaining phases.
  */
-export function resumeRun(run: Run, phase?: string): Run {
+export function resumeRun(run: Run, phase?: string, opts?: ResumeRunOptions): Run {
   if (!canResume(run)) {
     throw new RunStateError(
       `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed', 'blocked', 'needs_human_review', or 'cancelled'`,
     );
   }
+  if (opts?.pinnedRuntime !== undefined && !isPinnedRuntime(opts.pinnedRuntime)) {
+    throw new RunStateError(`invalid pinned runtime: ${opts.pinnedRuntime}`);
+  }
   const {
     completedAt: _completedAt,
     failureReason: _failureReason,
     currentPhase: _currentPhase,
+    pinnedRuntime: _pinnedRuntime,
     ...rest
   } = run;
+  const pinnedRuntime = opts?.pinnedRuntime !== undefined ? opts.pinnedRuntime : run.pinnedRuntime;
   return {
     ...rest,
     status: 'running',
     completedPhases: rest.completedPhases,
     skippedPhases: rest.skippedPhases,
     ...(phase !== undefined ? { currentPhase: phase } : {}),
+    ...(pinnedRuntime !== undefined ? { pinnedRuntime } : {}),
   };
 }

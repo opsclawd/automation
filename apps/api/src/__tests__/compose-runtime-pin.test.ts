@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot, type ComposeOptions } from '../compose.js';
-import { createRun, RepositoryId, PhaseName } from '@ai-sdlc/domain';
+import { createRun, failRun, resumeRun, RepositoryId, PhaseName } from '@ai-sdlc/domain';
 import {
   ArchitectureReviewHandler,
   SpecReviewHandler,
@@ -622,6 +622,57 @@ describe('Runtime Pin compose wiring', () => {
       } as unknown as PhaseHandlerContext;
 
       await expect(handler.run(ctx)).rejects.toThrow(PinnedRuntimeResolutionError);
+    });
+  });
+
+  describe('(f) Resuming a run with --runtime override resolves remaining phases to new pinned runtime profile', () => {
+    it('resumes failed run with explicit runtime override and confirms remaining phases use new pinned runtime profile', async () => {
+      const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-pin-')));
+      const scriptPath = fakeScript();
+      writeOrchestratorConfig(root, createMultiRuntimeConfig());
+
+      const c = await composeRoot({
+        repoRoot: root,
+        scriptPath,
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        runStartupSweeps: false,
+      });
+
+      const initialRun = createRun({
+        uuid: '00000000-0000-0000-0000-000000000099',
+        displayId: 'issue-42-20260513-000000',
+        issueNumber: 42,
+        repoId: RepositoryId('owner/repo'),
+        startedAt: new Date('2026-05-13T00:00:00Z'),
+        pinnedRuntime: 'claude-code',
+      });
+      const failedRun = failRun(initialRun, 'provider rate limit');
+
+      const initialCtx = c.buildRunContext!(failedRun);
+      expect(initialCtx.resolveProfile!('architecture-review')).toBe('claude');
+
+      // Operator resumes the run with --runtime antigravity override
+      const resumedRun = resumeRun(failedRun, 'architecture-review', {
+        pinnedRuntime: 'antigravity',
+      });
+      expect(resumedRun.pinnedRuntime).toBe('antigravity');
+
+      // Remaining phases use the new pinned runtime profile
+      const resumedCtx = c.buildRunContext!(resumedRun);
+      for (const phase of [
+        'plan-design',
+        'architecture-review',
+        'spec-review',
+        'quality-review',
+        'fix-review',
+        'follow-up-review',
+        'fix-validate',
+      ]) {
+        const resolvedProfile = resumedCtx.resolveProfile!(phase);
+        const profileDef = createMultiRuntimeConfig().profiles[resolvedProfile];
+        expect(profileDef).toBeDefined();
+        expect(profileDef.runtime).toBe('antigravity');
+      }
     });
   });
 });

@@ -48,7 +48,7 @@ export interface RunRepositoryUpdatePatch {
   configFingerprint?: string;
   configSourcesJson?: string;
   executionPolicy?: ExecutionPolicy;
-  pinnedRuntime?: PinnedRuntime;
+  pinnedRuntime?: PinnedRuntime | null;
 }
 
 export type ListRunsFilter = {
