@@ -45,6 +45,7 @@ import { safeDispatchReleaseBatchNotification } from './ports.js';
 import type { EventRepositoryFactory } from './start-issue-run.js';
 import type { InterItemMaintenanceService } from './inter-item-maintenance.js';
 import { assemblePromotionPr } from './assemble-promotion-pr.js';
+import { refreshPromotionPr } from './refresh-promotion-pr.js';
 
 export type ReconciliationAction =
   | 'idle'
@@ -170,6 +171,24 @@ export class ReleaseBatchCoordinator {
     actions: ReconciliationAction[],
   ): Promise<ReleaseBatch> {
     if (batch.promotionPrNumber) {
+      if (this.deps.github) {
+        const repo = this.deps.repositoryPort.findById(batch.repoId);
+        if (repo) {
+          try {
+            await refreshPromotionPr({
+              github: this.deps.github,
+              repoFullName: repo.fullName,
+              prNumber: batch.promotionPrNumber,
+              batch,
+              candidateSha,
+            });
+          } catch (err) {
+            this.deps.logger?.warn?.(
+              `Failed to refresh promotion PR #${batch.promotionPrNumber} for batch ${batch.id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      }
       return batch;
     }
     if (!this.deps.github) {

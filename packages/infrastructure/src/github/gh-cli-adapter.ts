@@ -8,6 +8,7 @@ import type {
   PullRequestReview,
   GitHubReviewComment,
   CreatePullRequestInput,
+  UpdatePullRequestInput,
   PrMergeReadiness,
   MergeMethod,
   RequestAutoMergeResult,
@@ -148,7 +149,7 @@ export class GhCliAdapter implements GitHubPort {
       '--repo',
       repoFullName,
       '--json',
-      'number,url,state,headRefName,baseRefName',
+      'number,url,state,headRefName,baseRefName,title,body',
     ]);
     const command = `gh pr view ${prNumber} --repo ${repoFullName}`;
     const j = this.safeJsonParse<{
@@ -157,6 +158,8 @@ export class GhCliAdapter implements GitHubPort {
       state: string;
       headRefName: string;
       baseRefName?: string;
+      title?: string;
+      body?: string;
     }>(out, command);
     const VALID_STATES = new Set(['open', 'closed', 'merged']);
     const normalised = j.state.toLowerCase();
@@ -172,6 +175,8 @@ export class GhCliAdapter implements GitHubPort {
       state: normalised as PullRequest['state'],
       headRefName: j.headRefName,
       ...(j.baseRefName !== undefined ? { baseRefName: j.baseRefName } : {}),
+      ...(j.title !== undefined ? { title: j.title } : {}),
+      ...(j.body !== undefined ? { body: j.body } : {}),
     };
   }
 
@@ -353,6 +358,20 @@ export class GhCliAdapter implements GitHubPort {
       );
     }
     return { number: Number(numMatch[1]), url, state: 'open' };
+  }
+
+  async updatePullRequest(input: UpdatePullRequestInput): Promise<void> {
+    if (input.title === undefined && input.body === undefined) {
+      return;
+    }
+    const args = ['pr', 'edit', String(input.prNumber), '--repo', input.repoFullName];
+    if (input.title !== undefined) {
+      args.push('--title', input.title);
+    }
+    if (input.body !== undefined) {
+      args.push('--body', input.body);
+    }
+    await this.run(args);
   }
 
   async requestAutoMerge(

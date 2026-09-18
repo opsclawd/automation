@@ -886,7 +886,6 @@ export function appendRemediationItems(batch: ReleaseBatch, issueNumbers: number
     approvedCandidateSha: _as,
     candidateTreeSha: _cts,
     promotionCommitSha: _pcs,
-    promotionPrNumber: _ppn,
     blockedReason: _br,
     ...rest
   } = batch;
@@ -894,7 +893,6 @@ export function appendRemediationItems(batch: ReleaseBatch, issueNumbers: number
   void _as;
   void _cts;
   void _pcs;
-  void _ppn;
   void _br;
 
   const firstUnmerged = allItems.find((i) => i.status !== 'merged');

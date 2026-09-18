@@ -10,7 +10,7 @@ case "$1 ${2:-}" in
   "repo view")
     echo '{"viewerPermission":"ADMIN"}' ;;
   "pr view")
-    echo '{"number":5,"url":"https://x/pr/5","state":"OPEN","headRefName":"feat-x","baseRefName":"main","statusCheckRollup":[],"mergeStateStatus":"CLEAN","autoMergeRequest":{"enabledAt":"2026-09-11T00:00:00Z"},"mergedAt":"2026-09-11T12:00:00Z","mergeCommit":{"oid":"sha-merge-123"}}' ;;
+    echo '{"number":5,"url":"https://x/pr/5","state":"OPEN","headRefName":"feat-x","baseRefName":"main","title":"T","body":"B","statusCheckRollup":[],"mergeStateStatus":"CLEAN","autoMergeRequest":{"enabledAt":"2026-09-11T00:00:00Z"},"mergedAt":"2026-09-11T12:00:00Z","mergeCommit":{"oid":"sha-merge-123"}}' ;;
   "api graphql")
     # resolveReviewThread query or mutation — return minimal success
     echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"T_1","isResolved":false,"comments":{"nodes":[{"databaseId":9001}]}}]}}}}}' ;;
@@ -34,6 +34,8 @@ case "$1 ${2:-}" in
     fi ;;
   "pr create")
     echo "https://github.com/o/r/pull/99" ;;
+  "pr edit")
+    : ;;  # PR edit, no output
   "pr merge")
     echo '{"merged":false}' ;;
   "issue edit")

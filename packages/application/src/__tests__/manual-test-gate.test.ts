@@ -516,6 +516,123 @@ describe('ManualTestGate use cases', () => {
       expect(github.autoMergeRequests[0]?.prNumber).toBe(888);
     });
 
+    it('refreshes existing promotion PR candidate SHA and Closes list on re-promote after reject and remediation (#1258)', async () => {
+      const batchId = ReleaseBatchId('batch-gate-repromote');
+      const candidateSha1 = 'sha-cand-first';
+      let batch = createReleaseBatch({
+        id: batchId,
+        repoId: defaultRepo.id,
+        sourceBranch: 'main',
+        sourceStartSha: 'sha-main-001',
+        releaseBranch: 'release/2026-09-11-repromote',
+        items: [{ position: 1, issueNumber: 101 }],
+        createdAt: new Date('2026-09-11T12:00:00.000Z'),
+      });
+
+      batch = admitItem(batch, 1, { runUuid: 'run-101', baseSha: 'sha-main-001' });
+      batch = markItemMerged(batch, 1, { mergedCommitSha: candidateSha1 });
+      batch = {
+        ...batch,
+        status: 'awaiting_manual_test',
+        candidateSha: candidateSha1,
+        candidateTreeSha: 'tree-' + candidateSha1,
+      };
+      batchRepo.insert(batch);
+
+      git.remoteRefs.set('origin/release/2026-09-11-repromote', candidateSha1);
+      git.remoteRefs.set('origin/main', 'sha-main-001');
+      git.ancestorResults.set(`sha-main-001|${candidateSha1}`, true);
+      git.ancestorResults.set(`${candidateSha1}|${candidateSha1}`, true);
+
+      const approveUseCase = new ApproveReleaseBatchCandidate({
+        releaseBatchRepository: batchRepo,
+        repositoryPort: repoPort,
+        git,
+        now,
+      });
+      const rejectUseCase = new RejectReleaseBatchCandidate({
+        releaseBatchRepository: batchRepo,
+        now,
+      });
+      const appendRemediationUseCase = new AppendRemediationIssues({
+        releaseBatchRepository: batchRepo,
+        github,
+        now,
+      });
+      const promoteUseCase = new PromoteReleaseBatch({
+        releaseBatchRepository: batchRepo,
+        repositoryPort: repoPort,
+        git,
+        github,
+        now,
+      });
+
+      // 1. Approve initial candidate
+      await approveUseCase.execute({ batchId, candidateSha: candidateSha1 });
+
+      // 2. Promote initial batch -> PR created with issue 101 and candidateSha1
+      const initialPromo = await promoteUseCase.execute({ batchId });
+      expect(initialPromo.prNumber).toBeDefined();
+      const prNumber = initialPromo.prNumber!;
+      expect(github.createdPrInputs).toHaveLength(1);
+      expect(github.createdPrInputs[0]?.title).toBe('Release batch-gate-repromote: #101');
+      expect(github.createdPrInputs[0]?.body).toContain('Closes #101');
+      expect(github.createdPrInputs[0]?.body).toContain(`\`${candidateSha1}\``);
+
+      // 3. Reject candidate
+      // Reset status to awaiting_manual_test to simulate re-evaluating or manual reject
+      batch = batchRepo.findById(batchId)!;
+      batchRepo.update({ ...batch, status: 'awaiting_manual_test' });
+      await rejectUseCase.execute({ batchId, candidateSha: candidateSha1 });
+
+      // 4. Append remediation issue 102
+      github.issues.set('test-org/test-repo/102', {
+        number: 102,
+        title: 'Remediation Fix',
+        body: 'Fixes problem found in review',
+        labels: [],
+        state: 'open',
+      });
+      await appendRemediationUseCase.execute({ batchId, issueNumbers: [102] });
+
+      // Simulate remediation run admitting and merging
+      const candidateSha2 = 'sha-cand-remediated';
+      batch = batchRepo.findById(batchId)!;
+      batch = admitItem(batch, 2, { runUuid: 'run-102', baseSha: candidateSha1 });
+      batch = markItemMerged(batch, 2, { mergedCommitSha: candidateSha2 });
+      batch = {
+        ...batch,
+        status: 'awaiting_manual_test',
+        candidateSha: candidateSha2,
+        candidateTreeSha: 'tree-' + candidateSha2,
+      };
+      batchRepo.update(batch);
+
+      git.remoteRefs.set('origin/release/2026-09-11-repromote', candidateSha2);
+      git.ancestorResults.set(`sha-main-001|${candidateSha2}`, true);
+      git.ancestorResults.set(`${candidateSha1}|${candidateSha2}`, true);
+      git.ancestorResults.set(`${candidateSha2}|${candidateSha2}`, true);
+
+      // 5. Re-approve with new candidate SHA
+      await approveUseCase.execute({ batchId, candidateSha: candidateSha2 });
+
+      // 6. Re-promote
+      const rePromo = await promoteUseCase.execute({ batchId });
+      expect(rePromo.prNumber).toBe(prNumber);
+      // Ensure no duplicate PR was created
+      expect(github.createdPrInputs).toHaveLength(1);
+
+      // 7. Verify PR was updated via updatePullRequest
+      const updatedPr = await github.getPr('test-org/test-repo', prNumber);
+      expect(updatedPr.title).toBe('Release batch-gate-repromote: #101, #102');
+      expect(updatedPr.body).toContain('| **Candidate SHA** | `sha-cand-remediated` |');
+      expect(updatedPr.body).not.toContain('| **Candidate SHA** | `sha-cand-first` |');
+      expect(updatedPr.body).toContain(
+        '- Release candidate commit `sha-cand-remediated` contains all constituent merge commits.',
+      );
+      expect(updatedPr.body).toContain('Closes #101\nCloses #102');
+    });
+
     it('publishes its event under the most recent item run uuid, not the batch id (#1249)', async () => {
       const batchId = ReleaseBatchId('batch-gate-event');
       const candidateSha = 'sha-cand-event';
