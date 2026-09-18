@@ -23,9 +23,6 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^2.1.4
         version: 2.1.9(vitest@2.1.9(@types/node@22.19.19))
-      bats:
-        specifier: ^1.13.0
-        version: 1.13.0
       better-sqlite3:
         specifier: ^11.5.0
         version: 11.10.0
@@ -1244,10 +1241,6 @@ packages:
   baseline-browser-mapping@2.10.30:
     resolution: {integrity: sha512-xjOFN16Ha1+Rz4nFYKqHU/LSB+gx/Vi3yQLX7r7sAW+Wa+8hhF2h4pvqTrTMc8+WcDBEunnUurr46Jvv0jk3Vg==}
     engines: {node: '>=6.0.0'}
-    hasBin: true
-
-  bats@1.13.0:
-    resolution: {integrity: sha512-giSYKGTOcPZyJDbfbTtzAedLcNWdjCLbXYU3/MwPnjyvDXzu6Dgw8d2M+8jHhZXSmsCMSQqCp+YBsJ603UO4vQ==}
     hasBin: true
 
   better-sqlite3@11.10.0:
@@ -3681,8 +3674,6 @@ snapshots:
   base64-js@1.5.1: {}
 
   baseline-browser-mapping@2.10.30: {}
-
-  bats@1.13.0: {}
 
   better-sqlite3@11.10.0:
     dependencies:
