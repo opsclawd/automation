@@ -87,7 +87,7 @@ export class ResumeReleaseBatch {
       const rawPhase = currentRun as { currentPhase?: string | null; phase?: string } | undefined;
       const runPhase = blocker.runPhase ?? rawPhase?.currentPhase ?? rawPhase?.phase ?? undefined;
       throw new RunOwnedBlockerError(
-        `Release batch ${batch.id}${issueNumber !== undefined ? ` item #${issueNumber}` : ''} is blocked by run ${runUuid} (${runStatus}${runPhase ? ` / ${runPhase}` : ''}).\nRun recovery must be performed via Run CLI:\n  runs resume --uuid ${runUuid}`,
+        `Release batch ${batch.id}${issueNumber !== undefined ? ` item #${issueNumber}` : ''} is blocked by run ${runUuid} (${runStatus}${runPhase ? ` / ${runPhase}` : ''}).\nRun recovery must be performed via Run CLI:\n  runs resume --uuid ${runUuid} [--runtime <runtime>]`,
         batch.id,
         runUuid,
         issueNumber,

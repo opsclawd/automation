@@ -993,5 +993,35 @@ describe('Recovery REST Endpoints', () => {
       expect(res.statusCode).toBe(400);
       expect(res.json().error).toBe('invalid_issue_number');
     });
+
+    it('returns 400 for invalid runtime on retry and resume', async () => {
+      const tempDir = createTempDir();
+      const c = compose(tempDir);
+      const app = await buildServer(c);
+      const uuid = '00000000-0000-0000-0000-0000000000ee';
+
+      c.runRepository.insertIfNoActive({
+        uuid,
+        displayId: 'run-ee',
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: 15,
+        type: 'issue_to_pr',
+        status: 'failed',
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      });
+
+      for (const action of ['retry', 'resume']) {
+        const res = await app.inject({
+          method: 'POST',
+          url: `/api/runs/${uuid}/${action}`,
+          headers: { 'x-repository-id': 'owner/repo' },
+          payload: { runtime: 'bad-runtime' },
+        });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: 'invalid_runtime' });
+      }
+    });
   });
 });

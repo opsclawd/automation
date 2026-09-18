@@ -6,6 +6,7 @@ import type {
   WorkerId,
   RunStatus,
   ResumeDisposition,
+  PinnedRuntime,
 } from '@ai-sdlc/domain';
 import type { AbortResult } from './ports/run-abort-port.js';
 
@@ -24,6 +25,7 @@ export interface ResumeRunUseCase {
     workerId: WorkerId;
     attempt?: number;
     resumeDisposition?: ResumeDisposition;
+    pinnedRuntime?: PinnedRuntime;
   }): Promise<{ jobId: JobId; jobStatus: 'queued' }>;
 }
 
@@ -32,6 +34,7 @@ export interface RetryFailedPhaseUseCase {
     runId: RunId;
     workerId: WorkerId;
     resumeDisposition?: ResumeDisposition;
+    pinnedRuntime?: PinnedRuntime;
   }): Promise<unknown>;
 }
 

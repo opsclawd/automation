@@ -14,6 +14,7 @@ import type {
   Phase,
   RunStatus,
   ResumeDisposition,
+  PinnedRuntime,
 } from '@ai-sdlc/domain';
 import type {
   RunRepositoryPort,
@@ -51,6 +52,7 @@ export interface ResumeTransitionState {
   savedCompletedAt: Date | null;
   savedFailureReason: string | null;
   savedCurrentPhase: string | null;
+  savedPinnedRuntime?: PinnedRuntime | null;
   savedCompletedPhases: string[];
   savedSkippedPhases: string[];
   savedSteps: Step[];
@@ -149,6 +151,7 @@ export class ResumeRun implements ResumeRunUseCase {
     workerId: WorkerId;
     attempt?: number;
     resumeDisposition?: ResumeDisposition;
+    pinnedRuntime?: PinnedRuntime;
   }): Promise<ResumeTransitionState> {
     const run = this.deps.runRepository.findByUuid(input.runId);
     if (!run) throw new Error(`No run found for ${input.runId}`);
@@ -178,10 +181,13 @@ export class ResumeRun implements ResumeRunUseCase {
     const savedCompletedAt = run.completedAt;
     const savedFailureReason = run.failureReason;
     const savedCurrentPhase = run.currentPhase || null;
+    const savedPinnedRuntime = run.pinnedRuntime ?? null;
     const savedCompletedPhases = run.completedPhases;
     const savedSkippedPhases = run.skippedPhases;
 
-    const reactivated = resumeRun(run, input.fromPhase);
+    const reactivated = resumeRun(run, input.fromPhase, {
+      ...(input.pinnedRuntime !== undefined ? { pinnedRuntime: input.pinnedRuntime } : {}),
+    });
 
     const savedSteps: Step[] = [];
     let savedPhase: Phase | undefined;
@@ -203,6 +209,7 @@ export class ResumeRun implements ResumeRunUseCase {
         failureReason: null,
         completedPhases: reactivated.completedPhases,
         skippedPhases: reactivated.skippedPhases,
+        ...(input.pinnedRuntime !== undefined ? { pinnedRuntime: reactivated.pinnedRuntime } : {}),
       },
       run.status,
     );
@@ -236,6 +243,7 @@ export class ResumeRun implements ResumeRunUseCase {
           currentPhase: savedCurrentPhase ?? null,
           completedPhases: savedCompletedPhases,
           skippedPhases: savedSkippedPhases,
+          ...(input.pinnedRuntime !== undefined ? { pinnedRuntime: savedPinnedRuntime } : {}),
         },
         'running' as RunStatus,
       );
@@ -258,6 +266,7 @@ export class ResumeRun implements ResumeRunUseCase {
       savedCompletedAt: savedCompletedAt ?? null,
       savedFailureReason: savedFailureReason ?? null,
       savedCurrentPhase: savedCurrentPhase ?? null,
+      savedPinnedRuntime,
       savedCompletedPhases,
       savedSkippedPhases,
       savedSteps,
@@ -272,6 +281,7 @@ export class ResumeRun implements ResumeRunUseCase {
     workerId: WorkerId;
     attempt?: number;
     resumeDisposition?: ResumeDisposition;
+    pinnedRuntime?: PinnedRuntime;
   }): Promise<{ jobId: JobId; jobStatus: 'queued' }> {
     const now = this.deps.now ?? (() => new Date());
     const run = this.deps.runRepository.findByUuid(input.runId);
@@ -342,6 +352,9 @@ export class ResumeRun implements ResumeRunUseCase {
             currentPhase: transitionState.savedCurrentPhase ?? null,
             completedPhases: transitionState.savedCompletedPhases,
             skippedPhases: transitionState.savedSkippedPhases,
+            ...(transitionState.savedPinnedRuntime !== undefined
+              ? { pinnedRuntime: transitionState.savedPinnedRuntime }
+              : {}),
           },
           'running' as RunStatus,
         );
