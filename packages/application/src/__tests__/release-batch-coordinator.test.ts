@@ -257,6 +257,63 @@ describe('ReleaseBatchCoordinator', () => {
         runUuid: 'run-item-1',
       });
     });
+
+    it('automatically unblocks batch/item when the Run has progressed all the way to passed', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      // 1. Run fails and coordinator blocks batch
+      runRepository.atomicUpdateByUuid(
+        'run-item-1',
+        { status: 'failed', failureReason: 'temporary network failure' },
+        'running',
+      );
+      await coordinator.reconcile(batchId);
+      expect(releaseBatchRepository.findById(batchId)!.status).toBe('blocked');
+      expect(releaseBatchRepository.findById(batchId)!.items[0]?.status).toBe('blocked');
+
+      // 2. Run resumes and completes to passed directly (e.g. via direct resume / outside job)
+      runRepository.atomicUpdateByUuid(
+        'run-item-1',
+        { status: 'passed', failureReason: null },
+        'failed',
+      );
+
+      // 3. Coordinator reconciles
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('unblocked');
+      expect(result.batchStatus).toBe('building');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('building');
+      expect(saved.blockedReason).toBeUndefined();
+      expect(saved.items[0]?.status).toBe('active');
+      expect(saved.items[0]?.blockedReason).toBeUndefined();
+      expect(saved.items[0]?.runUuid).toBe('run-item-1');
+
+      // Unblocked event published
+      const unblockedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.unblocked',
+      );
+      expect(unblockedEvent).toBeDefined();
+      expect(unblockedEvent?.event.metadata).toMatchObject({
+        releaseBatchId: batchId,
+        position: 1,
+        issueNumber: 101,
+        runUuid: 'run-item-1',
+      });
+
+      // 4. Now downstream merge barrier can certify item merged without error
+      const certifyResult = await coordinator.certifyItemMerged({
+        batchId,
+        position: 1,
+        mergedCommitSha: 'sha-commit-101',
+        now: t2,
+      });
+      expect(certifyResult.actions).toContain('successor_admitted');
+      const certifiedSaved = releaseBatchRepository.findById(batchId)!;
+      expect(certifiedSaved.items[0]?.status).toBe('merged');
+      expect(certifiedSaved.items[1]?.status).toBe('active');
+    });
   });
 
   describe('Run passed gate vs merge certification', () => {

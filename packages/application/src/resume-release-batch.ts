@@ -112,7 +112,13 @@ export class ResumeReleaseBatch {
 
     const updatedBatch =
       this.deps.releaseBatchRepository.findById(batch.id) ?? reconcileResult.batch;
-    const updatedBlocker = classifyReleaseBatchBlocker(updatedBatch);
+    const updatedCurrentItem =
+      updatedBatch.items.find((i) => i.status === 'blocked' || i.status === 'active') ??
+      updatedBatch.items.find((i) => i.position === updatedBatch.currentPosition);
+    const updatedCurrentRun = updatedCurrentItem?.runUuid
+      ? this.deps.runRepository.findByUuid(updatedCurrentItem.runUuid)
+      : undefined;
+    const updatedBlocker = classifyReleaseBatchBlocker(updatedBatch, updatedCurrentRun);
 
     return {
       batchId: batch.id,

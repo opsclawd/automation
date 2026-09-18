@@ -135,4 +135,89 @@ describe('ResumeReleaseBatch', () => {
     expect(result.actions).toContain('source_drift_integrated');
     expect(result.actions).toContain('status_reconciled');
   });
+
+  it('resumes batch and reconciles without throwing RunOwnedBlockerError when item was blocked by run_failed but run reached passed', async () => {
+    const batchId = ReleaseBatchId('batch-run-passed');
+    const runUuid = 'uuid-passed-run';
+    const run = createRun({
+      uuid: runUuid,
+      displayId: 'issue-102-002',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 102,
+      startedAt: new Date(),
+    });
+    run.status = 'passed';
+    run.currentPhase = 'wait-merge';
+    runRepo.insertIfNoActive(run);
+
+    batchRepo.insert({
+      id: batchId,
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-0',
+      releaseBranch: 'release/batch-run-passed',
+      status: 'blocked',
+      blockedReason: 'run_failed',
+      currentPosition: 2,
+      createdAt: new Date(),
+      items: [
+        { position: 1, issueNumber: 101, status: 'merged' },
+        {
+          position: 2,
+          issueNumber: 102,
+          status: 'blocked',
+          blockedReason: 'run_failed',
+          runUuid,
+        },
+      ],
+    });
+
+    const result = await useCase.execute({ batchId });
+
+    expect(coordinator.reconcile).toHaveBeenCalledWith(batchId);
+    expect(result.actions).toContain('status_reconciled');
+    expect(result.blocker.owner).toBe('none');
+  });
+
+  it('resumes batch and reconciles without throwing RunOwnedBlockerError when item was blocked by run_failed but run is actively running', async () => {
+    const batchId = ReleaseBatchId('batch-run-running');
+    const runUuid = 'uuid-running-run';
+    const run = createRun({
+      uuid: runUuid,
+      displayId: 'issue-102-003',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 102,
+      startedAt: new Date(),
+    });
+    run.status = 'running';
+    runRepo.insertIfNoActive(run);
+
+    batchRepo.insert({
+      id: batchId,
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-0',
+      releaseBranch: 'release/batch-run-running',
+      status: 'blocked',
+      blockedReason: 'run_failed',
+      currentPosition: 2,
+      createdAt: new Date(),
+      items: [
+        { position: 1, issueNumber: 101, status: 'merged' },
+        {
+          position: 2,
+          issueNumber: 102,
+          status: 'blocked',
+          blockedReason: 'run_failed',
+          runUuid,
+        },
+      ],
+    });
+
+    const result = await useCase.execute({ batchId });
+
+    expect(coordinator.reconcile).toHaveBeenCalledWith(batchId);
+    expect(result.actions).toContain('status_reconciled');
+    expect(result.blocker.owner).toBe('none');
+  });
 });
