@@ -22,6 +22,7 @@ import type {
 } from './ports.js';
 import type { EventRepositoryFactory } from './start-issue-run.js';
 import type { ReleaseBatchCoordinator } from './release-batch-coordinator.js';
+import { assemblePromotionPr } from './assemble-promotion-pr.js';
 
 export interface ManualTestGateDeps {
   releaseBatchRepository: ReleaseBatchRepositoryPort;
@@ -347,17 +348,20 @@ export class PromoteReleaseBatch {
 
     let prNumber = batch.promotionPrNumber;
     if (!prNumber && this.deps.github) {
-      const issueNumbers = [...new Set(batch.items.map((i) => i.issueNumber))];
-      const closesLines = issueNumbers.map((num) => `Closes #${num}`).join('\n');
-      const body = closesLines
-        ? `Autonomous release batch promotion for ${batch.id}.\nApproved Candidate SHA: \`${batch.approvedCandidateSha}\`\n\n${closesLines}`
-        : `Autonomous release batch promotion for ${batch.id}.\nApproved Candidate SHA: \`${batch.approvedCandidateSha}\``;
+      const { title, body } = await assemblePromotionPr({
+        batch,
+        repoFullName: repo.fullName,
+        candidateSha: batch.approvedCandidateSha,
+        localBasePath: repo.localBasePath,
+        github: this.deps.github,
+        git: this.deps.git,
+      });
 
       const pr = await this.deps.github.createPullRequest({
         repoFullName: repo.fullName,
         headBranch: batch.releaseBranch,
         baseBranch: batch.sourceBranch,
-        title: `Release ${batch.id}: ${batch.items.map((i) => `#${i.issueNumber}`).join(', ')}`,
+        title,
         body,
       });
       prNumber = pr.number;
@@ -383,6 +387,39 @@ export class PromoteReleaseBatch {
       // without a human reviewing the promotion PR first is too risky to be
       // the default; require an explicit `autoMerge: true`.
       if (input.autoMerge === true) {
+        try {
+          await this.deps.github.requestAutoMerge(
+            repo.fullName,
+            prNumber,
+            input.mergeMethod ?? 'merge',
+          );
+        } catch (err) {
+          this.deps.logger?.warn?.(
+            `Failed to request auto-merge for promotion PR #${prNumber}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    } else if (prNumber) {
+      if (batch.status !== 'promoting') {
+        batch = attachPromotionPr(batch, prNumber);
+        this.deps.releaseBatchRepository.update(batch);
+      }
+
+      this.publishEvent(batch, {
+        type: 'release_batch.promoting',
+        level: 'info',
+        message: `release-batch ${batch.id} promoting with existing promotion PR #${prNumber} to ${batch.sourceBranch}`,
+        timestamp: now,
+        metadata: {
+          releaseBatchId: batch.id,
+          prNumber,
+          releaseBranch: batch.releaseBranch,
+          sourceBranch: batch.sourceBranch,
+          approvedCandidateSha: batch.approvedCandidateSha,
+        },
+      });
+
+      if (input.autoMerge === true && this.deps.github) {
         try {
           await this.deps.github.requestAutoMerge(
             repo.fullName,

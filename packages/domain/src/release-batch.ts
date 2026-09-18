@@ -691,6 +691,7 @@ export function transitionToAwaitingManualTest(
   batch: ReleaseBatch,
   candidateSha: string,
   candidateTreeSha?: string,
+  promotionPrNumber?: number,
 ): ReleaseBatch {
   assertNotTerminal(batch, 'transition to awaiting manual test');
 
@@ -712,6 +713,14 @@ export function transitionToAwaitingManualTest(
     );
   }
 
+  if (promotionPrNumber !== undefined) {
+    if (!Number.isInteger(promotionPrNumber) || promotionPrNumber <= 0) {
+      throw new ReleaseBatchStateError(
+        `promotionPrNumber must be a positive integer, got ${promotionPrNumber}`,
+      );
+    }
+  }
+
   const {
     blockedReason: _br,
     approvedCandidateSha: _ac,
@@ -724,11 +733,32 @@ export function transitionToAwaitingManualTest(
   void _pc;
   void _pp;
 
+  const resolvedPrNumber =
+    promotionPrNumber !== undefined ? promotionPrNumber : batch.promotionPrNumber;
+
   return {
     ...rest,
     status: 'awaiting_manual_test',
     candidateSha,
     ...(candidateTreeSha !== undefined ? { candidateTreeSha } : {}),
+    ...(resolvedPrNumber !== undefined ? { promotionPrNumber: resolvedPrNumber } : {}),
+  };
+}
+
+export function recordPromotionPr(batch: ReleaseBatch, prNumber: number): ReleaseBatch {
+  assertNotTerminal(batch, 'record promotion PR');
+
+  if (!Number.isInteger(prNumber) || prNumber <= 0) {
+    throw new ReleaseBatchStateError(`prNumber must be a positive integer, got ${prNumber}`);
+  }
+
+  if (batch.promotionPrNumber === prNumber) {
+    return batch;
+  }
+
+  return {
+    ...batch,
+    promotionPrNumber: prNumber,
   };
 }
 

@@ -1093,12 +1093,48 @@ describe('ReleaseBatchCoordinator', () => {
       }
 
       expect(lastResult?.actions).toContain('candidate_captured');
+      expect(lastResult?.actions).toContain('promotion_pr_created');
       expect(lastResult?.batchStatus).toBe('awaiting_manual_test');
 
       const saved = releaseBatchRepository.findById(batchId)!;
       expect(saved.status).toBe('awaiting_manual_test');
       expect(saved.candidateSha).toBe(finalSha);
       expect(saved.candidateTreeSha).toBe('tree-105');
+      expect(saved.promotionPrNumber).toBe(1);
+      expect(fakeGitHub.createdPrInputs).toHaveLength(1);
+      expect(fakeGitHub.createdPrInputs[0]?.headBranch).toBe('release/2026-09-11-batch-five');
+      expect(fakeGitHub.createdPrInputs[0]?.baseBranch).toBe('main');
+      expect(fakeGitHub.createdPrInputs[0]?.body).toContain('Closes #101');
+      expect(fakeGitHub.createdPrInputs[0]?.body).toContain('Closes #105');
+      expect(fakeGitHub.autoMergeRequests).toHaveLength(0); // auto-merge disabled by default
+    });
+
+    it('idempotently reuses existing promotionPrNumber on subsequent reconcile', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const finalSha = 'sha-commit-105';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', finalSha);
+      fakeGit.remoteRefs.set('origin/main', 'sha-root-000');
+      fakeGit.treeShaResults.set(finalSha, 'tree-105');
+      fakeGit.ancestorResults.set(`sha-root-000|${finalSha}`, true);
+
+      // Certify all 5 items merged
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t1,
+        });
+      }
+
+      expect(fakeGitHub.createdPrInputs).toHaveLength(1);
+
+      // Reconcile again while in awaiting_manual_test
+      const secondResult = await coordinator.reconcile(batchId);
+      expect(secondResult.batchStatus).toBe('awaiting_manual_test');
+      expect(secondResult.actions).not.toContain('promotion_pr_created');
+      // Still exactly 1 PR created, no duplicate
+      expect(fakeGitHub.createdPrInputs).toHaveLength(1);
     });
 
     it('blocks candidate capture with source_branch_advanced when source branch drifted ahead', async () => {

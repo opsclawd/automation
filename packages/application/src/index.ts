@@ -62,3 +62,4 @@ export * from './manual-test-gate.js';
 export * from './blocker-classification.js';
 export * from './get-release-batch-status.js';
 export * from './resume-release-batch.js';
+export * from './assemble-promotion-pr.js';

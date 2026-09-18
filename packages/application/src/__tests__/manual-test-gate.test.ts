@@ -417,9 +417,9 @@ describe('ManualTestGate use cases', () => {
       expect(createdPr?.headRefName).toBe('release/2026-09-11-cand');
       expect(github.autoMergeRequests).toHaveLength(1);
       expect(github.autoMergeRequests[0]?.prNumber).toBe(result.prNumber);
-      expect(github.createdPrInputs[0]?.body).toBe(
-        `Autonomous release batch promotion for ${batchId}.\nApproved Candidate SHA: \`${candidateSha}\`\n\nCloses #101`,
-      );
+      expect(github.createdPrInputs[0]?.body).toContain(`## Release Promotion: \`${batchId}\``);
+      expect(github.createdPrInputs[0]?.body).toContain(`\`${candidateSha}\``);
+      expect(github.createdPrInputs[0]?.body).toContain('Closes #101');
     });
 
     it('includes Closes #N for all batch items in promotion PR body', async () => {
@@ -477,9 +477,43 @@ describe('ManualTestGate use cases', () => {
       expect(result.batch.status).toBe('promoting');
       expect(github.createdPrInputs).toHaveLength(1);
       expect(github.createdPrInputs[0]?.title).toBe('Release batch-gate-multi: #201, #202, #203');
-      expect(github.createdPrInputs[0]?.body).toBe(
-        `Autonomous release batch promotion for batch-gate-multi.\nApproved Candidate SHA: \`sha-cand-multi\`\n\nCloses #201\nCloses #202\nCloses #203`,
-      );
+      expect(github.createdPrInputs[0]?.body).toContain('Closes #201');
+      expect(github.createdPrInputs[0]?.body).toContain('Closes #202');
+      expect(github.createdPrInputs[0]?.body).toContain('Closes #203');
+      expect(github.createdPrInputs[0]?.body).toContain('`sha-cand-multi`');
+    });
+
+    it('idempotently promotes using existing promotionPrNumber without creating duplicate PR', async () => {
+      const { batchId, candidateSha } = setupAwaitingBatch();
+      const batch = batchRepo.findById(batchId)!;
+      batchRepo.update({
+        ...batch,
+        status: 'approved',
+        approvedCandidateSha: candidateSha,
+        promotionPrNumber: 888,
+      });
+
+      git.ancestorResults.set(`${candidateSha}|${candidateSha}`, true);
+
+      const promoteUseCase = new PromoteReleaseBatch({
+        releaseBatchRepository: batchRepo,
+        repositoryPort: repoPort,
+        git,
+        github,
+        now,
+      });
+
+      const result = await promoteUseCase.execute({
+        batchId,
+        autoMerge: true,
+      });
+
+      expect(result.batch.status).toBe('promoting');
+      expect(result.prNumber).toBe(888);
+      // Ensure NO new PR was created via github.createPullRequest
+      expect(github.createdPrInputs).toHaveLength(0);
+      expect(github.autoMergeRequests).toHaveLength(1);
+      expect(github.autoMergeRequests[0]?.prNumber).toBe(888);
     });
 
     it('publishes its event under the most recent item run uuid, not the batch id (#1249)', async () => {
