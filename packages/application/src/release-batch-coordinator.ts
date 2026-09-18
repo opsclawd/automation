@@ -1084,6 +1084,31 @@ export class ReleaseBatchCoordinator {
       }
 
       case 'passed': {
+        // If item was blocked due to run state, unblock it now that run has passed
+        const isRunBlocker =
+          ['run_failed', 'run_blocked', 'run_cancelled', 'needs_human_review'].includes(
+            currentItem.blockedReason ?? '',
+          ) ||
+          (currentItem.blockedReason?.startsWith('run_') ?? false);
+        if (isRunBlocker) {
+          batch = unblockItem(batch, currentItem.position);
+          this.deps.releaseBatchRepository.update(batch);
+          actions.push('unblocked');
+
+          this.publishEvent(batch, {
+            type: 'release_batch.unblocked',
+            level: 'info',
+            message: `release-batch ${batch.id} unblocked: run ${runUuid} for issue #${currentItem.issueNumber} passed`,
+            timestamp: now,
+            metadata: {
+              releaseBatchId: batch.id,
+              position: currentItem.position,
+              issueNumber: currentItem.issueNumber,
+              runUuid,
+            },
+          });
+        }
+
         // Run passed alone CANNOT admit a successor without downstream merge certification.
         // Preserve current item.
         const prAttached = await this.tryAttachPrMetadata(batch, currentItem, run);

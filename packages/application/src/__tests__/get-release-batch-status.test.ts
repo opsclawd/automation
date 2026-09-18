@@ -183,6 +183,48 @@ describe('GetReleaseBatchStatus', () => {
     expect(status.blocker.action).toContain('runs resume --uuid');
   });
 
+  it('reports blocker owner as none when item has stale run_failed but run is passed', async () => {
+    const batchId = ReleaseBatchId('batch-003-passed');
+    const runUuid = 'uuid-run-passed';
+    const run = createRun({
+      uuid: runUuid,
+      displayId: 'issue-102-002',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 102,
+      startedAt: new Date(),
+    });
+    run.status = 'passed';
+    run.currentPhase = 'wait-merge';
+    runRepo.insertIfNoActive(run);
+
+    batchRepo.insert({
+      id: batchId,
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-main-0',
+      releaseBranch: 'release/batch-003-passed',
+      status: 'blocked',
+      blockedReason: 'run_failed',
+      currentPosition: 2,
+      createdAt: new Date(),
+      items: [
+        { position: 1, issueNumber: 101, status: 'merged' },
+        {
+          position: 2,
+          issueNumber: 102,
+          status: 'blocked',
+          blockedReason: 'run_failed',
+          runUuid,
+        },
+      ],
+    });
+
+    const status = await useCase.execute({ batchId });
+
+    expect(status.blocker.owner).toBe('none');
+    expect(status.formattedLines.some((l) => l.includes('Owner:          none'))).toBe(true);
+  });
+
   it('includes pinnedRuntime in items, currentItem, and formattedLines when run has pin', async () => {
     const batchId = ReleaseBatchId('batch-pin');
     const runUuid = 'uuid-run-pin';

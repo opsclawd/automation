@@ -39,14 +39,23 @@ export function classifyReleaseBatchBlocker(
     batchReason.startsWith('run_') ||
     itemReason.startsWith('run_');
 
-  const isRunTerminal =
-    currentRun &&
+  const isRunBlockerStatus =
+    currentRun != null &&
     (currentRun.status === 'failed' ||
       currentRun.status === 'blocked' ||
       currentRun.status === 'cancelled' ||
       currentRun.status === 'needs_human_review');
 
-  if (isRunReason || isRunTerminal) {
+  const isRunResolved =
+    currentRun != null &&
+    (currentRun.status === 'passed' ||
+      currentRun.status === 'running' ||
+      currentRun.status === 'queued' ||
+      currentRun.status === 'waiting');
+
+  // Run owns the blocker if currentRun is explicitly in a blocker status,
+  // OR if currentRun is absent/unknown and the stored reason is a run blocker.
+  if (isRunBlockerStatus || (!currentRun && isRunReason)) {
     const runUuid = currentItem?.runUuid ?? currentRun?.uuid;
     const issueNumber = currentItem?.issueNumber ?? currentRun?.issueNumber;
     const reason =
@@ -71,45 +80,54 @@ export function classifyReleaseBatchBlocker(
     };
   }
 
-  // 2. If neither batch nor item is blocked, no blocker exists
-  if (batch.status !== 'blocked' && currentItem?.status !== 'blocked') {
+  // If the run has resolved, any historical run blocker reasons on the batch or item are stale.
+  const isStaleRunReason = (r: string) => RUN_BLOCKER_REASONS.has(r) || r.startsWith('run_');
+  const activeBatchReason = isRunResolved && isStaleRunReason(batchReason) ? '' : batchReason;
+  const activeItemReason = isRunResolved && isStaleRunReason(itemReason) ? '' : itemReason;
+  const activeEffectiveReason = activeBatchReason || activeItemReason;
+
+  // 2. If neither batch nor item is blocked, or if the only block was a stale run blocker that has now resolved
+  if (
+    (batch.status !== 'blocked' && currentItem?.status !== 'blocked') ||
+    (isRunResolved && !activeEffectiveReason)
+  ) {
     return { owner: 'none' };
   }
 
   // 3. Environment-owned blockers
   if (
-    effectiveReason === 'environment_unhealthy' ||
-    effectiveReason.startsWith('Disk free space') ||
-    effectiveReason.startsWith('Available memory') ||
-    effectiveReason.toLowerCase().includes('maintenance')
+    activeEffectiveReason === 'environment_unhealthy' ||
+    activeEffectiveReason.startsWith('Disk free space') ||
+    activeEffectiveReason.startsWith('Available memory') ||
+    activeEffectiveReason.toLowerCase().includes('maintenance')
   ) {
     return {
       owner: 'environment',
-      reason: effectiveReason,
+      reason: activeEffectiveReason,
       ...(currentItem?.position !== undefined ? { position: currentItem.position } : {}),
       ...(currentItem?.issueNumber !== undefined ? { issueNumber: currentItem.issueNumber } : {}),
-      action: `Environment resource threshold breached (${effectiveReason}). Free up disk/memory resources and resume via: releases resume --id ${batch.id}`,
+      action: `Environment resource threshold breached (${activeEffectiveReason}). Free up disk/memory resources and resume via: releases resume --id ${batch.id}`,
     };
   }
 
   // 4. Release-owned blockers
   if (
-    effectiveReason === 'source_branch_advanced' ||
-    effectiveReason === 'release_branch_drift' ||
-    effectiveReason === 'promotion_tree_mismatch'
+    activeEffectiveReason === 'source_branch_advanced' ||
+    activeEffectiveReason === 'release_branch_drift' ||
+    activeEffectiveReason === 'promotion_tree_mismatch'
   ) {
-    let action = `Release branch or source branch drift detected (${effectiveReason}).`;
-    if (effectiveReason === 'source_branch_advanced') {
+    let action = `Release branch or source branch drift detected (${activeEffectiveReason}).`;
+    if (activeEffectiveReason === 'source_branch_advanced') {
       action = `Source branch ${batch.sourceBranch} advanced ahead of release branch. Integrate source changes via: releases integrate-source --id ${batch.id} (or releases resume --id ${batch.id})`;
-    } else if (effectiveReason === 'release_branch_drift') {
+    } else if (activeEffectiveReason === 'release_branch_drift') {
       action = `Release branch ${batch.releaseBranch} changed after candidate capture. Retest required via: releases resume --id ${batch.id}`;
-    } else if (effectiveReason === 'promotion_tree_mismatch') {
+    } else if (activeEffectiveReason === 'promotion_tree_mismatch') {
       action = `Promoted source branch content does not match approved candidate tree. Retest required.`;
     }
 
     return {
       owner: 'release',
-      reason: effectiveReason,
+      reason: activeEffectiveReason,
       ...(currentItem?.position !== undefined ? { position: currentItem.position } : {}),
       ...(currentItem?.issueNumber !== undefined ? { issueNumber: currentItem.issueNumber } : {}),
       action,
@@ -118,28 +136,28 @@ export function classifyReleaseBatchBlocker(
 
   // 5. GitHub-owned blockers
   if (
-    effectiveReason.startsWith('ci_failed') ||
-    effectiveReason.startsWith('promotion_ci_failed') ||
-    effectiveReason.startsWith('auto_merge_unavailable') ||
-    effectiveReason.startsWith('pr_closed_unmerged') ||
-    effectiveReason.startsWith('pr_base_mismatch')
+    activeEffectiveReason.startsWith('ci_failed') ||
+    activeEffectiveReason.startsWith('promotion_ci_failed') ||
+    activeEffectiveReason.startsWith('auto_merge_unavailable') ||
+    activeEffectiveReason.startsWith('pr_closed_unmerged') ||
+    activeEffectiveReason.startsWith('pr_base_mismatch')
   ) {
-    let action = `GitHub check or configuration blocker (${effectiveReason}).`;
-    if (effectiveReason.startsWith('ci_failed')) {
+    let action = `GitHub check or configuration blocker (${activeEffectiveReason}).`;
+    if (activeEffectiveReason.startsWith('ci_failed')) {
       action = `CI checks failed on GitHub PR. Resolve failing checks on GitHub, then resume via: releases resume --id ${batch.id}`;
-    } else if (effectiveReason.startsWith('promotion_ci_failed')) {
+    } else if (activeEffectiveReason.startsWith('promotion_ci_failed')) {
       action = `CI checks failed on promotion PR #${batch.promotionPrNumber ?? ''}. Fix checks on GitHub, then resume via: releases resume --id ${batch.id}`;
-    } else if (effectiveReason.startsWith('auto_merge_unavailable')) {
+    } else if (activeEffectiveReason.startsWith('auto_merge_unavailable')) {
       action = `Auto-merge is disabled or unavailable on GitHub PR. Enable auto-merge on GitHub, then resume via: releases resume --id ${batch.id}`;
-    } else if (effectiveReason.startsWith('pr_closed_unmerged')) {
+    } else if (activeEffectiveReason.startsWith('pr_closed_unmerged')) {
       action = `PR was closed without merge. Re-open or fix on GitHub, then resume via: releases resume --id ${batch.id}`;
-    } else if (effectiveReason.startsWith('pr_base_mismatch')) {
+    } else if (activeEffectiveReason.startsWith('pr_base_mismatch')) {
       action = `PR base branch does not target ${batch.releaseBranch}. Retarget PR on GitHub, then resume via: releases resume --id ${batch.id}`;
     }
 
     return {
       owner: 'github',
-      reason: effectiveReason,
+      reason: activeEffectiveReason,
       ...(currentItem?.position !== undefined ? { position: currentItem.position } : {}),
       ...(currentItem?.issueNumber !== undefined ? { issueNumber: currentItem.issueNumber } : {}),
       action,
@@ -149,9 +167,9 @@ export function classifyReleaseBatchBlocker(
   // 6. Generic release-level blocker fallback
   return {
     owner: 'release',
-    reason: effectiveReason || 'unknown_blocker',
+    reason: activeEffectiveReason || 'unknown_blocker',
     ...(currentItem?.position !== undefined ? { position: currentItem.position } : {}),
     ...(currentItem?.issueNumber !== undefined ? { issueNumber: currentItem.issueNumber } : {}),
-    action: `Release batch is blocked (${effectiveReason || 'unknown'}). Reconcile via: releases resume --id ${batch.id}`,
+    action: `Release batch is blocked (${activeEffectiveReason || 'unknown'}). Reconcile via: releases resume --id ${batch.id}`,
   };
 }

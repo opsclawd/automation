@@ -158,6 +158,10 @@ export class GetReleaseBatchStatus {
       batch.items.find((i) => i.status === 'blocked' || i.status === 'active') ??
       batch.items.find((i) => i.position === batch.currentPosition);
 
+    if (currentItemRecord?.runUuid) {
+      currentItemRun = this.deps.runRepository.findByUuid(currentItemRecord.runUuid);
+    }
+
     let currentItemView: ReleaseBatchStatusView['currentItem'];
     if (currentItemRecord) {
       let prMergeState: string | undefined;
