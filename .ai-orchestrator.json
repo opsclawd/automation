@@ -1,17 +1,7 @@
 {
   "validation": {
-    "commands": [
-      "pnpm build",
-      "pnpm lint",
-      "pnpm typecheck",
-      "pnpm test",
-      "pnpm test:bash",
-      "pnpm boundaries"
-    ],
-    "tiers": [
-      ["pnpm build"],
-      ["pnpm lint", "pnpm typecheck", "pnpm test", "pnpm test:bash", "pnpm boundaries"]
-    ],
+    "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test", "pnpm boundaries"],
+    "tiers": [["pnpm build"], ["pnpm lint", "pnpm typecheck", "pnpm test", "pnpm boundaries"]],
     "timeout": 600,
     "forbiddenArtifactPaths": ["certification/"],
     "narrowByChangedFiles": true

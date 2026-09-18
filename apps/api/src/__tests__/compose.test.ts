@@ -2,7 +2,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   statSync,
   writeFileSync,
   chmodSync,
@@ -14,7 +13,7 @@ import * as childProcess from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { composeRoot, captureExecOutput, type ComposeOptions } from '../compose.js';
 import { openDatabase, applyMigrations, GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
-import { RunId, RepositoryId, PhaseName, Step } from '@ai-sdlc/domain';
+import { createRun, RunId, RepositoryId, PhaseName, Step } from '@ai-sdlc/domain';
 import {
   RunExecutor,
   ReadIssueHandler,
@@ -78,12 +77,10 @@ const FAKE_METADATA_RESOLVER: ComposeOptions['metadataResolver'] = {
 };
 
 describe('composeRoot', () => {
-  it('wires dependencies correctly and can execute a run against a fake script', async () => {
+  it('wires dependencies correctly', async () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = fakeScript(0);
     const container = composeRoot({
       repoRoot: root,
-      scriptPath,
       metadataResolver: FAKE_METADATA_RESOLVER,
     });
 
@@ -95,20 +92,20 @@ describe('composeRoot', () => {
     expect(container.releaseBatchRepository).toBeDefined();
     expect(container.startReleaseBatch).toBeDefined();
     expect(container.releaseBatchCoordinator).toBeDefined();
-    expect(container.startIssueRun).toBeDefined();
     expect(container.runsDir).toBe(path.join(root, '.ai-runs'));
     expect(container.buildPhaseHandlerContext).toBeDefined();
+    expect(container.jobQueue).toBeDefined();
 
-    const out = await container.startIssueRun.execute({
-      issueNumber: 1,
+    const run = createRun({
+      uuid: '11111111-1111-1111-1111-111111111111',
+      displayId: '1-abcdef01',
       repoId: RepositoryId('owner/repo'),
+      issueNumber: 1,
+      startedAt: new Date(),
     });
-    expect(out.status).toBe('passed');
-    expect(out.exitCode).toBe(0);
-    expect(out.uuid).toBeTruthy();
-
-    const row = container.runRepository.findByUuid(out.uuid);
-    expect(row?.status).toBe('passed');
+    container.runRepository.insertIfNoActive(run);
+    const row = container.runRepository.findByUuid(run.uuid);
+    expect(row?.uuid).toBe(run.uuid);
   });
 
   it('throws when metadata resolution fails for an explicit targetRepoRoot', () => {
@@ -224,75 +221,6 @@ describe('composeRoot', () => {
     expect(typeof container.prReviewRepository.listComments).toBe('function');
   });
 
-  it('passes optional deps through to StartIssueRun', async () => {
-    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const dir = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = path.join(dir, 'env.sh');
-    writeFileSync(
-      scriptPath,
-      `#!/usr/bin/env bash\necho "BRANCH=$AI_BASE_BRANCH MODEL=$AI_AGENT_MODEL RUNTIME=$AI_RUNTIME"\nexit 0\n`,
-    );
-    chmodSync(scriptPath, 0o755);
-
-    const container = composeRoot({
-      metadataResolver: FAKE_METADATA_RESOLVER,
-      repoRoot: root,
-      scriptPath,
-      baseBranch: 'develop',
-      model: 'gpt-4',
-      agentCli: 'codex',
-    });
-
-    const out = await container.startIssueRun.execute({
-      issueNumber: 2,
-      repoId: RepositoryId('owner/repo'),
-    });
-    expect(out.status).toBe('passed');
-  });
-
-  it('classifies failure from phase.failed event end-to-end', async () => {
-    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const dir = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = path.join(dir, 'fail-with-event.sh');
-    writeFileSync(
-      scriptPath,
-      `#!/usr/bin/env bash
-mkdir -p "$(dirname "$AI_RUN_EVENTS_FILE")"
-echo '{"runId":"'"$AI_RUN_DISPLAY_ID"'","phase":"validate","level":"error","type":"phase.failed","message":"pnpm build failed","timestamp":"2026-05-18T10:00:00.000Z","metadata":{"command":"pnpm build","exitCode":2}}' >> "$AI_RUN_EVENTS_FILE"
-sleep 0.3
-exit 1
-`,
-    );
-    chmodSync(scriptPath, 0o755);
-
-    const container = composeRoot({
-      metadataResolver: FAKE_METADATA_RESOLVER,
-      repoRoot: root,
-      scriptPath,
-    });
-
-    const out = await container.startIssueRun.execute({
-      issueNumber: 42,
-      repoId: RepositoryId('owner/repo'),
-    });
-    expect(out.status).toBe('failed');
-    expect(out.exitCode).toBe(1);
-
-    const failure = container.failureRepository.findLatestByRun(out.uuid);
-    expect(failure).toBeDefined();
-    expect(failure!.kind).toBe('validation_failed');
-    expect(failure!.phase).toBe('validate');
-    expect(failure!.exitCode).toBe(2);
-    expect(failure!.message).toMatch(/pnpm build/);
-
-    const runDir = path.join(container.runsDir, out.displayId);
-    if (existsSync(path.join(runDir, 'failure.json'))) {
-      const failureJson = JSON.parse(readFileSync(path.join(runDir, 'failure.json'), 'utf-8'));
-      expect(failureJson.kind).toBe('validation_failed');
-      expect(failureJson.phase).toBe('validate');
-    }
-  });
-
   it('sweeps orphaned runs on compose and restores them to a non-terminal state', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
@@ -340,61 +268,17 @@ exit 1
     }
   });
 
-  it('sets TMPDIR/SQLITE_TMPDIR in child env to per-run tmp dir', async () => {
-    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const dir = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = path.join(dir, 'check-env.sh');
-    writeFileSync(
-      scriptPath,
-      `#!/usr/bin/env bash\necho "TMPDIR=$TMPDIR"\necho "SQLITE_TMPDIR=$SQLITE_TMPDIR"\nexit 0\n`,
-    );
-    chmodSync(scriptPath, 0o755);
-    const origTmpdir = process.env.TMPDIR;
-    delete process.env.TMPDIR;
-    try {
-      const container = composeRoot({
-        metadataResolver: FAKE_METADATA_RESOLVER,
-        repoRoot: root,
-        scriptPath,
-      });
-      const out = await container.startIssueRun.execute({
-        issueNumber: 1,
-        repoId: RepositoryId('owner/repo'),
-      });
-      const runDir = path.join(container.runsDir, out.displayId);
-      const combined = readFileSync(path.join(runDir, 'combined.log'), 'utf8');
-      expect(combined).toContain('TMPDIR=');
-      expect(combined).toContain('SQLITE_TMPDIR=');
-      expect(combined).toContain(out.uuid);
-    } finally {
-      if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
-      else delete process.env.TMPDIR;
-    }
-  });
-
-  it('respects operator-set TMPDIR and nests per-run tmp dirs under it', async () => {
+  it('respects operator-set TMPDIR and sets baseTmpDir under it', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const customTmp = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-custom-tmp-')));
-    const dir = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = path.join(dir, 'check-tmpdir.sh');
-    writeFileSync(scriptPath, `#!/usr/bin/env bash\necho "TMPDIR=$TMPDIR"\nexit 0\n`);
-    chmodSync(scriptPath, 0o755);
     const origTmpdir = process.env.TMPDIR;
     process.env.TMPDIR = customTmp;
     try {
       const container = composeRoot({
         metadataResolver: FAKE_METADATA_RESOLVER,
         repoRoot: root,
-        scriptPath,
       });
       expect(container.baseTmpDir).toBe(path.join(customTmp, '.ai-tmp'));
-      const out = await container.startIssueRun.execute({
-        issueNumber: 2,
-        repoId: RepositoryId('owner/repo'),
-      });
-      const runDir = path.join(container.runsDir, out.displayId);
-      const combined = readFileSync(path.join(runDir, 'combined.log'), 'utf8');
-      expect(combined).toContain(`TMPDIR=${path.join(customTmp, '.ai-tmp', out.uuid)}`);
     } finally {
       if (origTmpdir === undefined) {
         delete process.env.TMPDIR;
@@ -524,29 +408,6 @@ exit 1
       expect(existsSync(unknownTmpDir)).toBe(true);
       composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
       expect(existsSync(unknownTmpDir)).toBe(true);
-    } finally {
-      if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
-      else delete process.env.TMPDIR;
-    }
-  });
-
-  it('removes per-run tmp dir after a passing run completes', async () => {
-    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = fakeScript(0);
-    const origTmpdir = process.env.TMPDIR;
-    delete process.env.TMPDIR;
-    try {
-      const container = composeRoot({
-        metadataResolver: FAKE_METADATA_RESOLVER,
-        repoRoot: root,
-        scriptPath,
-      });
-      const out = await container.startIssueRun.execute({
-        issueNumber: 3,
-        repoId: RepositoryId('owner/repo'),
-      });
-      const tmpRunDir = path.join(container.baseTmpDir, out.uuid);
-      expect(existsSync(tmpRunDir)).toBe(false);
     } finally {
       if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
       else delete process.env.TMPDIR;
@@ -694,35 +555,10 @@ exit 1
     expect(handler).toBeInstanceOf(ReadIssueHandler);
   });
 
-  it('removes per-run tmp dir after a failed run completes', async () => {
-    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = fakeScript(1);
-    const origTmpdir = process.env.TMPDIR;
-    delete process.env.TMPDIR;
-    try {
-      const container = composeRoot({
-        metadataResolver: FAKE_METADATA_RESOLVER,
-        repoRoot: root,
-        scriptPath,
-      });
-      const out = await container.startIssueRun.execute({
-        issueNumber: 4,
-        repoId: RepositoryId('owner/repo'),
-      });
-      const tmpRunDir = path.join(container.baseTmpDir, out.uuid);
-      expect(out.status).toBe('failed');
-      expect(existsSync(tmpRunDir)).toBe(false);
-    } finally {
-      if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
-      else delete process.env.TMPDIR;
-    }
-  });
-
   it('exposes a buildPrReviewPoller factory', () => {
     const c = composeRoot({
       metadataResolver: FAKE_METADATA_RESOLVER,
       repoRoot: trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-'))),
-      scriptPath: 'scripts/legacy/ai-run-issue-v2',
       dbPath: ':memory:',
     });
     expect(typeof c.buildPrReviewPoller).toBe('function');

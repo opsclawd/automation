@@ -23,8 +23,6 @@ describe('CLI run --base-branch wiring (TS executor)', () => {
         'run',
         '--issue',
         '42',
-        '--executor',
-        'ts',
         '--base-branch',
         'develop',
         '--help',

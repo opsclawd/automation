@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Container } from '../compose.js';
 import { serializeRun, serializeFailure, serializeJob } from '../serializers.js';
@@ -12,6 +13,11 @@ import {
   RepositoryValidationError,
   RunRepositoryMismatchError,
   RunRepositoryMissingError,
+  createRun,
+  createJob,
+  JobId,
+  IssueNumber,
+  type Repository,
   type ResumeDisposition,
   type ExecutionPolicy,
   type PinnedRuntime,
@@ -22,7 +28,7 @@ import {
   UnknownPhaseError,
   ResumeDispositionRequiredError,
 } from '@ai-sdlc/application';
-import { EXECUTION_POLICIES } from '@ai-sdlc/shared';
+import { EXECUTION_POLICIES, newRunId } from '@ai-sdlc/shared';
 import { resolveRepoContext, canonicalizeRepoContext, guardRead } from './_lib.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -159,24 +165,94 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         throw err;
       }
     }
-    try {
-      const run = await c.startIssueRun.execute({
-        issueNumber,
-        repoId: repositoryId,
-        baseBranch: typeof body.baseBranch === 'string' ? body.baseBranch : undefined,
-        executionPolicy: (body.executionPolicy as ExecutionPolicy | undefined) ?? c.executionPolicy,
-        pinnedRuntime: runtimeVal as PinnedRuntime | undefined,
-      });
-      return reply.code(201).send({ run });
-    } catch (err) {
-      if (err instanceof RepositoryNotApprovedError) {
-        return reply.code(409).send({ error: 'repository_not_approved', message: err.message });
+
+    if (!repositoryId) {
+      const enabled = c.listRepositories.execute({ includeDisabled: false });
+      if (enabled.length === 1 && enabled[0]) {
+        repositoryId = enabled[0].id;
+      } else if (enabled.length === 0 && c.repoFullName) {
+        repositoryId = RepositoryId(c.repoFullName);
+      } else {
+        return reply.code(400).send({
+          error: 'missing_repository_id',
+          message: `repoId is required when more than one repository is enabled (found ${enabled.length})`,
+        });
       }
-      if (err instanceof RepositoryValidationError) {
-        return reply.code(400).send({ error: 'missing_repository_id', message: err.message });
+    }
+
+    let repo: Repository;
+    try {
+      repo = c.inspectRepository.executeById(repositoryId);
+    } catch (err) {
+      if (err instanceof RepositoryNotFoundError) {
+        return reply.code(404).send({ error: 'repository_not_found' });
       }
       throw err;
     }
+
+    if (!repo.enabled) {
+      return reply.code(409).send({
+        error: 'repository_not_approved',
+        message: `Repository '${repo.fullName}' is disabled`,
+      });
+    }
+    if (repo.healthStatus === 'degraded' || repo.healthStatus === 'unreachable') {
+      return reply.code(409).send({
+        error: 'repository_not_approved',
+        message: `Repository '${repo.fullName}' is degraded or unreachable`,
+      });
+    }
+
+    const startedAt = new Date();
+    const ids = newRunId({ issueNumber, now: startedAt });
+    const executionPolicy =
+      (body.executionPolicy as ExecutionPolicy | undefined) ?? c.executionPolicy ?? 'standard';
+    const effectiveBaseBranch =
+      typeof body.baseBranch === 'string' ? body.baseBranch : repo.defaultBranch;
+
+    const run = createRun({
+      uuid: ids.uuid,
+      displayId: ids.displayId,
+      repoId: repositoryId,
+      issueNumber,
+      startedAt,
+      executionPolicy,
+      ...(effectiveBaseBranch ? { baseBranch: effectiveBaseBranch } : {}),
+      ...(runtimeVal ? { pinnedRuntime: runtimeVal as PinnedRuntime } : {}),
+    });
+
+    try {
+      c.runRepository.insertIfNoActive(run);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(409).send({ error: 'active_run_conflict', message });
+    }
+
+    c.eventBus.publish(run.uuid, {
+      runId: run.displayId,
+      level: 'info',
+      type: 'run.config',
+      message: `run.config: executor=ts executionPolicy=${run.executionPolicy ?? 'standard'} baseBranch=${run.baseBranch || '(default)'}`,
+      timestamp: startedAt.toISOString(),
+      metadata: {
+        executor: 'ts',
+        executionPolicy: run.executionPolicy ?? 'standard',
+        baseBranch: run.baseBranch || null,
+      },
+    });
+
+    const jobId = JobId(randomUUID());
+    const job = createJob({
+      id: jobId,
+      runId: RunId(run.uuid),
+      repoId: repositoryId,
+      issueNumber: IssueNumber(issueNumber),
+      priority: 0,
+      createdAt: startedAt,
+    });
+    c.jobQueue.enqueue({ job });
+
+    return reply.code(201).send({ run: serializeRun(run) });
   });
 
   app.post<{

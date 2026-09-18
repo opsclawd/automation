@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildProgram } from '../cli.js';
+import { WorkerScheduler } from '../worker-scheduler.js';
 import { ReleaseBatchId, JobId } from '@ai-sdlc/domain';
 import { RunExecutor } from '@ai-sdlc/application';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
@@ -16,15 +17,6 @@ describe('CLI runtime pin admission and status', () => {
   let stderrSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
   const tempDirs: string[] = [];
-
-  function fakeScript(exitCode = 0): string {
-    const dir = mkdtempSync(join(tmpdir(), 'ai-orch-pin-cli-'));
-    tempDirs.push(dir);
-    const path = join(dir, 'run.sh');
-    writeFileSync(path, `#!/usr/bin/env bash\nexit ${exitCode}\n`);
-    chmodSync(path, 0o755);
-    return path;
-  }
 
   function createTestDb(): string {
     const dir = mkdtempSync(join(tmpdir(), 'ai-orch-pin-db-'));
@@ -87,9 +79,15 @@ describe('CLI runtime pin admission and status', () => {
   });
 
   describe('orchestrator run --runtime', () => {
-    it('passes valid runtime pin to StartIssueRun and logs pin', async () => {
-      const scriptPath = fakeScript(0);
+    it('passes valid runtime pin to run and logs pin', async () => {
       const dbPath = createTestDb();
+      const schedulerSpy = vi
+        .spyOn(WorkerScheduler.prototype, 'runUntilComplete')
+        .mockImplementation(async () => {
+          const db = openDatabase(dbPath);
+          db.prepare(`UPDATE runs SET status = 'passed' WHERE issue_number = 42`).run();
+          db.close();
+        });
 
       const program = buildProgram({
         isCliTestSuite: true,
@@ -105,25 +103,21 @@ describe('CLI runtime pin admission and status', () => {
         'run',
         '--issue',
         '42',
-        '--executor',
-        'bash',
-        '--script',
-        scriptPath,
         '--runtime',
         'claude-code',
       ]);
 
+      schedulerSpy.mockRestore();
       expect(exitSpy).toHaveBeenCalledWith(0);
       const parsed = JSON.parse(stdoutOutput.join(''));
-      expect(parsed.pinnedRuntime).toBe('claude-code');
-      expect(parsed.status).toBe('passed');
+      expect(parsed.run.pinnedRuntime).toBe('claude-code');
+      expect(parsed.run.status).toBe('passed');
 
       const allStderr = stderrOutput.join('\n');
       expect(allStderr).toContain('Runtime pin: claude-code');
     });
 
     it('rejects invalid runtime pin fast with exit code 1', async () => {
-      const scriptPath = fakeScript(0);
       const program = buildProgram({
         isCliTestSuite: true,
         composeOverrides: { repoFullName: 'owner/repo' },
@@ -135,10 +129,6 @@ describe('CLI runtime pin admission and status', () => {
         'run',
         '--issue',
         '42',
-        '--executor',
-        'bash',
-        '--script',
-        scriptPath,
         '--runtime',
         'invalid-runtime',
       ]);

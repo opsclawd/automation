@@ -34,11 +34,7 @@ import {
   AgentUsageRepository,
   SqliteStepRepository,
   ReleaseBatchRepository,
-  RunDirectory,
-  runBashScript,
-  classifyExit,
   InMemoryEventBus,
-  EventTailer,
   ProcessValidationAdapter,
   GhCliAdapter,
   GitWorktreeAdapter,
@@ -61,7 +57,6 @@ import {
 } from '@ai-sdlc/infrastructure';
 import {
   LoadRepositoryForRun,
-  StartIssueRun,
   StartReleaseBatch,
   ReleaseBatchCoordinator,
   type ReconcileBatchResult,
@@ -114,14 +109,10 @@ import {
   type WorkerLoopDeps,
   type WorkerRegistryPort,
   type ArtifactStore,
-  type StartIssueRunDeps,
-  type ClassifyExitFn,
-  type EventTailerFactory,
   type EventRepositoryFactory,
   type EventBusPort,
   type RunRecord,
   type RunRepositoryPort,
-  type TmpDirectoryFactory,
   type RepositoryPort,
   type JobQueuePort,
   type StepRepositoryPort,
@@ -153,7 +144,6 @@ import {
   buildTargetedTestCommand,
   type ValidationRunCommandItem,
   CONTRACT_VIOLATION_CODES,
-  type ResolveRefShaFn,
   type ArtifactGuardPort,
   type StepAgentOutcome,
   type ValidateFixStepContext,
@@ -347,40 +337,6 @@ async function readTail(filePath: string, maxBytes: number = 65536): Promise<str
     return '';
   }
 }
-
-const classifyExitAdapter = (
-  agentInvocationRepository: AgentInvocationRepository,
-): ClassifyExitFn => {
-  return (input) => {
-    let enriched = input;
-    try {
-      const invocations = agentInvocationRepository.listByRun(RunId(input.runUuid));
-      const latest = invocations[invocations.length - 1];
-      if (latest && latest.outcome && latest.outcome !== 'success') {
-        let stderrContent: string | undefined;
-        if (latest.stderrPath) {
-          try {
-            stderrContent = readFileSync(latest.stderrPath, 'utf-8');
-          } catch {}
-        }
-        enriched = {
-          ...input,
-          invocation: {
-            outcome: latest.outcome,
-            phaseId: latest.phaseId,
-            ...(stderrContent !== undefined ? { stderrContent } : {}),
-            ...(latest.contractViolations !== undefined
-              ? { contractViolations: latest.contractViolations }
-              : {}),
-          },
-        };
-      }
-    } catch (err) {
-      console.error(`Failed to enrich classifyExit with invocation data:`, err);
-    }
-    return classifyExit(enriched);
-  };
-};
 
 export interface ExtractTaskTextResult {
   ok: boolean;
@@ -703,7 +659,6 @@ export interface Container {
   repoFullName: string;
   targetRepoRoot: string;
   runValidation: RunValidation;
-  startIssueRun: StartIssueRun;
   startReleaseBatch: StartReleaseBatch;
   releaseBatchCoordinator: ReleaseBatchCoordinator;
   approveReleaseBatchCandidate: ApproveReleaseBatchCandidate;
@@ -773,7 +728,7 @@ export interface ComposeOptions {
    * always come from `repoRoot` regardless of this value.
    */
   targetRepoRoot?: string;
-  scriptPath: string;
+  scriptPath?: string;
   pinnedRuntime?: PinnedRuntime;
   baseBranch?: string;
   model?: string;
@@ -1869,50 +1824,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     idFactory: () => randomUUID(),
     now: () => new Date(),
   });
-  const createEventTailer: EventTailerFactory = (input) => new EventTailer(input);
-
-  const tmpDirectoryFactory: TmpDirectoryFactory = ({ baseTmpDir: base, runId }) => {
-    const tmpDir = join(base, runId);
-    mkdirSync(tmpDir, { recursive: true });
-    return {
-      tmpDir,
-      remove() {
-        rmSync(tmpDir, { recursive: true, force: true });
-      },
-    };
-  };
-
   const loadRepositoryForRun = new LoadRepositoryForRun({ repositoryPort: registryBackedRepo });
 
-  const deps: StartIssueRunDeps = {
-    runRepository,
-    failureRepository,
-    classifyExit: classifyExitAdapter(agentInvocationRepository),
-    runDirectoryFactory: ({ rootDir, run }) => RunDirectory.create({ rootDir, run }),
-    runBashScript,
-    runsDir,
-    scriptPath: opts.scriptPath,
-    eventRepository: eventRepositoryFactory,
-    eventBus,
-    createEventTailer,
-    baseTmpDir,
-    tmpDirectoryFactory,
-    repositoryPort: registryBackedRepo,
-    runNotification,
-    ...(opts.pinnedRuntime ? { pinnedRuntime: opts.pinnedRuntime } : {}),
-  };
-  if (opts.baseBranch !== undefined) deps.baseBranch = opts.baseBranch;
-  if (opts.model !== undefined) deps.model = opts.model;
-  if (opts.agentCli !== undefined) deps.agentCli = opts.agentCli;
-  if (opts.tee !== undefined) deps.tee = opts.tee;
-  deps.resolveRefSha = ((cwd: string, ref: string) => {
-    try {
-      return execFileSync('git', ['rev-parse', ref], { cwd }).toString().trim() || undefined;
-    } catch {
-      return undefined;
-    }
-  }) satisfies ResolveRefShaFn;
-  const startIssueRun = new StartIssueRun(deps);
   const checkMergeReadiness = new CheckMergeReadiness({ prReviewRepo: prReviewRepository });
 
   const abortRegistry = new AbortRegistry();
@@ -3958,7 +3871,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     repoFullName: resolvedRepoFullName ?? '',
     targetRepoRoot: targetRoot,
     runValidation,
-    startIssueRun,
     startReleaseBatch,
     releaseBatchCoordinator,
     approveReleaseBatchCandidate,

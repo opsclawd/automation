@@ -6,7 +6,8 @@ import { afterEach } from 'vitest';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 import { buildServer } from '../../server.js';
 import { composeRoot } from '../../compose.js';
-import { RepositoryId } from '@ai-sdlc/domain';
+import { RepositoryId, createRun } from '@ai-sdlc/domain';
+import { newRunId } from '@ai-sdlc/shared';
 
 const activeServers: Awaited<ReturnType<typeof buildServer>>[] = [];
 
@@ -70,10 +71,16 @@ export async function buildTestServer() {
     },
 
     async startIssue(options: { issueNumber: number; repositoryId: string }) {
-      const run = await container.startIssueRun.execute({
-        issueNumber: options.issueNumber,
+      const startedAt = new Date();
+      const ids = newRunId({ issueNumber: options.issueNumber, now: startedAt });
+      const run = createRun({
+        uuid: ids.uuid,
+        displayId: ids.displayId,
         repoId: RepositoryId(options.repositoryId),
+        issueNumber: options.issueNumber,
+        startedAt,
       });
+      container.runRepository.insertIfNoActive(run);
       return { uuid: run.uuid, repoId: run.repoId };
     },
 

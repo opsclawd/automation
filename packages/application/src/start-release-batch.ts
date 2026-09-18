@@ -26,6 +26,7 @@ import type {
   GitHubPort,
   EventBusPort,
   EventRepositoryPort,
+  EventRepositoryFactory,
 } from './ports.js';
 
 export class ReleaseBatchValidationError extends ReleaseBatchStateError {
@@ -51,8 +52,6 @@ export class ReleaseBranchConflictError extends ReleaseBatchPreflightError {
     Object.setPrototypeOf(this, ReleaseBranchConflictError.prototype);
   }
 }
-
-import type { EventRepositoryFactory } from './start-issue-run.js';
 
 export interface StartReleaseBatchDeps {
   releaseBatchRepository: ReleaseBatchRepositoryPort;

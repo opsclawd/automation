@@ -104,10 +104,6 @@ describe('RunNotification wiring in composeRoot', () => {
 
     const loopDeps = container.workerLoopDeps?.(RepositoryId('owner/repo'));
     expect(loopDeps?.runNotification).toBe(container.runNotification);
-    expect(
-      (container.startIssueRun as unknown as { deps: { runNotification?: unknown } }).deps
-        .runNotification,
-    ).toBe(container.runNotification);
   });
 
   it('exposes drainStartupSweeps which awaits startup sweeps', async () => {

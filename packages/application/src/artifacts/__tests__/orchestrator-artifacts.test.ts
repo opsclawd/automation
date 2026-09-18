@@ -16,10 +16,9 @@ import {
   getGitCommitExcludePathspecsString,
 } from '../orchestrator-artifacts.js';
 
-describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => {
+describe('orchestrator-artifacts canonical artifact paths', () => {
   it('should assert the exact canonical artifact list', () => {
-    // This exact list is pinned to scripts/lib/artifacts.sh while bash parity exists.
-    // Any change here must also be updated in scripts/lib/artifacts.sh.
+    // Canonical artifact list.
     const expected = [
       'validation.headsha',
       'validation.fingerprint',

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +25,6 @@ import {
   ResumeRun,
   RetryFailedPhase,
   LoadRepositoryForRun,
-  StartIssueRun,
 } from '@ai-sdlc/application';
 import {
   GitWorktreeAdapter,
@@ -77,14 +76,6 @@ function trackDir<T>(fn: () => T): T {
   return result;
 }
 
-function fakeScript(exitCode: number): string {
-  const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cli-')));
-  const path = join(dir, 'run.sh');
-  writeFileSync(path, `#!/usr/bin/env bash\nexit ${exitCode}\n`);
-  chmodSync(path, 0o755);
-  return path;
-}
-
 describe('findRepoRoot', () => {
   it('walks up to find pnpm-workspace.yaml', () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-root-')));
@@ -106,81 +97,6 @@ describe('CLI run command', () => {
     expect(runCommand?.description()).toBe(
       'Start an issue-to-PR run with the TypeScript executor by default',
     );
-  });
-
-  it('exits 0 on passed run and outputs JSON', async () => {
-    const scriptPath = fakeScript(0);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-    const writes: string[] = [];
-    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
-      chunk: string | Uint8Array,
-      cbOrEnc?: unknown,
-      cb2?: unknown,
-    ) => {
-      writes.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
-      const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
-      if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
-      return true;
-    }) as never);
-
-    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
-    await program.parseAsync([
-      'node',
-      'orchestrator',
-      'run',
-      '--issue',
-      '42',
-      '--executor',
-      'bash',
-      '--script',
-      scriptPath,
-    ]);
-
-    expect(exitSpy).toHaveBeenCalledWith(0);
-    const parsed = JSON.parse(writes.join(''));
-    expect(parsed.status).toBe('passed');
-    expect(parsed.exitCode).toBe(0);
-    expect(parsed.uuid).toBeTruthy();
-
-    exitSpy.mockRestore();
-    writeSpy.mockRestore();
-  });
-
-  it('exits 1 on failed run', async () => {
-    const scriptPath = fakeScript(7);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-    const writes: string[] = [];
-    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
-      chunk: string | Uint8Array,
-      cbOrEnc?: unknown,
-      cb2?: unknown,
-    ) => {
-      writes.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
-      const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
-      if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
-      return true;
-    }) as never);
-
-    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
-    await program.parseAsync([
-      'node',
-      'orchestrator',
-      'run',
-      '--issue',
-      '99',
-      '--executor',
-      'bash',
-      '--script',
-      scriptPath,
-    ]);
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    const parsed = JSON.parse(writes.join(''));
-    expect(parsed.status).toBe('failed');
-    expect(parsed.exitCode).toBe(7);
-
-    exitSpy.mockRestore();
-    writeSpy.mockRestore();
   });
 
   it('missing required --issue causes Commander error mentioning --issue', async () => {
@@ -1158,15 +1074,9 @@ describe('CLI run command signal handlers', () => {
         },
       }),
     );
-    const scriptPath = join(root, 'long-running.sh');
-    writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
-    chmodSync(scriptPath, 0o755);
-
-    const child = spawnOrchestrator(
-      ['run', '--issue', '77', '--executor', 'ts', '--script', scriptPath],
-      root,
-      { GITHUB_REPOSITORY: 'opsclawd/automation' },
-    );
+    const child = spawnOrchestrator(['run', '--issue', '77'], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
 
     const stderr: string[] = [];
     child.stderr?.on('data', (d) => stderr.push(d.toString()));
@@ -1263,15 +1173,9 @@ describe('CLI run command signal handlers', () => {
         },
       }),
     );
-    const scriptPath = join(root, 'long-running.sh');
-    writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
-    chmodSync(scriptPath, 0o755);
-
-    const child = spawnOrchestrator(
-      ['run', '--issue', '78', '--executor', 'ts', '--script', scriptPath],
-      root,
-      { GITHUB_REPOSITORY: 'opsclawd/automation' },
-    );
+    const child = spawnOrchestrator(['run', '--issue', '78'], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
 
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
 
@@ -1361,16 +1265,9 @@ describe('CLI run command signal handlers', () => {
         },
       }),
     );
-    const scriptPath = join(root, 'long-running.sh');
-    // Use a script that ignores SIGINT and sleeps, so it won't fail when SIGINT is sent to the process group
-    writeFileSync(scriptPath, '#!/usr/bin/env bash\ntrap "" SIGINT\nsleep 60\n');
-    chmodSync(scriptPath, 0o755);
-
-    const child = spawnOrchestrator(
-      ['run', '--issue', '79', '--executor', 'ts', '--script', scriptPath],
-      root,
-      { GITHUB_REPOSITORY: 'opsclawd/automation' },
-    );
+    const child = spawnOrchestrator(['run', '--issue', '79'], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
 
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
 
@@ -1378,7 +1275,7 @@ describe('CLI run command signal handlers', () => {
     // The job goes queued→claimed→running; we send SIGINT after it enters claimed/running
     // to test the claimed+signal path.
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('timed out waiting for job row')), 15_000);
+      const timeout = setTimeout(() => reject(new Error('timed out waiting for job row')), 30_000);
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
@@ -1469,16 +1366,9 @@ describe('CLI run command signal handlers', () => {
         },
       }),
     );
-    const scriptPath = join(root, 'long-running.sh');
-    // Use a script that ignores SIGINT so it won't fail immediately when signal arrives
-    writeFileSync(scriptPath, '#!/usr/bin/env bash\ntrap "" SIGINT\nsleep 60\n');
-    chmodSync(scriptPath, 0o755);
-
-    const child = spawnOrchestrator(
-      ['run', '--issue', '80', '--executor', 'ts', '--script', scriptPath],
-      root,
-      { GITHUB_REPOSITORY: 'opsclawd/automation' },
-    );
+    const child = spawnOrchestrator(['run', '--issue', '80'], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
 
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
 
@@ -1535,49 +1425,7 @@ describe('CLI run command signal handlers', () => {
   }, 45_000);
 });
 
-describe('CLI run --executor ts', () => {
-  it('exits 1 and rejects --model or --agent-cli for ts executor', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-flags-')));
-    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-
-    const savedCwd = process.cwd();
-    process.chdir(root);
-    try {
-      const consoleErrs: string[] = [];
-      const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
-        consoleErrs.push(String(msg));
-      });
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const program = buildProgram({
-        composeOverrides: {
-          repoRoot: root,
-          repoFullName: 'owner/repo',
-          runStartupSweeps: false,
-        },
-      });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '55',
-        '--executor',
-        'ts',
-        '--model',
-        'gpt-4',
-        '--script',
-        '/dev/null',
-      ]);
-      const exitCode = exitSpy.mock.calls[0]?.[0];
-      errSpy.mockRestore();
-      exitSpy.mockRestore();
-      expect(exitCode).toBe(1);
-      expect(consoleErrs.join('')).toContain('only apply to --executor bash');
-    } finally {
-      process.chdir(savedCwd);
-    }
-  });
-
+describe('CLI run with TS executor', () => {
   it('exits 1 when base branch is not found on remote origin', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-base-branch-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
@@ -1622,12 +1470,8 @@ describe('CLI run --executor ts', () => {
         'run',
         '--issue',
         '55',
-        '--executor',
-        'ts',
         '--base-branch',
         'non-existent-branch',
-        '--script',
-        '/dev/null',
       ]);
       const exitCode = exitSpy.mock.calls[0]?.[0];
       errSpy.mockRestore();
@@ -1655,17 +1499,7 @@ describe('CLI run --executor ts', () => {
       });
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
       const program = buildProgram();
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '55',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '55']);
       const exitCode = exitSpy.mock.calls[0]?.[0];
       errSpy.mockRestore();
       exitSpy.mockRestore();
@@ -1734,17 +1568,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '1',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '1']);
       const exitCode = exitSpy.mock.calls[0]?.[0];
 
       expect(exitCode).toBe(1);
@@ -1826,17 +1650,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '7',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '7']);
       const exitCode = exitSpy.mock.calls[0]?.[0];
 
       expect(exitCode).toBe(0);
@@ -1927,17 +1741,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '99',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '99']);
       const exitCode = exitSpy.mock.calls[0]?.[0];
 
       expect(exitCode).toBe(0);
@@ -2017,17 +1821,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '99',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '99']);
       const exitCode = exitSpy.mock.calls[0]?.[0];
 
       expect(exitCode).toBe(0);
@@ -2101,17 +1895,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '58',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '58']);
 
       // The CLI exits with EXIT_USER_ERROR (1). The catch block calls
       // atomicUpdateByUuid(..., { status: 'failed' }, 'running') as a safe CAS
@@ -2191,17 +1975,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '58',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '58']);
 
       // insertIfNoActive throws before the scheduler is started, so the throw
       // is caught by the inner try/catch (exit 1).
@@ -2268,17 +2042,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '60',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '60']);
 
       expect(exitSpy.mock.calls[0]?.[0]).toBe(1);
 
@@ -2357,17 +2121,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '62',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '62']);
 
       // worktree must NOT be removed when run fails
       expect(removeWorktreeSpy).not.toHaveBeenCalled();
@@ -2433,18 +2187,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '70',
-        '--executor',
-        'ts',
-        '--verbose',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '70', '--verbose']);
 
       // subscribe must be called to set up the event bus listener
       expect(subscribeSpy).toHaveBeenCalled();
@@ -2535,18 +2278,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '71',
-        '--executor',
-        'ts',
-        '--no-verbose',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '71', '--no-verbose']);
 
       // subscribe must NOT be called when --no-verbose suppresses output
       expect(subscribeSpy).not.toHaveBeenCalled();
@@ -2620,18 +2352,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '72',
-        '--executor',
-        'ts',
-        '--verbose',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '72', '--verbose']);
 
       const output = JSON.parse(stdoutChunks.join(''));
       expect(output).toHaveProperty('run');
@@ -2735,17 +2456,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '8',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '8']);
 
       const exitCode = exitSpy.mock.calls[0]?.[0];
       expect(exitCode).toBe(1);
@@ -2853,17 +2564,7 @@ describe('CLI run --executor ts', () => {
           runStartupSweeps: false,
         },
       });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '9',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '9']);
 
       const exitCode = exitSpy.mock.calls[0]?.[0];
       expect(exitCode).toBe(0);
@@ -4194,118 +3895,6 @@ describe('CLI runs resume command', () => {
 });
 
 describe('CLI run flag validation', () => {
-  it('rejects --model with --executor ts and exits non-zero before insertIfNoActive', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-val-model-')));
-    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-    const savedCwd = process.cwd();
-    process.chdir(root);
-    try {
-      const program = buildProgram({
-        composeOverrides: { repoRoot: root, repoFullName: 'owner/repo', runStartupSweeps: false },
-      });
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '1',
-        '--executor',
-        'ts',
-        '--model',
-        'opus',
-      ]);
-
-      expect(exitSpy).toHaveBeenCalledWith(1);
-      expect(errSpy).toHaveBeenCalled();
-      expect(errSpy.mock.calls[0][0]).toContain('--model only apply to --executor bash');
-
-      errSpy.mockRestore();
-      exitSpy.mockRestore();
-    } finally {
-      process.chdir(savedCwd);
-    }
-  });
-
-  it('rejects --agent-cli with --executor ts and exits non-zero', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-val-agent-')));
-    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-    const savedCwd = process.cwd();
-    process.chdir(root);
-    try {
-      const program = buildProgram({
-        composeOverrides: { repoRoot: root, repoFullName: 'owner/repo', runStartupSweeps: false },
-      });
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '1',
-        '--executor',
-        'ts',
-        '--agent-cli',
-        'pi',
-      ]);
-
-      expect(exitSpy).toHaveBeenCalledWith(1);
-      expect(errSpy).toHaveBeenCalled();
-      expect(errSpy.mock.calls[0][0]).toContain('--agent-cli only apply to --executor bash');
-
-      errSpy.mockRestore();
-      exitSpy.mockRestore();
-    } finally {
-      process.chdir(savedCwd);
-    }
-  });
-
-  it('still allows --model with --executor bash (no rejection at the CLI layer)', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-val-bash-')));
-    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-    const savedCwd = process.cwd();
-    process.chdir(root);
-    try {
-      const program = buildProgram({
-        composeOverrides: { repoRoot: root, repoFullName: 'owner/repo', runStartupSweeps: false },
-      });
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-
-      try {
-        await program.parseAsync([
-          'node',
-          'orchestrator',
-          'run',
-          '--issue',
-          '1',
-          '--executor',
-          'bash',
-          '--model',
-          'opus',
-          '--script',
-          '/nonexistent/script',
-        ]);
-      } catch {
-        // Ignore any errors downstream (e.g. from missing script), we only care about CLI validation
-      }
-
-      const hadBashValidationError = errSpy.mock.calls.some((call) =>
-        call[0]?.includes?.('only apply to --executor bash'),
-      );
-      expect(hadBashValidationError).toBe(false);
-
-      errSpy.mockRestore();
-      exitSpy.mockRestore();
-    } finally {
-      process.chdir(savedCwd);
-    }
-  });
-
   it('updates --base-branch help text to reflect new behavior', () => {
     const program = buildProgram();
     const runCmd = program.commands.find((c) => c.name() === 'run');
@@ -4313,349 +3902,401 @@ describe('CLI run flag validation', () => {
     const baseBranchOpt = runCmd!.options.find((o) => o.long === '--base-branch');
     expect(baseBranchOpt?.description).toMatch(/target repository default branch/i);
   });
+});
 
-  it('labels --model help text as Bash-only', () => {
-    const program = buildProgram();
-    const runCmd = program.commands.find((c) => c.name() === 'run');
-    const modelOpt = runCmd!.options.find((o) => o.long === '--model');
-    expect(modelOpt?.description).toMatch(/Bash executor only/);
-  });
-  it('labels --agent-cli help text as Bash-only', () => {
-    const program = buildProgram();
-    const runCmd = program.commands.find((c) => c.name() === 'run');
-    const agentCliOpt = runCmd!.options.find((o) => o.long === '--agent-cli');
-    expect(agentCliOpt?.description).toMatch(/Bash executor only/);
-  });
+describe('CLI --repository-id flag', () => {
+  let resolverSpy: ReturnType<typeof vi.spyOn> | undefined;
+  let savedCwd: string | undefined;
 
-  describe('CLI --repository-id flag', () => {
-    let resolverSpy: ReturnType<typeof vi.spyOn> | undefined;
-    let savedCwd: string | undefined;
-
-    beforeEach(() => {
-      savedCwd = process.cwd();
-      resolverSpy = vi
-        .spyOn(RepositoryMetadataResolver.prototype, 'resolve')
-        .mockImplementation((targetPath: string) => {
-          return {
-            rootPath: targetPath,
-            nameWithOwner: 'owner/repo-1',
-            defaultBranch: 'main',
-            remoteUrl: 'https://github.com/owner/repo-1.git',
-          };
-        });
-    });
-
-    afterEach(() => {
-      resolverSpy?.mockRestore();
-      if (savedCwd) {
-        process.chdir(savedCwd);
-      }
-    });
-
-    it('start works without --repository-id when exactly one repo enabled', async () => {
-      const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-start-single-')));
-      writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-      process.chdir(root);
-
-      const mockRepoId = '0000000000000000000000000000000000000000000000000000000000000001';
-
-      let startCalled = false;
-      let startCalledWithRepoId: string | undefined = undefined;
-      const startSpy = vi
-        .spyOn(StartIssueRun.prototype, 'execute')
-        .mockImplementation(async (input: unknown) => {
-          startCalled = true;
-          startCalledWithRepoId = (input as { repoId: string }).repoId;
-          return { uuid: 'run-uuid', status: 'passed' as const, exitCode: 0 };
-        });
-
-      const program = buildProgram({
-        composeOverrides: { repoFullName: 'owner/repo-1' },
-      });
-
-      const { c } = composeWithTarget(root);
-      c.repositoryRegistry.insert({
-        id: mockRepoId as RepositoryId,
-        fullName: 'owner/repo-1',
-        owner: 'owner',
-        name: 'repo-1',
-        localBasePath: root,
-        defaultBranch: 'main',
-        remoteUrl: 'https://github.com/owner/repo-1.git',
-        enabled: true,
-        maxConcurrentRuns: 1,
-        configMetadata: '',
-        healthStatus: 'healthy',
-        healthError: null,
-        lastHealthCheckAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, cb) => {
-        if (typeof cb === 'function') (cb as () => void)();
-        return true;
-      });
-
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '42',
-        '--executor',
-        'bash',
-        '--script',
-        '/nonexistent/script',
-      ]);
-
-      expect(startCalled).toBe(true);
-      expect(startCalledWithRepoId).toBe(mockRepoId);
-      expect(exitSpy).toHaveBeenCalledWith(0);
-
-      startSpy.mockRestore();
-      exitSpy.mockRestore();
-      writeSpy.mockRestore();
-    });
-
-    it('start errors helpfully when many repos enabled and flag omitted', async () => {
-      vi.stubEnv('GITHUB_REPOSITORY', 'unknown/unknown');
-      const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-start-many-')));
-      writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-      process.chdir(root);
-
-      const mockRepoId1 = '0000000000000000000000000000000000000000000000000000000000000001';
-      const mockRepoId2 = '0000000000000000000000000000000000000000000000000000000000000002';
-
-      resolverSpy.mockImplementation((targetPath: string) => {
+  beforeEach(() => {
+    savedCwd = process.cwd();
+    resolverSpy = vi
+      .spyOn(RepositoryMetadataResolver.prototype, 'resolve')
+      .mockImplementation((targetPath: string) => {
         return {
           rootPath: targetPath,
-          nameWithOwner: 'owner/repo-3',
+          nameWithOwner: 'owner/repo-1',
           defaultBranch: 'main',
-          remoteUrl: 'https://github.com/owner/repo-3.git',
+          remoteUrl: 'https://github.com/owner/repo-1.git',
         };
       });
+  });
 
-      const program = buildProgram({
-        composeOverrides: { repoFullName: undefined },
+  afterEach(() => {
+    resolverSpy?.mockRestore();
+    if (savedCwd) {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('start works without --repository-id when exactly one repo enabled', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-start-single-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    process.chdir(root);
+
+    const mockRepoId = '0000000000000000000000000000000000000000000000000000000000000001';
+
+    let startCalledWithRepoId: string | undefined = undefined;
+    let insertedRun: Run | undefined;
+    const insertSpy = vi
+      .spyOn(RunRepository.prototype, 'insertIfNoActive')
+      .mockImplementation((run) => {
+        startCalledWithRepoId = run.repoId;
+        insertedRun = { ...run, status: 'passed' };
+        return { ok: true, run: insertedRun };
       });
+    const findByUuidSpy = vi
+      .spyOn(RunRepository.prototype, 'findByUuid')
+      .mockImplementation(() => insertedRun);
+    const schedulerSpy = vi
+      .spyOn(WorkerScheduler.prototype, 'runUntilComplete')
+      .mockResolvedValue(undefined);
 
-      const { c } = composeWithTarget(root);
-      c.repositoryRegistry.insert({
-        id: mockRepoId1 as RepositoryId,
-        fullName: 'owner/repo-1',
-        owner: 'owner',
-        name: 'repo-1',
-        localBasePath: join(root, 'repo-1'),
+    const program = buildProgram({
+      composeOverrides: { repoFullName: 'owner/repo-1' },
+    });
+
+    const { c } = composeWithTarget(root);
+    c.repositoryRegistry.insert({
+      id: mockRepoId as RepositoryId,
+      fullName: 'owner/repo-1',
+      owner: 'owner',
+      name: 'repo-1',
+      localBasePath: root,
+      defaultBranch: 'main',
+      remoteUrl: 'https://github.com/owner/repo-1.git',
+      enabled: true,
+      maxConcurrentRuns: 1,
+      configMetadata: '',
+      healthStatus: 'healthy',
+      healthError: null,
+      lastHealthCheckAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, cb) => {
+      if (typeof cb === 'function') (cb as () => void)();
+      return true;
+    });
+
+    try {
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '42']);
+
+      expect(startCalledWithRepoId).toBe(mockRepoId);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      insertSpy.mockRestore();
+      findByUuidSpy.mockRestore();
+      schedulerSpy.mockRestore();
+      exitSpy.mockRestore();
+      writeSpy.mockRestore();
+    }
+  });
+
+  it('start errors helpfully when many repos enabled and flag omitted', async () => {
+    vi.stubEnv('GITHUB_REPOSITORY', 'unknown/unknown');
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-start-many-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    process.chdir(root);
+
+    const mockRepoId1 = '0000000000000000000000000000000000000000000000000000000000000001';
+    const mockRepoId2 = '0000000000000000000000000000000000000000000000000000000000000002';
+
+    resolverSpy.mockImplementation((targetPath: string) => {
+      return {
+        rootPath: targetPath,
+        nameWithOwner: 'owner/repo-3',
         defaultBranch: 'main',
-        remoteUrl: 'https://github.com/owner/repo-1.git',
-        enabled: true,
-        maxConcurrentRuns: 1,
-        configMetadata: '',
-        healthStatus: 'healthy',
-        healthError: null,
-        lastHealthCheckAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      c.repositoryRegistry.insert({
-        id: mockRepoId2 as RepositoryId,
-        fullName: 'owner/repo-2',
-        owner: 'owner',
-        name: 'repo-2',
-        localBasePath: join(root, 'repo-2'),
-        defaultBranch: 'main',
-        remoteUrl: 'https://github.com/owner/repo-2.git',
-        enabled: true,
-        maxConcurrentRuns: 1,
-        configMetadata: '',
-        healthStatus: 'healthy',
-        healthError: null,
-        lastHealthCheckAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
+        remoteUrl: 'https://github.com/owner/repo-3.git',
+      };
+    });
 
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const program = buildProgram({
+      composeOverrides: { repoFullName: undefined },
+    });
 
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '42',
-        '--executor',
-        'bash',
-        '--script',
-        '/nonexistent/script',
-      ]);
+    const { c } = composeWithTarget(root);
+    c.repositoryRegistry.insert({
+      id: mockRepoId1 as RepositoryId,
+      fullName: 'owner/repo-1',
+      owner: 'owner',
+      name: 'repo-1',
+      localBasePath: join(root, 'repo-1'),
+      defaultBranch: 'main',
+      remoteUrl: 'https://github.com/owner/repo-1.git',
+      enabled: true,
+      maxConcurrentRuns: 1,
+      configMetadata: '',
+      healthStatus: 'healthy',
+      healthError: null,
+      lastHealthCheckAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    c.repositoryRegistry.insert({
+      id: mockRepoId2 as RepositoryId,
+      fullName: 'owner/repo-2',
+      owner: 'owner',
+      name: 'repo-2',
+      localBasePath: join(root, 'repo-2'),
+      defaultBranch: 'main',
+      remoteUrl: 'https://github.com/owner/repo-2.git',
+      enabled: true,
+      maxConcurrentRuns: 1,
+      configMetadata: '',
+      healthStatus: 'healthy',
+      healthError: null,
+      lastHealthCheckAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await program.parseAsync(['node', 'orchestrator', 'run', '--issue', '42']);
 
       expect(exitSpy).toHaveBeenCalledWith(2);
       expect(errSpy.mock.calls[0][0]).toContain(
         '--repository-id is required when more than one repository is enabled',
       );
-
+    } finally {
       exitSpy.mockRestore();
       errSpy.mockRestore();
+    }
+  });
+
+  it('cancel routes through loadRepositoryForRun', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-id-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    process.chdir(root);
+
+    let loadCalledWith: unknown = null;
+    const loadSpy = vi
+      .spyOn(LoadRepositoryForRun.prototype, 'execute')
+      .mockImplementation((input: unknown) => {
+        loadCalledWith = input;
+      });
+
+    const mockRepoId = '0000000000000000000000000000000000000000000000000000000000000001';
+    const mockRun: Run = {
+      uuid: 'cancel-uuid-test',
+      displayId: 'issue-50-20260519-000000',
+      repoId: mockRepoId as RepositoryId,
+      issueNumber: 50,
+      status: 'running',
+      pid: process.pid,
+      startedAt: new Date(),
+      type: 'issue_to_pr',
+      completedPhases: [],
+      skippedPhases: [],
+    };
+
+    const program = buildProgram({
+      composeOverrides: { repoFullName: 'owner/repo-1' },
     });
 
-    it('cancel routes through loadRepositoryForRun', async () => {
-      const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-id-')));
-      writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-      process.chdir(root);
+    const { c } = composeWithTarget(root);
+    c.repositoryRegistry.insert({
+      id: mockRepoId as RepositoryId,
+      fullName: 'owner/repo-1',
+      owner: 'owner',
+      name: 'repo-1',
+      localBasePath: join(root, 'repo-1'),
+      defaultBranch: 'main',
+      remoteUrl: 'https://github.com/owner/repo-1.git',
+      enabled: true,
+      maxConcurrentRuns: 1,
+      configMetadata: '',
+      healthStatus: 'healthy',
+      healthError: null,
+      lastHealthCheckAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    c.runRepository.insertIfNoActive(mockRun);
 
-      let loadCalledWith: unknown = null;
-      const loadSpy = vi
-        .spyOn(LoadRepositoryForRun.prototype, 'execute')
-        .mockImplementation((input: unknown) => {
-          loadCalledWith = input;
-        });
+    const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+    runsCmd.exitOverride();
 
-      const mockRepoId = '0000000000000000000000000000000000000000000000000000000000000001';
-      const mockRun: Run = {
-        uuid: 'cancel-uuid-test',
-        displayId: 'issue-50-20260519-000000',
-        repoId: mockRepoId as RepositoryId,
-        issueNumber: 50,
-        status: 'running',
-        pid: process.pid,
-        startedAt: new Date(),
-        type: 'issue_to_pr',
-        completedPhases: [],
-        skippedPhases: [],
-      };
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
 
-      const program = buildProgram({
-        composeOverrides: { repoFullName: 'owner/repo-1' },
+    await runsCmd.parseAsync(
+      ['cancel', '--uuid', 'cancel-uuid-test', '--repository-id', mockRepoId],
+      { from: 'user' },
+    );
+
+    expect(loadCalledWith).toBeDefined();
+    expect((loadCalledWith as Record<string, unknown>).callerRepoId).toBe(mockRepoId);
+    expect((loadCalledWith as Record<string, Record<string, unknown>>).run.uuid).toBe(
+      'cancel-uuid-test',
+    );
+
+    loadSpy.mockRestore();
+    exitSpy.mockRestore();
+    killSpy.mockRestore();
+  });
+
+  it('start with --repository-id owner/name resolves via inspectRepository', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-start-fullname-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    process.chdir(root);
+
+    const mockRepoId1 = '0000000000000000000000000000000000000000000000000000000000000001';
+    const mockRepoId2 = '0000000000000000000000000000000000000000000000000000000000000002';
+
+    let startCalledWithRepoId: string | undefined = undefined;
+    let insertedRun: Run | undefined;
+    const insertSpy = vi
+      .spyOn(RunRepository.prototype, 'insertIfNoActive')
+      .mockImplementation((run) => {
+        startCalledWithRepoId = run.repoId;
+        insertedRun = { ...run, status: 'passed' };
+        return { ok: true, run: insertedRun };
       });
+    const findByUuidSpy = vi
+      .spyOn(RunRepository.prototype, 'findByUuid')
+      .mockImplementation(() => insertedRun);
+    const schedulerSpy = vi
+      .spyOn(WorkerScheduler.prototype, 'runUntilComplete')
+      .mockResolvedValue(undefined);
 
-      const { c } = composeWithTarget(root);
-      c.repositoryRegistry.insert({
-        id: mockRepoId as RepositoryId,
-        fullName: 'owner/repo-1',
-        owner: 'owner',
-        name: 'repo-1',
-        localBasePath: join(root, 'repo-1'),
-        defaultBranch: 'main',
-        remoteUrl: 'https://github.com/owner/repo-1.git',
-        enabled: true,
-        maxConcurrentRuns: 1,
-        configMetadata: '',
-        healthStatus: 'healthy',
-        healthError: null,
-        lastHealthCheckAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      c.runRepository.insertIfNoActive(mockRun);
-
-      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
-      runsCmd.exitOverride();
-
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
-
-      await runsCmd.parseAsync(
-        ['cancel', '--uuid', 'cancel-uuid-test', '--repository-id', mockRepoId],
-        { from: 'user' },
-      );
-
-      expect(loadCalledWith).toBeDefined();
-      expect((loadCalledWith as Record<string, unknown>).callerRepoId).toBe(mockRepoId);
-      expect((loadCalledWith as Record<string, Record<string, unknown>>).run.uuid).toBe(
-        'cancel-uuid-test',
-      );
-
-      loadSpy.mockRestore();
-      exitSpy.mockRestore();
-      killSpy.mockRestore();
+    const program = buildProgram({
+      composeOverrides: { repoFullName: 'owner/repo-1' },
     });
 
-    it('start with --repository-id owner/name resolves via inspectRepository', async () => {
-      const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-start-fullname-')));
-      writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-      process.chdir(root);
+    const { c } = composeWithTarget(root);
+    c.repositoryRegistry.insert({
+      id: mockRepoId1 as RepositoryId,
+      fullName: 'owner/repo-1',
+      owner: 'owner',
+      name: 'repo-1',
+      localBasePath: join(root, 'repo-1'),
+      defaultBranch: 'main',
+      remoteUrl: 'https://github.com/owner/repo-1.git',
+      enabled: true,
+      maxConcurrentRuns: 1,
+      configMetadata: '',
+      healthStatus: 'healthy',
+      healthError: null,
+      lastHealthCheckAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    c.repositoryRegistry.insert({
+      id: mockRepoId2 as RepositoryId,
+      fullName: 'owner/repo-2',
+      owner: 'owner',
+      name: 'repo-2',
+      localBasePath: join(root, 'repo-2'),
+      defaultBranch: 'main',
+      remoteUrl: 'https://github.com/owner/repo-2.git',
+      enabled: true,
+      maxConcurrentRuns: 1,
+      configMetadata: '',
+      healthStatus: 'healthy',
+      healthError: null,
+      lastHealthCheckAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
 
-      const mockRepoId1 = '0000000000000000000000000000000000000000000000000000000000000001';
-      const mockRepoId2 = '0000000000000000000000000000000000000000000000000000000000000002';
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, cb) => {
+      if (typeof cb === 'function') (cb as () => void)();
+      return true;
+    });
 
-      let startCalledWithRepoId: string | undefined = undefined;
-      const startSpy = vi
-        .spyOn(StartIssueRun.prototype, 'execute')
-        .mockImplementation(async (input: unknown) => {
-          startCalledWithRepoId = (input as { repoId: string }).repoId;
-          return { uuid: 'run-uuid', status: 'passed' as const, exitCode: 0 };
-        });
-
-      const program = buildProgram({
-        composeOverrides: { repoFullName: 'owner/repo-1' },
-      });
-
-      const { c } = composeWithTarget(root);
-      c.repositoryRegistry.insert({
-        id: mockRepoId1 as RepositoryId,
-        fullName: 'owner/repo-1',
-        owner: 'owner',
-        name: 'repo-1',
-        localBasePath: join(root, 'repo-1'),
-        defaultBranch: 'main',
-        remoteUrl: 'https://github.com/owner/repo-1.git',
-        enabled: true,
-        maxConcurrentRuns: 1,
-        configMetadata: '',
-        healthStatus: 'healthy',
-        healthError: null,
-        lastHealthCheckAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      c.repositoryRegistry.insert({
-        id: mockRepoId2 as RepositoryId,
-        fullName: 'owner/repo-2',
-        owner: 'owner',
-        name: 'repo-2',
-        localBasePath: join(root, 'repo-2'),
-        defaultBranch: 'main',
-        remoteUrl: 'https://github.com/owner/repo-2.git',
-        enabled: true,
-        maxConcurrentRuns: 1,
-        configMetadata: '',
-        healthStatus: 'healthy',
-        healthError: null,
-        lastHealthCheckAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, cb) => {
-        if (typeof cb === 'function') (cb as () => void)();
-        return true;
-      });
-
+    try {
       await program.parseAsync([
         'node',
         'orchestrator',
         'run',
         '--issue',
         '42',
-        '--executor',
-        'bash',
-        '--script',
-        '/nonexistent/script',
         '--repository-id',
         'owner/repo-2',
       ]);
 
       expect(startCalledWithRepoId).toBe(mockRepoId2);
       expect(exitSpy).toHaveBeenCalledWith(0);
-
-      startSpy.mockRestore();
+    } finally {
+      insertSpy.mockRestore();
+      findByUuidSpy.mockRestore();
+      schedulerSpy.mockRestore();
       exitSpy.mockRestore();
       writeSpy.mockRestore();
-    });
+    }
   });
 });
 
