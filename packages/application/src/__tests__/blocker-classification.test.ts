@@ -285,4 +285,64 @@ describe('classifyReleaseBatchBlocker', () => {
     expect(blocker.owner).toBe('github');
     expect(blocker.reason).toBe('ci_failed: checks failed');
   });
+
+  it('classifies as owner: none when currentItem is merged even if currentRun status is needs_human_review', () => {
+    const batch = makeBatch({
+      status: 'building',
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged',
+          runUuid: 'uuid-run-101',
+          mergedCommitSha: 'sha-101',
+        },
+      ],
+    });
+    const run = createRun({
+      uuid: 'uuid-run-101',
+      displayId: 'issue-101-001',
+      repoId,
+      issueNumber: 101,
+      startedAt: new Date(),
+    });
+    run.status = 'needs_human_review';
+
+    const blocker = classifyReleaseBatchBlocker(batch, run);
+    expect(blocker.owner).toBe('none');
+  });
+
+  it('classifies as owner: none when all items in batch are merged and currentPosition run was failed/needs_human_review', () => {
+    const batch = makeBatch({
+      status: 'building',
+      currentPosition: 2,
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged',
+          runUuid: 'uuid-run-101',
+          mergedCommitSha: 'sha-101',
+        },
+        {
+          position: 2,
+          issueNumber: 102,
+          status: 'merged',
+          runUuid: 'uuid-run-102',
+          mergedCommitSha: 'sha-102',
+        },
+      ],
+    });
+    const run = createRun({
+      uuid: 'uuid-run-102',
+      displayId: 'issue-102-001',
+      repoId,
+      issueNumber: 102,
+      startedAt: new Date(),
+    });
+    run.status = 'failed';
+
+    const blocker = classifyReleaseBatchBlocker(batch, run);
+    expect(blocker.owner).toBe('none');
+  });
 });

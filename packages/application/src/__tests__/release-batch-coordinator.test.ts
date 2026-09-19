@@ -412,6 +412,54 @@ describe('ReleaseBatchCoordinator', () => {
         totalItems: 5,
       });
     });
+
+    it('certifyItemMerged finalizes underlying run from needs_human_review to passed in runRepository', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      // Put item 1 run in needs_human_review at fix-validate phase
+      runRepository.update('run-item-1', {
+        status: 'needs_human_review',
+        currentPhase: 'fix-validate',
+      });
+      expect(runRepository.findByUuid('run-item-1')?.status).toBe('needs_human_review');
+      expect(runRepository.findByUuid('run-item-1')?.currentPhase).toBe('fix-validate');
+
+      // Certify item 1 merged
+      await coordinator.certifyItemMerged({
+        batchId,
+        position: 1,
+        mergedCommitSha: 'sha-commit-101',
+        now: t2,
+      });
+
+      const updatedRun = runRepository.findByUuid('run-item-1')!;
+      expect(updatedRun.status).toBe('passed');
+      expect(updatedRun.currentPhase).toBeUndefined();
+    });
+
+    it('reconcile self-heals stranded non-passed runs for merged items', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      // Manually set item 1 to merged in batch repo, but leave run as needs_human_review in run repo
+      const batch = releaseBatchRepository.findById(batchId)!;
+      batch.items[0] = {
+        ...batch.items[0]!,
+        status: 'merged',
+        mergedCommitSha: 'sha-commit-101',
+      };
+      releaseBatchRepository.update(batch);
+
+      runRepository.update('run-item-1', {
+        status: 'needs_human_review',
+        currentPhase: 'fix-validate',
+      });
+
+      await coordinator.reconcile(batchId);
+
+      const healedRun = runRepository.findByUuid('run-item-1')!;
+      expect(healedRun.status).toBe('passed');
+      expect(healedRun.currentPhase).toBeUndefined();
+    });
   });
 
   describe('Crash windows & idempotency', () => {
