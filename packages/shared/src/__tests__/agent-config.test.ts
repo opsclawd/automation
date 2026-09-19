@@ -197,6 +197,18 @@ describe('variant field on profiles', () => {
     expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
   });
 
+  it('accepts variant xhigh on a profile', () => {
+    const cfg = structuredClone(baseValid);
+    (cfg.agent.profiles['opencode-frontier'] as Record<string, unknown>).variant = 'xhigh';
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
+
+  it('accepts variant max on a profile', () => {
+    const cfg = structuredClone(baseValid);
+    (cfg.agent.profiles['opencode-frontier'] as Record<string, unknown>).variant = 'max';
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
+
   it('rejects an unknown variant value', () => {
     const cfg = structuredClone(baseValid);
     (cfg.agent.profiles['opencode-frontier'] as Record<string, unknown>).variant = 'ultra';

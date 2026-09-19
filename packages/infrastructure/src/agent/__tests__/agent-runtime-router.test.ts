@@ -54,8 +54,10 @@ function req(overrides: Partial<AgentInvocationRequest> = {}): AgentInvocationRe
 }
 
 class StubAdapter implements AgentPort {
+  lastRequest?: AgentInvocationRequest;
   constructor(private readonly result: AgentInvocationResult) {}
-  async invoke(_: AgentInvocationRequest): Promise<AgentInvocationResult> {
+  async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+    this.lastRequest = req;
     return this.result;
   }
 }
@@ -1597,6 +1599,7 @@ describe('variant suffix in effectiveProfile', () => {
     await router.invoke(req({ profile: AgentProfileName('flash-high') }));
     const row = inv.findById(AgentInvocationId('inv-variant'));
     expect(row?.model).toBe('gemini-3.5-flash-high');
+    expect(adapter.lastRequest?.variant).toBe('high');
   });
 
   it('does NOT append variant suffix when AI_AGENT_MODEL env is set', async () => {

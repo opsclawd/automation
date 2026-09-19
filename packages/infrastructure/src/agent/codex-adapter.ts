@@ -46,6 +46,39 @@ export function resolveWorktreeGitDirs(cwd: string): string[] {
   }
 }
 
+export const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number];
+
+const REASONING_SUFFIX_PATTERN = new RegExp(`-(${CODEX_REASONING_EFFORTS.join('|')})$`, 'i');
+
+/**
+ * Resolves the underlying model slug and reasoning effort level for Codex CLI.
+ * Suffixes like `-high`, `-medium`, `-low`, `-xhigh`, `-max` are extracted from
+ * the model slug so that Codex is invoked with the base model name (e.g. `gpt-5.6-luna`)
+ * and `-c model_reasoning_effort="<effort>"`.
+ */
+export function resolveCodexModelAndReasoning(
+  model: string | undefined,
+  variant?: string,
+): { model: string | undefined; reasoningEffort: CodexReasoningEffort | undefined } {
+  let baseModel = model;
+  let reasoningEffort: CodexReasoningEffort | undefined;
+
+  if (variant && (CODEX_REASONING_EFFORTS as readonly string[]).includes(variant.toLowerCase())) {
+    reasoningEffort = variant.toLowerCase() as CodexReasoningEffort;
+  }
+
+  if (baseModel && baseModel !== 'default') {
+    const match = baseModel.match(REASONING_SUFFIX_PATTERN);
+    if (match && match[1] && match.index !== undefined) {
+      reasoningEffort = match[1].toLowerCase() as CodexReasoningEffort;
+      baseModel = baseModel.slice(0, match.index);
+    }
+  }
+
+  return { model: baseModel, reasoningEffort };
+}
+
 /**
  * Runtime backed by the Codex CLI (`codex`).
  *
@@ -68,8 +101,15 @@ export class CodexAgentAdapter implements AgentPort {
     for (const dir of worktreeGitDirs) {
       args.push('--add-dir', dir);
     }
-    if (request.model && request.model !== 'default') {
-      args.push('--model', request.model);
+    const { model: cliModel, reasoningEffort } = resolveCodexModelAndReasoning(
+      request.model,
+      request.variant,
+    );
+    if (cliModel && cliModel !== 'default') {
+      args.push('--model', cliModel);
+    }
+    if (reasoningEffort) {
+      args.push('-c', `model_reasoning_effort="${reasoningEffort}"`);
     }
     const result = await runExternalCli({
       input: prompt,
