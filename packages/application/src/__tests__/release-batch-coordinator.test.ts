@@ -1349,7 +1349,9 @@ describe('ReleaseBatchCoordinator', () => {
       const integratedSha = 'sha-commit-integrated-merge';
       fakeGit.headByCwd.set(defaultRepo.localBasePath, integratedSha);
       // Simulate remote updated on push
-      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', integratedSha);
+      fakeGit.push = vi.fn(async () => {
+        fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', integratedSha);
+      });
       fakeGit.ancestorResults.set(`${driftedSourceSha}|${integratedSha}`, true);
       fakeGit.treeShaResults.set(integratedSha, 'tree-integrated');
 
@@ -1361,6 +1363,13 @@ describe('ReleaseBatchCoordinator', () => {
       expect(saved.status).toBe('awaiting_manual_test');
       expect(saved.candidateSha).toBe(integratedSha);
       expect(saved.candidateTreeSha).toBe('tree-integrated');
+
+      const driftIntegratedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.source_drift_integrated',
+      );
+      expect(driftIntegratedEvent).toBeDefined();
+      expect(driftIntegratedEvent?.runUuid).toBe(saved.items[4]?.runUuid);
+      expect(driftIntegratedEvent?.runUuid).not.toBe(batchId);
     });
 
     it('reconciles promotion PR merge and marks batch completed', async () => {
@@ -1412,6 +1421,84 @@ describe('ReleaseBatchCoordinator', () => {
       expect(saved.status).toBe('completed');
       expect(saved.promotionCommitSha).toBe(promotionSha);
       expect(saved.completedAt).toBeDefined();
+
+      const completedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.completed',
+      );
+      expect(completedEvent).toBeDefined();
+      expect(completedEvent?.runUuid).toBe(saved.items[0]?.runUuid);
+      expect(completedEvent?.runUuid).not.toBe(batchId);
+    });
+
+    it('publishes batch-level events with fallback runUuid from latest item and avoids batch.id as runUuid (#1266)', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const insertedEvents: Array<{ runUuid: string; type: string }> = [];
+      const fakeEventRepo = {
+        insert: vi.fn((ev: { runUuid: string; type: string }) => {
+          insertedEvents.push(ev);
+          return 1;
+        }),
+        listByRunSince: vi.fn(() => []),
+      };
+
+      const customCoordinator = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        repositoryPort,
+        jobQueue,
+        eventBus,
+        eventRepository: fakeEventRepo,
+        git: fakeGit,
+        github: fakeGitHub,
+        now: () => t1,
+      });
+
+      // Prepare git refs for integrateSourceBranch
+      const driftedSourceSha = 'sha-drifted';
+      const finalSha = 'sha-commit-105';
+      const integratedSha = 'sha-integrated';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', finalSha);
+      fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${finalSha}`, false);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${integratedSha}`, true);
+      fakeGit.headByCwd.set(defaultRepo.localBasePath, integratedSha);
+      fakeGit.push = vi.fn(async () => {
+        fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', integratedSha);
+      });
+      fakeGit.treeShaResults.set(integratedSha, 'tree-integrated');
+
+      for (let pos = 1; pos <= 5; pos++) {
+        await customCoordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t1,
+        });
+      }
+
+      eventBus.published = [];
+      insertedEvents.length = 0;
+
+      const res = await customCoordinator.integrateSourceBranch(batchId);
+      expect(res.success).toBe(true);
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      const expectedItemRunUuid = saved.items[4]?.runUuid;
+      expect(expectedItemRunUuid).toBeDefined();
+
+      // Verify all published events have valid runUuid (matching item 5), none have batchId
+      expect(eventBus.published.length).toBeGreaterThan(0);
+      for (const { runUuid } of eventBus.published) {
+        expect(runUuid).toBe(expectedItemRunUuid);
+        expect(runUuid).not.toBe(batchId);
+      }
+
+      // Verify eventRepo.insert was called with expectedItemRunUuid, never batchId
+      expect(insertedEvents.length).toBeGreaterThan(0);
+      for (const { runUuid } of insertedEvents) {
+        expect(runUuid).toBe(expectedItemRunUuid);
+        expect(runUuid).not.toBe(batchId);
+      }
     });
   });
 

@@ -477,7 +477,7 @@ export class StartReleaseBatch {
       logger.error?.(`Failed to publish event for release batch ${batch.id}`, err);
     }
 
-    if (eventRepo) {
+    if (eventRepo && runUuid) {
       try {
         eventRepo.insert({
           runUuid,

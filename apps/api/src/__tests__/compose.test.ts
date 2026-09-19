@@ -13,7 +13,15 @@ import * as childProcess from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { composeRoot, captureExecOutput, type ComposeOptions } from '../compose.js';
 import { openDatabase, applyMigrations, GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
-import { createRun, RunId, RepositoryId, PhaseName, Step } from '@ai-sdlc/domain';
+import {
+  createRun,
+  RunId,
+  RepositoryId,
+  PhaseName,
+  Step,
+  createReleaseBatch,
+  ReleaseBatchId,
+} from '@ai-sdlc/domain';
 import {
   RunExecutor,
   ReadIssueHandler,
@@ -27,6 +35,7 @@ import {
   CompoundHandler,
   CreatePrHandler,
   WaitMergeHandler,
+  type GitPort,
 } from '@ai-sdlc/application';
 import type { PrReviewPollerDeps } from '@ai-sdlc/application';
 
@@ -1707,5 +1716,63 @@ describe('composeRoot', () => {
 
     // Empty string repoId should be treated as a valid cache hit, not re-querying findByUuid
     expect(findByUuidSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists batch-level events via releaseBatchCoordinator without SQLite foreign key violations (#1266)', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const fakeGit: GitPort = {
+      fetch: vi.fn().mockResolvedValue(undefined),
+      resolveRef: vi.fn().mockImplementation(async (_dir, ref) => {
+        if (ref.includes('release')) return 'release-sha-2';
+        return 'source-sha-1';
+      }),
+      isAncestor: vi.fn().mockResolvedValue(false),
+      mergeBranch: vi.fn().mockResolvedValue({ success: true }),
+      push: vi.fn().mockResolvedValue(undefined),
+    } as unknown as GitPort;
+
+    const container = composeRoot({
+      repoRoot: root,
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      runStartupSweeps: false,
+      gitPort: fakeGit,
+    });
+
+    const runUuid = '550e8400-e29b-41d4-a716-446655440000';
+    const run = createRun({
+      uuid: runUuid,
+      displayId: '1-abcdef01',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 1,
+      startedAt: new Date(),
+    });
+    container.runRepository.insertIfNoActive(run);
+
+    const consoleErrorSpy = vi.spyOn(console, 'error');
+
+    const batch = createReleaseBatch({
+      id: ReleaseBatchId('batch-fk-1266'),
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'start-sha-1234567890abcdef1234567890abcdef',
+      releaseBranch: 'release/2026-09-18-batch-fk-1266',
+      createdAt: new Date(),
+      items: [{ position: 1, issueNumber: 1, runUuid, status: 'active' }],
+    });
+    container.releaseBatchRepository.insert(batch);
+
+    const result = await container.releaseBatchCoordinator.integrateSourceBranch(batch.id);
+    expect(result.success).toBe(true);
+
+    const fkErrors = consoleErrorSpy.mock.calls.filter((call) =>
+      call.some((arg) => String(arg).includes('FOREIGN KEY constraint failed')),
+    );
+    expect(fkErrors).toHaveLength(0);
+
+    const events = container.eventRepository.listByRunSince(runUuid);
+    const driftEvents = events.filter((e) => e.type === 'release_batch.source_drift_integrated');
+    expect(driftEvents).toHaveLength(1);
+    expect(driftEvents[0]?.runUuid).toBe(runUuid);
+    expect(driftEvents[0]?.metadata?.['releaseBatchId']).toBe(batch.id);
   });
 });

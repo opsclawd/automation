@@ -1841,7 +1841,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       git: gitAdapter,
       github: ghPortForReleaseBatch,
       eventBus: persistingEventBus,
-      eventRepository,
       executionPolicy,
       pinnedRuntime: opts.pinnedRuntime,
     });
@@ -1861,7 +1860,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       jobQueue,
       repositoryPort: registryBackedRepo,
       eventBus: persistingEventBus,
-      eventRepository,
       executionPolicy,
       pinnedRuntime: opts.pinnedRuntime,
       releaseBatchNotification,
@@ -1881,7 +1879,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       releaseBatchRepository,
       repositoryPort: registryBackedRepo,
       eventBus: persistingEventBus,
-      eventRepository,
       git: gitAdapter,
       logger,
     });
@@ -1891,7 +1888,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     new RejectReleaseBatchCandidate({
       releaseBatchRepository,
       eventBus: persistingEventBus,
-      eventRepository,
       logger,
     });
 
@@ -1902,7 +1898,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       repositoryPort: registryBackedRepo,
       github: ghPortForReleaseBatch,
       eventBus: persistingEventBus,
-      eventRepository,
       coordinator: releaseBatchCoordinator,
       logger,
     });
@@ -1915,7 +1910,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       github: ghPortForReleaseBatch,
       git: gitAdapter,
       eventBus: persistingEventBus,
-      eventRepository,
       coordinator: releaseBatchCoordinator,
       logger,
     });
