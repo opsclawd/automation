@@ -494,7 +494,8 @@ function publishBatchEvent(
   const fallbackRunUuid = [...batch.items]
     .reverse()
     .find((item) => item.runUuid !== undefined)?.runUuid;
-  const runUuid = (event.metadata['runUuid'] as string | undefined) ?? fallbackRunUuid ?? batch.id;
+  const effectiveRunUuid = (event.metadata['runUuid'] as string | undefined) ?? fallbackRunUuid;
+  const runUuid = effectiveRunUuid ?? batch.id;
   const runDisplayId =
     (event.metadata['runDisplayId'] as string | undefined) ?? `batch-${batch.id}`;
 
@@ -520,10 +521,10 @@ function publishBatchEvent(
       ? deps.eventRepository(batch.repoId)
       : deps.eventRepository;
 
-  if (eventRepo) {
+  if (eventRepo && effectiveRunUuid) {
     try {
       eventRepo.insert({
-        runUuid,
+        runUuid: effectiveRunUuid,
         level: payload.level,
         type: payload.type,
         message: payload.message,
