@@ -324,11 +324,13 @@ export class AgentRuntimeRouter implements AgentPort {
         ? hints
         : undefined;
 
+    const effectiveVariant = request.variant ?? profile.variant;
     const enrichedRequest: AgentInvocationRequest = {
       ...request,
       ...(composedSignal ? { abortSignal: composedSignal } : {}),
       provider: effectiveProvider,
       model: effectiveModel,
+      ...(effectiveVariant !== undefined ? { variant: effectiveVariant } : {}),
       timeoutMs: effectiveTimeoutMs,
       ...(profile.promptBudgetTokens !== undefined
         ? { promptBudgetTokens: profile.promptBudgetTokens }

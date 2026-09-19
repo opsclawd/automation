@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { AgentProfileName } from '@ai-sdlc/domain';
-import { CodexAgentAdapter } from '../codex-adapter.js';
+import { CodexAgentAdapter, resolveCodexModelAndReasoning } from '../codex-adapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -169,6 +169,122 @@ describe('CodexAgentAdapter', () => {
     await adapter.invoke(req(cwd, { model: 'default' }));
     const args = readFileSync(argLog, 'utf-8');
     expect(args).not.toContain('--model');
+  });
+
+  it('parses reasoning suffix from model name and passes -c model_reasoning_effort="..." with clean base model', async () => {
+    const cwd = makeWorktree();
+    const argLog = join(cwd, 'args.txt');
+    const shim = join(cwd, 'shim.sh');
+    writeFileSync(shim, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argLog}"\nexit 0\n`);
+    execSync(`chmod +x ${shim}`);
+    const adapter = new CodexAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
+    await adapter.invoke(req(cwd, { model: 'gpt-5.6-luna-high' }));
+    const args = readFileSync(argLog, 'utf-8');
+    expect(args).toContain('--model');
+    expect(args).toContain('gpt-5.6-luna');
+    expect(args).not.toContain('gpt-5.6-luna-high');
+    expect(args).toContain('-c');
+    expect(args).toContain('model_reasoning_effort="high"');
+  });
+
+  it('applies variant parameter as reasoning effort when model has no suffix', async () => {
+    const cwd = makeWorktree();
+    const argLog = join(cwd, 'args.txt');
+    const shim = join(cwd, 'shim.sh');
+    writeFileSync(shim, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argLog}"\nexit 0\n`);
+    execSync(`chmod +x ${shim}`);
+    const adapter = new CodexAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
+    await adapter.invoke(req(cwd, { model: 'gpt-5.6-luna', variant: 'high' }));
+    const args = readFileSync(argLog, 'utf-8');
+    expect(args).toContain('--model');
+    expect(args).toContain('gpt-5.6-luna');
+    expect(args).toContain('-c');
+    expect(args).toContain('model_reasoning_effort="high"');
+  });
+
+  it('omits -c model_reasoning_effort when no variant or reasoning suffix is present', async () => {
+    const cwd = makeWorktree();
+    const argLog = join(cwd, 'args.txt');
+    const shim = join(cwd, 'shim.sh');
+    writeFileSync(shim, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argLog}"\nexit 0\n`);
+    execSync(`chmod +x ${shim}`);
+    const adapter = new CodexAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
+    await adapter.invoke(req(cwd, { model: 'gpt-5.6-luna' }));
+    const args = readFileSync(argLog, 'utf-8');
+    expect(args).toContain('--model');
+    expect(args).toContain('gpt-5.6-luna');
+    expect(args).not.toContain('model_reasoning_effort');
+  });
+
+  it('passes -c model_reasoning_effort without --model when model is "default" and variant is set', async () => {
+    const cwd = makeWorktree();
+    const argLog = join(cwd, 'args.txt');
+    const shim = join(cwd, 'shim.sh');
+    writeFileSync(shim, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argLog}"\nexit 0\n`);
+    execSync(`chmod +x ${shim}`);
+    const adapter = new CodexAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
+    await adapter.invoke(req(cwd, { model: 'default', variant: 'medium' }));
+    const args = readFileSync(argLog, 'utf-8');
+    expect(args).not.toContain('--model');
+    expect(args).toContain('-c');
+    expect(args).toContain('model_reasoning_effort="medium"');
+  });
+
+  describe('resolveCodexModelAndReasoning', () => {
+    it('extracts suffix and base model for all supported reasoning levels', () => {
+      expect(resolveCodexModelAndReasoning('gpt-5.6-luna-low')).toEqual({
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'low',
+      });
+      expect(resolveCodexModelAndReasoning('gpt-5.6-luna-medium')).toEqual({
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'medium',
+      });
+      expect(resolveCodexModelAndReasoning('gpt-5.6-luna-high')).toEqual({
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'high',
+      });
+      expect(resolveCodexModelAndReasoning('gpt-5.6-luna-xhigh')).toEqual({
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'xhigh',
+      });
+      expect(resolveCodexModelAndReasoning('gpt-5.6-luna-max')).toEqual({
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'max',
+      });
+    });
+
+    it('uses variant argument when model has no reasoning suffix', () => {
+      expect(resolveCodexModelAndReasoning('gpt-5.6-luna', 'high')).toEqual({
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'high',
+      });
+    });
+
+    it('prefers suffix on model over variant if both present and different', () => {
+      expect(resolveCodexModelAndReasoning('gpt-5.6-luna-high', 'low')).toEqual({
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'high',
+      });
+    });
+
+    it('leaves models without reasoning suffixes unchanged with undefined effort', () => {
+      expect(resolveCodexModelAndReasoning('gpt-5.6-luna')).toEqual({
+        model: 'gpt-5.6-luna',
+        reasoningEffort: undefined,
+      });
+      expect(resolveCodexModelAndReasoning('o3-mini')).toEqual({
+        model: 'o3-mini',
+        reasoningEffort: undefined,
+      });
+    });
+
+    it('handles default model with variant', () => {
+      expect(resolveCodexModelAndReasoning('default', 'high')).toEqual({
+        model: 'default',
+        reasoningEffort: 'high',
+      });
+    });
   });
 
   it('propagates provider field from request through adapter to result', async () => {

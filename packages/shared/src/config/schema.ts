@@ -106,7 +106,7 @@ const agentProfileSchema = z
     runtime: agentRuntime,
     provider: nonBlankString,
     model: nonBlankString,
-    variant: z.enum(['low', 'medium', 'high']).optional(),
+    variant: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
     contextLimitTokens: z.number().int().positive().optional(),
     promptBudgetTokens: z.number().int().positive().optional(),
     outputBudgetTokens: z.number().int().positive().optional(),

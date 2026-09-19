@@ -36,6 +36,7 @@ export interface AgentInvocationRequest {
   abortSignal?: AbortSignal;
   provider?: string;
   model?: string;
+  variant?: string;
   promptBudgetTokens?: number;
   runtimeHints?: {
     contextLimitTokens?: number;
