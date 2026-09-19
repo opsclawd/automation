@@ -129,8 +129,20 @@ export class GetReleaseBatchStatus {
       if (item.runUuid) {
         const run = this.deps.runRepository.findByUuid(item.runUuid);
         if (run) {
-          runPhase = run.currentPhase ?? undefined;
-          runStatus = run.status;
+          if (item.status === 'merged') {
+            runPhase = undefined;
+            runStatus = 'passed';
+            if (run.status !== 'passed') {
+              this.deps.runRepository.update(item.runUuid, {
+                status: 'passed',
+                currentPhase: null,
+                completedAt: item.completedAt ?? new Date(),
+              });
+            }
+          } else {
+            runPhase = run.currentPhase ?? undefined;
+            runStatus = run.status;
+          }
           pinnedRuntime = run.pinnedRuntime ?? undefined;
           if (item.position === batch.currentPosition || item.status === 'active') {
             currentItemRun = run;
@@ -177,21 +189,32 @@ export class GetReleaseBatchStatus {
         }
       }
 
+      const isMerged = currentItemRecord.status === 'merged';
+      const effectiveRunStatus = isMerged ? 'passed' : currentItemRun?.status;
+      const effectiveRunPhase = isMerged ? 'completed' : currentItemRun?.currentPhase;
+
       currentItemView = {
         position: currentItemRecord.position,
         issueNumber: currentItemRecord.issueNumber,
         status: currentItemRecord.status,
         ...(currentItemRecord.runUuid ? { runUuid: currentItemRecord.runUuid } : {}),
-        ...(currentItemRun?.currentPhase ? { currentPhase: currentItemRun.currentPhase } : {}),
-        ...(currentItemRun?.status ? { runStatus: currentItemRun.status } : {}),
+        ...(effectiveRunPhase ? { currentPhase: effectiveRunPhase } : {}),
+        ...(effectiveRunStatus ? { runStatus: effectiveRunStatus } : {}),
         ...(currentItemRun?.pinnedRuntime ? { pinnedRuntime: currentItemRun.pinnedRuntime } : {}),
         ...(currentItemRecord.prNumber ? { prNumber: currentItemRecord.prNumber } : {}),
         ...(prMergeState ? { prMergeState } : {}),
       };
     }
 
+    let runForBlocker: Run | undefined = currentItemRun;
+    if (currentItemRecord?.status === 'merged' && currentItemRun) {
+      const { currentPhase: _cp, ...rest } = currentItemRun;
+      void _cp;
+      runForBlocker = { ...rest, status: 'passed' };
+    }
+
     // Blocker analysis
-    const blocker = classifyReleaseBatchBlocker(batch, currentItemRun);
+    const blocker = classifyReleaseBatchBlocker(batch, runForBlocker);
 
     // Candidate staleness check
     let isStale = false;

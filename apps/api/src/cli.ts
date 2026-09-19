@@ -2062,6 +2062,34 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 }
               }
 
+              // Check if the run belongs to a release batch where the item is already merged
+              if (c.releaseBatchRepository) {
+                const batches = c.releaseBatchRepository.listForRepo(run.repoId);
+                const mergedItem = batches
+                  .flatMap((b) => b.items)
+                  .find((i) => i.runUuid === opts.uuid && i.status === 'merged');
+
+                if (mergedItem) {
+                  c.runRepository.update(run.uuid, {
+                    status: 'passed',
+                    currentPhase: null,
+                    completedAt: new Date(),
+                  });
+                  console.error(
+                    `Run ${opts.uuid} is already merged${mergedItem.prNumber ? ` (PR #${mergedItem.prNumber})` : ''}. Run marked as passed.`,
+                  );
+                  const finalizedRun = c.runRepository.findByUuid(run.uuid);
+                  process.stdout.write(
+                    JSON.stringify({
+                      run: finalizedRun ?? { ...run, status: 'passed', currentPhase: undefined },
+                      phases,
+                    }) + '\n',
+                  );
+                  await drainAndExit(c, 0);
+                  return;
+                }
+              }
+
               const plan = planRunRecoveryAction({
                 action: opts.fromPhase ? 'resume' : 'retry',
                 run: reconciledRun,
@@ -2276,6 +2304,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 lease?.stop();
               }
             } catch (err) {
+              if (err instanceof Error && err.message.startsWith('process.exit:')) {
+                throw err;
+              }
               console.error(err instanceof Error ? err.message : String(err));
               await drainAndExit(containerRef, EXIT_USER_ERROR);
               return;

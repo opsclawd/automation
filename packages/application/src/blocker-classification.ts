@@ -39,7 +39,12 @@ export function classifyReleaseBatchBlocker(
     batchReason.startsWith('run_') ||
     itemReason.startsWith('run_');
 
+  const isCurrentItemMerged = currentItem?.status === 'merged';
+  const allItemsMerged = batch.items.length > 0 && batch.items.every((i) => i.status === 'merged');
+  const canRunOwnBlocker = !isCurrentItemMerged && !allItemsMerged;
+
   const isRunBlockerStatus =
+    canRunOwnBlocker &&
     currentRun != null &&
     (currentRun.status === 'failed' ||
       currentRun.status === 'blocked' ||
@@ -55,7 +60,7 @@ export function classifyReleaseBatchBlocker(
 
   // Run owns the blocker if currentRun is explicitly in a blocker status,
   // OR if currentRun is absent/unknown and the stored reason is a run blocker.
-  if (isRunBlockerStatus || (!currentRun && isRunReason)) {
+  if (canRunOwnBlocker && (isRunBlockerStatus || (!currentRun && isRunReason))) {
     const runUuid = currentItem?.runUuid ?? currentRun?.uuid;
     const issueNumber = currentItem?.issueNumber ?? currentRun?.issueNumber;
     const reason =
@@ -80,16 +85,17 @@ export function classifyReleaseBatchBlocker(
     };
   }
 
-  // If the run has resolved, any historical run blocker reasons on the batch or item are stale.
+  // If the run has resolved or the item/all items are merged, any historical run blocker reasons on the batch or item are stale.
   const isStaleRunReason = (r: string) => RUN_BLOCKER_REASONS.has(r) || r.startsWith('run_');
-  const activeBatchReason = isRunResolved && isStaleRunReason(batchReason) ? '' : batchReason;
-  const activeItemReason = isRunResolved && isStaleRunReason(itemReason) ? '' : itemReason;
+  const runResolvedOrMerged = isRunResolved || isCurrentItemMerged || allItemsMerged;
+  const activeBatchReason = runResolvedOrMerged && isStaleRunReason(batchReason) ? '' : batchReason;
+  const activeItemReason = runResolvedOrMerged && isStaleRunReason(itemReason) ? '' : itemReason;
   const activeEffectiveReason = activeBatchReason || activeItemReason;
 
   // 2. If neither batch nor item is blocked, or if the only block was a stale run blocker that has now resolved
   if (
     (batch.status !== 'blocked' && currentItem?.status !== 'blocked') ||
-    (isRunResolved && !activeEffectiveReason)
+    (runResolvedOrMerged && !activeEffectiveReason)
   ) {
     return { owner: 'none' };
   }

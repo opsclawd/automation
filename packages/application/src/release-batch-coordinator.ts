@@ -282,6 +282,20 @@ export class ReleaseBatchCoordinator {
     // Identify current unmerged items
     const unmergedItems = batch.items.filter((i) => i.status !== 'merged');
 
+    // Reconcile run status for merged items to ensure consistency and heal stale records
+    for (const item of batch.items) {
+      if (item.status === 'merged' && item.runUuid) {
+        const run = this.deps.runRepository.findByUuid(item.runUuid);
+        if (run && run.status !== 'passed') {
+          this.deps.runRepository.update(item.runUuid, {
+            status: 'passed',
+            currentPhase: null,
+            completedAt: item.completedAt ?? now,
+          });
+        }
+      }
+    }
+
     if (unmergedItems.length === 0) {
       // If batch is still in building status, complete build stage and attempt candidate capture
       if (batch.status === 'building') {
@@ -1283,6 +1297,16 @@ export class ReleaseBatchCoordinator {
 
     // Idempotent check
     if (item.status === 'merged' && item.mergedCommitSha === input.mergedCommitSha) {
+      if (item.runUuid) {
+        const run = this.deps.runRepository.findByUuid(item.runUuid);
+        if (run && run.status !== 'passed') {
+          this.deps.runRepository.update(item.runUuid, {
+            status: 'passed',
+            currentPhase: null,
+            completedAt: item.completedAt ?? now,
+          });
+        }
+      }
       return this.reconcile(input.batchId);
     }
 
@@ -1291,6 +1315,17 @@ export class ReleaseBatchCoordinator {
       now,
     });
     this.deps.releaseBatchRepository.update(updatedBatch);
+
+    if (item.runUuid) {
+      const run = this.deps.runRepository.findByUuid(item.runUuid);
+      if (run && run.status !== 'passed') {
+        this.deps.runRepository.update(item.runUuid, {
+          status: 'passed',
+          currentPhase: null,
+          completedAt: now,
+        });
+      }
+    }
 
     this.publishEvent(updatedBatch, {
       type: 'release_batch.item_merged',

@@ -308,4 +308,64 @@ describe('GetReleaseBatchStatus', () => {
     expect(status.currentItem?.pinnedRuntime).toBeUndefined();
     expect(status.formattedLines.some((l) => /Runtime Pin:\s+unpinned/.test(l))).toBe(true);
   });
+
+  it('surfaces runStatus as passed and phase omitted for merged items even if runRepository has stale needs_human_review', async () => {
+    const batchId = ReleaseBatchId('batch-stale-run');
+    const runUuid = 'uuid-run-stale';
+    const run = createRun({
+      uuid: runUuid,
+      displayId: 'issue-101-003',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 101,
+      startedAt: new Date(),
+    });
+    run.status = 'needs_human_review';
+    run.currentPhase = 'fix-validate';
+    runRepo.insertIfNoActive(run);
+
+    batchRepo.insert({
+      id: batchId,
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-main-0',
+      releaseBranch: 'release/batch-stale-run',
+      status: 'building',
+      currentPosition: 1,
+      createdAt: new Date(),
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged',
+          runUuid,
+          prNumber: 59,
+          mergedCommitSha: 'sha-merged-101',
+          completedAt: new Date(),
+        },
+      ],
+    });
+
+    const status = await useCase.execute({ batchId });
+
+    // items view should show passed and not fix-validate
+    expect(status.items[0]?.runStatus).toBe('passed');
+    expect(status.items[0]?.runPhase).toBeUndefined();
+
+    // currentItem view should show passed and completed phase
+    expect(status.currentItem?.runStatus).toBe('passed');
+    expect(status.currentItem?.currentPhase).toBe('completed');
+
+    // Blocker diagnostics should report none
+    expect(status.blocker.owner).toBe('none');
+
+    // Run in runRepo should be healed to passed
+    const healedRun = runRepo.findByUuid(runUuid)!;
+    expect(healedRun.status).toBe('passed');
+    expect(healedRun.currentPhase).toBeUndefined();
+
+    // Formatted lines should not report phase=fix-validate
+    expect(status.formattedLines.some((l) => l.includes('phase=fix-validate'))).toBe(false);
+    expect(status.formattedLines.some((l) => /Run Status:\s+passed/.test(l))).toBe(true);
+    expect(status.formattedLines.some((l) => /Run Phase:\s+completed/.test(l))).toBe(true);
+  });
 });

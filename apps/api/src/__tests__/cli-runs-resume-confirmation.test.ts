@@ -1017,4 +1017,70 @@ describe('CLI runs resume confirmation tests', () => {
       process.chdir(savedCwd);
     }
   });
+
+  it('immediately marks run as passed and exits 0 when release batch item is already merged', async () => {
+    const uuid = 'merged-run-uuid-999';
+    // Run is in needs_human_review at fix-validate phase
+    const root = setupTempRepo(uuid, 'fix-validate', 'needs_human_review');
+
+    // Create a release batch where this run's item is already merged
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    try {
+      db.prepare(
+        `INSERT INTO release_batches (id, repo_id, source_branch, source_start_sha, release_branch, status, current_position, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        'batch-test-merged',
+        'owner/repo',
+        'main',
+        'sha-start',
+        'release/batch-test',
+        'building',
+        1,
+        new Date().toISOString(),
+      );
+
+      db.prepare(
+        `INSERT INTO release_batch_items (release_batch_id, position, issue_number, status, run_uuid, pr_number, merged_commit_sha)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run('batch-test-merged', 1, 123, 'merged', uuid, 59, 'sha-merged-59');
+    } finally {
+      db.close();
+    }
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+
+    try {
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+
+      await expect(
+        runsCmd.parseAsync(['resume', '--uuid', uuid], { from: 'user' }),
+      ).rejects.toThrow(/process.exit: 0/);
+
+      // Verify run in DB was updated to passed
+      const verifyDb = openDatabase(dbPath);
+      try {
+        const updatedRunRow = verifyDb
+          .prepare('SELECT status, current_phase FROM runs WHERE uuid = ?')
+          .get(uuid) as {
+          status: string;
+          current_phase: string | null;
+        };
+        expect(updatedRunRow.status).toBe('passed');
+        expect(updatedRunRow.current_phase).toBeNull();
+      } finally {
+        verifyDb.close();
+      }
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`Run ${uuid} is already merged (PR #59). Run marked as passed.`),
+      );
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
 });
