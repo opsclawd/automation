@@ -139,13 +139,13 @@
       "codex-reviewer": {
         "runtime": "codex",
         "provider": "openai",
-        "model": "default",
+        "model": "gpt-5.6-luna-medium",
         "timeoutMinutes": 45
       },
       "codex-writer": {
         "runtime": "codex",
         "provider": "openai",
-        "model": "default",
+        "model": "gpt-5.6-luna-medium",
         "timeoutMinutes": 45
       }
     },
