@@ -131,6 +131,7 @@ describe('buildPhaseHandlerContext', () => {
       promptsRoot: '/prompts',
       startCommitSha: 'abc123',
       expectedBranch: 'feature/foo',
+      batchIssueNumbers: [42, 43, 44],
       resolveProfile,
       idFactory,
       readWorktreeFile,
@@ -139,6 +140,7 @@ describe('buildPhaseHandlerContext', () => {
     });
     expect(ctx.promptsRoot).toBe('/prompts');
     expect(ctx.startCommitSha).toBe('abc123');
+    expect(ctx.batchIssueNumbers).toEqual([42, 43, 44]);
     expect(ctx.expectedBranch).toBe('feature/foo');
     expect(ctx.resolveProfile).toBe(resolveProfile);
     expect(ctx.resolveProfile?.('any')).toBe('opencode-frontier');

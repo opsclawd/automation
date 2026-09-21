@@ -2602,6 +2602,8 @@ export function composeRoot(opts: ComposeOptions): Container {
 
         const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
         const startCommitSha = runRepository.findByUuid(run.uuid)?.startCommitSha;
+        const releaseBatch = releaseBatchRepository.findByRunUuid(run.uuid);
+        const batchIssueNumbers = releaseBatch?.batch.items.map((item) => item.issueNumber);
         const priorPhaseName = run.completedPhases[run.completedPhases.length - 1];
         const effectivePin = run.pinnedRuntime ?? opts.pinnedRuntime;
         return composeBuildPhaseHandlerContext(
@@ -2625,6 +2627,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             baseBranch: run.baseBranch ?? opts.baseBranch ?? defaultBranch,
             ...(startCommitSha ? { startCommitSha } : {}),
             ...(priorPhaseName ? { priorPhaseName } : {}),
+            ...(batchIssueNumbers ? { batchIssueNumbers } : {}),
             ...(opts.allowProtectedPaths !== undefined
               ? { allowProtectedPaths: opts.allowProtectedPaths }
               : {}),

@@ -265,6 +265,46 @@ Direct consumer: #128
     expect(consumerItems[1]!.id).toBe('CONSUMER-128-AC-2');
   });
 
+  it('excludes validated consumers that are outside the batch allowlist', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/128', {
+      number: 128,
+      title: 'Admitted downstream consumer',
+      body: '## Acceptance criteria\n- [ ] In-batch requirement',
+      labels: [],
+    });
+    github.issues.set('test-org/test-repo/129', {
+      number: 129,
+      title: 'Excluded human-gated consumer',
+      body: `## Acceptance criteria
+- [ ] Excluded requirement
+
+## Goal
+- Excluded goal
+
+## Anchored Design
+- Excluded design`,
+      labels: [],
+    });
+
+    const ledger = await buildRequirementsLedger({
+      issueNumber: 1129,
+      repoFullName: 'test-org/test-repo',
+      issueMd: `# Issue 1129
+Direct consumer: #128
+Direct consumer: #129
+
+## Acceptance criteria
+- [ ] Foundational requirement`,
+      github,
+      batchIssueNumbers: [1129, 128],
+    });
+
+    const consumerItems = ledger.items.filter((it) => it.category === 'consumer_requirement');
+    expect(consumerItems.map((item) => item.id)).toEqual(['CONSUMER-128-AC-1']);
+    expect(consumerItems.every((item) => !item.title.includes('Excluded'))).toBe(true);
+  });
+
   it('backward compatibility alias buildArchitectureRequirementsLedger works identically', async () => {
     const issueMd = `# Issue 1129\n## Acceptance criteria\n- [ ] AC1`;
     const ledger = await buildArchitectureRequirementsLedger({

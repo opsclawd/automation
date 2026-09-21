@@ -139,6 +139,7 @@ export class SpecReviewHandler implements PhaseHandler {
         issueCommentsMd,
         designMd,
         github: ctx.github,
+        batchIssueNumbers: ctx.batchIssueNumbers,
       });
       await ctx.artifacts.write({
         runId: ctx.runUuid,

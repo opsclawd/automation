@@ -51,6 +51,8 @@ export interface PhaseHandlerContext {
   selfVerifyCommands?: string[] | undefined;
   governanceProtectedPaths?: string[] | undefined;
   allowProtectedPaths?: string[] | undefined;
+  /** Issue numbers admitted to the current release batch, when batch-scoped. */
+  batchIssueNumbers?: readonly number[] | undefined;
 }
 
 export type PhaseOutcome =
@@ -112,6 +114,7 @@ export type PhaseHandlerContextFactory = (
     | 'priorPhaseName'
     | 'selfVerifyCommands'
     | 'allowProtectedPaths'
+    | 'batchIssueNumbers'
   >,
   opts?: Partial<
     Pick<
@@ -133,6 +136,7 @@ export type PhaseHandlerContextFactory = (
       | 'priorPhaseName'
       | 'selfVerifyCommands'
       | 'allowProtectedPaths'
+      | 'batchIssueNumbers'
     >
   >,
 ) => PhaseHandlerContext;
@@ -157,6 +161,7 @@ export function buildPhaseHandlerContext(
     | 'priorPhaseName'
     | 'selfVerifyCommands'
     | 'allowProtectedPaths'
+    | 'batchIssueNumbers'
   >,
   opts?: Partial<
     Pick<
@@ -178,6 +183,7 @@ export function buildPhaseHandlerContext(
       | 'priorPhaseName'
       | 'selfVerifyCommands'
       | 'allowProtectedPaths'
+      | 'batchIssueNumbers'
     >
   >,
 ): PhaseHandlerContext {
