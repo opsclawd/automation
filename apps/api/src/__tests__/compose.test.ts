@@ -1050,6 +1050,73 @@ describe('composeRoot', () => {
     expect(ctx.cwd).toBe(path.join(root, '.ai-worktrees', 'issue-42'));
   });
 
+  it('passes release-batch issue scope into run contexts and leaves standalone runs unscoped', () => {
+    const root = trackDir(() =>
+      mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-batch-scope-')),
+    );
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: { skip: [], reviewFix: { maxIterations: 3 }, implement: { maxIterations: 3 } },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+
+    const c = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: fakeScript(0),
+    });
+    expect(c.buildRunContext).toBeDefined();
+
+    const batchRun = createRun({
+      uuid: '550e8400-e29b-41d4-a716-446655440050',
+      displayId: 'issue-42-batch',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 42,
+      startedAt: new Date(),
+    });
+    c.runRepository.insertIfNoActive(batchRun);
+    c.releaseBatchRepository.insert(
+      createReleaseBatch({
+        id: ReleaseBatchId('batch-context-scope'),
+        repoId: RepositoryId('owner/repo'),
+        sourceBranch: 'main',
+        sourceStartSha: 'start-sha-1234567890abcdef1234567890abcdef',
+        releaseBranch: 'release/context-scope',
+        createdAt: new Date(),
+        items: [
+          { position: 1, issueNumber: 42, runUuid: batchRun.uuid, status: 'active' },
+          { position: 2, issueNumber: 43, status: 'pending' },
+          { position: 3, issueNumber: 44, status: 'pending' },
+        ],
+      }),
+    );
+
+    const batchContext = c.buildRunContext!(batchRun);
+    expect(batchContext.batchIssueNumbers).toEqual([42, 43, 44]);
+
+    const standaloneRun = createRun({
+      uuid: '550e8400-e29b-41d4-a716-446655440051',
+      displayId: 'issue-45-standalone',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 45,
+      startedAt: new Date(),
+    });
+    expect(c.buildRunContext!(standaloneRun).batchIssueNumbers).toBeUndefined();
+  });
+
   it('buildRunContext is undefined when agent config is absent', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-noagent-')));
     writeFileSync(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');

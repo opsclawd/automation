@@ -174,6 +174,87 @@ describe('ArchitectureReviewHandler', () => {
     expect(persistedReviewMd.length).toBeGreaterThan(0);
   });
 
+  it('propagates batch scope to the ledger, excluding out-of-batch consumers while retaining admitted ones', async () => {
+    const handler = new ArchitectureReviewHandler();
+    const ctx = createTestContext({ batchIssueNumbers: [1129, 128] });
+    const github = ctx.github as FakeGitHubPort;
+    github.issues.set('test-org/test-repo/128', {
+      number: 128,
+      title: 'Admitted consumer',
+      body: 'Depends on #1129\n## Acceptance criteria\n- [ ] In-batch consumer requirement',
+      labels: [],
+    });
+    github.issues.set('test-org/test-repo/129', {
+      number: 129,
+      title: 'Excluded consumer',
+      body: 'Depends on #1129\n## Acceptance criteria\n- [ ] Excluded consumer requirement',
+      labels: [],
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents:
+        '# Issue 1129\nDirect consumer: #128\nDirect consumer: #129\n## Acceptance criteria\n- [ ] Foundational requirement\n',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design\n',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: '# Plan\n- [ ] Implement the change\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    const reviewerProfile = 'profile-for-architecture-review';
+    agent.enqueue(reviewerProfile, async () => {
+      const ledger = JSON.parse(
+        await ctx.artifacts.read(ctx.runUuid, 'architecture-requirements.json'),
+      ) as { items: Array<{ id: string }> };
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          requirements_checks: ledger.items.map((item) => ({
+            requirement_id: item.id,
+            requirement: item.id,
+            result: 'PASS',
+          })),
+          findings: [],
+          summary: 'All requirements and in-scope consumer requirements pass.',
+        }),
+      });
+      return {
+        id: 'inv-1' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(reviewerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    const result = await handler.run(ctx);
+    expect(['passed', 'needs_human_review']).toContain(result.outcome);
+    const ledger = JSON.parse(
+      await ctx.artifacts.read(ctx.runUuid, 'architecture-requirements.json'),
+    ) as { items: Array<{ id: string }> };
+    expect(ledger.items.map((item) => item.id)).toContain('CONSUMER-128-AC-1');
+    expect(ledger.items.map((item) => item.id)).not.toContain('CONSUMER-129-AC-1');
+  });
+
   it('invokes targeted planner correction and passes when re-verification succeeds', async () => {
     const handler = new ArchitectureReviewHandler();
     const ctx = createTestContext();

@@ -37,6 +37,8 @@ export interface BuildRequirementsOptions {
   issueCommentsMd?: string | undefined;
   designMd?: string | undefined;
   github?: GitHubPort | undefined;
+  /** When present, only admitted batch issues may contribute consumer requirements. */
+  batchIssueNumbers?: readonly number[] | undefined;
 }
 
 export type BuildArchitectureRequirementsOptions = BuildRequirementsOptions;
@@ -538,6 +540,9 @@ export async function buildRequirementsLedger(
     // Extract requirements from validated direct consumers
     for (const directConsumer of validatedConsumers) {
       const refNum = directConsumer.number;
+      if (opts.batchIssueNumbers !== undefined && !opts.batchIssueNumbers.includes(refNum)) {
+        continue;
+      }
       let consumerItemCount = 0;
 
       // a) Acceptance criteria from consumer

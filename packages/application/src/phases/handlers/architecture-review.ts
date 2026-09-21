@@ -126,6 +126,7 @@ export class ArchitectureReviewHandler implements PhaseHandler {
         issueMd,
         issueCommentsMd,
         github: ctx.github,
+        batchIssueNumbers: ctx.batchIssueNumbers,
       });
       await ctx.artifacts.write({
         runId: ctx.runUuid,
