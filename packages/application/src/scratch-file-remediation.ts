@@ -84,6 +84,49 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === 'string');
 }
 
+function isStringTiers(value: unknown): value is string[][] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (tier) =>
+        Array.isArray(tier) &&
+        tier.length > 0 &&
+        tier.every((command) => typeof command === 'string' && command.length > 0),
+    )
+  );
+}
+
+function flattenTiers(tiers: string[][]): string[] {
+  return tiers.flat();
+}
+
+function firstOccurrences(commands: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return commands.filter((command) => {
+    if (seen.has(command)) return false;
+    seen.add(command);
+    return true;
+  });
+}
+
+/**
+ * Preserve the first-occurrence order of existing tier commands. The loader's
+ * tier normalization is first-occurrence-wins, so a plain subsequence check
+ * is not sufficient when a new duplicate moves an existing command's first
+ * execution position.
+ */
+function preservesFirstOccurrenceOrder(
+  oldCommands: readonly string[],
+  newCommands: readonly string[],
+): boolean {
+  const oldFirstOccurrences = firstOccurrences(oldCommands);
+  const oldCommandsSet = new Set(oldFirstOccurrences);
+  const newExistingFirstOccurrences = firstOccurrences(newCommands).filter((command) =>
+    oldCommandsSet.has(command),
+  );
+  return deepEqual(oldFirstOccurrences, newExistingFirstOccurrences);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -130,7 +173,8 @@ function isPureInsertion(oldArr: readonly string[], newArr: readonly string[]): 
  * should be enforced going forward (e.g. a new adapter's integration tests) —
  * refusing that penalizes the correct behavior of wiring new tests into the
  * gate. This narrowly permits ONLY that shape of change: `validation.commands`
- * and/or `validation.additionalCommands` gaining new string entries with
+ * and/or `validation.additionalCommands` gaining new string entries, or
+ * `validation.tiers` gaining new command entries, with
  * every existing entry still present in the same order, and nothing else in
  * the file differing at all.
  */
@@ -161,10 +205,37 @@ export function isAdditiveOrchestratorConfigChange(
     if (!isPureInsertion(oldArr, newArr)) return false;
     sawInsertion = true;
   }
+
+  const oldHasTiers = Object.hasOwn(oldValidation, 'tiers');
+  const newHasTiers = Object.hasOwn(newValidation, 'tiers');
+  if (oldHasTiers !== newHasTiers) return false;
+  if (oldHasTiers && newHasTiers) {
+    const oldTiers = oldValidation.tiers;
+    const newTiers = newValidation.tiers;
+    if (!isStringTiers(oldTiers) || !isStringTiers(newTiers)) return false;
+
+    const oldTierCommands = flattenTiers(oldTiers);
+    const newTierCommands = flattenTiers(newTiers);
+    if (!deepEqual(oldTiers, newTiers)) {
+      if (
+        !isPureInsertion(oldTierCommands, newTierCommands) ||
+        !preservesFirstOccurrenceOrder(oldTierCommands, newTierCommands)
+      ) {
+        return false;
+      }
+      sawInsertion = true;
+    }
+  }
+
   if (!sawInsertion) return false;
 
   const stripCommandArrays = (validation: Record<string, unknown>): Record<string, unknown> => {
-    const { commands: _commands, additionalCommands: _additionalCommands, ...rest } = validation;
+    const {
+      commands: _commands,
+      additionalCommands: _additionalCommands,
+      tiers: _tiers,
+      ...rest
+    } = validation;
     return rest;
   };
 

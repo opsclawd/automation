@@ -96,6 +96,110 @@ describe('scratch-file-remediation', () => {
       ).toBe(true);
     });
 
+    it('permits the #100 command and final-tier insertion shape', () => {
+      const oldObj = {
+        validation: {
+          commands: ['pnpm integration', 'pnpm exit:phase1', 'pnpm exit:phase2'],
+          tiers: [['pnpm integration'], ['pnpm exit:phase1', 'pnpm exit:phase2']],
+          timeout: 300,
+        },
+      };
+      const newObj = {
+        validation: {
+          commands: [
+            'pnpm integration',
+            'pnpm integration:phase4',
+            'pnpm exit:phase1',
+            'pnpm exit:phase2',
+            'pnpm exit:phase4',
+          ],
+          tiers: [
+            ['pnpm integration'],
+            ['pnpm integration:phase4', 'pnpm exit:phase1', 'pnpm exit:phase2', 'pnpm exit:phase4'],
+          ],
+          timeout: 300,
+        },
+      };
+      expect(
+        isAdditiveOrchestratorConfigChange(JSON.stringify(oldObj), JSON.stringify(newObj)),
+      ).toBe(true);
+    });
+
+    it('permits a command-only insertion when valid tiers are unchanged', () => {
+      const oldObj = {
+        validation: { commands: ['pnpm a'], tiers: [['pnpm a']], timeout: 300 },
+      };
+      const newObj = {
+        validation: { commands: ['pnpm a', 'pnpm b'], tiers: [['pnpm a']], timeout: 300 },
+      };
+      expect(
+        isAdditiveOrchestratorConfigChange(JSON.stringify(oldObj), JSON.stringify(newObj)),
+      ).toBe(true);
+    });
+
+    it('permits inserting into a tier or appending a new tier', () => {
+      const oldObj = { validation: { tiers: [['pnpm a'], ['pnpm b']], timeout: 300 } };
+      const inserted = { validation: { tiers: [['pnpm a', 'pnpm x'], ['pnpm b']], timeout: 300 } };
+      const appended = {
+        validation: { tiers: [['pnpm a'], ['pnpm b'], ['pnpm x', 'pnpm y']], timeout: 300 },
+      };
+      expect(
+        isAdditiveOrchestratorConfigChange(JSON.stringify(oldObj), JSON.stringify(inserted)),
+      ).toBe(true);
+      expect(
+        isAdditiveOrchestratorConfigChange(JSON.stringify(oldObj), JSON.stringify(appended)),
+      ).toBe(true);
+    });
+
+    it.each([
+      ['removes a tier', [['pnpm a'], ['pnpm b']], [['pnpm a']]],
+      ['reorders tiers', [['pnpm a'], ['pnpm b']], [['pnpm b'], ['pnpm a'], ['pnpm x']]],
+      ['reorders entries', [['pnpm a', 'pnpm b']], [['pnpm b', 'pnpm a', 'pnpm x']]],
+      ['removes an existing entry', [['pnpm a', 'pnpm b']], [['pnpm a', 'pnpm x']]],
+    ])('%s', (_label, oldTiers, newTiers) => {
+      const oldObj = { validation: { tiers: oldTiers, timeout: 300 } };
+      const newObj = { validation: { tiers: newTiers, timeout: 300 } };
+      expect(
+        isAdditiveOrchestratorConfigChange(JSON.stringify(oldObj), JSON.stringify(newObj)),
+      ).toBe(false);
+    });
+
+    it('rejects a duplicate-aware tier reorder that changes first execution order', () => {
+      const oldObj = { validation: { tiers: [['pnpm a'], ['pnpm b']], timeout: 300 } };
+      const newObj = {
+        validation: { tiers: [['pnpm b'], ['pnpm a'], ['pnpm b', 'pnpm x']], timeout: 300 },
+      };
+      expect(
+        isAdditiveOrchestratorConfigChange(JSON.stringify(oldObj), JSON.stringify(newObj)),
+      ).toBe(false);
+    });
+
+    it('rejects malformed tiers and asymmetric tier presence', () => {
+      const oldObj = { validation: { commands: ['pnpm a'], tiers: [['pnpm a']], timeout: 300 } };
+      const malformed = [
+        { validation: { commands: ['pnpm a', 'pnpm b'], tiers: ['pnpm a'], timeout: 300 } },
+        { validation: { commands: ['pnpm a', 'pnpm b'], tiers: [['pnpm a', 2]], timeout: 300 } },
+        { validation: { commands: ['pnpm a', 'pnpm b'], tiers: [['']], timeout: 300 } },
+      ];
+      for (const newObj of malformed) {
+        expect(
+          isAdditiveOrchestratorConfigChange(JSON.stringify(oldObj), JSON.stringify(newObj)),
+        ).toBe(false);
+      }
+      expect(
+        isAdditiveOrchestratorConfigChange(
+          JSON.stringify(oldObj),
+          JSON.stringify({ validation: { commands: ['pnpm a', 'pnpm b'], timeout: 300 } }),
+        ),
+      ).toBe(false);
+      expect(
+        isAdditiveOrchestratorConfigChange(
+          JSON.stringify({ validation: { commands: ['pnpm a'], timeout: 300 } }),
+          JSON.stringify(oldObj),
+        ),
+      ).toBe(false);
+    });
+
     it('rejects removing an existing validation command', () => {
       const oldContent = JSON.stringify(base);
       const newContent = JSON.stringify({
