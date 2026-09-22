@@ -307,11 +307,26 @@ export async function runSingleShotAgentPhase(
     },
   };
 
+  const candidateDestinations = resolvedResultJsonPath
+    ? [
+        'result.json',
+        'fix-review-result.json',
+        'fix-validate-result.json',
+        'follow-up-review-result.json',
+      ].filter((p) => p !== resolvedResultJsonPath)
+    : [];
+
   // Pre-cleanup stale result files from previous phases or iterations to avoid
-  // model schema anchoring or stale result extraction (#1158, #1162).
+  // model schema anchoring or stale result extraction (#1158, #1162). This
+  // must cover every fixed candidate destination the post-invocation
+  // hasCandidateOnDisk() check below will look at, not just the current
+  // phase's own resolved path — otherwise a legitimately-completed earlier
+  // phase's leftover result file (e.g. fix-review-result.json still present
+  // when follow-up-review runs) falsely satisfies hasCandidateOnDisk() and
+  // wrongly disqualifies the isEmptyResponseViolation single retry (#1278).
   if (!config.skipResultExtraction && resolvedResultJsonPath !== 'result.json') {
     try {
-      const targetsToClean = new Set<string>([resolvedResultJsonPath, 'result.json']);
+      const targetsToClean = new Set<string>([resolvedResultJsonPath, ...candidateDestinations]);
       for (const target of targetsToClean) {
         const fullPath = join(ctx.cwd, target);
         if (existsSync(fullPath)) {
@@ -344,15 +359,6 @@ export async function runSingleShotAgentPhase(
     emit(`${String(config.phase)}.failed`, 'error', failure.message);
     return { outcome: 'failed', failure };
   }
-
-  const candidateDestinations = resolvedResultJsonPath
-    ? [
-        'result.json',
-        'fix-review-result.json',
-        'fix-validate-result.json',
-        'follow-up-review-result.json',
-      ].filter((p) => p !== resolvedResultJsonPath)
-    : [];
   const hasCandidateOnDisk = () =>
     candidateDestinations.some((p) => {
       try {
