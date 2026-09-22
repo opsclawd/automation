@@ -68,6 +68,15 @@ export function normalizeRepositoryPath(path: string, cwd: string): string | und
 }
 
 /**
+ * Returns whether a normalized repository path belongs to target-repository
+ * review fixture state, which is ambient test noise rather than a validation
+ * fix candidate.
+ */
+export function isReviewFixtureStorePath(path: string): boolean {
+  return /(^|\/)\.review-fixture-store(?:\/|$)/.test(path);
+}
+
+/**
  * Normalizes and deduplicates finding file anchors, returning a sorted list.
  */
 export function deriveAllowedFiles(

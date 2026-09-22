@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { GitPort } from '../ports/git-port.js';
-import { normalizeRepositoryPath } from './review-fix-scope.js';
+import { isReviewFixtureStorePath, normalizeRepositoryPath } from './review-fix-scope.js';
 import {
   parseGitStatusLine,
   unquoteGitPath,
@@ -60,11 +60,15 @@ export function parseStatusPaths(statusOutput: string, cwd: string = ''): Set<st
 
     for (const rawPath of targetPaths) {
       const unquoted = unquoteGitPath(rawPath);
-      if (!unquoted || isOrchestratorArtifactPattern(unquoted)) {
+      if (!unquoted) {
         continue;
       }
       const normalized = normalizeRepositoryPath(unquoted, cwd);
-      if (normalized) {
+      if (
+        normalized &&
+        !isOrchestratorArtifactPattern(normalized) &&
+        !isReviewFixtureStorePath(normalized)
+      ) {
         result.add(normalized);
       }
     }
@@ -96,7 +100,7 @@ export async function recordValidationCriticalFilesFromWorktree(input: {
   const results: ValidationCriticalFile[] = [];
 
   for (const path of candidatePaths) {
-    if (isOrchestratorArtifactPattern(path)) {
+    if (isOrchestratorArtifactPattern(path) || isReviewFixtureStorePath(path)) {
       continue;
     }
     let afterContent: string | undefined;
@@ -153,7 +157,7 @@ export async function recordValidationCriticalFilesFromCommits(input: {
 
   for (const rawPath of changedFiles) {
     const path = normalizeRepositoryPath(rawPath, cwd);
-    if (!path || isOrchestratorArtifactPattern(path)) {
+    if (!path || isOrchestratorArtifactPattern(path) || isReviewFixtureStorePath(path)) {
       continue;
     }
 
