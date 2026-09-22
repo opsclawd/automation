@@ -12,6 +12,7 @@ import {
   checkValidationCriticalRevert,
   type ValidationCriticalFile,
 } from '../validation-critical-files.js';
+import { isReviewFixtureStorePath } from '../review-fix-scope.js';
 
 function sha256(content: string): string {
   return createHash('sha256').update(content).digest('hex');
@@ -82,6 +83,32 @@ describe('validation-critical-files', () => {
       const paths = parseStatusPaths(statusOutput, '/worktree');
       expect(paths.has('src/foo\tbar.ts')).toBe(true);
       expect(paths.has('src/quote"name.ts')).toBe(true);
+    });
+
+    it('filters nested review fixture-store paths without filtering similar names', () => {
+      const statusOutput = [
+        ' M apps/orchestrator/.review-fixture-store/baselines/BASE-001.json',
+        ' M src/.review-fixture-store.backup.ts',
+        ' M src/review-fixture-store.ts',
+        ' M src/real-product.ts',
+      ].join('\n');
+
+      const paths = parseStatusPaths(statusOutput, '/worktree');
+      expect(paths.has('apps/orchestrator/.review-fixture-store/baselines/BASE-001.json')).toBe(
+        false,
+      );
+      expect(paths.has('src/.review-fixture-store.backup.ts')).toBe(true);
+      expect(paths.has('src/review-fixture-store.ts')).toBe(true);
+      expect(paths.has('src/real-product.ts')).toBe(true);
+    });
+
+    it('matches only the review fixture-store directory segment', () => {
+      expect(isReviewFixtureStorePath('.review-fixture-store/root.json')).toBe(true);
+      expect(isReviewFixtureStorePath('apps/orchestrator/.review-fixture-store/root.json')).toBe(
+        true,
+      );
+      expect(isReviewFixtureStorePath('.review-fixture-store.backup/root.json')).toBe(false);
+      expect(isReviewFixtureStorePath('src/review-fixture-store.ts')).toBe(false);
     });
   });
 
@@ -227,6 +254,37 @@ describe('validation-critical-files', () => {
 
       expect(result).toHaveLength(0);
     });
+
+    it('skips review fixture-store noise while retaining genuine changed files', async () => {
+      const git = new FakeGitPort();
+      const cwd = '/worktree';
+      const fixturePath = 'apps/orchestrator/.review-fixture-store/baselines/BASE-001.json';
+      const productPath = 'src/validation-fix.ts';
+      const dirtyBefore = new Map<string, string | undefined>([
+        [fixturePath, 'fixture before'],
+        [productPath, 'product before'],
+      ]);
+
+      git.statusByCwd.set(cwd, ` M ${fixturePath}\n M ${productPath}`);
+      git.worktreeFileContents.set(`${cwd}:${fixturePath}`, 'fixture after');
+      git.worktreeFileContents.set(`${cwd}:${productPath}`, 'product after');
+
+      const result = await recordValidationCriticalFilesFromWorktree({
+        git,
+        cwd,
+        dirtyBefore,
+        diagnostic: 'test failed',
+      });
+
+      expect(result).toEqual([
+        {
+          path: productPath,
+          beforeHash: sha256('product before'),
+          afterHash: sha256('product after'),
+          diagnostic: 'test failed',
+        },
+      ]);
+    });
   });
 
   describe('recordValidationCriticalFilesFromCommits', () => {
@@ -295,6 +353,38 @@ describe('validation-critical-files', () => {
       });
 
       expect(result).toHaveLength(0);
+    });
+
+    it('skips review fixture-store noise while retaining genuine changed files', async () => {
+      const git = new FakeGitPort();
+      const cwd = '/worktree';
+      const headBefore = 'sha-before';
+      const headAfter = 'sha-after';
+      const fixturePath = 'apps/orchestrator/.review-fixture-store/findings/F-001.json';
+      const productPath = 'src/validation-fix.ts';
+
+      git.fileContentResults.set(`${headBefore}:${fixturePath}`, 'fixture before');
+      git.fileContentResults.set(`${headAfter}:${fixturePath}`, 'fixture after');
+      git.fileContentResults.set(`${headBefore}:${productPath}`, 'product before');
+      git.fileContentResults.set(`${headAfter}:${productPath}`, 'product after');
+
+      const result = await recordValidationCriticalFilesFromCommits({
+        git,
+        cwd,
+        headBeforeFix: headBefore,
+        headAfterFix: headAfter,
+        changedFiles: [fixturePath, productPath],
+        diagnostic: 'test failed',
+      });
+
+      expect(result).toEqual([
+        {
+          path: productPath,
+          beforeHash: sha256('product before'),
+          afterHash: sha256('product after'),
+          diagnostic: 'test failed',
+        },
+      ]);
     });
   });
 
