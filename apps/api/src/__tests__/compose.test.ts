@@ -1006,6 +1006,154 @@ describe('composeRoot', () => {
     vi.restoreAllMocks();
   });
 
+  it('recovers a resumed null baseline from the base branch before creating the worktree', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'compose-resume-wt-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      repoFullName: 'owner/repo',
+      runStartupSweeps: false,
+    });
+    const runUuid = 'prepare-wt-resume-uuid';
+    container.runRepository.insertIfNoActive({
+      uuid: runUuid,
+      displayId: 'issue-73-20260622-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 73,
+      type: 'issue_to_pr',
+      status: 'failed',
+      baseBranch: 'release/batch-1',
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    });
+    const resolvedSha = '2222333344445555666677778888999900001111';
+    const resolveRefSpy = vi
+      .spyOn(GitWorktreeAdapter.prototype, 'resolveRef')
+      .mockImplementation(async (_cwd, ref) =>
+        ref === 'origin/release/batch-1' ? resolvedSha : undefined,
+      );
+    const createWorktreeSpy = vi
+      .spyOn(GitWorktreeAdapter.prototype, 'createWorktree')
+      .mockResolvedValue(undefined);
+    vi.spyOn(GitWorktreeAdapter.prototype, 'seedArtifactExcludes').mockResolvedValue(undefined);
+    const headCommitShaSpy = vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha');
+
+    const result = await container.workerLoopDeps!(RepositoryId('owner/repo')).prepareWorktree({
+      repoId: RepositoryId('owner/repo'),
+      runId: RunId(runUuid),
+      signal: new AbortController().signal,
+      resumeDisposition: 'reset_to_baseline',
+    });
+
+    expect(resolveRefSpy).toHaveBeenCalledWith(root, 'origin/release/batch-1');
+    expect(createWorktreeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ baseBranch: resolvedSha }),
+    );
+    expect(headCommitShaSpy).not.toHaveBeenCalled();
+    expect(container.runRepository.findByUuid(runUuid)?.startCommitSha).toBe(resolvedSha);
+    expect(result.cwd).toBe(path.join(root, '.ai-worktrees', 'issue-73'));
+    vi.restoreAllMocks();
+  });
+
+  it('does not create a resumed worktree when recovered baseline persistence fails', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'compose-resume-wt-fail-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      repoFullName: 'owner/repo',
+      runStartupSweeps: false,
+    });
+    const runUuid = 'prepare-wt-resume-persist-failure-uuid';
+    container.runRepository.insertIfNoActive({
+      uuid: runUuid,
+      displayId: 'issue-74-20260622-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 74,
+      type: 'issue_to_pr',
+      status: 'failed',
+      baseBranch: 'release/batch-1',
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    });
+    const resolvedSha = '3333444455556666777788889999000011112222';
+    const resolveRefSpy = vi
+      .spyOn(GitWorktreeAdapter.prototype, 'resolveRef')
+      .mockImplementation(async (_cwd, ref) =>
+        ref === 'origin/release/batch-1' ? resolvedSha : undefined,
+      );
+    const createWorktreeSpy = vi
+      .spyOn(GitWorktreeAdapter.prototype, 'createWorktree')
+      .mockResolvedValue(undefined);
+    vi.spyOn(GitWorktreeAdapter.prototype, 'seedArtifactExcludes').mockResolvedValue(undefined);
+    vi.spyOn(container.runRepository, 'update').mockImplementation(() => {
+      throw new Error('database unavailable');
+    });
+
+    await expect(
+      container.workerLoopDeps!(RepositoryId('owner/repo')).prepareWorktree({
+        repoId: RepositoryId('owner/repo'),
+        runId: RunId(runUuid),
+        signal: new AbortController().signal,
+        resumeDisposition: 'reset_to_baseline',
+      }),
+    ).rejects.toThrow(
+      `failed to persist recovered startCommitSha ${resolvedSha}: database unavailable`,
+    );
+
+    expect(resolveRefSpy).toHaveBeenCalledWith(root, 'origin/release/batch-1');
+    expect(createWorktreeSpy).not.toHaveBeenCalled();
+    expect(container.runRepository.findByUuid(runUuid)?.startCommitSha).toBeUndefined();
+    vi.restoreAllMocks();
+  });
+
   it('buildRunContext populates promptsRoot and expectedBranch from repoRoot and issueNumber', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     writeFileSync(

@@ -3714,8 +3714,8 @@ describe('CLI runs resume command', () => {
     const db = openDatabase(dbPath);
     applyMigrations(db);
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase, start_commit_sha, base_branch)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runUuid,
       'issue-81-20260622-000000',
@@ -3727,6 +3727,8 @@ describe('CLI runs resume command', () => {
       '[]',
       new Date().toISOString(),
       'implement',
+      execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root }).toString().trim(),
+      'main',
     );
     db.close();
 
@@ -3824,8 +3826,8 @@ describe('CLI runs resume command', () => {
     const db = openDatabase(dbPath);
     applyMigrations(db);
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase, start_commit_sha, base_branch)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runUuid,
       'issue-82-20260622-000000',
@@ -3837,6 +3839,8 @@ describe('CLI runs resume command', () => {
       '[]',
       new Date().toISOString(),
       'implement',
+      execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root }).toString().trim(),
+      'main',
     );
     db.close();
 
