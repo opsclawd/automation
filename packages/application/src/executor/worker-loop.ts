@@ -50,7 +50,9 @@ export interface WorkerLoopDeps {
     repoId: RepositoryId;
     runId: RunId;
     signal: AbortSignal;
+    resumeDisposition?: ResumeDisposition;
   }) => Promise<{ cwd: string }>;
+  handlePreparationFailure?: (input: { runId: RunId; error: Error }) => void;
   resetWorktree: (repoId: RepositoryId) => void;
   isWorkerAlive(workerId: WorkerId): boolean;
   now: () => Date;
@@ -159,24 +161,38 @@ export async function runClaimedJob(
       queue.markRunning(ownership, deps.now());
       started = true;
 
-      const worktree = await Promise.race([
-        deps.prepareWorktree({
-          repoId: job.repoId,
-          runId: job.runId,
-          signal: abortController.signal,
-        }),
-        new Promise<never>((_, reject) => {
-          if (abortController.signal.aborted) {
-            reject(new Error('aborted during worktree preparation'));
-            return;
-          }
-          abortController.signal.addEventListener(
-            'abort',
-            () => reject(new Error('aborted during worktree preparation')),
-            { once: true },
-          );
-        }),
-      ]);
+      let worktree: { cwd: string };
+      try {
+        worktree = await Promise.race([
+          deps.prepareWorktree({
+            repoId: job.repoId,
+            runId: job.runId,
+            signal: abortController.signal,
+            ...(job.resumeDisposition !== undefined
+              ? { resumeDisposition: job.resumeDisposition }
+              : {}),
+          }),
+          new Promise<never>((_, reject) => {
+            if (abortController.signal.aborted) {
+              reject(new Error('aborted during worktree preparation'));
+              return;
+            }
+            abortController.signal.addEventListener(
+              'abort',
+              () => reject(new Error('aborted during worktree preparation')),
+              { once: true },
+            );
+          }),
+        ]);
+      } catch (err) {
+        if (deps.handlePreparationFailure && !abortController.signal.aborted) {
+          deps.handlePreparationFailure({
+            runId: job.runId,
+            error: err instanceof Error ? err : new Error(String(err)),
+          });
+        }
+        throw err;
+      }
 
       const run = deps.findRun(job.runId);
       if (!run) {

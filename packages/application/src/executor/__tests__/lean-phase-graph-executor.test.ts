@@ -152,7 +152,9 @@ describe('Lean Phase Graph in RunExecutor (Issue #1106)', () => {
       completedPhases: [],
       skippedPhases: [],
       attempt: 1,
-    };
+      baseBranch: 'main',
+      startCommitSha: 'test-start-sha',
+    } as Run;
     runRepo.addRun(run as never);
 
     const executor = new RunExecutor({
