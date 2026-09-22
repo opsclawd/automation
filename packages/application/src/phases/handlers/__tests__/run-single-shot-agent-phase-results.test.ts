@@ -649,6 +649,73 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
     expect(agent.invocations[1]?.fallbackReason).toBe('empty_response_retry');
   });
 
+  it('still auto-retries an empty response when a completed earlier phase left its own result file on disk (#1278)', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'retry-despite-stale-sibling-'));
+    ctx.cwd = tempDir;
+    git.currentBranchByCwd.set(tempDir, 'ai/issue-1128');
+    git.headByCwd.set(tempDir, '0'.repeat(40));
+
+    try {
+      // Simulate fix-review having genuinely completed earlier in this same
+      // run, leaving its own result file behind in the worktree.
+      writeFileSync(join(tempDir, 'fix-review-result.json'), '{"result":"done_with_fixes"}');
+
+      // Pre-seed the eventual successful retry's result content in the
+      // artifact store (extraction reads through ctx.artifacts, not disk).
+      await artifacts.write({
+        runId: 'run-1128',
+        relativePath: 'follow-up-review-result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          evaluations: [],
+          new_findings: [],
+          summary: 'Retried successfully',
+        }),
+      });
+
+      agent.enqueue('follow-up-review', () => ({
+        runtime: 'antigravity',
+        provider: 'google',
+        model: 'gemini-3.8-flash-high',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: join(tempDir, 'stdout-empty.log'),
+        stderrPath: join(tempDir, 'stderr.log'),
+        contractViolations: ['missing_required_artifact'],
+        outcome: 'contract_violation',
+        endCommitSha: '0'.repeat(40),
+      }));
+      agent.enqueue('follow-up-review', () => ({
+        runtime: 'antigravity',
+        provider: 'google',
+        model: 'gemini-3.8-flash-high',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: join(tempDir, 'stdout.log'),
+        stderrPath: join(tempDir, 'stderr.log'),
+        resultJsonPath: 'follow-up-review-result.json',
+        contractViolations: [],
+        outcome: 'success',
+      }));
+
+      const result = await runSingleShotAgentPhase<FollowUpReviewResult>(ctx, {
+        phase: PhaseName('follow-up-review'),
+        profile: AgentProfileName('follow-up-review'),
+        step: 'follow-up-review',
+        vars: { cwd: ctx.cwd },
+        resultJsonPath: 'follow-up-review-result.json',
+        agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+      });
+
+      expect(result.outcome).toBe('passed');
+      expect(agent.invocations).toHaveLength(2);
+      expect(agent.invocations[1]?.fallbackOfInvocationId).toBe(agent.invocations[0]?.id);
+      expect(agent.invocations[1]?.fallbackReason).toBe('empty_response_retry');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('does not auto-retry when a rescueable candidate result file exists on disk (#1241)', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'no-retry-when-rescueable-'));
     const stdoutPath = join(tempDir, 'stdout.log');
