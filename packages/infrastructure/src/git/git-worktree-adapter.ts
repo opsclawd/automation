@@ -55,6 +55,8 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
       // branch does not exist yet
     }
 
+    await mkdir(dirname(worktreePath), { recursive: true });
+
     if (branchExists) {
       await git(repoLocalBasePath, ['worktree', 'add', worktreePath, branch]);
     } else {

@@ -73,6 +73,26 @@ export interface ReconcileBatchResult {
   batch: ReleaseBatch;
 }
 
+export type IntegrateSourceBranchResult =
+  | {
+      success: true;
+      outcome: 'already_integrated';
+      sourceBranch: string;
+      releaseBranch: string;
+      releaseSha: string;
+    }
+  | {
+      success: true;
+      outcome: 'merged';
+      sourceBranch: string;
+      releaseBranch: string;
+      newReleaseSha: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
 export interface CertifyItemMergedInput {
   batchId: ReleaseBatchId;
   position: number;
@@ -499,10 +519,15 @@ export class ReleaseBatchCoordinator {
         }
       }
 
-      // If batch is awaiting_manual_test or approved, check safety invariant (branch movement)
-      if (batch.status === 'awaiting_manual_test' || batch.status === 'approved') {
+      // If batch is awaiting_manual_test, approved, or promoting, check safety invariant (branch movement)
+      if (
+        batch.status === 'awaiting_manual_test' ||
+        batch.status === 'approved' ||
+        batch.status === 'promoting'
+      ) {
         const repo = this.deps.repositoryPort.findById(batch.repoId);
         if (this.deps.git && repo && batch.candidateSha) {
+          const candidateSha = batch.candidateSha;
           try {
             await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
             await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
@@ -516,7 +541,7 @@ export class ReleaseBatchCoordinator {
             );
 
             const isApproved = batch.status === 'approved';
-            if (remoteReleaseSha && remoteReleaseSha !== batch.candidateSha) {
+            if (remoteReleaseSha && remoteReleaseSha !== candidateSha) {
               batch = this.blockBatchAndNotify(
                 batch,
                 'release_branch_drift',
@@ -536,13 +561,47 @@ export class ReleaseBatchCoordinator {
               };
             }
 
+            let verifiedMergedPromotionCommitSha: string | undefined;
+            if (
+              (batch.status === 'approved' || batch.status === 'promoting') &&
+              batch.promotionPrNumber !== undefined &&
+              this.deps.github
+            ) {
+              try {
+                const readiness = await this.deps.github.getPrMergeReadiness(
+                  repo.fullName,
+                  batch.promotionPrNumber,
+                );
+                if (readiness.isMerged || readiness.state === 'merged') {
+                  const resolvedSha = readiness.mergeCommitSha ?? remoteSourceSha;
+                  if (resolvedSha) {
+                    verifiedMergedPromotionCommitSha = resolvedSha;
+                    if (batch.promotionCommitSha !== resolvedSha) {
+                      batch = recordPromotionCommit(batch, resolvedSha);
+                      this.deps.releaseBatchRepository.update(batch);
+                    }
+                  }
+                }
+              } catch (err) {
+                this.deps.logger?.warn?.(
+                  `Failed checking promotion PR merge readiness for batch ${batch.id}: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+            }
+
             if (remoteSourceSha) {
               const isContained = await this.deps.git.isAncestor(
                 repo.localBasePath,
                 remoteSourceSha,
-                batch.candidateSha,
+                candidateSha,
               );
-              if (!isContained) {
+              const isPromotionOwned =
+                (batch.status === 'approved' || batch.status === 'promoting') &&
+                batch.promotionPrNumber !== undefined &&
+                verifiedMergedPromotionCommitSha !== undefined &&
+                remoteSourceSha === verifiedMergedPromotionCommitSha;
+
+              if (!isContained && !isPromotionOwned) {
                 batch = this.blockBatchAndNotify(
                   batch,
                   'source_branch_advanced',
@@ -586,7 +645,7 @@ export class ReleaseBatchCoordinator {
               batch.promotionPrNumber,
             );
             if (readiness.isMerged || readiness.state === 'merged') {
-              let promoSha = readiness.mergeCommitSha;
+              let promoSha = batch.promotionCommitSha ?? readiness.mergeCommitSha;
               if (this.deps.git) {
                 await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
                 const sourceSha = await this.deps.git.resolveRef(
@@ -1847,11 +1906,25 @@ export class ReleaseBatchCoordinator {
     }
   }
 
-  async integrateSourceBranch(batchId: ReleaseBatchId): Promise<{
-    success: boolean;
-    newReleaseSha?: string;
-    error?: string;
-  }> {
+  private async removeWorktreeToleratingAbsent(worktreePath: string): Promise<void> {
+    if (!this.deps.git) return;
+    try {
+      await this.deps.git.removeWorktree(worktreePath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes('no worktree') ||
+        msg.includes('does not exist') ||
+        msg.includes('ENOENT') ||
+        msg.includes('not a valid')
+      ) {
+        return;
+      }
+      throw err;
+    }
+  }
+
+  async integrateSourceBranch(batchId: ReleaseBatchId): Promise<IntegrateSourceBranchResult> {
     const now = (this.deps.now ?? (() => new Date()))();
     let batch = this.deps.releaseBatchRepository.findById(batchId);
     if (!batch) {
@@ -1891,51 +1964,156 @@ export class ReleaseBatchCoordinator {
         this.deps.releaseBatchRepository.update(batch);
         await this.reconcile(batch.id);
       }
-      return { success: true, newReleaseSha: remoteReleaseSha };
-    }
-
-    const mergeResult = await this.deps.git.mergeBranch(
-      repo.localBasePath,
-      `origin/${batch.sourceBranch}`,
-      `Merge remote-tracking branch 'origin/${batch.sourceBranch}' into ${batch.releaseBranch}`,
-    );
-
-    if (!mergeResult.success) {
       return {
-        success: false,
-        error: mergeResult.error ?? 'Merge conflict integrating source branch into release branch',
+        success: true,
+        outcome: 'already_integrated',
+        sourceBranch: batch.sourceBranch,
+        releaseBranch: batch.releaseBranch,
+        releaseSha: remoteReleaseSha,
       };
     }
 
-    await this.deps.git.push({
-      cwd: repo.localBasePath,
-      branch: batch.releaseBranch,
-      remote: 'origin',
-    });
+    const normalizedBase = repo.localBasePath.replace(/\\/g, '/').replace(/\/+$/, '');
+    const worktreesRoot = `${normalizedBase}/.ai-worktrees`;
+    const safeBatchComponent = batch.id.replace(/[^a-zA-Z0-9_-]/g, '_') || 'batch';
+    const worktreeDirName = `integrate-${safeBatchComponent}-${randomUUID().slice(0, 8)}`;
+    const worktreePath = `${worktreesRoot}/${worktreeDirName}`;
 
-    const updatedReleaseSha =
-      (await this.deps.git.resolveRef(repo.localBasePath, `origin/${batch.releaseBranch}`)) ??
-      remoteReleaseSha;
-
-    this.publishEvent(batch, {
-      type: 'release_batch.source_drift_integrated',
-      level: 'info',
-      message: `release-batch ${batch.id} integrated source branch drift into ${batch.releaseBranch} (${updatedReleaseSha})`,
-      timestamp: now,
-      metadata: {
-        releaseBatchId: batch.id,
-        releaseBranch: batch.releaseBranch,
-        newReleaseSha: updatedReleaseSha,
-      },
-    });
-
-    if (batch.status === 'blocked' && batch.blockedReason === 'source_branch_advanced') {
-      batch = unblockBatch(batch);
-      this.deps.releaseBatchRepository.update(batch);
+    if (
+      !worktreePath.startsWith(`${worktreesRoot}/`) ||
+      worktreeDirName.includes('/') ||
+      worktreeDirName.includes('\\') ||
+      worktreeDirName.includes('..')
+    ) {
+      return {
+        success: false,
+        error: `Resolved worktree path escapes root: ${worktreePath}`,
+      };
     }
 
-    await this.reconcile(batch.id);
+    let worktreeCreated = false;
+    let worktreeCleanedUp = false;
+    let primaryError: string | undefined;
 
-    return { success: true, newReleaseSha: updatedReleaseSha };
+    try {
+      await this.deps.git.createWorktree({
+        repoLocalBasePath: repo.localBasePath,
+        worktreePath,
+        branch: batch.releaseBranch,
+        baseBranch: batch.releaseBranch,
+      });
+      worktreeCreated = true;
+
+      const currentBranch = await this.deps.git.currentBranch(worktreePath);
+      if (currentBranch !== batch.releaseBranch) {
+        primaryError = `Worktree branch mismatch: expected ${batch.releaseBranch}, got ${currentBranch}`;
+        return { success: false, error: primaryError };
+      }
+
+      const mergeResult = await this.deps.git.mergeBranch(
+        worktreePath,
+        `origin/${batch.sourceBranch}`,
+        `Merge remote-tracking branch 'origin/${batch.sourceBranch}' into ${batch.releaseBranch}`,
+      );
+
+      if (!mergeResult.success) {
+        primaryError =
+          mergeResult.error ?? 'Merge conflict integrating source branch into release branch';
+        return { success: false, error: primaryError };
+      }
+
+      await this.deps.git.push({
+        cwd: worktreePath,
+        branch: batch.releaseBranch,
+        remote: 'origin',
+      });
+
+      await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
+      await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
+      const freshRemoteSourceSha = await this.deps.git.resolveRef(
+        repo.localBasePath,
+        `origin/${batch.sourceBranch}`,
+      );
+      const updatedRemoteReleaseSha = await this.deps.git.resolveRef(
+        repo.localBasePath,
+        `origin/${batch.releaseBranch}`,
+      );
+      const worktreeHeadSha = await this.deps.git.headCommitSha(worktreePath);
+
+      if (!freshRemoteSourceSha || !updatedRemoteReleaseSha || !worktreeHeadSha) {
+        primaryError = 'Could not resolve updated remote refs or worktree head';
+        return { success: false, error: primaryError };
+      }
+
+      if (updatedRemoteReleaseSha === remoteReleaseSha) {
+        primaryError = 'Remote release branch head did not advance after push';
+        return { success: false, error: primaryError };
+      }
+
+      if (worktreeHeadSha !== updatedRemoteReleaseSha) {
+        primaryError = `Worktree head (${worktreeHeadSha}) does not match updated remote release head (${updatedRemoteReleaseSha})`;
+        return { success: false, error: primaryError };
+      }
+
+      const isAncestorAfterMerge = await this.deps.git.isAncestor(
+        repo.localBasePath,
+        freshRemoteSourceSha,
+        updatedRemoteReleaseSha,
+      );
+      if (!isAncestorAfterMerge) {
+        primaryError = `Source branch (${freshRemoteSourceSha}) is not an ancestor of updated release head (${updatedRemoteReleaseSha})`;
+        return { success: false, error: primaryError };
+      }
+
+      try {
+        await this.removeWorktreeToleratingAbsent(worktreePath);
+        worktreeCleanedUp = true;
+      } catch (err) {
+        primaryError = `Failed to remove worktree ${worktreePath}: ${err instanceof Error ? err.message : String(err)}`;
+        return { success: false, error: primaryError };
+      }
+
+      this.publishEvent(batch, {
+        type: 'release_batch.source_drift_integrated',
+        level: 'info',
+        message: `release-batch ${batch.id} integrated source branch drift into ${batch.releaseBranch} (${updatedRemoteReleaseSha})`,
+        timestamp: now,
+        metadata: {
+          releaseBatchId: batch.id,
+          releaseBranch: batch.releaseBranch,
+          newReleaseSha: updatedRemoteReleaseSha,
+        },
+      });
+
+      if (batch.status === 'blocked' && batch.blockedReason === 'source_branch_advanced') {
+        batch = unblockBatch(batch);
+        this.deps.releaseBatchRepository.update(batch);
+      }
+
+      await this.reconcile(batch.id);
+
+      return {
+        success: true,
+        outcome: 'merged',
+        sourceBranch: batch.sourceBranch,
+        releaseBranch: batch.releaseBranch,
+        newReleaseSha: updatedRemoteReleaseSha,
+      };
+    } catch (err) {
+      if (!primaryError) {
+        primaryError = err instanceof Error ? err.message : String(err);
+      }
+      return { success: false, error: primaryError };
+    } finally {
+      if (worktreeCreated && !worktreeCleanedUp) {
+        try {
+          await this.removeWorktreeToleratingAbsent(worktreePath);
+        } catch (cleanupErr) {
+          if (!primaryError) {
+            primaryError = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+          }
+        }
+      }
+    }
   }
 }

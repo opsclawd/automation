@@ -1935,15 +1935,24 @@ describe('composeRoot', () => {
 
   it('persists batch-level events via releaseBatchCoordinator without SQLite foreign key violations (#1266)', async () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    let releaseSha = 'release-sha-2';
     const fakeGit: GitPort = {
       fetch: vi.fn().mockResolvedValue(undefined),
       resolveRef: vi.fn().mockImplementation(async (_dir, ref) => {
-        if (ref.includes('release')) return 'release-sha-2';
+        if (ref.includes('release')) return releaseSha;
         return 'source-sha-1';
       }),
-      isAncestor: vi.fn().mockResolvedValue(false),
+      isAncestor: vi.fn().mockImplementation(async (_dir, _ancestor, descendant) => {
+        return descendant === 'release-sha-3';
+      }),
+      createWorktree: vi.fn().mockResolvedValue(undefined),
+      removeWorktree: vi.fn().mockResolvedValue(undefined),
+      currentBranch: vi.fn().mockResolvedValue('release/2026-09-18-batch-fk-1266'),
+      headCommitSha: vi.fn().mockResolvedValue('release-sha-3'),
       mergeBranch: vi.fn().mockResolvedValue({ success: true }),
-      push: vi.fn().mockResolvedValue(undefined),
+      push: vi.fn().mockImplementation(async () => {
+        releaseSha = 'release-sha-3';
+      }),
     } as unknown as GitPort;
 
     const container = composeRoot({
@@ -1978,6 +1987,38 @@ describe('composeRoot', () => {
 
     const result = await container.releaseBatchCoordinator.integrateSourceBranch(batch.id);
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.outcome).toBe('merged');
+      expect(result.newReleaseSha).toBe('release-sha-3');
+    }
+
+    // Verify constant release SHA guard prevents false success
+    const fakeGitUnchanged = {
+      ...fakeGit,
+      resolveRef: vi.fn().mockImplementation(async (_dir, ref) => {
+        if (ref.includes('release')) return 'release-sha-unchanged';
+        return 'source-sha-1';
+      }),
+      isAncestor: vi.fn().mockResolvedValue(false),
+      headCommitSha: vi.fn().mockResolvedValue('release-sha-unchanged'),
+      push: vi.fn().mockResolvedValue(undefined),
+    } as unknown as GitPort;
+    const containerUnchanged = composeRoot({
+      repoRoot: trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-'))),
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      runStartupSweeps: false,
+      gitPort: fakeGitUnchanged,
+    });
+    containerUnchanged.runRepository.insertIfNoActive(run);
+    containerUnchanged.releaseBatchRepository.insert({
+      ...batch,
+      id: ReleaseBatchId('batch-fk-unchanged'),
+    });
+    const failedResult = await containerUnchanged.releaseBatchCoordinator.integrateSourceBranch(
+      ReleaseBatchId('batch-fk-unchanged'),
+    );
+    expect(failedResult.success).toBe(false);
+    expect(failedResult.error).toContain('Remote release branch head did not advance after push');
 
     const fkErrors = consoleErrorSpy.mock.calls.filter((call) =>
       call.some((arg) => String(arg).includes('FOREIGN KEY constraint failed')),

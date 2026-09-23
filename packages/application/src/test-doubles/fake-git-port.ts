@@ -50,13 +50,37 @@ export class FakeGitPort implements GitPort, ArtifactGuardPort {
   worktreeIgnoredFilesByCwd = new Map<string, string[]>();
   committedFilesByCommit = new Map<string, string[]>();
 
+  createWorktreeCalls: CreateWorktreeInput[] = [];
+  removeWorktreeCalls: string[] = [];
+  removeWorktreeTolerateAbsent = false;
+  mergeHeadByCwd = new Map<string, string>();
+  defaultMergeHead?: string;
+  autoAdvanceOnMerge = true;
+
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
+    this.createWorktreeCalls.push(input);
     this.worktrees.push(input.worktreePath);
+    if (!this.currentBranchByCwd.has(input.worktreePath)) {
+      this.currentBranchByCwd.set(input.worktreePath, input.branch);
+    }
+    if (!this.headByCwd.has(input.worktreePath)) {
+      const baseHead =
+        this.remoteRefs.get(`origin/${input.baseBranch}`) ??
+        this.remoteRefs.get(input.baseBranch) ??
+        this.headByCwd.get(input.repoLocalBasePath);
+      if (baseHead) {
+        this.headByCwd.set(input.worktreePath, baseHead);
+      }
+    }
   }
 
   async removeWorktree(worktreePath: string): Promise<void> {
+    this.removeWorktreeCalls.push(worktreePath);
     const idx = this.worktrees.indexOf(worktreePath);
-    if (idx === -1) throw new Error(`no worktree ${worktreePath}`);
+    if (idx === -1) {
+      if (this.removeWorktreeTolerateAbsent) return;
+      throw new Error(`no worktree ${worktreePath}`);
+    }
     this.worktrees.splice(idx, 1);
   }
 
@@ -134,6 +158,7 @@ export class FakeGitPort implements GitPort, ArtifactGuardPort {
     const head = await this.headCommitSha(input.cwd);
     if (head) {
       this.remoteRefs.set(`${remote}/${input.branch}`, head);
+      this.resolveRefResults.set(`${remote}/${input.branch}`, head);
     }
   }
 
@@ -280,9 +305,33 @@ export class FakeGitPort implements GitPort, ArtifactGuardPort {
   ): Promise<{ success: boolean; conflict?: boolean; error?: string }> {
     this.mergeBranchCalls.push({ cwd, sourceRef, message });
     const key = `${cwd}:${sourceRef}`;
-    if (this.mergeBranchResults.has(key)) return this.mergeBranchResults.get(key)!;
-    if (this.mergeBranchResults.has(sourceRef)) return this.mergeBranchResults.get(sourceRef)!;
-    return { success: true };
+    const result = this.mergeBranchResults.has(key)
+      ? this.mergeBranchResults.get(key)!
+      : this.mergeBranchResults.has(sourceRef)
+        ? this.mergeBranchResults.get(sourceRef)!
+        : { success: true };
+
+    if (result.success) {
+      let newHead: string | undefined;
+      if (this.mergeHeadByCwd.has(cwd)) {
+        newHead = this.mergeHeadByCwd.get(cwd)!;
+      } else if (this.defaultMergeHead) {
+        newHead = this.defaultMergeHead;
+      } else if (this.autoAdvanceOnMerge) {
+        const currentHead = this.headByCwd.get(cwd) ?? 'head';
+        newHead = `${currentHead}-merged-${++this.shaCounter}`;
+      }
+
+      if (newHead) {
+        this.headByCwd.set(cwd, newHead);
+        const sourceSha = this.remoteRefs.get(sourceRef) ?? (await this.resolveRef(cwd, sourceRef));
+        if (sourceSha && !this.ancestorResults.has(`${sourceSha}|${newHead}`)) {
+          this.ancestorResults.set(`${sourceSha}|${newHead}`, true);
+        }
+      }
+    }
+
+    return result;
   }
 
   async resolveCommitSha(cwd: string, ref: string): Promise<string | undefined> {
