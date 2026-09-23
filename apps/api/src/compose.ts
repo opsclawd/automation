@@ -1945,6 +1945,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     runAbort: abortRegistry,
     git: gitAdapter,
     leases: workerLeaseRepository,
+    queue: jobQueue,
+    eventBus: persistingEventBus,
     findCwd: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
       if (!run) throw new Error(`findCwd: no run found for ${runId}`);
@@ -2845,6 +2847,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventRepository,
         stepRepository,
         runNotification,
+        jobQueue,
         reviewConvergenceMaxIterations: config.phases.reviewConvergence?.maxIterations ?? 4,
       });
     }

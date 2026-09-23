@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import type { RunId, RepositoryId, WorkerLease } from '@ai-sdlc/domain';
+import type { RunId, RepositoryId, WorkerLease, Job, IssueNumber } from '@ai-sdlc/domain';
+import {
+  JobId as mkJobId,
+  WorkerId as mkWorkerId,
+  RepositoryId as mkRepoId,
+} from '@ai-sdlc/domain';
 import { CancelRun } from '../cancel-run.js';
-import type { GitPort, WorkerLeasePort, RunAbortPort, LoggerPort } from '../ports.js';
+import type {
+  GitPort,
+  WorkerLeasePort,
+  RunAbortPort,
+  LoggerPort,
+  RepositoryPort,
+} from '../ports.js';
 import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
+import { FakeJobQueuePort } from '../test-doubles/fake-job-queue-port.js';
+import { FakeEventBus } from '../test-doubles/fake-event-bus.js';
 
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 const runId = (s: string) => s as RunId;
@@ -40,6 +53,8 @@ function makeCancelRun(deps: Partial<Parameters<typeof CancelRun.prototype.const
     findCwd: deps.findCwd ?? noopFindCwd,
     findStartCommitSha: deps.findStartCommitSha ?? noopFindStartSha,
     logger: deps.logger ?? noopLogger,
+    queue: deps.queue,
+    eventBus: deps.eventBus,
     now: deps.now ?? fixedNow,
   });
 }
@@ -678,6 +693,187 @@ describe('CancelRun', () => {
       expect(callOrder).toContain('reset');
       expect(callOrder).toContain('clean');
       expect(callOrder).not.toContain('release');
+    });
+  });
+
+  describe('job reconciliation on cancel', () => {
+    const mockRepoPort: RepositoryPort = {
+      findById: () => ({
+        id: mkRepoId('repo-1'),
+        owner: 'owner',
+        name: 'repo',
+        fullName: 'owner/repo',
+        defaultBranch: 'main',
+        localBasePath: '/tmp/test',
+        enabled: true,
+        maxConcurrentRuns: 1,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+      findByFullName: () => undefined,
+      listEnabled: () => [],
+    };
+
+    it('reconciles queued jobs associated with the run to cancelled and publishes job.reconciled event', async () => {
+      const repo = new FakeRunRepository();
+      repo.addRun({
+        uuid: 'run-job-1',
+        displayId: 'issue-10-run-1',
+        repoId: mkRepoId('repo-1'),
+        issueNumber: 10,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T19:00:00Z'),
+      });
+      const queue = new FakeJobQueuePort(mockRepoPort);
+      const eventBus = new FakeEventBus();
+      const events: unknown[] = [];
+      eventBus.subscribe('run-job-1', (ev) => events.push(ev));
+
+      const job: Job = {
+        id: mkJobId('job-for-run-1'),
+        runId: runId('run-job-1'),
+        repoId: mkRepoId('repo-1'),
+        issueNumber: 10 as IssueNumber,
+        status: 'queued',
+        priority: 0,
+        attempts: 0,
+        createdAt: new Date('2026-05-13T19:00:00Z'),
+      };
+      queue.enqueue({ job });
+
+      const usecase = makeCancelRun({
+        runRepository: repo,
+        queue,
+        eventBus,
+      });
+
+      const res = await usecase.execute({
+        runId: runId('run-job-1'),
+        reason: 'operator cancelled',
+      });
+      expect(res.status).toBe('cancelled');
+
+      const updatedJob = queue.findById(mkJobId('job-for-run-1'));
+      expect(updatedJob?.status).toBe('cancelled');
+      expect(updatedJob?.completedAt).toBeDefined();
+
+      expect(events).toHaveLength(1);
+      expect((events[0] as Record<string, unknown>).type).toBe('job.reconciled');
+      expect((events[0] as Record<string, unknown>).metadata).toMatchObject({
+        runUuid: 'run-job-1',
+        jobId: 'job-for-run-1',
+        previousStatus: 'queued',
+        targetStatus: 'cancelled',
+        reason: 'operator cancelled',
+      });
+    });
+
+    it('reconciles running jobs and clears claim fields', async () => {
+      const repo = new FakeRunRepository();
+      repo.addRun({
+        uuid: 'run-job-2',
+        displayId: 'issue-11-run-2',
+        repoId: mkRepoId('repo-1'),
+        issueNumber: 11,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T19:00:00Z'),
+      });
+      const queue = new FakeJobQueuePort(mockRepoPort);
+      const job: Job = {
+        id: mkJobId('job-for-run-2'),
+        runId: runId('run-job-2'),
+        repoId: mkRepoId('repo-1'),
+        issueNumber: 11 as IssueNumber,
+        status: 'queued',
+        priority: 0,
+        attempts: 0,
+        createdAt: new Date('2026-05-13T19:00:00Z'),
+      };
+      queue.enqueue({ job });
+      const claimed = queue.claimNext({
+        workerId: mkWorkerId('worker-active'),
+        repoId: mkRepoId('repo-1'),
+      });
+      expect(claimed).toBeDefined();
+      queue.markRunning(
+        {
+          jobId: claimed!.id,
+          workerId: claimed!.claimedBy!,
+          claimToken: claimed!.claimToken!,
+        },
+        new Date('2026-05-13T19:01:00Z'),
+      );
+
+      const usecase = makeCancelRun({
+        runRepository: repo,
+        queue,
+      });
+
+      await usecase.execute({ runId: runId('run-job-2') });
+
+      const updatedJob = queue.findById(mkJobId('job-for-run-2'));
+      expect(updatedJob?.status).toBe('cancelled');
+      expect(updatedJob?.claimedBy).toBeUndefined();
+      expect(updatedJob?.claimToken).toBeUndefined();
+    });
+
+    it('reconciles jobs even when abort times out (skipping worktree reset)', async () => {
+      const repo = new FakeRunRepository();
+      repo.addRun({
+        uuid: 'run-job-3',
+        displayId: 'issue-12-run-3',
+        repoId: mkRepoId('repo-1'),
+        issueNumber: 12,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T19:00:00Z'),
+      });
+      const queue = new FakeJobQueuePort(mockRepoPort);
+      const job: Job = {
+        id: mkJobId('job-for-run-3'),
+        runId: runId('run-job-3'),
+        repoId: mkRepoId('repo-1'),
+        issueNumber: 12 as IssueNumber,
+        status: 'queued',
+        priority: 0,
+        attempts: 0,
+        createdAt: new Date('2026-05-13T19:00:00Z'),
+      };
+      queue.enqueue({ job });
+
+      const timingOutAbort: RunAbortPort = {
+        register: () => {},
+        abort: () => Promise.resolve({ status: 'timed_out' }),
+        unregister: () => {},
+      };
+
+      let resetCalled = false;
+      const git: GitPort = {
+        ...noopGit,
+        resetHard: async () => {
+          resetCalled = true;
+        },
+      };
+
+      const usecase = makeCancelRun({
+        runRepository: repo,
+        runAbort: timingOutAbort,
+        git,
+        queue,
+      });
+
+      const res = await usecase.execute({ runId: runId('run-job-3') });
+      expect(res.abortStatus).toBe('timed_out');
+      expect(res.worktreeReset).toBe(false);
+      expect(resetCalled).toBe(false);
+
+      const updatedJob = queue.findById(mkJobId('job-for-run-3'));
+      expect(updatedJob?.status).toBe('cancelled');
     });
   });
 });

@@ -1,12 +1,4 @@
-import type {
-  Run,
-  Phase,
-  PhaseStatus,
-  Failure,
-  ResumeDisposition,
-  Step,
-  RunId,
-} from '@ai-sdlc/domain';
+import type { Run, Phase, PhaseStatus, Failure, ResumeDisposition, Step } from '@ai-sdlc/domain';
 import {
   PhaseName,
   startPhase,
@@ -16,6 +8,7 @@ import {
   passRun,
   blockRun,
   markRunNeedsHumanReview,
+  RunId,
 } from '@ai-sdlc/domain';
 import type { PhaseHandlerContext, PhaseResult } from '../phases/handler.js';
 import type { PhaseDefinition } from '../phases/phase-definitions.js';
@@ -33,6 +26,7 @@ import type { RunRepositoryPort, FailureRepositoryPort, LoggerPort, RunRecord } 
 import type { PhaseRepositoryPort } from '../ports/phase-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { PhaseHandlerRegistryPort } from '../ports/phase-handler-registry-port.js';
+import type { JobQueuePort } from '../ports/job-queue-port.js';
 import type {
   WorktreeLifecyclePort,
   WorktreeLifecyclePlan,
@@ -73,6 +67,7 @@ export interface RunExecutorDeps {
   stepRepository?: StepRepositoryPort;
   runNotification?: RunNotificationPort;
   reviewConvergenceMaxIterations?: number;
+  jobQueue?: JobQueuePort;
 }
 
 export interface ExecuteRunInput {
@@ -171,33 +166,44 @@ export class RunExecutor {
 
     let approvedInboundPaths: string[] | undefined;
 
-    if (input.resumeDisposition !== undefined) {
-      const firstIncompletePhase = phaseGraph.getFirstIncompletePhase({
-        completedPhases: completedSet,
-        skippedPhases: previouslySkippedSet,
-        skipSet,
-      });
-
-      if (firstIncompletePhase) {
-        const firstIncompleteDef = PHASE_DEFINITIONS[firstIncompletePhase]!;
-        const persistedRun = (this.deps.runRepository.findByUuid(run.uuid) ?? run) as RunRecord;
-        if (persistedRun.startCommitSha?.trim()) {
-          // Run's domain shape intentionally does not expose the persistence
-          // field, but preserve it at runtime so context factories that do
-          // not re-read the repository still receive the admitted baseline.
-          currentRun = { ...currentRun, startCommitSha: persistedRun.startCommitSha } as Run;
-        }
+    // Early-Resume Baseline Guard (Finding 4, CONSUMER-1282, AC-5, AC-6):
+    // Ensure that early-phase resumes or runs with missing startCommitSha resolve and persist
+    // the base commit ref or durably fail the run and terminalize any jobs before phase context construction.
+    const runRecord = run as RunRecord;
+    let persistedRun: RunRecord = runRecord;
+    if (runRecord.startCommitSha?.trim()) {
+      // Run's domain shape intentionally does not expose the persistence
+      // field, but preserve it at runtime so context factories that do
+      // not re-read the repository still receive the admitted baseline.
+      currentRun = { ...currentRun, startCommitSha: runRecord.startCommitSha } as Run;
+    } else if (run.baseBranch !== undefined || input.resumeDisposition !== undefined) {
+      persistedRun = (this.deps.runRepository.findByUuid(run.uuid) ?? run) as RunRecord;
+      if (persistedRun.startCommitSha?.trim()) {
+        currentRun = { ...currentRun, startCommitSha: persistedRun.startCommitSha } as Run;
+      } else {
+        const firstIncompletePhase: PhaseName =
+          phaseGraph.getFirstIncompletePhase({
+            completedPhases: completedSet,
+            skippedPhases: previouslySkippedSet,
+            skipSet,
+          }) ?? PhaseName('read_issue');
+        const firstIncompleteDef =
+          PHASE_DEFINITIONS[firstIncompletePhase] ?? getPhaseDefinition(firstIncompletePhase);
         let ctxForResume = this.buildContext(persistedRun, undefined, input.allowProtectedPaths);
+        const baseBranch = ctxForResume.baseBranch?.trim() ?? persistedRun.baseBranch?.trim();
+        const shouldAttemptRecovery =
+          Boolean(baseBranch && typeof ctxForResume.git?.resolveRef === 'function') ||
+          input.resumeDisposition !== undefined;
 
-        const persistedStartCommitSha = persistedRun.startCommitSha?.trim();
-        if (!persistedStartCommitSha) {
-          const baseBranch = ctxForResume.baseBranch?.trim() ?? persistedRun.baseBranch?.trim();
+        if (shouldAttemptRecovery) {
           let recoveredStartCommitSha: string | undefined;
           let resolutionError: string | undefined;
           let recoveredSourceRef: string | undefined;
 
           if (!baseBranch) {
             resolutionError = 'the resumed run has no configured base branch';
+          } else if (typeof ctxForResume.git?.resolveRef !== 'function') {
+            resolutionError = 'git adapter does not support resolveRef';
           } else {
             const remoteRef = `origin/${baseBranch}`;
             try {
@@ -249,6 +255,42 @@ export class RunExecutor {
               startedAt: now(),
               completedAt: now(),
             };
+            if (this.deps.jobQueue) {
+              try {
+                const jobs = this.deps.jobQueue.listForRun(RunId(currentRun.uuid));
+                for (const job of jobs) {
+                  if (
+                    job.status === 'queued' ||
+                    job.status === 'claimed' ||
+                    job.status === 'running'
+                  ) {
+                    const owner =
+                      job.claimedBy && job.claimToken
+                        ? { jobId: job.id, workerId: job.claimedBy, claimToken: job.claimToken }
+                        : undefined;
+                    try {
+                      this.deps.jobQueue.reconcileTerminalJob({
+                        jobId: job.id,
+                        targetStatus: 'failed',
+                        now: now(),
+                        reason: 'admission-repair',
+                        ...(owner ? { owner } : {}),
+                      });
+                    } catch (jobErr) {
+                      this.deps.logger?.error(
+                        `RunExecutor: failed to reconcile job ${job.id} for run ${currentRun.uuid}`,
+                        jobErr,
+                      );
+                    }
+                  }
+                }
+              } catch (err) {
+                this.deps.logger?.error(
+                  `RunExecutor: failed to list/reconcile jobs for run ${currentRun.uuid}`,
+                  err,
+                );
+              }
+            }
             return this.needsHumanReviewRun(
               currentRun,
               firstIncompleteDef,
@@ -263,6 +305,17 @@ export class RunExecutor {
             this.deps.runRepository.update(currentRun.uuid, {
               startCommitSha: recoveredStartCommitSha,
             });
+            const verified = this.deps.runRepository.findByUuid(currentRun.uuid) as
+              | RunRecord
+              | undefined;
+            if (
+              !verified?.startCommitSha ||
+              verified.startCommitSha.trim() !== recoveredStartCommitSha
+            ) {
+              throw new Error(
+                `read-back verification failed: expected ${recoveredStartCommitSha}, got ${verified?.startCommitSha}`,
+              );
+            }
           } catch (err) {
             const failureMessage = `failed to persist recovered startCommitSha ${recoveredStartCommitSha}: ${err instanceof Error ? err.message : String(err)}`;
             const failure: Failure = {
@@ -284,6 +337,42 @@ export class RunExecutor {
               startedAt: now(),
               completedAt: now(),
             };
+            if (this.deps.jobQueue) {
+              try {
+                const jobs = this.deps.jobQueue.listForRun(RunId(currentRun.uuid));
+                for (const job of jobs) {
+                  if (
+                    job.status === 'queued' ||
+                    job.status === 'claimed' ||
+                    job.status === 'running'
+                  ) {
+                    const owner =
+                      job.claimedBy && job.claimToken
+                        ? { jobId: job.id, workerId: job.claimedBy, claimToken: job.claimToken }
+                        : undefined;
+                    try {
+                      this.deps.jobQueue.reconcileTerminalJob({
+                        jobId: job.id,
+                        targetStatus: 'failed',
+                        now: now(),
+                        reason: 'admission-repair',
+                        ...(owner ? { owner } : {}),
+                      });
+                    } catch (jobErr) {
+                      this.deps.logger?.error(
+                        `RunExecutor: failed to reconcile job ${job.id} for run ${currentRun.uuid}`,
+                        jobErr,
+                      );
+                    }
+                  }
+                }
+              } catch (err) {
+                this.deps.logger?.error(
+                  `RunExecutor: failed to list/reconcile jobs for run ${currentRun.uuid}`,
+                  err,
+                );
+              }
+            }
             return this.needsHumanReviewRun(
               currentRun,
               firstIncompleteDef,
@@ -295,7 +384,6 @@ export class RunExecutor {
           }
 
           currentRun = { ...currentRun, startCommitSha: recoveredStartCommitSha } as Run;
-          ctxForResume = this.buildContext(currentRun, undefined, input.allowProtectedPaths);
           const recoveryMessage = `recovered missing startCommitSha from ${
             recoveredSourceRef ?? 'base branch'
           }: ${recoveredStartCommitSha}`;
@@ -331,6 +419,19 @@ export class RunExecutor {
             recoveryMetadata,
           );
         }
+      }
+    }
+
+    if (input.resumeDisposition !== undefined) {
+      const firstIncompletePhase = phaseGraph.getFirstIncompletePhase({
+        completedPhases: completedSet,
+        skippedPhases: previouslySkippedSet,
+        skipSet,
+      });
+
+      if (firstIncompletePhase) {
+        const firstIncompleteDef = PHASE_DEFINITIONS[firstIncompletePhase]!;
+        let ctxForResume = this.buildContext(currentRun, undefined, input.allowProtectedPaths);
 
         const isImplementPhase = firstIncompletePhase === 'implement';
         // Lean's review-convergence loop (validate -> fix-validate ->

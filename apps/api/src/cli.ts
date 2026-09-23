@@ -1949,6 +1949,43 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               testWorkerReaper?.stop();
               signalHandlers?.remove();
               lease?.stop();
+              if (c?.jobQueue) {
+                try {
+                  const finalRun = c.runRepository.findByUuid(run.uuid);
+                  const targetJobStatus: 'succeeded' | 'failed' | 'cancelled' =
+                    finalRun?.status === 'passed'
+                      ? 'succeeded'
+                      : finalRun?.status === 'cancelled'
+                        ? 'cancelled'
+                        : 'failed';
+
+                  const nonTerminalJobs = c.jobQueue
+                    .listForRun(RunId(run.uuid))
+                    .filter(
+                      (j) =>
+                        j.status === 'queued' || j.status === 'claimed' || j.status === 'running',
+                    );
+
+                  for (const job of nonTerminalJobs) {
+                    const owner =
+                      job.claimedBy && job.claimToken
+                        ? { jobId: job.id, workerId: job.claimedBy, claimToken: job.claimToken }
+                        : undefined;
+
+                    c.jobQueue.reconcileTerminalJob({
+                      jobId: job.id,
+                      targetStatus: targetJobStatus,
+                      now: new Date(),
+                      reason: 'runs_execute_settled',
+                      ...(owner ? { owner } : {}),
+                    });
+                  }
+                } catch (reconcileErr) {
+                  console.error(
+                    `Failed to reconcile jobs after runs execute: ${reconcileErr instanceof Error ? reconcileErr.message : String(reconcileErr)}`,
+                  );
+                }
+              }
             }
             const isCliTestSuite =
               buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';

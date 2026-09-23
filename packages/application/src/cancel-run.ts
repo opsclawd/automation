@@ -9,6 +9,8 @@ import type {
   ResolveWorktreeCwdFn,
   ResolveStartCommitShaFn,
   AbortResult,
+  JobQueuePort,
+  EventBusPort,
 } from './ports.js';
 import type { CancelRunUseCase, CancelRunResult } from './use-cases.js';
 
@@ -20,6 +22,8 @@ export interface CancelRunDeps {
   findCwd: ResolveWorktreeCwdFn;
   findStartCommitSha?: ResolveStartCommitShaFn;
   logger: LoggerPort;
+  queue?: JobQueuePort;
+  eventBus?: EventBusPort;
   now?: () => Date;
 }
 
@@ -58,6 +62,60 @@ export class CancelRun implements CancelRunUseCase {
     );
     if (!updated) {
       throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
+    }
+
+    // Step 2.5: Reconcile associated non-terminal jobs
+    if (this.deps.queue) {
+      try {
+        const nonTerminalJobs = this.deps.queue
+          .listForRun(input.runId)
+          .filter((j) => j.status === 'queued' || j.status === 'claimed' || j.status === 'running');
+
+        for (const job of nonTerminalJobs) {
+          const owner =
+            job.claimedBy && job.claimToken
+              ? { jobId: job.id, workerId: job.claimedBy, claimToken: job.claimToken }
+              : undefined;
+
+          try {
+            const res = this.deps.queue.reconcileTerminalJob({
+              jobId: job.id,
+              targetStatus: 'cancelled',
+              now: now(),
+              reason: input.reason ?? 'run_cancelled',
+              ...(owner ? { owner } : {}),
+            });
+
+            if (res.reconciled && this.deps.eventBus) {
+              this.deps.eventBus.publish(String(input.runId), {
+                runId: run.displayId ?? String(run.uuid),
+                level: 'info',
+                type: 'job.reconciled',
+                message: `Job ${job.id} reconciled to cancelled (reason: ${input.reason ?? 'run_cancelled'})`,
+                timestamp: now().toISOString(),
+                metadata: {
+                  runUuid: run.uuid,
+                  jobId: job.id,
+                  previousStatus: job.status,
+                  targetStatus: 'cancelled',
+                  reason: input.reason ?? 'run_cancelled',
+                  priorClaimedBy: job.claimedBy ?? null,
+                },
+              });
+            }
+          } catch (jobErr) {
+            this.deps.logger.error(
+              `CancelRun: failed to reconcile job ${job.id} for run ${input.runId}`,
+              jobErr,
+            );
+          }
+        }
+      } catch (err) {
+        this.deps.logger.error(
+          `CancelRun: failed to list/reconcile jobs for run ${input.runId}`,
+          err,
+        );
+      }
     }
 
     // Step 3: Abort agent (best-effort)
