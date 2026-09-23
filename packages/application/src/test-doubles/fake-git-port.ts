@@ -42,6 +42,9 @@ export class FakeGitPort implements GitPort, ArtifactGuardPort {
     path: string,
   ) => `fake worktree content for ${path}`;
   fetchCalls: Array<{ cwd: string; remote: string; ref?: string }> = [];
+  fetchRemoteRefs = new Map<string, string>();
+  fetchThrows?: Error;
+  ancestorCalls: Array<{ cwd: string; ancestor: string; descendant: string }> = [];
   createBranchCalls: Array<{ cwd: string; branch: string; startPoint: string }> = [];
   resolveRefResults = new Map<string, string>();
   branchesByCwd = new Map<string, Set<string>>();
@@ -172,7 +175,46 @@ export class FakeGitPort implements GitPort, ArtifactGuardPort {
   }
 
   async isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
-    return this.ancestorResults.get(`${ancestor}|${descendant}`) ?? false;
+    this.ancestorCalls.push({ cwd, ancestor, descendant });
+    const directKey = `${ancestor}|${descendant}`;
+    if (this.ancestorResults.has(directKey)) {
+      return this.ancestorResults.get(directKey) ?? false;
+    }
+    for (const [refName, refSha] of this.remoteRefs.entries()) {
+      if (refSha === descendant) {
+        const refKey = `${ancestor}|${refName}`;
+        if (this.ancestorResults.has(refKey)) {
+          return this.ancestorResults.get(refKey) ?? false;
+        }
+        if (refName.startsWith('origin/')) {
+          const stripped = `${ancestor}|${refName.slice('origin/'.length)}`;
+          if (this.ancestorResults.has(stripped)) {
+            return this.ancestorResults.get(stripped) ?? false;
+          }
+        }
+      }
+    }
+    for (const [refName, refSha] of this.resolveRefResults.entries()) {
+      if (refSha === descendant) {
+        const refKey = `${ancestor}|${refName}`;
+        if (this.ancestorResults.has(refKey)) {
+          return this.ancestorResults.get(refKey) ?? false;
+        }
+        if (refName.startsWith('origin/')) {
+          const stripped = `${ancestor}|${refName.slice('origin/'.length)}`;
+          if (this.ancestorResults.has(stripped)) {
+            return this.ancestorResults.get(stripped) ?? false;
+          }
+        }
+      }
+    }
+    if (descendant.startsWith('origin/')) {
+      const stripped = `${ancestor}|${descendant.slice('origin/'.length)}`;
+      if (this.ancestorResults.has(stripped)) {
+        return this.ancestorResults.get(stripped) ?? false;
+      }
+    }
+    return false;
   }
 
   async logBetween(cwd: string, base: string, head: string): Promise<string[]> {
@@ -204,7 +246,52 @@ export class FakeGitPort implements GitPort, ArtifactGuardPort {
 
   async changedFiles(cwd: string, base: string, head?: string): Promise<string[]> {
     this.changedFilesCalls.push({ cwd, base, ...(head ? { head } : {}) });
-    return [...(this.changedFilesResults.get(`${base}|${head ?? 'HEAD'}`) ?? [])];
+    const directKey = `${base}|${head ?? 'HEAD'}`;
+    if (this.changedFilesResults.has(directKey)) {
+      return [...(this.changedFilesResults.get(directKey) ?? [])];
+    }
+    for (const [refName, refSha] of this.remoteRefs.entries()) {
+      if (refSha === base) {
+        const refKey = `${refName}|${head ?? 'HEAD'}`;
+        if (this.changedFilesResults.has(refKey)) {
+          return [...(this.changedFilesResults.get(refKey) ?? [])];
+        }
+        if (refName.startsWith('origin/')) {
+          const stripped = `${refName.slice('origin/'.length)}|${head ?? 'HEAD'}`;
+          if (this.changedFilesResults.has(stripped)) {
+            return [...(this.changedFilesResults.get(stripped) ?? [])];
+          }
+        }
+      }
+    }
+    for (const [refName, refSha] of this.resolveRefResults.entries()) {
+      if (refSha === base) {
+        const refKey = `${refName}|${head ?? 'HEAD'}`;
+        if (this.changedFilesResults.has(refKey)) {
+          return [...(this.changedFilesResults.get(refKey) ?? [])];
+        }
+        if (refName.startsWith('origin/')) {
+          const stripped = `${refName.slice('origin/'.length)}|${head ?? 'HEAD'}`;
+          if (this.changedFilesResults.has(stripped)) {
+            return [...(this.changedFilesResults.get(stripped) ?? [])];
+          }
+        }
+      }
+    }
+    if (base.startsWith('origin/')) {
+      const sha = this.remoteRefs.get(base) ?? this.resolveRefResults.get(base);
+      if (sha) {
+        const shaKey = `${sha}|${head ?? 'HEAD'}`;
+        if (this.changedFilesResults.has(shaKey)) {
+          return [...(this.changedFilesResults.get(shaKey) ?? [])];
+        }
+      }
+      const strippedKey = `${base.slice('origin/'.length)}|${head ?? 'HEAD'}`;
+      if (this.changedFilesResults.has(strippedKey)) {
+        return [...(this.changedFilesResults.get(strippedKey) ?? [])];
+      }
+    }
+    return [];
   }
 
   async createdFiles(cwd: string, base: string, head?: string): Promise<string[]> {
@@ -232,11 +319,67 @@ export class FakeGitPort implements GitPort, ArtifactGuardPort {
     if (this.fileContentThrows.has(key2)) {
       throw this.fileContentThrows.get(key2)!;
     }
-    return (
-      this.fileContentResults.get(key1) ??
-      this.fileContentResults.get(key2) ??
-      `fake content for ${ref}:${path}`
-    );
+    const direct = this.fileContentResults.get(key1) ?? this.fileContentResults.get(key2);
+    if (direct !== undefined) {
+      return direct;
+    }
+    for (const [refName, refSha] of this.remoteRefs.entries()) {
+      if (refSha === ref) {
+        const refRes =
+          this.fileContentResults.get(`${refName}:${path}`) ??
+          this.fileContentResults.get(`${refName}|${path}`);
+        if (refRes !== undefined) {
+          return refRes;
+        }
+        if (refName.startsWith('origin/')) {
+          const stripped = refName.slice('origin/'.length);
+          const strippedRes =
+            this.fileContentResults.get(`${stripped}:${path}`) ??
+            this.fileContentResults.get(`${stripped}|${path}`);
+          if (strippedRes !== undefined) {
+            return strippedRes;
+          }
+        }
+      }
+    }
+    for (const [refName, refSha] of this.resolveRefResults.entries()) {
+      if (refSha === ref) {
+        const refRes =
+          this.fileContentResults.get(`${refName}:${path}`) ??
+          this.fileContentResults.get(`${refName}|${path}`);
+        if (refRes !== undefined) {
+          return refRes;
+        }
+        if (refName.startsWith('origin/')) {
+          const stripped = refName.slice('origin/'.length);
+          const strippedRes =
+            this.fileContentResults.get(`${stripped}:${path}`) ??
+            this.fileContentResults.get(`${stripped}|${path}`);
+          if (strippedRes !== undefined) {
+            return strippedRes;
+          }
+        }
+      }
+    }
+    if (ref.startsWith('origin/')) {
+      const sha = this.remoteRefs.get(ref) ?? this.resolveRefResults.get(ref);
+      if (sha) {
+        const shaRes =
+          this.fileContentResults.get(`${sha}:${path}`) ??
+          this.fileContentResults.get(`${sha}|${path}`);
+        if (shaRes !== undefined) {
+          return shaRes;
+        }
+      }
+      const strippedRef = ref.slice('origin/'.length);
+      const strippedRes =
+        this.fileContentResults.get(`${strippedRef}:${path}`) ??
+        this.fileContentResults.get(`${strippedRef}|${path}`);
+      if (strippedRes !== undefined) {
+        return strippedRes;
+      }
+    }
+    return `fake content for ${ref}:${path}`;
   }
 
   async worktreeFileContent(cwd: string, path: string): Promise<string | undefined> {
@@ -256,6 +399,17 @@ export class FakeGitPort implements GitPort, ArtifactGuardPort {
 
   async fetch(cwd: string, remote: string, ref?: string): Promise<void> {
     this.fetchCalls.push({ cwd, remote, ...(ref !== undefined ? { ref } : {}) });
+    if (this.fetchThrows) {
+      throw this.fetchThrows;
+    }
+    if (ref !== undefined) {
+      const remoteRefKey = `${remote}/${ref}`;
+      if (this.fetchRemoteRefs.has(remoteRefKey)) {
+        const advancedSha = this.fetchRemoteRefs.get(remoteRefKey)!;
+        this.remoteRefs.set(remoteRefKey, advancedSha);
+        this.resolveRefResults.set(remoteRefKey, advancedSha);
+      }
+    }
   }
 
   async resolveRef(cwd: string, ref: string): Promise<string | undefined> {

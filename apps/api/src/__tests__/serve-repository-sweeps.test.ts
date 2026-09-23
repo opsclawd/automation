@@ -238,10 +238,18 @@ describe('buildRepositorySweepCoordinator (#652 Task 6)', () => {
       resolveRef: vi.fn().mockResolvedValue('sha-merged-101'),
       resetWorktreeIfClean: vi.fn().mockResolvedValue(undefined),
     };
+    const fakeMaintenanceService = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        reapedProcesses: 0,
+        worktreeRemoved: false,
+      }),
+    };
 
     const c = buildContainer({
       githubPort: fakeGithub as never,
       gitPort: fakeGit as never,
+      interItemMaintenanceService: fakeMaintenanceService as never,
     });
     const repoA = c.registerRepository.execute({ localPath: tmpRepoDir('a') });
     const repoB = c.registerRepository.execute({ localPath: tmpRepoDir('b') });
