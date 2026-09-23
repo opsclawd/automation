@@ -6,6 +6,7 @@ import {
   _removeValidationSteps,
 } from '../create-pr.js';
 import { FakeArtifactStore, FakeGitPort, FakeGitHubPort } from '../../../test-doubles/index.js';
+import { ProtectedArtifactCollisionError } from '../../../ports/git-port.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
@@ -547,6 +548,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(gitAny.cleanOrchestratorArtifacts).toHaveBeenCalledWith(
       ctx.cwd,
       ctx.baseBranch ?? 'main',
+      ctx.startCommitSha,
     );
 
     expect(calls.indexOf('write-summary')).toBeGreaterThanOrEqual(0);
@@ -563,6 +565,38 @@ describe('CreatePrHandler — deterministic assembly', () => {
 
     const res = await HANDLER.run(ctx);
     expect(res.outcome).toBe('passed');
+  });
+
+  it('fails closed to needs_human_review when cleanOrchestratorArtifacts encounters protected artifact collision', async () => {
+    const { git, ctx, events } = await build();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gitAny = git as any;
+    gitAny.cleanOrchestratorArtifacts = vi
+      .fn()
+      .mockRejectedValue(
+        new ProtectedArtifactCollisionError(
+          ctx.cwd,
+          ['prompts/architecture-review/architecture-review.md'],
+          ctx.startCommitSha,
+        ),
+      );
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('needs_human_review');
+    if (res.outcome === 'needs_human_review') {
+      expect(res.failure.kind).toBe('needs_human_review');
+      expect(res.failure.message).toContain('prompts/architecture-review/architecture-review.md');
+      expect(res.failure.canRetry).toBe(false);
+    }
+
+    const collisionEvent = events.find((e) => e.type === 'create_pr.protected_artifact_collision');
+    expect(collisionEvent).toBeDefined();
+    expect(collisionEvent?.metadata).toEqual(
+      expect.objectContaining({
+        paths: ['prompts/architecture-review/architecture-review.md'],
+        baselineCommit: ctx.startCommitSha,
+      }),
+    );
   });
 
   it('succeeds and commits when dirtyPaths includes an already-staged deletion', async () => {

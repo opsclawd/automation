@@ -743,4 +743,414 @@ describe('FixReviewHandler', () => {
       'packages/api/src/deleted.ts',
     );
   });
+
+  it('fails closed to needs_human_review when fixer deletes a baseline-tracked artifact-pattern file', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    const protectedPath = 'prompts/architecture-review/architecture-review.md';
+    const baselineSha = ctx.startCommitSha!;
+
+    // Baseline tracks the prompt template file
+    git.committedFilesByCommit.set(baselineSha, [protectedPath, 'src/index.ts']);
+    git.fileContentResults.set(`${baselineSha}:${protectedPath}`, '# Architecture Review\n');
+
+    // Fixer deleted the file from worktree (content undefined)
+    git.worktreeFileContents.set(protectedPath, undefined as unknown as string);
+    git.worktreeFileContents.set(`${ctx.cwd}:${protectedPath}`, undefined as unknown as string);
+    git.defaultWorktreeFileContent = (p) => (p === protectedPath ? undefined : 'content');
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain(protectedPath);
+      expect(result.failure.canRetry).toBe(false);
+    }
+
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const collisionEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.protected_artifact_collision',
+    );
+    expect(collisionEvents).toHaveLength(1);
+    expect(
+      (collisionEvents[0][1] as { metadata?: { paths?: string[] } }).metadata?.paths,
+    ).toContain(protectedPath);
+  });
+
+  it('fails closed to needs_human_review when fixer modifies a baseline-tracked artifact-pattern file', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    const protectedPath = 'prompts/review-fix/spec-review.md';
+    const baselineSha = ctx.startCommitSha!;
+
+    // Baseline tracks the file with original content
+    git.committedFilesByCommit.set(baselineSha, [protectedPath, 'src/index.ts']);
+    git.fileContentResults.set(`${baselineSha}:${protectedPath}`, '# Original Spec Review\n');
+
+    // Fixer modified the file in worktree
+    git.worktreeFileContents.set(protectedPath, '# Modified Content By Agent\n');
+    git.worktreeFileContents.set(`${ctx.cwd}:${protectedPath}`, '# Modified Content By Agent\n');
+    git.defaultWorktreeFileContent = (p) =>
+      p === protectedPath ? '# Modified Content By Agent\n' : 'content';
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain(protectedPath);
+    }
+  });
+
+  it('succeeds normally when fixer creates a new untracked artifact-pattern file', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    const baselineSha = ctx.startCommitSha!;
+    // Baseline only has regular source files
+    git.committedFilesByCommit.set(baselineSha, ['src/index.ts']);
+
+    // Fixer creates new untracked scratch file
+    git.worktreeFileContents.set('fix.patch', 'patch content');
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+  });
+
+  it('succeeds normally when baseline prompt templates remain intact and unmodified', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    const protectedPath = 'prompts/architecture-review/architecture-review.md';
+    const baselineSha = ctx.startCommitSha!;
+
+    // Baseline tracks prompt template
+    git.committedFilesByCommit.set(baselineSha, [protectedPath, 'src/index.ts']);
+    const promptContent = '# Architecture Review Prompt\n';
+    git.fileContentResults.set(`${baselineSha}:${protectedPath}`, promptContent);
+
+    // Worktree content matches baseline content exactly (intact)
+    git.worktreeFileContents.set(protectedPath, promptContent);
+    git.worktreeFileContents.set(`${ctx.cwd}:${protectedPath}`, promptContent);
+    git.defaultWorktreeFileContent = (p) => (p === protectedPath ? promptContent : 'content');
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+  });
+
+  it('fails closed to needs_human_review when startCommitSha is absent', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+    ctx.startCommitSha = undefined;
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain('missing startCommitSha');
+      expect(result.failure.canRetry).toBe(false);
+    }
+
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const collisionEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.protected_artifact_collision',
+    );
+    expect(collisionEvents).toHaveLength(1);
+    expect((collisionEvents[0][1] as { metadata?: { error?: string } }).metadata?.error).toContain(
+      'missing startCommitSha',
+    );
+
+    const completedEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.completed',
+    );
+    expect(completedEvents).toHaveLength(0);
+  });
+
+  it('fails closed to needs_human_review when baseline file enumeration fails', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    vi.spyOn(git, 'listFilesAtCommit').mockRejectedValue(new Error('git ls-tree connection reset'));
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain('Failed to enumerate baseline files');
+      expect(result.failure.message).toContain('git ls-tree connection reset');
+      expect(result.failure.canRetry).toBe(false);
+    }
+
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const collisionEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.protected_artifact_collision',
+    );
+    expect(collisionEvents).toHaveLength(1);
+    expect((collisionEvents[0][1] as { metadata?: { error?: string } }).metadata?.error).toContain(
+      'git ls-tree connection reset',
+    );
+
+    const completedEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.completed',
+    );
+    expect(completedEvents).toHaveLength(0);
+  });
+
+  it('fails closed to needs_human_review when worktree file-content read fails for a protected candidate', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    const protectedPath = 'prompts/architecture-review/architecture-review.md';
+    const baselineSha = ctx.startCommitSha!;
+    git.committedFilesByCommit.set(baselineSha, [protectedPath, 'src/index.ts']);
+
+    vi.spyOn(git, 'worktreeFileContent').mockImplementation(async (_cwd, path) => {
+      if (path === protectedPath) {
+        throw new Error('EACCES: permission denied');
+      }
+      return 'content';
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain(protectedPath);
+      expect(result.failure.message).toContain('EACCES: permission denied');
+      expect(result.failure.canRetry).toBe(false);
+    }
+
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const collisionEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.protected_artifact_collision',
+    );
+    expect(collisionEvents).toHaveLength(1);
+    expect(
+      (collisionEvents[0][1] as { metadata?: { paths?: string[] } }).metadata?.paths,
+    ).toContain(protectedPath);
+    expect((collisionEvents[0][1] as { metadata?: { error?: string } }).metadata?.error).toContain(
+      'EACCES: permission denied',
+    );
+
+    const completedEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.completed',
+    );
+    expect(completedEvents).toHaveLength(0);
+  });
+
+  it('fails closed to needs_human_review when baseline file-content read fails for a protected candidate', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    const protectedPath = 'prompts/review-fix/spec-review.md';
+    const baselineSha = ctx.startCommitSha!;
+    git.committedFilesByCommit.set(baselineSha, [protectedPath, 'src/index.ts']);
+
+    // Worktree content exists
+    git.worktreeFileContents.set(protectedPath, '# Content\n');
+    git.defaultWorktreeFileContent = () => '# Content\n';
+
+    // Baseline content read throws
+    git.fileContentThrows.set(
+      `${baselineSha}:${protectedPath}`,
+      new Error('git cat-file: object corrupted'),
+    );
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    const handler = new FixReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain(protectedPath);
+      expect(result.failure.message).toContain('git cat-file: object corrupted');
+      expect(result.failure.canRetry).toBe(false);
+    }
+
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const collisionEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.protected_artifact_collision',
+    );
+    expect(collisionEvents).toHaveLength(1);
+    expect(
+      (collisionEvents[0][1] as { metadata?: { paths?: string[] } }).metadata?.paths,
+    ).toContain(protectedPath);
+    expect((collisionEvents[0][1] as { metadata?: { error?: string } }).metadata?.error).toContain(
+      'git cat-file: object corrupted',
+    );
+
+    const completedEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix_review.completed',
+    );
+    expect(completedEvents).toHaveLength(0);
+  });
 });

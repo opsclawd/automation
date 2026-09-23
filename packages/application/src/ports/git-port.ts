@@ -26,6 +26,26 @@ export class TrackedSourceDriftError extends Error {
   }
 }
 
+export class ProtectedArtifactCollisionError extends Error {
+  readonly cwd: string;
+  readonly protectedPaths: string[];
+  readonly startCommitSha?: string | undefined;
+
+  constructor(cwd: string, protectedPaths: string[], startCommitSha?: string | undefined) {
+    const baselineInfo = startCommitSha ? ` at baseline commit ${startCommitSha}` : '';
+    super(
+      `Protected pre-existing repository file(s) collided with orchestrator artifact pattern in ${cwd}${baselineInfo}: ${protectedPaths.join(', ')}`,
+    );
+    this.name = 'ProtectedArtifactCollisionError';
+    this.cwd = cwd;
+    this.protectedPaths = protectedPaths;
+    this.startCommitSha = startCommitSha;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, this.constructor);
+    }
+  }
+}
+
 export interface GitPort {
   createWorktree(input: CreateWorktreeInput): Promise<void>;
   removeWorktree(worktreePath: string): Promise<void>;
@@ -113,5 +133,9 @@ export interface GitRenamePair {
 
 export interface ArtifactGuardPort {
   seedArtifactExcludes(cwd: string): Promise<void>;
-  cleanOrchestratorArtifacts(cwd: string, baseBranch?: string): Promise<void>;
+  cleanOrchestratorArtifacts(
+    cwd: string,
+    baseBranch?: string,
+    startCommitSha?: string,
+  ): Promise<void>;
 }

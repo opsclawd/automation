@@ -1,7 +1,13 @@
-import type { GitPort, CreateWorktreeInput, PushInput, GitRenamePair } from '../ports/git-port.js';
+import type {
+  GitPort,
+  CreateWorktreeInput,
+  PushInput,
+  GitRenamePair,
+  ArtifactGuardPort,
+} from '../ports/git-port.js';
 import { TrackedSourceDriftError } from '../ports/git-port.js';
 
-export class FakeGitPort implements GitPort {
+export class FakeGitPort implements GitPort, ArtifactGuardPort {
   currentBranchByCwd = new Map<string, string>();
   headByCwd = new Map<string, string>();
   worktrees: string[] = [];
@@ -345,4 +351,24 @@ export class FakeGitPort implements GitPort {
     }
     return Array.from(new Set(fromFileContents)).sort();
   }
+
+  cleanOrchestratorArtifactsCalls: Array<{
+    cwd: string;
+    baseBranch?: string | undefined;
+    startCommitSha?: string | undefined;
+  }> = [];
+  cleanOrchestratorArtifactsThrows?: Error;
+
+  async cleanOrchestratorArtifacts(
+    cwd: string,
+    baseBranch?: string | undefined,
+    startCommitSha?: string | undefined,
+  ): Promise<void> {
+    this.cleanOrchestratorArtifactsCalls.push({ cwd, baseBranch, startCommitSha });
+    if (this.cleanOrchestratorArtifactsThrows) {
+      throw this.cleanOrchestratorArtifactsThrows;
+    }
+  }
+
+  async seedArtifactExcludes(_cwd: string): Promise<void> {}
 }
