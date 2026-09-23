@@ -17,7 +17,12 @@ import type {
   WorktreeLifecyclePlan,
   ExecuteWorktreeLifecyclePlanInput,
   WorktreeLifecycleExecutionResult,
+  JobQueuePort,
+  RepositoryPort,
+  LoggerPort,
 } from '../../ports.js';
+import { FakeJobQueuePort } from '../../test-doubles/fake-job-queue-port.js';
+import { JobId as mkJobId, type Job, type IssueNumber, RunId } from '@ai-sdlc/domain';
 import type { PhaseRepositoryPort } from '../../ports/phase-repository-port.js';
 import { RunExecutor } from '../run-executor.js';
 import { ImplementHandler } from '../../phases/handlers/implement.js';
@@ -223,12 +228,22 @@ function makeDeps(overrides?: {
   events?: Partial<EventBusPort>;
   registry?: PhaseHandlerRegistry;
   contextFactory?: (run: Run) => PhaseHandlerContext;
+  jobQueue?: JobQueuePort;
+  logger?: LoggerPort;
 }) {
   return {
+    jobQueue: overrides?.jobQueue,
+    logger: overrides?.logger,
     runRepository: {
       insertIfNoActive: vi.fn(),
       update: vi.fn(),
-      findByUuid: vi.fn(),
+      // Existing resume tests focus on worktree/disposition behavior. Give
+      // those synthetic runs an already-admitted baseline; recovery-specific
+      // cases override this repository lookup with a null baseline.
+      findByUuid: vi.fn().mockReturnValue({
+        startCommitSha: 'existing-start-sha',
+        baseBranch: 'main',
+      }),
       findByIssueNumber: vi.fn(),
       findActiveRuns: vi.fn().mockReturnValue([]),
       updateStatusByIssueNumber: vi.fn().mockReturnValue(true),
@@ -308,6 +323,189 @@ function registerPassThroughHandlers(
 }
 
 describe('RunExecutor durable resume', () => {
+  it('recovers a missing baseline before resuming a pre-implement phase', async () => {
+    const run = makeRun({ completedPhases: ['read_issue'], baseBranch: 'main' });
+    const persistedRun = { ...run, startCommitSha: undefined };
+    const runRepository = {
+      findByUuid: vi.fn(() => persistedRun),
+      update: vi.fn((_uuid: string, patch: { startCommitSha?: string }) => {
+        if (patch.startCommitSha !== undefined) persistedRun.startCommitSha = patch.startCommitSha;
+      }),
+    };
+    const git = new FakeGitPort();
+    git.resolveRefResults.set('origin/main', 'recovered-main-sha');
+    const artifacts = new FakeArtifactStore();
+    const resolveRefSpy = vi.spyOn(git, 'resolveRef');
+    await artifacts.write({
+      runId: run.uuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue.md',
+      contents: '# Issue\n',
+    });
+    await artifacts.write({
+      runId: run.uuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue-comments.md',
+      contents: '[]\n',
+    });
+    const capturedContexts: PhaseHandlerContext[] = [];
+    const registry = new PhaseHandlerRegistry();
+    registerPassThroughHandlers(registry, vi.fn());
+
+    const deps = makeDeps({
+      runRepository,
+      registry,
+      contextFactory: (contextRun) =>
+        ({
+          runId: contextRun.displayId,
+          runUuid: contextRun.uuid,
+          repoFullName: 'acme/widgets',
+          issueNumber: 42,
+          cwd: '/tmp/worktree',
+          artifacts,
+          git,
+          events: { publish: vi.fn(), subscribe: vi.fn().mockReturnValue(() => {}) },
+          now: () => FIXED_NOW,
+          baseBranch: contextRun.baseBranch,
+          startCommitSha: (contextRun as Run & { startCommitSha?: string }).startCommitSha,
+        }) as unknown as PhaseHandlerContext,
+    });
+    const originalGet = registry.get.bind(registry);
+    vi.spyOn(registry, 'get').mockImplementation((phase) => {
+      const handler = originalGet(phase);
+      return {
+        phase: handler.phase,
+        run: async (ctx) => {
+          capturedContexts.push(ctx);
+          return handler.run(ctx);
+        },
+      };
+    });
+
+    const result = await new RunExecutor(deps).execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+      resumeDisposition: 'reset_to_baseline',
+    });
+
+    expect(result.run.status).toBe('passed');
+    expect(runRepository.update).toHaveBeenCalledWith(run.uuid, {
+      startCommitSha: 'recovered-main-sha',
+    });
+    expect(capturedContexts[0]?.startCommitSha).toBe('recovered-main-sha');
+    expect(resolveRefSpy).toHaveBeenCalledWith('/tmp/worktree', 'origin/main');
+  });
+
+  it('returns a retryable setup failure when recovered baseline persistence fails', async () => {
+    const run = makeRun({ completedPhases: ['read_issue'], baseBranch: 'main' });
+    const git = new FakeGitPort();
+    git.resolveRefResults.set('origin/main', 'recovered-main-sha');
+    const handlerSpy = vi.fn();
+    const registry = new PhaseHandlerRegistry();
+    registry.register({
+      phase: makePhaseName('plan-design'),
+      run: async () => {
+        handlerSpy();
+        return { outcome: 'passed' };
+      },
+    });
+    const resolveRefSpy = vi.spyOn(git, 'resolveRef');
+    const update = vi.fn((_uuid: string, patch: { startCommitSha?: string }) => {
+      if (patch.startCommitSha !== undefined) {
+        throw new Error('database unavailable');
+      }
+    });
+    const failureRepository = { insert: vi.fn() };
+    const deps = makeDeps({
+      runRepository: {
+        findByUuid: vi.fn().mockReturnValue({ ...run, startCommitSha: undefined }),
+        update,
+      },
+      failureRepository,
+      registry,
+      contextFactory: (_run) =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          repoFullName: 'acme/widgets',
+          issueNumber: 42,
+          cwd: '/tmp/worktree',
+          artifacts: new FakeArtifactStore(),
+          git,
+          baseBranch: 'main',
+          events: { publish: vi.fn(), subscribe: vi.fn().mockReturnValue(() => {}) },
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const result = await new RunExecutor(deps).execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+      resumeDisposition: 'preserve_working_tree',
+    });
+
+    expect(resolveRefSpy).toHaveBeenCalledWith('/tmp/worktree', 'origin/main');
+    expect(update).toHaveBeenCalledWith(run.uuid, { startCommitSha: 'recovered-main-sha' });
+    expect(handlerSpy).not.toHaveBeenCalled();
+    expect(result.run.status).toBe('needs_human_review');
+    expect(failureRepository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'setup_failed',
+        canRetry: true,
+        message: expect.stringContaining('failed to persist recovered startCommitSha'),
+      }),
+    );
+  });
+
+  it('fails a missing baseline recovery without falling back to HEAD', async () => {
+    const run = makeRun({ completedPhases: ['read_issue'], baseBranch: 'main' });
+    const git = new FakeGitPort();
+    const handlerSpy = vi.fn();
+    const registry = new PhaseHandlerRegistry();
+    registry.register({
+      phase: makePhaseName('plan-design'),
+      run: async () => {
+        handlerSpy();
+        return { outcome: 'passed' };
+      },
+    });
+    const deps = makeDeps({
+      runRepository: {
+        findByUuid: vi.fn().mockReturnValue({ ...run, startCommitSha: undefined }),
+      },
+      registry,
+      contextFactory: (_run) =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          repoFullName: 'acme/widgets',
+          issueNumber: 42,
+          cwd: '/tmp/worktree',
+          artifacts: new FakeArtifactStore(),
+          git,
+          baseBranch: 'main',
+          events: { publish: vi.fn(), subscribe: vi.fn().mockReturnValue(() => {}) },
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const result = await new RunExecutor(deps).execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+      resumeDisposition: 'preserve_working_tree',
+    });
+
+    expect(result.run.status).toBe('needs_human_review');
+    expect(handlerSpy).not.toHaveBeenCalled();
+    expect(deps.runRepository.update).not.toHaveBeenCalledWith(
+      run.uuid,
+      expect.objectContaining({ startCommitSha: expect.any(String) }),
+    );
+  });
+
   it('skips implement on resume when completed outputs exist durably and continues into validate', async () => {
     const artifacts = new FakeArtifactStore();
     const run = makeRun({
@@ -1817,5 +2015,227 @@ describe('RunExecutor durable resume', () => {
     expect(lifecycle.executeCalls).toHaveLength(0);
     expect(implementSpy).toHaveBeenCalled();
     expect(capturedApprovedPaths).toEqual(['.gitignore', 'src/helper.ts']);
+  });
+
+  it('recovers a missing baseline before running early phase even when resumeDisposition is undefined (consumer issue #1282 / AC-5)', async () => {
+    const run = makeRun({ completedPhases: [], baseBranch: 'main' });
+    const persistedRun = { ...run, startCommitSha: undefined };
+    const runRepository = {
+      findByUuid: vi.fn(() => persistedRun),
+      update: vi.fn((_uuid: string, patch: { startCommitSha?: string }) => {
+        if (patch.startCommitSha !== undefined) persistedRun.startCommitSha = patch.startCommitSha;
+      }),
+    };
+    const git = new FakeGitPort();
+    git.resolveRefResults.set('origin/main', 'recovered-main-sha-early');
+    const artifacts = new FakeArtifactStore();
+    const capturedContexts: PhaseHandlerContext[] = [];
+    const registry = new PhaseHandlerRegistry();
+    registerPassThroughHandlers(registry, vi.fn());
+
+    const deps = makeDeps({
+      runRepository,
+      registry,
+      contextFactory: (contextRun) =>
+        ({
+          runId: contextRun.displayId,
+          runUuid: contextRun.uuid,
+          repoFullName: 'acme/widgets',
+          issueNumber: 42,
+          cwd: '/tmp/worktree',
+          artifacts,
+          git,
+          events: { publish: vi.fn(), subscribe: vi.fn().mockReturnValue(() => {}) },
+          now: () => FIXED_NOW,
+          baseBranch: contextRun.baseBranch,
+          startCommitSha: (contextRun as Run & { startCommitSha?: string }).startCommitSha,
+        }) as unknown as PhaseHandlerContext,
+    });
+    const originalGet = registry.get.bind(registry);
+    vi.spyOn(registry, 'get').mockImplementation((phase) => {
+      const handler = originalGet(phase);
+      return {
+        phase: handler.phase,
+        run: async (ctx) => {
+          capturedContexts.push(ctx);
+          return handler.run(ctx);
+        },
+      };
+    });
+
+    // Execute with resumeDisposition === undefined (e.g. batch start or fresh execute)
+    const result = await new RunExecutor(deps).execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('passed');
+    expect(runRepository.update).toHaveBeenCalledWith(run.uuid, {
+      startCommitSha: 'recovered-main-sha-early',
+    });
+    expect(capturedContexts[0]?.startCommitSha).toBe('recovered-main-sha-early');
+  });
+
+  it('fails cleanly and reconciles queued/claimed job to failed when baseline recovery fails without resumeDisposition (consumer issue #1282 / AC-6)', async () => {
+    const run = makeRun({ completedPhases: [], baseBranch: 'main' });
+    const git = new FakeGitPort(); // No resolveRef results -> resolution will fail
+    const failureRepository = { insert: vi.fn() };
+    const repoPort: RepositoryPort = {
+      findById: () => ({
+        id: RepositoryId('acme/widgets'),
+        owner: 'acme',
+        name: 'widgets',
+        fullName: 'acme/widgets',
+        defaultBranch: 'main',
+        localBasePath: '/tmp/worktree',
+        enabled: true,
+        maxConcurrentRuns: 1,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+      findByFullName: () => undefined,
+      listEnabled: () => [],
+    };
+    const jobQueue = new FakeJobQueuePort(repoPort);
+    const job: Job = {
+      id: mkJobId('job-early-fail'),
+      runId: RunId(run.uuid),
+      repoId: RepositoryId('acme/widgets'),
+      issueNumber: 42 as IssueNumber,
+      status: 'queued',
+      priority: 0,
+      attempts: 0,
+      createdAt: new Date(),
+    };
+    jobQueue.enqueue({ job });
+
+    const deps = makeDeps({
+      runRepository: {
+        findByUuid: vi.fn().mockReturnValue({ ...run, startCommitSha: undefined }),
+        update: vi.fn(),
+      },
+      failureRepository,
+      jobQueue,
+      contextFactory: (_r) =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          repoFullName: 'acme/widgets',
+          issueNumber: 42,
+          cwd: '/tmp/worktree',
+          artifacts: new FakeArtifactStore(),
+          git,
+          baseBranch: 'main',
+          events: { publish: vi.fn(), subscribe: vi.fn().mockReturnValue(() => {}) },
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const result = await new RunExecutor(deps).execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('needs_human_review');
+    expect(failureRepository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'setup_failed',
+        phase: 'read_issue',
+        canRetry: true,
+        message: expect.stringContaining('failed to recover missing startCommitSha'),
+      }),
+    );
+    const reconciledJob = jobQueue.findById(mkJobId('job-early-fail'));
+    expect(reconciledJob?.status).toBe('failed');
+  });
+
+  it('catches and logs job reconciliation errors defensively during admission repair without interrupting failure flow (Finding F-6f85b634)', async () => {
+    const run = makeRun({ completedPhases: [], baseBranch: 'main' });
+    const git = new FakeGitPort(); // No resolveRef results -> resolution will fail
+    const failureRepository = { insert: vi.fn() };
+    const repoPort: RepositoryPort = {
+      findById: () => ({
+        id: RepositoryId('acme/widgets'),
+        owner: 'acme',
+        name: 'widgets',
+        fullName: 'acme/widgets',
+        defaultBranch: 'main',
+        localBasePath: '/tmp/worktree',
+        enabled: true,
+        maxConcurrentRuns: 1,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+      findByFullName: () => undefined,
+      listEnabled: () => [],
+    };
+    const jobQueue = new FakeJobQueuePort(repoPort);
+    const job: Job = {
+      id: mkJobId('job-early-fail-defensive'),
+      runId: RunId(run.uuid),
+      repoId: RepositoryId('acme/widgets'),
+      issueNumber: 42 as IssueNumber,
+      status: 'queued',
+      priority: 0,
+      attempts: 0,
+      createdAt: new Date(),
+    };
+    jobQueue.enqueue({ job });
+
+    vi.spyOn(jobQueue, 'reconcileTerminalJob').mockImplementation(() => {
+      throw new Error('simulated ownership mismatch');
+    });
+
+    const logger: LoggerPort = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const deps = makeDeps({
+      runRepository: {
+        findByUuid: vi.fn().mockReturnValue({ ...run, startCommitSha: undefined }),
+        update: vi.fn(),
+      },
+      failureRepository,
+      jobQueue,
+      logger,
+      contextFactory: (_r) =>
+        ({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          repoFullName: 'acme/widgets',
+          issueNumber: 42,
+          cwd: '/tmp/worktree',
+          artifacts: new FakeArtifactStore(),
+          git,
+          baseBranch: 'main',
+          events: { publish: vi.fn(), subscribe: vi.fn().mockReturnValue(() => {}) },
+          now: () => FIXED_NOW,
+        }) as unknown as PhaseHandlerContext,
+    });
+
+    const result = await new RunExecutor(deps).execute({
+      run,
+      skip: [],
+      presentArtifacts: [],
+    });
+
+    expect(result.run.status).toBe('needs_human_review');
+    expect(failureRepository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'setup_failed',
+        phase: 'read_issue',
+        canRetry: true,
+        message: expect.stringContaining('failed to recover missing startCommitSha'),
+      }),
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining(`RunExecutor: failed to reconcile job ${job.id}`),
+      expect.any(Error),
+    );
   });
 });

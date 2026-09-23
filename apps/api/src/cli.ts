@@ -578,20 +578,46 @@ function buildSchedulerDeps(
           }
         }
       },
-      prepareWorktree: async ({ repoId: _repoId, runId: rId }) => {
+      prepareWorktree: async ({ repoId: _repoId, runId: rId, resumeDisposition }) => {
         const r = runtime.runRepository.findByUuid(rId);
         if (!r) throw new Error(`prepareWorktree: no run found for ${rId}`);
         const repo = runtime.repository;
         const repoRootPath = repo.localBasePath;
         const repoDefaultBranch = repo.defaultBranch;
         const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
-        const baseBranch = r.startCommitSha ?? r.baseBranch ?? repoDefaultBranch;
+        let baseBranch = r.startCommitSha ?? r.baseBranch ?? repoDefaultBranch;
         if (r.baseBranch && c.git) {
           try {
             await c.git.fetch(repoRootPath, 'origin', r.baseBranch);
           } catch {
             // best-effort fetch
           }
+        }
+        if (resumeDisposition !== undefined && !r.startCommitSha) {
+          const configuredBaseBranch = r.baseBranch ?? repoDefaultBranch;
+          const remoteRef = `origin/${configuredBaseBranch}`;
+          let recoveredSha: string | undefined;
+          try {
+            recoveredSha = await c.git.resolveRef(repoRootPath, remoteRef);
+          } catch {
+            // Fall back to the direct branch ref below.
+          }
+          if (!recoveredSha) {
+            recoveredSha = await c.git.resolveRef(repoRootPath, configuredBaseBranch);
+          }
+          if (!recoveredSha) {
+            throw new Error(
+              `failed to recover missing startCommitSha: neither ${remoteRef} nor ${configuredBaseBranch} resolved to a commit`,
+            );
+          }
+          try {
+            runtime.runRepository.update(r.uuid, { startCommitSha: recoveredSha });
+          } catch (err) {
+            throw new Error(
+              `failed to persist recovered startCommitSha ${recoveredSha}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          baseBranch = recoveredSha;
         }
         await c.git.createWorktree({
           repoLocalBasePath: repoRootPath,
@@ -602,11 +628,15 @@ function buildSchedulerDeps(
         if ('seedArtifactExcludes' in c.git) {
           await (c.git as unknown as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
         }
-        if (!r.startCommitSha) {
+        if (!r.startCommitSha && resumeDisposition === undefined) {
           const sha = await c.git.headCommitSha(worktreePath);
           runtime.runRepository.update(r.uuid, { startCommitSha: sha });
         }
         return { cwd: worktreePath };
+      },
+      handlePreparationFailure: ({ runId, error }) => {
+        const run = runtime.runRepository.findByUuid(runId);
+        if (run) c.runExecutor!.recordPreparationFailure(run, error);
       },
       resetWorktree: (repoId) => {
         const lease = runtime.workerLeaseRepository.current(repoId);
@@ -1919,6 +1949,43 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               testWorkerReaper?.stop();
               signalHandlers?.remove();
               lease?.stop();
+              if (c?.jobQueue) {
+                try {
+                  const finalRun = c.runRepository.findByUuid(run.uuid);
+                  const targetJobStatus: 'succeeded' | 'failed' | 'cancelled' =
+                    finalRun?.status === 'passed'
+                      ? 'succeeded'
+                      : finalRun?.status === 'cancelled'
+                        ? 'cancelled'
+                        : 'failed';
+
+                  const nonTerminalJobs = c.jobQueue
+                    .listForRun(RunId(run.uuid))
+                    .filter(
+                      (j) =>
+                        j.status === 'queued' || j.status === 'claimed' || j.status === 'running',
+                    );
+
+                  for (const job of nonTerminalJobs) {
+                    const owner =
+                      job.claimedBy && job.claimToken
+                        ? { jobId: job.id, workerId: job.claimedBy, claimToken: job.claimToken }
+                        : undefined;
+
+                    c.jobQueue.reconcileTerminalJob({
+                      jobId: job.id,
+                      targetStatus: targetJobStatus,
+                      now: new Date(),
+                      reason: 'runs_execute_settled',
+                      ...(owner ? { owner } : {}),
+                    });
+                  }
+                } catch (reconcileErr) {
+                  console.error(
+                    `Failed to reconcile jobs after runs execute: ${reconcileErr instanceof Error ? reconcileErr.message : String(reconcileErr)}`,
+                  );
+                }
+              }
             }
             const isCliTestSuite =
               buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';

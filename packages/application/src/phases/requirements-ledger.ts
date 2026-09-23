@@ -50,6 +50,33 @@ export function isHardGateRequirement(title: string): boolean {
   return HARD_GATE_REGEX.test(title);
 }
 
+const DOWNSTREAM_PROCESS_OR_EXIT_GATE_REGEX =
+  /\b(?:real[\s-]*provider(?:[\s-]+candidate)?[\s-]+validation|candidate[\s-]+validation(?:[\s-]+report)?|locked[\s-]+sha|pinned[\s-]+model[\s-]+identity|human[\s-]+operator|operator[\s-]*(?:sign[\s-]*off|approval|verification)|manual[\s-]*(?:sign[\s-]*off|verification)|evidence[\s-]*backed[\s-]+\*?\*?go\*?\*?|explicit[\s-]+(?:evidence[\s-]*backed[\s-]+)?\*?\*?go\*?\*?|before[\s-]+phase[\s-]+\S+[\s-]+is[\s-]+(?:considered[\s-]+)?complete|phase(?:[\s-]+\w+)?[\s-]+exit[\s-]*gate|exit[\s-]*gate[\s-]+(?:deliverable|harness|run|report|sign[\s-]*off|approval)|(?:after|once)[\s-]+all[\s-]+(?:\w+[\s-]+)?(?:batch[\s-]+items|items|issues|prs)[\s-]+are[\s-]+merged)\b/i;
+
+const EXIT_GATE_ISSUE_TITLE_REGEX =
+  /\b(?:exit[\s-]*gate|phase[\s-]*exit|candidate[\s-]*validation)\b/i;
+
+export function isDownstreamProcessOrExitGateCriterion(
+  criterionText: string,
+  consumerTitle?: string,
+): boolean {
+  if (DOWNSTREAM_PROCESS_OR_EXIT_GATE_REGEX.test(criterionText)) {
+    return true;
+  }
+  if (consumerTitle && EXIT_GATE_ISSUE_TITLE_REGEX.test(consumerTitle)) {
+    // In an exit-gate issue, criteria about running validation, certifying completion,
+    // or obtaining human approvals are process deliverables of that terminal issue.
+    if (
+      /\b(?:validation[\s-]+is[\s-]+run|receives?[\s-]+(?:an[\s-]+)?(?:explicit[\s-]+)?(?:evidence[\s-]*backed[\s-]+)?\*?\*?go\*?\*?|sign[\s-]*off|approval|certified|certification)\b/i.test(
+        criterionText,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function extractAcceptanceCriteria(markdown: string): string[] {
   const criteria: string[] = [];
   const lines = markdown.split(/\r?\n/);
@@ -379,6 +406,9 @@ export async function buildRequirementsLedger(
             dHeader.includes('context') ||
             dHeader.includes('alternative') ||
             dHeader.includes('rationale') ||
+            dHeader.includes('traceability') ||
+            dHeader.includes('matrix') ||
+            dHeader.includes('mapping') ||
             dHeader.includes('notes');
 
           const isWhitelisted =
@@ -548,12 +578,17 @@ export async function buildRequirementsLedger(
       // a) Acceptance criteria from consumer
       const consumerAcs = extractAcceptanceCriteria(directConsumer.body);
       for (let i = 0; i < consumerAcs.length; i++) {
+        const title = consumerAcs[i]!;
+        if (isDownstreamProcessOrExitGateCriterion(title, directConsumer.title)) {
+          continue;
+        }
         addItem({
           id: `CONSUMER-${refNum}-AC-${i + 1}`,
           category: 'consumer_requirement',
-          title: consumerAcs[i]!,
+          title,
           source: `issue #${refNum}`,
           description: `Direct consumer requirement from #${refNum} (${directConsumer.title})`,
+          hardGate: false,
         });
         consumerItemCount++;
       }
@@ -567,12 +602,16 @@ export async function buildRequirementsLedger(
         if (cHeader === 'goal' || cHeader.startsWith('goal') || cHeader.includes('goals')) {
           const bullets = extractBulletsOrParagraphs(cSecLines);
           for (const bullet of bullets) {
+            if (isDownstreamProcessOrExitGateCriterion(bullet, directConsumer.title)) {
+              continue;
+            }
             addItem({
               id: `CONSUMER-${refNum}-GOAL-${consumerGoalIdx++}`,
               category: 'consumer_requirement',
               title: bullet,
               source: `issue #${refNum}`,
               description: `Direct consumer goal from #${refNum} (${directConsumer.title})`,
+              hardGate: false,
             });
             consumerItemCount++;
           }
@@ -584,12 +623,16 @@ export async function buildRequirementsLedger(
         ) {
           const bullets = extractBulletsOrParagraphs(cSecLines);
           for (const bullet of bullets) {
+            if (isDownstreamProcessOrExitGateCriterion(bullet, directConsumer.title)) {
+              continue;
+            }
             addItem({
               id: `CONSUMER-${refNum}-DESIGN-${consumerDesignIdx++}`,
               category: 'consumer_requirement',
               title: bullet,
               source: `issue #${refNum}`,
               description: `Direct consumer design requirement from #${refNum} (${directConsumer.title})`,
+              hardGate: false,
             });
             consumerItemCount++;
           }
@@ -597,13 +640,17 @@ export async function buildRequirementsLedger(
       }
 
       // c) Fallback if consumer body had no structured sections/ACs
-      if (consumerItemCount === 0) {
+      const isExitGateConsumer =
+        EXIT_GATE_ISSUE_TITLE_REGEX.test(directConsumer.title) ||
+        isDownstreamProcessOrExitGateCriterion(directConsumer.title);
+      if (consumerItemCount === 0 && !isExitGateConsumer) {
         addItem({
           id: `CONSUMER-${refNum}-REQ-1`,
           category: 'consumer_requirement',
           title: directConsumer.title || `Consumer issue #${refNum} contract requirements`,
           source: `issue #${refNum}`,
           description: `Direct consumer requirement from #${refNum}`,
+          hardGate: false,
         });
       }
     }

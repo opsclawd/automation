@@ -74,6 +74,36 @@ export interface GitPort {
     sourceRef: string,
     message: string,
   ): Promise<{ success: boolean; conflict?: boolean; error?: string }>;
+  /**
+   * Resolves a git ref to a full 40-character hexadecimal commit SHA.
+   * Uses git rev-parse --verify "${ref}^{commit}" to peel through annotated tags
+   * to their underlying commit object.
+   *
+   * Rejects non-commit objects (annotated tags pointing to trees or blobs, tree objects,
+   * blob objects, invalid or missing refs) by returning undefined.
+   * Expands abbreviated commit SHAs to the full 40-character commit SHA.
+   *
+   * @param cwd - Working directory of the git repository
+   * @param ref - Git ref to resolve (branch, tag, HEAD, commit SHA, abbreviation)
+   * @returns Full 40-hex commit SHA, or undefined if the ref cannot resolve to a commit object
+   */
+  resolveCommitSha(cwd: string, ref: string): Promise<string | undefined>;
+  /**
+   * Enumerate all regular files in the worktree, optionally including ignored regular files.
+   * Guaranteed to observe tracked, untracked, and (when includeIgnored is true) ignored regular files.
+   *
+   * @param cwd - Working directory
+   * @param opts - Enumeration options (includeIgnored)
+   */
+  listWorktreeFiles(cwd: string, opts?: { includeIgnored?: boolean }): Promise<string[]>;
+  /**
+   * Enumerate all regular file paths in the committed tree at the specified commit SHA.
+   * Rejects non-commit SHAs.
+   *
+   * @param cwd - Working directory
+   * @param commitSha - Full commit SHA
+   */
+  listFilesAtCommit(cwd: string, commitSha: string): Promise<string[]>;
 }
 
 export interface GitRenamePair {

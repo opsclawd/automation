@@ -518,4 +518,56 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
       }
     }
   }
+
+  async resolveCommitSha(cwd: string, ref: string): Promise<string | undefined> {
+    try {
+      const raw = await git(cwd, ['rev-parse', '--verify', `${ref}^{commit}`]);
+      const sha = raw.trim();
+      if (/^[0-9a-f]{40}$/i.test(sha)) {
+        return sha;
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async listWorktreeFiles(cwd: string, opts?: { includeIgnored?: boolean }): Promise<string[]> {
+    const parseZ = (out: string) =>
+      out
+        .split('\0')
+        .filter(Boolean)
+        .map((p) => p.replace(/\\/g, '/'));
+    const trackedOut = await git(cwd, ['ls-files', '-z']);
+    const untrackedOut = await git(cwd, ['ls-files', '-z', '--others', '--exclude-standard']);
+    let ignoredOut = '';
+    if (opts?.includeIgnored) {
+      ignoredOut = await git(cwd, [
+        'ls-files',
+        '-z',
+        '--others',
+        '--ignored',
+        '--exclude-standard',
+      ]);
+    }
+    const all = new Set([
+      ...parseZ(trackedOut),
+      ...parseZ(untrackedOut),
+      ...(opts?.includeIgnored ? parseZ(ignoredOut) : []),
+    ]);
+    return Array.from(all).sort();
+  }
+
+  async listFilesAtCommit(cwd: string, commitSha: string): Promise<string[]> {
+    const verifiedSha = await this.resolveCommitSha(cwd, commitSha);
+    if (!verifiedSha) {
+      throw new Error(`Cannot list files: '${commitSha}' does not resolve to a commit object`);
+    }
+    const out = await git(cwd, ['ls-tree', '-r', '--name-only', '-z', verifiedSha]);
+    return out
+      .split('\0')
+      .filter(Boolean)
+      .map((p) => p.replace(/\\/g, '/'))
+      .sort();
+  }
 }

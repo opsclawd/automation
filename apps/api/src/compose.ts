@@ -1945,6 +1945,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     runAbort: abortRegistry,
     git: gitAdapter,
     leases: workerLeaseRepository,
+    queue: jobQueue,
+    eventBus: persistingEventBus,
     findCwd: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
       if (!run) throw new Error(`findCwd: no run found for ${runId}`);
@@ -2845,6 +2847,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventRepository,
         stepRepository,
         runNotification,
+        jobQueue,
         reviewConvergenceMaxIterations: config.phases.reviewConvergence?.maxIterations ?? 4,
       });
     }
@@ -2988,14 +2991,14 @@ export function composeRoot(opts: ComposeOptions): Container {
               }
             }
           },
-          prepareWorktree: async ({ repoId, runId, signal: _signal }) => {
+          prepareWorktree: async ({ repoId, runId, signal: _signal, resumeDisposition }) => {
             const r = runRepository.findByUuid(runId);
             if (!r) throw new Error(`prepareWorktree: no run found for ${runId}`);
             const repo = registryBackedRepo.findById(repoId);
             const repoRootPath = repo ? repo.localBasePath : targetRoot;
             const repoDefaultBranch = repo ? repo.defaultBranch : resolvedDefaultBranch;
             const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
-            const baseBranch =
+            let baseBranch =
               r.startCommitSha ?? r.baseBranch ?? opts.baseBranch ?? repoDefaultBranch;
             if (r.baseBranch) {
               try {
@@ -3003,6 +3006,39 @@ export function composeRoot(opts: ComposeOptions): Container {
               } catch {
                 // best-effort fetch
               }
+            }
+            if (resumeDisposition !== undefined && !r.startCommitSha) {
+              const configuredBaseBranch = r.baseBranch ?? opts.baseBranch ?? repoDefaultBranch;
+              const remoteRef = `origin/${configuredBaseBranch}`;
+              let recoveredSha: string | undefined;
+              let remoteResolutionError: unknown;
+              try {
+                recoveredSha = await gitAdapter.resolveRef(repoRootPath, remoteRef);
+              } catch (err) {
+                remoteResolutionError = err;
+              }
+              if (!recoveredSha) {
+                try {
+                  recoveredSha = await gitAdapter.resolveRef(repoRootPath, configuredBaseBranch);
+                } catch (err) {
+                  throw new Error(
+                    `failed to recover missing startCommitSha from ${remoteRef} or ${configuredBaseBranch}: ${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
+              }
+              if (!recoveredSha) {
+                throw new Error(
+                  `failed to recover missing startCommitSha: neither ${remoteRef} nor ${configuredBaseBranch} resolved to a commit${remoteResolutionError instanceof Error ? ` (${remoteResolutionError.message})` : ''}`,
+                );
+              }
+              try {
+                runRepository.update(r.uuid, { startCommitSha: recoveredSha });
+              } catch (err) {
+                throw new Error(
+                  `failed to persist recovered startCommitSha ${recoveredSha}: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+              baseBranch = recoveredSha;
             }
             await gitAdapter.createWorktree({
               repoLocalBasePath: repoRootPath,
@@ -3013,11 +3049,15 @@ export function composeRoot(opts: ComposeOptions): Container {
             if ('seedArtifactExcludes' in gitAdapter) {
               await (gitAdapter as unknown as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
             }
-            if (!r.startCommitSha) {
+            if (!r.startCommitSha && resumeDisposition === undefined) {
               const sha = await gitAdapter.headCommitSha(worktreePath);
               runRepository.update(r.uuid, { startCommitSha: sha });
             }
             return { cwd: worktreePath };
+          },
+          handlePreparationFailure: ({ runId, error }) => {
+            const run = runRepository.findByUuid(runId);
+            if (run) runExecutor!.recordPreparationFailure(run, error);
           },
           resetWorktree: (repoId) => {
             const lease = workerLeaseRepository.current(repoId);

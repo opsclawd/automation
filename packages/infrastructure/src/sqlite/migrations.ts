@@ -40,6 +40,7 @@ import * as addExecutionPolicy from './migrations/0037-add-execution-policy.js';
 import * as addReleaseBatches from './migrations/0038-add-release-batches.js';
 import * as addReleaseBatchPromotionFields from './migrations/0039-add-release-batch-promotion-fields.js';
 import * as addPinnedRuntime from './migrations/0040-add-pinned-runtime-column.js';
+import * as reconcileHistoricalJobs from './migrations/0041-reconcile-historical-jobs.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -82,6 +83,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: addReleaseBatches.version, sql: addReleaseBatches.sql },
   { version: addReleaseBatchPromotionFields.version, sql: addReleaseBatchPromotionFields.sql },
   { version: addPinnedRuntime.version, sql: addPinnedRuntime.sql },
+  { version: reconcileHistoricalJobs.version, sql: reconcileHistoricalJobs.sql },
 ];
 
 export function registerCustomFunctions(db: Db): void {

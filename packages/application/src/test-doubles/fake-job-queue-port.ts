@@ -15,7 +15,13 @@ import {
   type JobOwnership,
   JobOwnershipLostError,
 } from '@ai-sdlc/domain';
-import type { JobQueuePort, EnqueueJobInput, ClaimNextInput } from '../ports/job-queue-port.js';
+import type {
+  JobQueuePort,
+  EnqueueJobInput,
+  ClaimNextInput,
+  ReconcileTerminalJobInput,
+  ReconcileTerminalJobResult,
+} from '../ports/job-queue-port.js';
 import type { RepositoryPort } from '../ports.js';
 
 export class FakeJobQueuePort implements JobQueuePort {
@@ -70,6 +76,41 @@ export class FakeJobQueuePort implements JobQueuePort {
   }
   markCancelled(owner: JobOwnership, now: Date): void {
     this.updateWithOwnership(owner, (j) => markJobCancelled(j, now));
+  }
+
+  reconcileTerminalJob(input: ReconcileTerminalJobInput): ReconcileTerminalJobResult {
+    const existing = this.jobs.get(input.jobId);
+    if (!existing) {
+      return { reconciled: false, status: 'failed' };
+    }
+    if (
+      existing.status === 'succeeded' ||
+      existing.status === 'failed' ||
+      existing.status === 'cancelled'
+    ) {
+      return { reconciled: false, status: existing.status };
+    }
+    if (input.expectedStatus !== undefined && existing.status !== input.expectedStatus) {
+      return { reconciled: false, status: existing.status };
+    }
+    if (input.owner !== undefined) {
+      if (
+        existing.claimedBy !== input.owner.workerId ||
+        existing.claimToken !== input.owner.claimToken
+      ) {
+        throw new JobOwnershipLostError(input.owner.jobId);
+      }
+    }
+    const updated: Job = {
+      ...existing,
+      status: input.targetStatus,
+      completedAt: input.now,
+    };
+    delete updated.claimedBy;
+    delete updated.claimToken;
+    delete updated.claimExpiresAt;
+    this.jobs.set(input.jobId, updated);
+    return { reconciled: true, status: input.targetStatus };
   }
 
   listForRepo(repoId: RepositoryId): Job[] {

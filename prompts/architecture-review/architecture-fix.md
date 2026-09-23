@@ -47,7 +47,7 @@ Ensure the updated design and plan:
 4. Correctly classify and record **provenance layers** (`requested / declared`, `configured / executed`, `measured / verified`) without conflating configuration with measured stream/execution metadata.
 5. Explicitly enforce **conditional invariants** across related fields (ensuring conditionally required fields are enforced when triggering state exists).
 6. Conserve information flow, contracts, schemas, and state persistence across boundaries.
-7. Maintain compatibility for directly referenced downstream consumers.
+7. Maintain compatibility for directly referenced downstream consumers (evaluating schema and contract representability; downstream execution deliverables belong solely to downstream issues that execute them).
 
 Return the complete, updated `design_md` and `plan_md`.
 

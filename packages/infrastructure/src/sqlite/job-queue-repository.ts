@@ -29,6 +29,8 @@ import type {
   RepositoryPort,
   EnqueueJobInput,
   ClaimNextInput,
+  ReconcileTerminalJobInput,
+  ReconcileTerminalJobResult,
 } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
@@ -211,6 +213,76 @@ export class JobQueueRepository implements JobQueuePort {
 
   markCancelled(owner: JobOwnership, now: Date): void {
     this.updateJobWithOwnership(owner, (j) => markJobCancelled(j, now));
+  }
+
+  reconcileTerminalJob(input: ReconcileTerminalJobInput): ReconcileTerminalJobResult {
+    const tx = this.db.transaction((): ReconcileTerminalJobResult => {
+      let row: JobRow | undefined;
+      if (this.repoId !== undefined) {
+        row = this.db
+          .prepare('SELECT * FROM jobs WHERE id = ? AND repo_id = ?')
+          .get(input.jobId, this.repoId) as JobRow | undefined;
+      } else {
+        row = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(input.jobId) as
+          | JobRow
+          | undefined;
+      }
+      if (!row) {
+        return { reconciled: false, status: 'failed' as JobStatus };
+      }
+      const currentStatus = row.status as JobStatus;
+      if (
+        currentStatus === 'succeeded' ||
+        currentStatus === 'failed' ||
+        currentStatus === 'cancelled'
+      ) {
+        return { reconciled: false, status: currentStatus };
+      }
+      if (input.expectedStatus !== undefined && currentStatus !== input.expectedStatus) {
+        return { reconciled: false, status: currentStatus };
+      }
+      if (input.owner !== undefined) {
+        if (row.claimed_by !== input.owner.workerId || row.claim_token !== input.owner.claimToken) {
+          throw new JobOwnershipLostError(input.owner.jobId);
+        }
+      }
+      if (this.repoId !== undefined) {
+        this.db
+          .prepare(
+            `UPDATE jobs
+             SET status = @targetStatus,
+                 completed_at = @completedAt,
+                 claimed_by = NULL,
+                 claim_token = NULL,
+                 claim_expires_at = NULL
+             WHERE id = @id AND repo_id = @repo_id`,
+          )
+          .run({
+            targetStatus: input.targetStatus,
+            completedAt: input.now.toISOString(),
+            id: input.jobId,
+            repo_id: this.repoId,
+          });
+      } else {
+        this.db
+          .prepare(
+            `UPDATE jobs
+             SET status = @targetStatus,
+                 completed_at = @completedAt,
+                 claimed_by = NULL,
+                 claim_token = NULL,
+                 claim_expires_at = NULL
+             WHERE id = @id`,
+          )
+          .run({
+            targetStatus: input.targetStatus,
+            completedAt: input.now.toISOString(),
+            id: input.jobId,
+          });
+      }
+      return { reconciled: true, status: input.targetStatus };
+    });
+    return tx();
   }
 
   listForRepo(repoId: RepositoryId): Job[] {

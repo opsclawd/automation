@@ -4,6 +4,7 @@ import {
   buildArchitectureRequirementsLedger,
   formatRequirementsLedgerForPrompt,
   isHardGateRequirement,
+  isDownstreamProcessOrExitGateCriterion,
   type RequirementsLedger,
 } from '../requirements-ledger.js';
 import { FakeGitHubPort } from '../../test-doubles/fake-github-port.js';
@@ -28,6 +29,58 @@ describe('isHardGateRequirement', () => {
     ['Rename helper function', false],
   ])('matches %s -> %s', (title, expected) => {
     expect(isHardGateRequirement(title)).toBe(expected);
+  });
+});
+
+describe('isDownstreamProcessOrExitGateCriterion', () => {
+  it.each([
+    [
+      'Real-provider candidate validation is run against a locked SHA with pinned model identity.',
+      true,
+    ],
+    [
+      'Candidate receives an explicit evidence-backed **GO** before Phase 3 is considered complete.',
+      true,
+    ],
+    ['Real-provider validation runs on candidate', true],
+    ['Human operator sign-off is required before phase 2 is complete', true],
+    ['Manual approval needed before phase 3 is considered complete', true],
+    ['Candidate validation report generated', true],
+    ['Locked SHA verified against manifest', true],
+    ['Pinned model identity recorded', true],
+    ['Candidate receives an explicit GO', true],
+    ['Phase-3 exit gate deliverable created', true],
+    ['Exit gate harness execution completed', true],
+    ['After all batch items are merged', true],
+    ['Once all items are merged', true],
+    ['Soundbed loop/trim to final video duration', false],
+    ['Validation harness CLI accepts candidate SHA flag', false],
+    ['Support provider interface for custom audio models', false],
+    ['Persist stream probe metadata in job manifest', false],
+  ])('matches criterion: %s -> %s', (title, expected) => {
+    expect(isDownstreamProcessOrExitGateCriterion(title)).toBe(expected);
+  });
+
+  it('matches exit-gate criteria when consumer issue title is an exit-gate issue', () => {
+    const exitTitle = 'Phase 3 exit-gate validation';
+    expect(
+      isDownstreamProcessOrExitGateCriterion('Validation is run against staging', exitTitle),
+    ).toBe(true);
+    expect(
+      isDownstreamProcessOrExitGateCriterion('Candidate receives an explicit GO', exitTitle),
+    ).toBe(true);
+    expect(isDownstreamProcessOrExitGateCriterion('Operator approval required', exitTitle)).toBe(
+      true,
+    );
+    expect(
+      isDownstreamProcessOrExitGateCriterion('Final build certified for deployment', exitTitle),
+    ).toBe(true);
+    expect(
+      isDownstreamProcessOrExitGateCriterion(
+        'Validation harness CLI accepts candidate SHA flag',
+        exitTitle,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -303,6 +356,218 @@ Direct consumer: #129
     const consumerItems = ledger.items.filter((it) => it.category === 'consumer_requirement');
     expect(consumerItems.map((item) => item.id)).toEqual(['CONSUMER-128-AC-1']);
     expect(consumerItems.every((item) => !item.title.includes('Excluded'))).toBe(true);
+  });
+
+  it('filters exit-gate criteria from downstream consumer issues while preserving behavioral requirements', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/69', {
+      number: 69,
+      title: 'Phase 3 exit-gate and candidate validation',
+      body: `
+# Issue 69: Phase 3 Exit Gate
+Depends on #63
+
+## Acceptance criteria
+- [ ] Soundbed loop/trim configuration interface supported
+- [ ] Real-provider candidate validation is run against a locked SHA with pinned model identity.
+- [ ] Candidate receives an explicit evidence-backed **GO** before Phase 3 is considered complete.
+- [ ] Validation harness CLI accepts candidate SHA flag.
+`,
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 63: Foundational Provider Architecture
+Direct consumer: #69
+
+## Acceptance criteria
+- [ ] Implement core provider abstractions
+`;
+
+    const ledger = await buildRequirementsLedger({
+      issueNumber: 63,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    const consumerItems = ledger.items.filter((it) => it.category === 'consumer_requirement');
+    // Only the 2 behavioral ACs should be extracted, the 2 exit-gate ACs filtered out
+    expect(consumerItems).toHaveLength(2);
+    expect(consumerItems[0]!.id).toBe('CONSUMER-69-AC-1');
+    expect(consumerItems[0]!.title).toBe('Soundbed loop/trim configuration interface supported');
+    expect(consumerItems[0]!.hardGate).toBe(false);
+
+    expect(consumerItems[1]!.id).toBe('CONSUMER-69-AC-4');
+    expect(consumerItems[1]!.title).toBe('Validation harness CLI accepts candidate SHA flag.');
+    expect(consumerItems[1]!.hardGate).toBe(false);
+
+    expect(ledger.items.some((it) => it.id === 'CONSUMER-69-AC-2')).toBe(false);
+    expect(ledger.items.some((it) => it.id === 'CONSUMER-69-AC-3')).toBe(false);
+  });
+
+  it('enforces hardGate: false invariant on all consumer requirements even if containing hard gate keywords', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/70', {
+      number: 70,
+      title: 'Downstream Feature',
+      body: `
+Depends on #63
+
+## Acceptance criteria
+- [ ] Must maintain stream order atomically before dispatch
+`,
+      labels: [],
+    });
+
+    const issueMd = `# Issue 63\nDirect consumer: #70\n## Acceptance criteria\n- [ ] Core feature`;
+
+    const ledger = await buildRequirementsLedger({
+      issueNumber: 63,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    const consumerItems = ledger.items.filter((it) => it.category === 'consumer_requirement');
+    expect(consumerItems).toHaveLength(1);
+    expect(consumerItems[0]!.id).toBe('CONSUMER-70-AC-1');
+    expect(consumerItems[0]!.hardGate).toBe(false);
+  });
+
+  it('skips Complete Requirements Traceability Matrix and similar sections in design.md', async () => {
+    const issueMd = `# Issue 63\n## Acceptance criteria\n- [ ] AC1`;
+    const designMd = `
+# Design: Issue 63
+
+## Anchored Design
+- Component architecture definition
+
+## 6.1 Complete Requirements Traceability Matrix
+- Must provide verification evidence for CONSUMER-69-AC-9
+- Must provide verification evidence for CONSUMER-69-AC-10
+
+## Traceability Mapping
+- Must map all inputs to outputs
+
+## Requirements Traceability
+- Verification mapping for test suite
+`;
+
+    const ledger = await buildRequirementsLedger({
+      issueNumber: 63,
+      issueMd,
+      designMd,
+    });
+
+    const designItems = ledger.items.filter((it) => it.source === 'design.md');
+    expect(designItems).toHaveLength(1);
+    expect(designItems[0]!.title).toBe('Component architecture definition');
+    expect(ledger.items.some((it) => it.title.includes('Traceability'))).toBe(false);
+    expect(ledger.items.some((it) => it.title.includes('CONSUMER-69-AC-9'))).toBe(false);
+  });
+
+  it('preserves exit-gate issue own acceptance criteria when running for the exit-gate issue itself', async () => {
+    const issueMd = `
+# Issue 69: Phase 3 Exit Gate Validation
+
+## Acceptance criteria
+- [ ] Real-provider candidate validation is run against a locked SHA with pinned model identity.
+- [ ] Candidate receives an explicit evidence-backed **GO** before Phase 3 is considered complete.
+- [ ] Validation harness CLI accepts candidate SHA flag.
+`;
+
+    const ledger = await buildRequirementsLedger({
+      issueNumber: 69,
+      issueMd,
+    });
+
+    const acs = ledger.items.filter((it) => it.category === 'acceptance_criteria');
+    expect(acs).toHaveLength(3);
+    expect(acs[0]!.id).toBe('AC-1');
+    expect(acs[0]!.title).toBe(
+      'Real-provider candidate validation is run against a locked SHA with pinned model identity.',
+    );
+    expect(acs[1]!.id).toBe('AC-2');
+    expect(acs[1]!.title).toBe(
+      'Candidate receives an explicit evidence-backed **GO** before Phase 3 is considered complete.',
+    );
+    expect(acs[1]!.hardGate).toBe(true); // "before" triggers hardGate for issue's own AC
+    expect(acs[2]!.id).toBe('AC-3');
+  });
+
+  it('suppresses synthetic fallback CONSUMER-REQ-1 when consumer is an exit gate issue', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/69', {
+      number: 69,
+      title: 'Phase 3 exit-gate validation',
+      body: `
+Depends on #63
+
+## Acceptance criteria
+- [ ] Real-provider candidate validation is run against a locked SHA with pinned model identity.
+- [ ] Candidate receives an explicit evidence-backed **GO** before Phase 3 is considered complete.
+`,
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 63
+Direct consumer: #69
+## Acceptance criteria
+- [ ] Core feature
+`;
+
+    const ledger = await buildRequirementsLedger({
+      issueNumber: 63,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    const consumerItems = ledger.items.filter((it) => it.category === 'consumer_requirement');
+    expect(consumerItems).toHaveLength(0);
+  });
+
+  it('filters exit-gate items from consumer Goal and Anchored Design sections', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/69', {
+      number: 69,
+      title: 'Phase 3 exit gate',
+      body: `
+Depends on #63
+
+## Goal
+- Execute real-provider candidate validation
+- Contract support for timeline assembly
+
+## Anchored Design
+- Candidate receives an explicit GO before Phase 3 is complete
+- Expose probe metadata interface
+`,
+      labels: [],
+    });
+
+    const issueMd = `# Issue 63\nDirect consumer: #69\n## Acceptance criteria\n- [ ] Base feature`;
+
+    const ledger = await buildRequirementsLedger({
+      issueNumber: 63,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    const consumerItems = ledger.items.filter((it) => it.category === 'consumer_requirement');
+    expect(consumerItems).toHaveLength(2);
+    expect(consumerItems.some((it) => it.title === 'Contract support for timeline assembly')).toBe(
+      true,
+    );
+    expect(consumerItems.some((it) => it.title === 'Expose probe metadata interface')).toBe(true);
+    expect(consumerItems.every((it) => it.hardGate === false)).toBe(true);
+    expect(
+      consumerItems.some((it) => it.title.includes('real-provider candidate validation')),
+    ).toBe(false);
+    expect(consumerItems.some((it) => it.title.includes('explicit GO'))).toBe(false);
   });
 
   it('backward compatibility alias buildArchitectureRequirementsLedger works identically', async () => {

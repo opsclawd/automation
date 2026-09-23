@@ -41,6 +41,14 @@ Add or update appropriate tests while working.
 
 Implement the change completely and leave the worktree in a finished state for deterministic validation and independent review.
 
+## GOVERNANCE & EXIT-GATE AUTHORING BOUNDARY
+
+For candidate-validation exit gates and audit closeouts:
+- Author ONLY the test harness code, validation runner scripts, integration test suites, and blank report templates (e.g. `docs/*-report-template.md` with placeholder tokens like `<pinned-candidate-sha>`, `[ ] GO`, and `[ ] NO-GO`).
+- NEVER author, fill in, sign, or commit a completed candidate validation report or audit closeout (such as `docs/*-candidate-validation-report.md` or `docs/*-audit-closeout.json`).
+- NEVER assert an affirmative GO/APPROVE disposition, human operator sign-off, scenario pass counts, or real-provider execution metrics.
+- Candidate validation reports and promotion decisions are post-merge governance records authored and signed exclusively by human operators after real-provider candidate validation has been executed.
+
 ## VALIDATION SCOPE
 
 Do not re-run the full repository validation suite yourself. A dedicated

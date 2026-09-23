@@ -541,6 +541,47 @@ describe('workerLoop', () => {
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   }, 10_000);
 
+  it('reports worktree preparation failures before the job is marked failed', async () => {
+    const s = setup();
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+    const preparationError = new Error('failed to persist recovered startCommitSha sha');
+    const handlePreparationFailure = vi.fn();
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      repoId: RepositoryId('r1'),
+      executeRun: executeOk,
+      prepareWorktree: async () => {
+        throw preparationError;
+      },
+      handlePreparationFailure,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+      updateRun: () => {},
+    });
+
+    expect(handlePreparationFailure).toHaveBeenCalledWith({
+      runId: RunId('run-1'),
+      error: preparationError,
+    });
+    expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
+  });
+
   it('heartbeat failure during executeRun: lease held until executeRun settles (gap B)', async () => {
     const s = setup();
     s.queue.enqueue({

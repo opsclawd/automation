@@ -1,12 +1,4 @@
-import type {
-  Run,
-  Phase,
-  PhaseStatus,
-  Failure,
-  ResumeDisposition,
-  Step,
-  RunId,
-} from '@ai-sdlc/domain';
+import type { Run, Phase, PhaseStatus, Failure, ResumeDisposition, Step } from '@ai-sdlc/domain';
 import {
   PhaseName,
   startPhase,
@@ -16,6 +8,7 @@ import {
   passRun,
   blockRun,
   markRunNeedsHumanReview,
+  RunId,
 } from '@ai-sdlc/domain';
 import type { PhaseHandlerContext, PhaseResult } from '../phases/handler.js';
 import type { PhaseDefinition } from '../phases/phase-definitions.js';
@@ -29,10 +22,11 @@ import {
   verifyValidationFreshness,
   invalidateValidationEvidence,
 } from '../phases/index.js';
-import type { RunRepositoryPort, FailureRepositoryPort, LoggerPort } from '../ports.js';
+import type { RunRepositoryPort, FailureRepositoryPort, LoggerPort, RunRecord } from '../ports.js';
 import type { PhaseRepositoryPort } from '../ports/phase-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { PhaseHandlerRegistryPort } from '../ports/phase-handler-registry-port.js';
+import type { JobQueuePort } from '../ports/job-queue-port.js';
 import type {
   WorktreeLifecyclePort,
   WorktreeLifecyclePlan,
@@ -73,6 +67,7 @@ export interface RunExecutorDeps {
   stepRepository?: StepRepositoryPort;
   runNotification?: RunNotificationPort;
   reviewConvergenceMaxIterations?: number;
+  jobQueue?: JobQueuePort;
 }
 
 export interface ExecuteRunInput {
@@ -120,6 +115,39 @@ export class HandlerNotWiredError extends Error {
 export class RunExecutor {
   constructor(private readonly deps: RunExecutorDeps) {}
 
+  recordPreparationFailure(run: Run, error: Error): void {
+    const now = this.deps.now ?? (() => new Date());
+    const phaseGraph = resolvePhaseGraph(run.executionPolicy);
+    const firstIncompletePhase = phaseGraph.getFirstIncompletePhase({
+      completedPhases: new Set(run.completedPhases),
+      skippedPhases: new Set(run.skippedPhases),
+      skipSet: new Set(),
+    });
+    if (!firstIncompletePhase) return;
+
+    const phaseDef = PHASE_DEFINITIONS[firstIncompletePhase]!;
+    const failure: Failure = {
+      runUuid: run.uuid,
+      phase: firstIncompletePhase as string,
+      kind: 'setup_failed',
+      message: error.message,
+      canRetry: true,
+      suggestedAction: 'Resolve the worktree preparation problem, then resume the run.',
+      artifacts: [],
+      detectedAt: now(),
+    };
+    const phase: Phase = {
+      id: this.phaseId(run.uuid, firstIncompletePhase),
+      runUuid: run.uuid,
+      name: firstIncompletePhase as string,
+      status: 'needs_human_review',
+      attempt: 1,
+      startedAt: now(),
+      completedAt: now(),
+    };
+    this.needsHumanReviewRun(run, phaseDef, phase, failure, now(), [], true);
+  }
+
   async execute(input: ExecuteRunInput): Promise<ExecuteRunOutput> {
     const { run, skip } = input;
     const now = this.deps.now ?? (() => new Date());
@@ -138,6 +166,262 @@ export class RunExecutor {
 
     let approvedInboundPaths: string[] | undefined;
 
+    // Early-Resume Baseline Guard (Finding 4, CONSUMER-1282, AC-5, AC-6):
+    // Ensure that early-phase resumes or runs with missing startCommitSha resolve and persist
+    // the base commit ref or durably fail the run and terminalize any jobs before phase context construction.
+    const runRecord = run as RunRecord;
+    let persistedRun: RunRecord = runRecord;
+    if (runRecord.startCommitSha?.trim()) {
+      // Run's domain shape intentionally does not expose the persistence
+      // field, but preserve it at runtime so context factories that do
+      // not re-read the repository still receive the admitted baseline.
+      currentRun = { ...currentRun, startCommitSha: runRecord.startCommitSha } as Run;
+    } else if (run.baseBranch !== undefined || input.resumeDisposition !== undefined) {
+      persistedRun = (this.deps.runRepository.findByUuid(run.uuid) ?? run) as RunRecord;
+      if (persistedRun.startCommitSha?.trim()) {
+        currentRun = { ...currentRun, startCommitSha: persistedRun.startCommitSha } as Run;
+      } else {
+        const firstIncompletePhase: PhaseName =
+          phaseGraph.getFirstIncompletePhase({
+            completedPhases: completedSet,
+            skippedPhases: previouslySkippedSet,
+            skipSet,
+          }) ?? PhaseName('read_issue');
+        const firstIncompleteDef =
+          PHASE_DEFINITIONS[firstIncompletePhase] ?? getPhaseDefinition(firstIncompletePhase);
+        let ctxForResume = this.buildContext(persistedRun, undefined, input.allowProtectedPaths);
+        const baseBranch = ctxForResume.baseBranch?.trim() ?? persistedRun.baseBranch?.trim();
+        const shouldAttemptRecovery =
+          Boolean(baseBranch && typeof ctxForResume.git?.resolveRef === 'function') ||
+          input.resumeDisposition !== undefined;
+
+        if (shouldAttemptRecovery) {
+          let recoveredStartCommitSha: string | undefined;
+          let resolutionError: string | undefined;
+          let recoveredSourceRef: string | undefined;
+
+          if (!baseBranch) {
+            resolutionError = 'the resumed run has no configured base branch';
+          } else if (typeof ctxForResume.git?.resolveRef !== 'function') {
+            resolutionError = 'git adapter does not support resolveRef';
+          } else {
+            const remoteRef = `origin/${baseBranch}`;
+            try {
+              recoveredStartCommitSha = await ctxForResume.git.resolveRef(
+                ctxForResume.cwd,
+                remoteRef,
+              );
+              if (recoveredStartCommitSha) recoveredSourceRef = remoteRef;
+            } catch (err) {
+              resolutionError = `failed to resolve ${remoteRef}: ${err instanceof Error ? err.message : String(err)}`;
+            }
+
+            if (!recoveredStartCommitSha) {
+              try {
+                recoveredStartCommitSha = await ctxForResume.git.resolveRef(
+                  ctxForResume.cwd,
+                  baseBranch,
+                );
+                if (recoveredStartCommitSha) recoveredSourceRef = baseBranch;
+              } catch (err) {
+                resolutionError = `failed to resolve ${baseBranch}: ${err instanceof Error ? err.message : String(err)}`;
+              }
+            }
+
+            if (!recoveredStartCommitSha && !resolutionError) {
+              resolutionError = `neither ${remoteRef} nor ${baseBranch} resolved to a commit`;
+            }
+          }
+
+          if (!recoveredStartCommitSha) {
+            const failureMessage = `failed to recover missing startCommitSha: ${resolutionError ?? 'base branch ref did not resolve'}`;
+            const failure: Failure = {
+              runUuid: currentRun.uuid,
+              phase: firstIncompletePhase as string,
+              kind: 'setup_failed',
+              message: failureMessage,
+              canRetry: true,
+              suggestedAction:
+                'Fetch or restore the configured base branch ref, then resume the run.',
+              artifacts: [],
+              detectedAt: now(),
+            };
+            const phase: Phase = {
+              id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+              runUuid: currentRun.uuid,
+              name: firstIncompletePhase as string,
+              status: 'needs_human_review',
+              attempt: 1,
+              startedAt: now(),
+              completedAt: now(),
+            };
+            if (this.deps.jobQueue) {
+              try {
+                const jobs = this.deps.jobQueue.listForRun(RunId(currentRun.uuid));
+                for (const job of jobs) {
+                  if (
+                    job.status === 'queued' ||
+                    job.status === 'claimed' ||
+                    job.status === 'running'
+                  ) {
+                    const owner =
+                      job.claimedBy && job.claimToken
+                        ? { jobId: job.id, workerId: job.claimedBy, claimToken: job.claimToken }
+                        : undefined;
+                    try {
+                      this.deps.jobQueue.reconcileTerminalJob({
+                        jobId: job.id,
+                        targetStatus: 'failed',
+                        now: now(),
+                        reason: 'admission-repair',
+                        ...(owner ? { owner } : {}),
+                      });
+                    } catch (jobErr) {
+                      this.deps.logger?.error(
+                        `RunExecutor: failed to reconcile job ${job.id} for run ${currentRun.uuid}`,
+                        jobErr,
+                      );
+                    }
+                  }
+                }
+              } catch (err) {
+                this.deps.logger?.error(
+                  `RunExecutor: failed to list/reconcile jobs for run ${currentRun.uuid}`,
+                  err,
+                );
+              }
+            }
+            return this.needsHumanReviewRun(
+              currentRun,
+              firstIncompleteDef,
+              phase,
+              failure,
+              now(),
+              phases,
+            );
+          }
+
+          try {
+            this.deps.runRepository.update(currentRun.uuid, {
+              startCommitSha: recoveredStartCommitSha,
+            });
+            const verified = this.deps.runRepository.findByUuid(currentRun.uuid) as
+              | RunRecord
+              | undefined;
+            if (
+              !verified?.startCommitSha ||
+              verified.startCommitSha.trim() !== recoveredStartCommitSha
+            ) {
+              throw new Error(
+                `read-back verification failed: expected ${recoveredStartCommitSha}, got ${verified?.startCommitSha}`,
+              );
+            }
+          } catch (err) {
+            const failureMessage = `failed to persist recovered startCommitSha ${recoveredStartCommitSha}: ${err instanceof Error ? err.message : String(err)}`;
+            const failure: Failure = {
+              runUuid: currentRun.uuid,
+              phase: firstIncompletePhase as string,
+              kind: 'setup_failed',
+              message: failureMessage,
+              canRetry: true,
+              suggestedAction: 'Verify database connectivity, then resume the run.',
+              artifacts: [],
+              detectedAt: now(),
+            };
+            const phase: Phase = {
+              id: this.phaseId(currentRun.uuid, firstIncompletePhase),
+              runUuid: currentRun.uuid,
+              name: firstIncompletePhase as string,
+              status: 'needs_human_review',
+              attempt: 1,
+              startedAt: now(),
+              completedAt: now(),
+            };
+            if (this.deps.jobQueue) {
+              try {
+                const jobs = this.deps.jobQueue.listForRun(RunId(currentRun.uuid));
+                for (const job of jobs) {
+                  if (
+                    job.status === 'queued' ||
+                    job.status === 'claimed' ||
+                    job.status === 'running'
+                  ) {
+                    const owner =
+                      job.claimedBy && job.claimToken
+                        ? { jobId: job.id, workerId: job.claimedBy, claimToken: job.claimToken }
+                        : undefined;
+                    try {
+                      this.deps.jobQueue.reconcileTerminalJob({
+                        jobId: job.id,
+                        targetStatus: 'failed',
+                        now: now(),
+                        reason: 'admission-repair',
+                        ...(owner ? { owner } : {}),
+                      });
+                    } catch (jobErr) {
+                      this.deps.logger?.error(
+                        `RunExecutor: failed to reconcile job ${job.id} for run ${currentRun.uuid}`,
+                        jobErr,
+                      );
+                    }
+                  }
+                }
+              } catch (err) {
+                this.deps.logger?.error(
+                  `RunExecutor: failed to list/reconcile jobs for run ${currentRun.uuid}`,
+                  err,
+                );
+              }
+            }
+            return this.needsHumanReviewRun(
+              currentRun,
+              firstIncompleteDef,
+              phase,
+              failure,
+              now(),
+              phases,
+            );
+          }
+
+          currentRun = { ...currentRun, startCommitSha: recoveredStartCommitSha } as Run;
+          const recoveryMessage = `recovered missing startCommitSha from ${
+            recoveredSourceRef ?? 'base branch'
+          }: ${recoveredStartCommitSha}`;
+          const recoveryMetadata = {
+            baseBranch,
+            sourceRef: recoveredSourceRef,
+            startCommitSha: recoveredStartCommitSha,
+          };
+          try {
+            this.deps.eventRepository?.insert({
+              runUuid: currentRun.uuid,
+              phase: firstIncompletePhase as string,
+              level: 'info',
+              type: 'run.resume_start_commit_recovered',
+              message: recoveryMessage,
+              metadata: recoveryMetadata,
+              timestamp: now(),
+            });
+          } catch (err) {
+            this.deps.logger?.debug(
+              'failed to insert resume start commit recovery audit event',
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+          this.emit(
+            run.displayId,
+            run.uuid,
+            firstIncompletePhase as string,
+            'info',
+            'run.resume_start_commit_recovered',
+            recoveryMessage,
+            now(),
+            recoveryMetadata,
+          );
+        }
+      }
+    }
+
     if (input.resumeDisposition !== undefined) {
       const firstIncompletePhase = phaseGraph.getFirstIncompletePhase({
         completedPhases: completedSet,
@@ -147,7 +431,7 @@ export class RunExecutor {
 
       if (firstIncompletePhase) {
         const firstIncompleteDef = PHASE_DEFINITIONS[firstIncompletePhase]!;
-        const ctxForResume = this.buildContext(run, undefined, input.allowProtectedPaths);
+        let ctxForResume = this.buildContext(currentRun, undefined, input.allowProtectedPaths);
 
         const isImplementPhase = firstIncompletePhase === 'implement';
         // Lean's review-convergence loop (validate -> fix-validate ->
@@ -838,7 +1122,7 @@ export class RunExecutor {
       }
     }
 
-    const ctx = this.buildContext(run, approvedInboundPaths, input.allowProtectedPaths);
+    const ctx = this.buildContext(currentRun, approvedInboundPaths, input.allowProtectedPaths);
     // When resuming, the worktree may have been cleaned or artifacts lost
     // (e.g. CancelRun runs git clean). Re-materialize durable artifacts
     // into the worktree before starting the phase loop.
@@ -1934,9 +2218,14 @@ export class RunExecutor {
     failure: Failure,
     at: Date,
     phases: PhaseRecord[],
+    forceRecord = false,
   ): ExecuteRunOutput {
     const cancelled = this.deps.runRepository.findByUuid(currentRun.uuid);
-    if (cancelled && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelled.status)) {
+    if (
+      !forceRecord &&
+      cancelled &&
+      ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelled.status)
+    ) {
       return { run: cancelled, phases };
     }
 
