@@ -374,10 +374,10 @@ describe('migrations', () => {
     db.close();
   });
 
-  it('0040 is the migration immediately after 0039', () => {
+  it('0041 is the migration immediately after 0040', () => {
     const versions = MIGRATIONS.map((m) => m.version);
     const lastThree = versions.slice(-3);
-    expect(lastThree).toEqual([38, 39, 40]);
+    expect(lastThree).toEqual([39, 40, 41]);
 
     const uniqueVersions = new Set(versions);
     expect(uniqueVersions.size).toBe(versions.length);

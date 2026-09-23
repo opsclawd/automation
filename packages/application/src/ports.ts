@@ -112,7 +112,13 @@ export type {
   RepositoryRegistryPort,
   RepositoryUpdatePatch,
 } from './ports/repository-registry-port.js';
-export type { JobQueuePort, EnqueueJobInput, ClaimNextInput } from './ports/job-queue-port.js';
+export type {
+  JobQueuePort,
+  EnqueueJobInput,
+  ClaimNextInput,
+  ReconcileTerminalJobInput,
+  ReconcileTerminalJobResult,
+} from './ports/job-queue-port.js';
 export type { ReleaseBatchRepositoryPort } from './ports/release-batch-repository-port.js';
 export type { WorkerRegistryPort } from './ports/worker-registry-port.js';
 export type {

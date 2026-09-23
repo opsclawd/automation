@@ -678,4 +678,151 @@ describe('JobQueueRepository', () => {
       db.close();
     });
   });
+
+  describe('reconcileTerminalJob', () => {
+    it('reconciles an unowned queued job to cancelled', () => {
+      const db = freshDb();
+      const repos = mockRepos({ 'repo-1': true });
+      const queue = new JobQueueRepository(db, repos);
+      const job = defaultJob({ id: mkJobId('job-q') });
+      queue.enqueue({ job });
+
+      const result = queue.reconcileTerminalJob({
+        jobId: job.id,
+        targetStatus: 'cancelled',
+        now: new Date('2026-09-22T21:00:00Z'),
+        reason: 'run_cancelled',
+      });
+
+      expect(result).toEqual({ reconciled: true, status: 'cancelled' });
+      const updated = queue.findById(job.id);
+      expect(updated?.status).toBe('cancelled');
+      expect(updated?.completedAt).toEqual(new Date('2026-09-22T21:00:00Z'));
+      expect(updated?.claimedBy).toBeUndefined();
+      expect(updated?.claimToken).toBeUndefined();
+      db.close();
+    });
+
+    it('reconciles a claimed/running job, clearing claim fields and fencing subsequent worker transitions', () => {
+      const db = freshDb();
+      const repos = mockRepos({ 'repo-1': true });
+      const queue = new JobQueueRepository(db, repos);
+      const job = defaultJob({ id: mkJobId('job-run') });
+      queue.enqueue({ job });
+
+      const claimed = queue.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      expect(claimed).toBeDefined();
+      const owner = {
+        jobId: claimed!.id,
+        workerId: claimed!.claimedBy!,
+        claimToken: claimed!.claimToken!,
+      };
+      queue.markRunning(owner, new Date('2026-09-22T21:05:00Z'));
+
+      // Reconcile terminal job
+      const result = queue.reconcileTerminalJob({
+        jobId: job.id,
+        targetStatus: 'cancelled',
+        now: new Date('2026-09-22T21:10:00Z'),
+        reason: 'operator_cancelled',
+        owner,
+      });
+
+      expect(result).toEqual({ reconciled: true, status: 'cancelled' });
+      const reconciledJob = queue.findById(job.id);
+      expect(reconciledJob?.status).toBe('cancelled');
+      expect(reconciledJob?.claimedBy).toBeUndefined();
+      expect(reconciledJob?.claimToken).toBeUndefined();
+
+      // Subsequent worker attempt to mark succeeded MUST fail with JobOwnershipLostError (fenced)
+      expect(() => {
+        queue.markSucceeded(owner, new Date('2026-09-22T21:15:00Z'));
+      }).toThrow(JobOwnershipLostError);
+
+      db.close();
+    });
+
+    it('is idempotent when job is already in a terminal state', () => {
+      const db = freshDb();
+      const repos = mockRepos({ 'repo-1': true });
+      const queue = new JobQueueRepository(db, repos);
+      const job = defaultJob({ id: mkJobId('job-term') });
+      queue.enqueue({ job });
+
+      const claimed = queue.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      const owner = {
+        jobId: claimed!.id,
+        workerId: claimed!.claimedBy!,
+        claimToken: claimed!.claimToken!,
+      };
+      queue.markRunning(owner, new Date('2026-09-22T21:01:00Z'));
+      queue.markSucceeded(owner, new Date('2026-09-22T21:05:00Z'));
+
+      // Job is already succeeded
+      const result = queue.reconcileTerminalJob({
+        jobId: job.id,
+        targetStatus: 'cancelled',
+        now: new Date('2026-09-22T21:10:00Z'),
+        reason: 'late_cancel',
+      });
+
+      expect(result).toEqual({ reconciled: false, status: 'succeeded' });
+      const fetched = queue.findById(job.id);
+      expect(fetched?.status).toBe('succeeded');
+      db.close();
+    });
+
+    it('throws JobOwnershipLostError if owner is provided but does not match current claim', () => {
+      const db = freshDb();
+      const repos = mockRepos({ 'repo-1': true });
+      const queue = new JobQueueRepository(db, repos);
+      const job = defaultJob({ id: mkJobId('job-owner-mismatch') });
+      queue.enqueue({ job });
+
+      const claimed = queue.claimNext({
+        workerId: mkWorkerId('worker-1'),
+        repoId: mkRepositoryId('repo-1'),
+      });
+      expect(claimed).toBeDefined();
+
+      expect(() => {
+        queue.reconcileTerminalJob({
+          jobId: job.id,
+          targetStatus: 'cancelled',
+          now: new Date('2026-09-22T21:10:00Z'),
+          owner: {
+            jobId: job.id,
+            workerId: mkWorkerId('worker-2'),
+            claimToken: claimed!.claimToken!,
+          },
+        });
+      }).toThrow(JobOwnershipLostError);
+
+      db.close();
+    });
+
+    it('returns reconciled: false if expectedStatus does not match', () => {
+      const db = freshDb();
+      const repos = mockRepos({ 'repo-1': true });
+      const queue = new JobQueueRepository(db, repos);
+      const job = defaultJob({ id: mkJobId('job-expected-mismatch') });
+      queue.enqueue({ job });
+
+      const result = queue.reconcileTerminalJob({
+        jobId: job.id,
+        targetStatus: 'cancelled',
+        now: new Date('2026-09-22T21:10:00Z'),
+        expectedStatus: 'running',
+      });
+
+      expect(result).toEqual({ reconciled: false, status: 'queued' });
+      db.close();
+    });
+  });
 });

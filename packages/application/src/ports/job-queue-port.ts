@@ -1,4 +1,12 @@
-import type { Job, JobId, RepositoryId, RunId, WorkerId, JobOwnership } from '@ai-sdlc/domain';
+import type {
+  Job,
+  JobId,
+  RepositoryId,
+  RunId,
+  WorkerId,
+  JobOwnership,
+  JobStatus,
+} from '@ai-sdlc/domain';
 
 export interface EnqueueJobInput {
   job: Job;
@@ -11,6 +19,20 @@ export interface ClaimNextInput {
   ttlMs?: number;
 }
 
+export interface ReconcileTerminalJobInput {
+  jobId: JobId;
+  targetStatus: 'succeeded' | 'failed' | 'cancelled';
+  now: Date;
+  reason?: string;
+  expectedStatus?: JobStatus;
+  owner?: JobOwnership;
+}
+
+export interface ReconcileTerminalJobResult {
+  reconciled: boolean;
+  status: JobStatus;
+}
+
 export interface JobQueuePort {
   enqueue(input: EnqueueJobInput): void;
   claimNext(input: ClaimNextInput): Job | undefined;
@@ -20,6 +42,7 @@ export interface JobQueuePort {
   markSucceeded(owner: JobOwnership, now: Date): void;
   markFailed(owner: JobOwnership, now: Date): void;
   markCancelled(owner: JobOwnership, now: Date): void;
+  reconcileTerminalJob(input: ReconcileTerminalJobInput): ReconcileTerminalJobResult;
   listForRepo(repoId: RepositoryId): Job[];
   listForRun(runId: RunId): Job[];
   findById(jobId: JobId): Job | undefined;
