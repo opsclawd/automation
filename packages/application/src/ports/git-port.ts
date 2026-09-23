@@ -47,6 +47,9 @@ export class ProtectedArtifactCollisionError extends Error {
 }
 
 export interface GitPort {
+  /**
+   * Creates a git worktree at worktreePath, ensuring parent directories exist.
+   */
   createWorktree(input: CreateWorktreeInput): Promise<void>;
   removeWorktree(worktreePath: string): Promise<void>;
   currentBranch(cwd: string): Promise<string>;

@@ -101,6 +101,23 @@ describe('createWorktree()', () => {
     const branch = await git(worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD']);
     expect(branch).toBe('ai/existing-branch');
   });
+
+  it('creates a worktree when the parent directory (e.g. .ai-worktrees) does not exist yet', async () => {
+    const repoLocalBasePath = await makeTempRepo();
+    const worktreesDir = join(repoLocalBasePath, '.ai-worktrees');
+    const worktreePath = join(worktreesDir, `integrate-wt-${randomBytes(6).toString('hex')}`);
+    _extraDirs.push(worktreePath);
+
+    await adapter.createWorktree({
+      repoLocalBasePath,
+      worktreePath,
+      branch: 'ai/parent-dir-creation',
+      baseBranch: 'main',
+    });
+
+    const branch = await git(worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    expect(branch).toBe('ai/parent-dir-creation');
+  });
 });
 
 describe('removeWorktree()', () => {
