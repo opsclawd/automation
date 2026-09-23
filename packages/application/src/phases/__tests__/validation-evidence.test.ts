@@ -355,6 +355,74 @@ describe('validation-evidence', () => {
     expect(freshnessWithArtifacts.fresh).toBe(false);
     expect(freshnessWithArtifacts.reason).toContain('Failed to inspect worktree state');
   });
+
+  it('accounts for .ai-orchestrator.json changes in worktree source fingerprint and preserves freshness contract (issue #1270)', async () => {
+    const git = new FakeGitPort();
+    git.headByCwd.set('/test/repo', 'a'.repeat(40));
+    git.worktreeFileContents.set(
+      '/test/repo:.ai-orchestrator.json',
+      JSON.stringify({ validation: { commands: ['pnpm test'] } }),
+    );
+    git.statusByCwd.set('/test/repo', ' M .ai-orchestrator.json\n');
+
+    const artifacts = new FakeArtifactStore();
+    const ctx = createMockContext(artifacts, git);
+
+    // 1. Initial validation records evidence
+    await recordValidationEvidence(ctx, 'validate');
+    const fp1 = await artifacts.read('run-1', VALIDATION_FINGERPRINT_ARTIFACT);
+
+    const initialFreshness = await verifyValidationFreshness(ctx);
+    expect(initialFreshness.fresh).toBe(true);
+
+    // 2. Uncommitted configuration edit (e.g. during implement phase adding commands)
+    git.worktreeFileContents.set(
+      '/test/repo:.ai-orchestrator.json',
+      JSON.stringify({
+        validation: {
+          commands: ['pnpm test', 'exit-gate:phase1', 'exit-gate:phase2', 'test:browser'],
+        },
+      }),
+    );
+    // Fingerprint must change
+    const fp2 = await computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' });
+    expect(fp2).not.toBe(fp1.trim());
+
+    // Prior validation evidence is now stale
+    const staleFreshness = await verifyValidationFreshness(ctx);
+    expect(staleFreshness.fresh).toBe(false);
+    expect(staleFreshness.reason).toContain('stale');
+
+    // 3. Re-validating records the new fingerprint and restores freshness
+    await recordValidationEvidence(ctx, 'validate');
+    const revalidatedFreshness = await verifyValidationFreshness(ctx);
+    expect(revalidatedFreshness.fresh).toBe(true);
+
+    // 4. Committed HEAD change also changes fingerprint
+    git.headByCwd.set('/test/repo', 'b'.repeat(40));
+    const fp3 = await computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' });
+    expect(fp3).not.toBe(fp2);
+    const headStaleFreshness = await verifyValidationFreshness(ctx);
+    expect(headStaleFreshness.fresh).toBe(false);
+
+    // 5. Generated bookkeeping files do NOT invalidate fingerprint
+    await recordValidationEvidence(ctx, 'validate');
+    const fp4 = await artifacts.read('run-1', VALIDATION_FINGERPRINT_ARTIFACT);
+
+    git.statusByCwd.set(
+      '/test/repo',
+      [
+        ' M .ai-orchestrator.json',
+        '?? review-head-sha.txt',
+        '?? spec-review-head-sha.txt',
+        '?? finding-ledger.json',
+      ].join('\n'),
+    );
+    const fp5 = await computeWorktreeSourceFingerprint({ git, cwd: '/test/repo' });
+    expect(fp5).toBe(fp4.trim());
+    const bookkeepingFreshness = await verifyValidationFreshness(ctx);
+    expect(bookkeepingFreshness.fresh).toBe(true);
+  });
 });
 
 describe('listOrchestratorOwnedUntrackedPaths', () => {

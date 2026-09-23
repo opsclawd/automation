@@ -229,6 +229,7 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(template).toContain('{{var:complete_diff}}');
       expect(template).toContain('{{var:validation_evidence}}');
       expect(template).toContain('{{var:requirements_ledger}}');
+      expect(template).toContain('{{var:live_worktree_configuration}}');
       expect(template).toContain('{{var:validation_critical_files}}');
       expect(template).toContain('{{artifact:design.md}}');
 
@@ -261,6 +262,8 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
           complete_diff: 'diff --git a/app.ts b/app.ts',
           validation_evidence: 'All tests passed',
           requirements_ledger: '- [AC-1] Check hash',
+          live_worktree_configuration:
+            'File: .ai-orchestrator.json (live worktree content from ctx.cwd)\nStatus: present\n\n```json\n{}\n```',
           validation_critical_files:
             '### Validation-Critical Files\n- `src/critical.ts`: timed out',
           orchestrator_bookkeeping_files: '- `review-head-sha.txt`',
@@ -271,6 +274,8 @@ describe('Lean pipeline prompts (Issue #1103)', () => {
       expect(rendered).toContain('- [AC-1] Check hash');
       expect(rendered).toContain('review-head-sha.txt');
       expect(rendered).toContain('src/critical.ts');
+      expect(rendered).toContain('Live worktree configuration');
+      expect(rendered).toContain('.ai-orchestrator.json');
       expect(rendered).toContain('Hard Gates & Adversarial Falsification');
     });
   });

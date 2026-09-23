@@ -27,6 +27,10 @@ Deterministic validation evidence:
 
 {{var:validation_critical_files}}
 
+Live worktree configuration:
+
+{{var:live_worktree_configuration}}
+
 Complete branch diff against base:
 
 ```diff
@@ -42,7 +46,7 @@ Perform an independent post-implementation spec review to answer one question:
 
 > **Does the completed implementation satisfy every normative requirement of the issue and anchored design under the supported production configuration?**
 
-Use the issue, comments, design document, branch diff, validation evidence, and requirements ledger provided above as your primary review inputs.
+Use the issue, comments, design document, live worktree configuration, branch diff, validation evidence, and requirements ledger provided above as your primary review inputs.
 
 Also read:
 
@@ -83,6 +87,9 @@ A single failed normative requirement makes the verdict `FAIL`.
 
 - When issue correctness materially depends on repository-owned runtime configuration, certified templates, profiles, schemas, workflow definitions, migrations, generated contracts, capability declarations, or equivalent runtime artifacts, inspect the authoritative production artifact rather than relying solely on code abstractions or synthetic fixtures.
 - Determine which artifact is authoritative from the repository itself rather than assuming test fixtures represent production.
+- Inspect the live worktree configuration provided above (including the effective resolved validation configuration and live configuration layers) as the authoritative source of truth for repository configuration and validation commands. The supported runtime configuration is layered (automation base, automation local, target base, and target local layers).
+- Legitimate configuration additions or modifications made during implementation across any supported configuration layer (automation, target, or local layers, including `validation.commands` and `validation.additionalCommands`) are valid and satisfy configuration requirements under the effective configuration. Do NOT assert that required validation commands or configurations are missing based on admission snapshots, cached fingerprints, or pre-implementation artifacts when they are present in the live effective configuration or live layers.
+- Conversely, do not weaken validation: if a required command or configuration is genuinely absent or invalid in the live configuration, that remains a real defect and must be dispositioned as a failure.
 - Verify that at least one valid end-to-end success path exists under the actual supported production configuration for the behavior required by the issue.
 - Verify that compliance under production configuration does NOT rely on fabricated compliance data, self-authored audit approvals, or weakened fail-closed policy gates in production registries. Falsifying compliance data or modifying external governance registries to pass a gate is a critical spec violation.
 

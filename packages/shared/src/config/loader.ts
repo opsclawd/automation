@@ -25,7 +25,7 @@ export interface LoadedConfig {
   rawMergedJson: unknown;
 }
 
-interface LayerMetadata {
+export interface LayerMetadata {
   kind: ConfigSourceKind;
   isTarget: boolean;
 }
@@ -184,7 +184,7 @@ function normalizeTiers(tiers: string[][], effectiveCommands: string[]): string[
  *    commands, cross-tier duplicates, and empty tiers). Additions-only targets retain
  *    inherited tiers.
  */
-function mergeValidationPolicy(
+export function mergeValidationPolicy(
   baseValidation: unknown,
   overrideValidation: unknown,
   layer: LayerMetadata,
@@ -364,7 +364,7 @@ function genericMerge(base: unknown, override: unknown): unknown {
  * Merges a layer override into the accumulated base configuration.
  * Validation policy is resolved narrowly with layer metadata.
  */
-function mergeLayer(base: unknown, override: unknown, layer: LayerMetadata): unknown {
+export function mergeLayer(base: unknown, override: unknown, layer: LayerMetadata): unknown {
   if (!isPlainObject(base) || !isPlainObject(override)) return override;
   const out: Record<string, unknown> = { ...base };
   for (const [k, value] of Object.entries(override)) {
@@ -380,6 +380,16 @@ function mergeLayer(base: unknown, override: unknown, layer: LayerMetadata): unk
     }
   }
   return out;
+}
+
+export function mergeConfigLayers(
+  layers: Array<{ parsed: unknown; kind: ConfigSourceKind; isTarget: boolean }>,
+): unknown {
+  let merged: unknown = {};
+  for (const layer of layers) {
+    merged = mergeLayer(merged, layer.parsed, { kind: layer.kind, isTarget: layer.isTarget });
+  }
+  return merged;
 }
 
 export function sha256OfCanonicalJson(value: unknown): string {
