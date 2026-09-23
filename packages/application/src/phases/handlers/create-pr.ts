@@ -2,7 +2,7 @@ import type { PhaseName, Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError, type Artifact } from '../../ports/artifact-store.js';
-import type { ArtifactGuardPort } from '../../ports/git-port.js';
+import { type ArtifactGuardPort, ProtectedArtifactCollisionError } from '../../ports/git-port.js';
 import {
   uncommittedSourcePaths,
   formatDirtyPaths,
@@ -365,13 +365,28 @@ export class CreatePrHandler implements PhaseHandler {
     const baseBranch = ctx.baseBranch ?? 'main';
 
     // Clean up orchestrator artifacts now that the PR body has been assembled.
-    // Non-fatal: cleanup failure does not block the run outcome.
+    // Non-fatal: cleanup failure does not block the run outcome, EXCEPT for
+    // protected artifact collisions which fail closed to human review.
     try {
       const gitGuard = ctx.git as Partial<ArtifactGuardPort>;
       if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
-        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, baseBranch);
+        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, baseBranch, ctx.startCommitSha);
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof ProtectedArtifactCollisionError) {
+        const msg = err.message;
+        emit('create_pr.protected_artifact_collision', 'error', msg, {
+          paths: err.protectedPaths,
+          baselineCommit: err.startCommitSha,
+        });
+        emit('create_pr.failed', 'error', msg);
+        return this._needsHumanReview(
+          ctx,
+          msg,
+          'Review the protected pre-existing repository file collision and restore the affected source file(s).',
+          writtenArtifacts,
+        );
+      }
       // ignore
     }
 

@@ -126,6 +126,17 @@ export function isOrchestratorArtifactPattern(path: string): boolean {
   return getOrchestratorRegexes().some((regex) => regex.test(normalized));
 }
 
+export function isProtectedArtifactCandidate(path: string): boolean {
+  if (!path || typeof path !== 'string') return false;
+  const normalized = path.replace(/\r$/, '').replace(/^(\.\/|\/)+/, '');
+  if (!normalized) return false;
+  if (isOrchestratorArtifactPattern(normalized)) return true;
+  const basename = normalized.includes('/')
+    ? normalized.slice(normalized.lastIndexOf('/') + 1)
+    : normalized;
+  return isOrchestratorArtifactPattern(basename);
+}
+
 const utf8Decoder = new TextDecoder('utf-8');
 
 export function unquoteGitPath(path: string): string {
