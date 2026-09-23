@@ -1019,3 +1019,120 @@ describe('createBranch()', () => {
     expect(branchSha).toBe(headSha);
   });
 });
+
+describe('resolveCommitSha()', () => {
+  it('resolves HEAD to full 40-character commit SHA', async () => {
+    const repo = await makeTempRepo();
+    const headSha = (await git(repo, ['rev-parse', 'HEAD'])).trim();
+    const resolved = await adapter.resolveCommitSha(repo, 'HEAD');
+    expect(resolved).toBe(headSha);
+    expect(resolved).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('resolves an annotated tag pointing to a commit to the underlying commit SHA', async () => {
+    const repo = await makeTempRepo();
+    const headSha = (await git(repo, ['rev-parse', 'HEAD'])).trim();
+    await git(repo, ['tag', '-a', 'v1.0.0', '-m', 'release v1.0.0']);
+
+    const resolved = await adapter.resolveCommitSha(repo, 'v1.0.0');
+    expect(resolved).toBe(headSha);
+  });
+
+  it('returns undefined for tree and blob objects and annotated tags pointing to non-commits', async () => {
+    const repo = await makeTempRepo();
+    const treeSha = (await git(repo, ['rev-parse', 'HEAD^{tree}'])).trim();
+    const blobSha = (await git(repo, ['rev-parse', 'HEAD:README.md'])).trim();
+
+    // Direct tree object and blob object
+    expect(await adapter.resolveCommitSha(repo, treeSha)).toBeUndefined();
+    expect(await adapter.resolveCommitSha(repo, 'HEAD^{tree}')).toBeUndefined();
+    expect(await adapter.resolveCommitSha(repo, blobSha)).toBeUndefined();
+    expect(await adapter.resolveCommitSha(repo, 'HEAD:README.md')).toBeUndefined();
+
+    // Annotated tag pointing directly to a tree object
+    await git(repo, ['tag', '-a', 'tag-pointing-to-tree', '-m', 'tag on tree', treeSha]);
+    expect(await adapter.resolveCommitSha(repo, 'tag-pointing-to-tree')).toBeUndefined();
+
+    // Annotated tag pointing directly to a blob object
+    await git(repo, ['tag', '-a', 'tag-pointing-to-blob', '-m', 'tag on blob', blobSha]);
+    expect(await adapter.resolveCommitSha(repo, 'tag-pointing-to-blob')).toBeUndefined();
+  });
+
+  it('expands abbreviated commit SHAs to the full 40-character commit SHA', async () => {
+    const repo = await makeTempRepo();
+    const headSha = (await git(repo, ['rev-parse', 'HEAD'])).trim();
+    const abbrevSha = headSha.slice(0, 8);
+
+    const resolved = await adapter.resolveCommitSha(repo, abbrevSha);
+    expect(resolved).toBe(headSha);
+  });
+
+  it('returns undefined for invalid, non-existent, or zero-SHA refs', async () => {
+    const repo = await makeTempRepo();
+    expect(await adapter.resolveCommitSha(repo, 'refs/heads/nonexistent-branch')).toBeUndefined();
+    expect(await adapter.resolveCommitSha(repo, 'not-a-valid-ref')).toBeUndefined();
+    expect(
+      await adapter.resolveCommitSha(repo, '0000000000000000000000000000000000000000'),
+    ).toBeUndefined();
+  });
+});
+
+describe('listWorktreeFiles()', () => {
+  it('enumerates tracked, untracked, and ignored files when includeIgnored is true', async () => {
+    const repo = await makeTempRepo();
+    // Tracked: README.md already committed by makeTempRepo
+
+    // Untracked regular file
+    await writeFile(join(repo, 'untracked.txt'), 'untracked content\n');
+
+    // Add .gitignore and commit it
+    await writeFile(join(repo, '.gitignore'), '*.ignored\nnode_modules/\n');
+    await git(repo, ['add', '.gitignore']);
+    await git(repo, ['commit', '-m', 'add gitignore']);
+
+    // Ignored regular file
+    await writeFile(join(repo, 'temp.ignored'), 'ignored file\n');
+
+    // Without includeIgnored: tracked and untracked only
+    const regularFiles = await adapter.listWorktreeFiles(repo);
+    expect(regularFiles).toContain('README.md');
+    expect(regularFiles).toContain('.gitignore');
+    expect(regularFiles).toContain('untracked.txt');
+    expect(regularFiles).not.toContain('temp.ignored');
+
+    // With includeIgnored: includes ignored regular file
+    const allFiles = await adapter.listWorktreeFiles(repo, { includeIgnored: true });
+    expect(allFiles).toContain('README.md');
+    expect(allFiles).toContain('.gitignore');
+    expect(allFiles).toContain('untracked.txt');
+    expect(allFiles).toContain('temp.ignored');
+  });
+});
+
+describe('listFilesAtCommit()', () => {
+  it('enumerates committed files at the specified commit SHA', async () => {
+    const repo = await makeTempRepo();
+    // Add nested files and commit
+    await mkdir(join(repo, 'src'), { recursive: true });
+    await writeFile(join(repo, 'src/index.ts'), 'export const val = 42;\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'add src/index.ts']);
+
+    const commitSha = (await git(repo, ['rev-parse', 'HEAD'])).trim();
+    const files = await adapter.listFilesAtCommit(repo, commitSha);
+
+    expect(files).toEqual(['README.md', 'src/index.ts']);
+  });
+
+  it('rejects non-commit SHAs with an error', async () => {
+    const repo = await makeTempRepo();
+    const treeSha = (await git(repo, ['rev-parse', 'HEAD^{tree}'])).trim();
+
+    await expect(adapter.listFilesAtCommit(repo, 'nonexistent-ref')).rejects.toThrow(
+      'does not resolve to a commit object',
+    );
+    await expect(adapter.listFilesAtCommit(repo, treeSha)).rejects.toThrow(
+      'does not resolve to a commit object',
+    );
+  });
+});

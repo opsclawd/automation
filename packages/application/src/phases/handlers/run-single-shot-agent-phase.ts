@@ -28,6 +28,10 @@ import {
   type RegisteredPhase,
 } from '../../results/phase-registry.js';
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
+import {
+  takeCandidateSnapshot,
+  evaluateCandidateDelta,
+} from '../../candidate-validation/candidate-validation-guard.js';
 
 export interface SingleShotConfigBase {
   profile: AgentProfileName;
@@ -339,6 +343,7 @@ export async function runSingleShotAgentPhase(
   }
 
   // 6. Invoke agent
+  const baselineCandidateSnapshot = await takeCandidateSnapshot(ctx.cwd, ctx.git);
   const startedAt = ctx.now();
   emit('agent.invoking', 'info', `invoking agent for ${config.phase}`, {
     profile: config.profile,
@@ -411,6 +416,36 @@ export async function runSingleShotAgentPhase(
       emit(`${String(config.phase)}.failed`, 'error', failure.message);
       return { outcome: 'failed', failure };
     }
+  }
+
+  // Candidate-validation governance guard (Boundary 1)
+  const finalCandidateSnapshot = await takeCandidateSnapshot(ctx.cwd, ctx.git);
+  const candidateDeltaResult = evaluateCandidateDelta(
+    baselineCandidateSnapshot,
+    finalCandidateSnapshot,
+  );
+  if (!candidateDeltaResult.ok) {
+    const findingMessages = candidateDeltaResult.findings
+      .map((f) => `${f.code}: ${f.message}`)
+      .join('; ');
+    emit(
+      `${String(config.phase)}.governance_violation`,
+      'error',
+      `Candidate-validation governance violation detected: ${findingMessages}`,
+      { findings: candidateDeltaResult.findings },
+    );
+    const failure = buildFailure(
+      ctx,
+      config.phase as string,
+      'needs_human_review',
+      `Candidate-validation governance violation: Automated agents are not permitted to author or delete candidate validation reports, sign-offs, or release promotion decisions. Violations: ${findingMessages}`,
+      false,
+      'Review candidate-validation artifacts. Candidate reports, sign-offs, and release promotion decisions must be authored exclusively by human operators.',
+    );
+    emit(`${String(config.phase)}.needs_human_review`, 'error', failure.message, {
+      findings: candidateDeltaResult.findings,
+    });
+    return { outcome: 'needs_human_review', failure };
   }
 
   // Emit remediation warnings if the runner auto-corrected misplaced artifacts

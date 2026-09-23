@@ -91,3 +91,48 @@ describe('FakeGitPort.fileContent()', () => {
     expect(defaultContent).toBe('fake content for HEAD:src/b.ts');
   });
 });
+
+describe('FakeGitPort.resolveCommitSha()', () => {
+  it('resolves commit SHA configured explicitly or through commit history', async () => {
+    const fakeGit = new FakeGitPort();
+    const sha = await fakeGit.commit('/test', 'initial commit');
+    expect(await fakeGit.resolveCommitSha('/test', 'HEAD')).toBe(sha);
+    expect(await fakeGit.resolveCommitSha('/test', sha)).toBe(sha);
+
+    const fullSha = '0123456789abcdef0123456789abcdef01234567';
+    expect(await fakeGit.resolveCommitSha('/test', fullSha)).toBe(fullSha);
+
+    fakeGit.resolveCommitShaResults.set('/test:non-commit-ref', undefined);
+    expect(await fakeGit.resolveCommitSha('/test', 'non-commit-ref')).toBeUndefined();
+  });
+});
+
+describe('FakeGitPort.listWorktreeFiles()', () => {
+  it('lists worktree files including ignored files when requested', async () => {
+    const fakeGit = new FakeGitPort();
+    fakeGit.worktreeFilesByCwd.set('/test', ['src/index.ts', 'package.json']);
+    fakeGit.worktreeIgnoredFilesByCwd.set('/test', ['dist/bundle.js']);
+    fakeGit.worktreeFileContents.set('/test:docs/report.md', '# Report');
+
+    const regularFiles = await fakeGit.listWorktreeFiles('/test');
+    expect(regularFiles).toEqual(['docs/report.md', 'package.json', 'src/index.ts']);
+
+    const allFiles = await fakeGit.listWorktreeFiles('/test', { includeIgnored: true });
+    expect(allFiles).toEqual(['dist/bundle.js', 'docs/report.md', 'package.json', 'src/index.ts']);
+  });
+});
+
+describe('FakeGitPort.listFilesAtCommit()', () => {
+  it('lists files committed at commit SHA and throws on unresolvable commit', async () => {
+    const fakeGit = new FakeGitPort();
+    const commitSha = '0123456789abcdef0123456789abcdef01234567';
+    fakeGit.committedFilesByCommit.set(commitSha, ['src/main.ts', 'README.md']);
+
+    const files = await fakeGit.listFilesAtCommit('/test', commitSha);
+    expect(files).toEqual(['README.md', 'src/main.ts']);
+
+    await expect(fakeGit.listFilesAtCommit('/test', 'invalid-sha')).rejects.toThrow(
+      'does not resolve to a commit object',
+    );
+  });
+});
