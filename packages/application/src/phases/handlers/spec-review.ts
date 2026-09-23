@@ -26,6 +26,7 @@ import {
   formatValidationCriticalFilesWarning,
   type ValidationCriticalFile,
 } from '../../review-fix/validation-critical-files.js';
+import { loadLiveWorktreeConfiguration } from '../live-worktree-config.js';
 
 export interface SpecReviewHandlerOpts {
   profileName?: string;
@@ -198,6 +199,7 @@ export class SpecReviewHandler implements PhaseHandler {
       criticalFiles = [];
     }
     const validationCriticalWarning = formatValidationCriticalFilesWarning(criticalFiles);
+    const liveWorktreeConfig = await loadLiveWorktreeConfiguration(ctx);
 
     // 8. Invoke single-shot reviewer agent
     const runResult = await runSingleShotAgentPhase(ctx, {
@@ -210,6 +212,7 @@ export class SpecReviewHandler implements PhaseHandler {
         cwd: ctx.cwd,
         complete_diff: completeDiff || '(no diff)',
         validation_evidence: validationEvidence,
+        live_worktree_configuration: liveWorktreeConfig,
         requirements_ledger: formattedLedger,
         validation_critical_files: validationCriticalWarning,
         orchestrator_bookkeeping_files:

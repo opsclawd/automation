@@ -19,3 +19,4 @@ export * from './handlers/compound.js';
 export * from './handlers/create-pr.js';
 export * from './handlers/wait-merge.js';
 export * from './validation-evidence.js';
+export * from './live-worktree-config.js';
