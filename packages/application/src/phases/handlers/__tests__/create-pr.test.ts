@@ -34,6 +34,7 @@ async function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
   });
   const git = new FakeGitPort();
   git.headByCwd.set('/tmp/wt', 'base-sha');
+  git.remoteRefs.set('origin/main', 'base-sha');
   const events: OrchestratorEvent[] = [];
   const ctx = {
     runId: 'run-1',
@@ -547,7 +548,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(res.outcome).toBe('passed');
     expect(gitAny.cleanOrchestratorArtifacts).toHaveBeenCalledWith(
       ctx.cwd,
-      ctx.baseBranch ?? 'main',
+      'base-sha',
       ctx.startCommitSha,
     );
 

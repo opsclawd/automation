@@ -51,6 +51,7 @@ async function build() {
 
   const git = new CleanupGitPort();
   git.headByCwd.set(cwd, 'base-sha');
+  git.remoteRefs.set('origin/main', 'base-sha');
 
   const ctx = {
     runId: 'issue-7-run',
@@ -116,7 +117,7 @@ describe('CreatePrHandler durable artifacts', () => {
     const result = await HANDLER.run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(cleanupSpy).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch ?? 'main', ctx.startCommitSha);
+    expect(cleanupSpy).toHaveBeenCalledWith(ctx.cwd, 'base-sha', ctx.startCommitSha);
     expect(git.pushes).toHaveLength(1);
     expect(github.createdPrInputs).toHaveLength(1);
 
