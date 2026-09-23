@@ -63,3 +63,4 @@ export * from './get-release-batch-status.js';
 export * from './resume-release-batch.js';
 export * from './assemble-promotion-pr.js';
 export * from './refresh-promotion-pr.js';
+export * from './candidate-validation/index.js';

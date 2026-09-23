@@ -28,6 +28,7 @@ export class FakeGitPort implements GitPort {
   renamedFilesResults = new Map<string, GitRenamePair[]>();
   renamedFilesCalls: Array<{ cwd: string; base: string; head?: string }> = [];
   fileContentResults = new Map<string, string>();
+  fileContentThrows = new Map<string, Error>();
   fileContentCalls: Array<{ cwd: string; ref: string; path: string }> = [];
   worktreeFileContents = new Map<string, string>();
   worktreeFileContentCalls: Array<{ cwd: string; path: string }> = [];
@@ -38,6 +39,10 @@ export class FakeGitPort implements GitPort {
   createBranchCalls: Array<{ cwd: string; branch: string; startPoint: string }> = [];
   resolveRefResults = new Map<string, string>();
   branchesByCwd = new Map<string, Set<string>>();
+  resolveCommitShaResults = new Map<string, string | undefined>();
+  worktreeFilesByCwd = new Map<string, string[]>();
+  worktreeIgnoredFilesByCwd = new Map<string, string[]>();
+  committedFilesByCommit = new Map<string, string[]>();
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);
@@ -188,9 +193,17 @@ export class FakeGitPort implements GitPort {
 
   async fileContent(cwd: string, ref: string, path: string): Promise<string> {
     this.fileContentCalls.push({ cwd, ref, path });
+    const key1 = `${ref}:${path}`;
+    const key2 = `${ref}|${path}`;
+    if (this.fileContentThrows.has(key1)) {
+      throw this.fileContentThrows.get(key1)!;
+    }
+    if (this.fileContentThrows.has(key2)) {
+      throw this.fileContentThrows.get(key2)!;
+    }
     return (
-      this.fileContentResults.get(`${ref}:${path}`) ??
-      this.fileContentResults.get(`${ref}|${path}`) ??
+      this.fileContentResults.get(key1) ??
+      this.fileContentResults.get(key2) ??
       `fake content for ${ref}:${path}`
     );
   }
@@ -264,5 +277,72 @@ export class FakeGitPort implements GitPort {
     if (this.mergeBranchResults.has(key)) return this.mergeBranchResults.get(key)!;
     if (this.mergeBranchResults.has(sourceRef)) return this.mergeBranchResults.get(sourceRef)!;
     return { success: true };
+  }
+
+  async resolveCommitSha(cwd: string, ref: string): Promise<string | undefined> {
+    const key = `${cwd}:${ref}`;
+    if (this.resolveCommitShaResults.has(key)) {
+      return this.resolveCommitShaResults.get(key);
+    }
+    if (this.resolveCommitShaResults.has(ref)) {
+      return this.resolveCommitShaResults.get(ref);
+    }
+    if (ref === 'HEAD') {
+      const head = this.headByCwd.get(cwd);
+      if (head) {
+        return this.resolveCommitSha(cwd, head) ?? head;
+      }
+    }
+    const currentHead = this.headByCwd.get(cwd);
+    if (currentHead && currentHead === ref) {
+      return currentHead;
+    }
+    const foundCommit = this.commits.find((c) => c.sha === ref || (c.cwd === cwd && c.sha === ref));
+    if (foundCommit) {
+      return foundCommit.sha;
+    }
+    if (/^[0-9a-f]{40}$/i.test(ref)) {
+      return ref;
+    }
+    return undefined;
+  }
+
+  async listWorktreeFiles(cwd: string, opts?: { includeIgnored?: boolean }): Promise<string[]> {
+    const normalFiles = this.worktreeFilesByCwd.get(cwd) ?? [];
+    const ignoredFiles = opts?.includeIgnored
+      ? (this.worktreeIgnoredFilesByCwd.get(cwd) ?? [])
+      : [];
+    const fromContents: string[] = [];
+    for (const key of this.worktreeFileContents.keys()) {
+      if (key.startsWith(`${cwd}:`)) {
+        fromContents.push(key.slice(`${cwd}:`.length));
+      } else if (!key.includes(':')) {
+        fromContents.push(key);
+      }
+    }
+    return Array.from(new Set([...normalFiles, ...ignoredFiles, ...fromContents])).sort();
+  }
+
+  async listFilesAtCommit(cwd: string, commitSha: string): Promise<string[]> {
+    const verifiedSha = await this.resolveCommitSha(cwd, commitSha);
+    if (!verifiedSha) {
+      throw new Error(`Cannot list files: '${commitSha}' does not resolve to a commit object`);
+    }
+    const key = `${cwd}:${verifiedSha}`;
+    if (this.committedFilesByCommit.has(key)) {
+      return [...(this.committedFilesByCommit.get(key) ?? [])].sort();
+    }
+    if (this.committedFilesByCommit.has(verifiedSha)) {
+      return [...(this.committedFilesByCommit.get(verifiedSha) ?? [])].sort();
+    }
+    const fromFileContents: string[] = [];
+    for (const k of this.fileContentResults.keys()) {
+      if (k.startsWith(`${verifiedSha}:`)) {
+        fromFileContents.push(k.slice(`${verifiedSha}:`.length));
+      } else if (k.startsWith(`${verifiedSha}|`)) {
+        fromFileContents.push(k.slice(`${verifiedSha}|`.length));
+      }
+    }
+    return Array.from(new Set(fromFileContents)).sort();
   }
 }

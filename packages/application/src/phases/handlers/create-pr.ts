@@ -15,6 +15,11 @@ import { recordValidationHeadSha } from '../validation-headsha.js';
 import { RunId, normalizeTaskPath } from '@ai-sdlc/domain';
 import type { RunValidation } from '../../run-validation.js';
 import type { MergeMethod } from '../../ports/github-port.js';
+import {
+  isRecognizedCandidatePath,
+  classifyCandidateContent,
+} from '../../candidate-validation/candidate-validation-classifier.js';
+import type { GovernanceFinding } from '../../candidate-validation/types.js';
 
 export interface CreatePrHandlerOpts {
   headBranch: (ctx: PhaseHandlerContext) => string;
@@ -449,6 +454,145 @@ export class CreatePrHandler implements PhaseHandler {
       }
     }
 
+    // ── Stage 3c: Candidate-validation governance guard — committed tree and worktree inspection ──
+    let headSha: string | undefined;
+    try {
+      headSha = await ctx.git.resolveCommitSha(ctx.cwd, 'HEAD');
+    } catch (e) {
+      const msg = `failed to resolve HEAD commit SHA: ${(e as Error).message}`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        false,
+        'Check git repository state.',
+        writtenArtifacts,
+      );
+    }
+
+    if (!headSha) {
+      const msg = 'PR creation blocked: HEAD does not resolve to an immutable commit object';
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        false,
+        'Ensure HEAD points to a valid commit object.',
+        writtenArtifacts,
+      );
+    }
+
+    // Confirm live HEAD equality
+    let liveSha: string;
+    try {
+      liveSha = await ctx.git.headCommitSha(ctx.cwd);
+    } catch (e) {
+      const msg = `failed to inspect live HEAD commit SHA: ${(e as Error).message}`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        false,
+        'Check git repository state.',
+        writtenArtifacts,
+      );
+    }
+
+    if (liveSha !== headSha) {
+      const msg = `PR creation blocked: HEAD moved during verification (resolved ${headSha} !== live ${liveSha})`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        false,
+        'Ensure no concurrent processes modify git HEAD during PR creation.',
+        writtenArtifacts,
+      );
+    }
+
+    // Exact-tree committed inspection (CommittedInspection)
+    const governanceFindings: GovernanceFinding[] = [];
+    try {
+      const committedFiles = await ctx.git.listFilesAtCommit(ctx.cwd, headSha);
+      const candidateCommitted = committedFiles.filter(
+        (p) => isRecognizedCandidatePath(p) !== null,
+      );
+
+      for (const p of candidateCommitted) {
+        const headContent = await ctx.git.fileContent(ctx.cwd, headSha, p);
+        const baseContent = await ctx.git
+          .fileContent(ctx.cwd, baseBranch, p)
+          .catch(() => undefined);
+        // If file exists in baseBranch with identical content, tolerate as pre-existing operator-authored artifact
+        if (baseContent !== undefined && baseContent === headContent) {
+          continue;
+        }
+        const kind = isRecognizedCandidatePath(p)!;
+        const findings = classifyCandidateContent(p, headContent, kind);
+        governanceFindings.push(...findings);
+      }
+    } catch (e) {
+      const msg = `failed to inspect committed tree for candidate governance artifacts: ${(e as Error).message}`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        false,
+        'Check git repository state.',
+        writtenArtifacts,
+      );
+    }
+
+    // Worktree candidates inspection (uncommitted tracked, untracked, or ignored)
+    try {
+      const worktreeFiles = await ctx.git.listWorktreeFiles(ctx.cwd, { includeIgnored: true });
+      const candidateWorktree = worktreeFiles.filter((p) => isRecognizedCandidatePath(p) !== null);
+
+      for (const p of candidateWorktree) {
+        const worktreeContent = await ctx.git.worktreeFileContent(ctx.cwd, p);
+        if (worktreeContent !== undefined) {
+          const headContent = await ctx.git.fileContent(ctx.cwd, headSha, p).catch(() => undefined);
+          // Only classify uncommitted candidate files that are untracked, ignored, or modified in the worktree relative to headSha.
+          // Do not re-classify tracked worktree files that are identical to headSha.
+          if (headContent !== undefined && headContent === worktreeContent) {
+            continue;
+          }
+          const kind = isRecognizedCandidatePath(p)!;
+          const findings = classifyCandidateContent(p, worktreeContent, kind);
+          governanceFindings.push(...findings);
+        }
+      }
+    } catch (e) {
+      const msg = `failed to inspect worktree files for candidate governance artifacts: ${(e as Error).message}`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        false,
+        'Check git repository state.',
+        writtenArtifacts,
+      );
+    }
+
+    if (governanceFindings.length > 0) {
+      const findingMessages = governanceFindings.map((f) => `${f.code}: ${f.message}`).join('; ');
+      const msg = `PR creation blocked by candidate-validation governance violation: ${findingMessages}`;
+      emit('create_pr.governance_violation', 'error', msg, { findings: governanceFindings });
+      emit('create_pr.needs_human_review', 'error', msg, { findings: governanceFindings });
+      return this._needsHumanReview(
+        ctx,
+        msg,
+        'Review candidate-validation artifacts. Candidate reports, sign-offs, and release promotion decisions must be authored exclusively by human operators.',
+        writtenArtifacts,
+      );
+    }
+
     const title = _firstHeadingOrLine(summary, ctx.issueNumber);
 
     // Push the branch so gh pr create's --head ref exists on remote.
@@ -589,6 +733,27 @@ export class CreatePrHandler implements PhaseHandler {
         kind,
         message,
         canRetry,
+        suggestedAction,
+        artifacts,
+        detectedAt: ctx.now(),
+      },
+    };
+  }
+
+  private _needsHumanReview(
+    ctx: PhaseHandlerContext,
+    message: string,
+    suggestedAction: string,
+    artifacts: string[] = [],
+  ): PhaseResult {
+    return {
+      outcome: 'needs_human_review',
+      failure: {
+        runUuid: ctx.runUuid,
+        phase: this.phase,
+        kind: 'needs_human_review',
+        message,
+        canRetry: false,
         suggestedAction,
         artifacts,
         detectedAt: ctx.now(),
