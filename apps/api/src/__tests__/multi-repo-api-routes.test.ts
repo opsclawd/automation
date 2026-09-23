@@ -14,7 +14,7 @@ describe('multi-repo API routes', () => {
 
   it('GET /api/runs?repositoryId=<A> filters out repo B runs', async () => {
     await server.startIssue({ issueNumber: 42, repositoryId: repoA.id });
-    await server.startIssue({ issueNumber: 42, repositoryId: repoB.id });
+    await server.startIssue({ issueNumber: 43, repositoryId: repoB.id });
     const aRuns = await server.get('/api/runs', { query: { repositoryId: repoA.id } });
     expect(aRuns.json.runs.length).toBeGreaterThan(0);
     expect(aRuns.json.runs.every((r: { repoId: string }) => r.repoId === repoA.id)).toBe(true);
