@@ -56,6 +56,8 @@ Also read:
 
 Before deciding the verdict, evaluate EVERY item from the requirements ledger above. You must explicitly disposition each item by its exact `requirement_id`.
 
+For any consumer requirements (`CONSUMER-...`), verify that the implementation provides the required contracts, interfaces, or capabilities for downstream consumers. Downstream execution deliverables (such as downstream candidate validation runs, locked SHA verification, or phase exit-gate sign-offs) belong to those downstream issues and are not verification targets of the current PR.
+
 For each requirement check, provide:
 
 - `requirement_id`: Exact ID from the ledger (e.g. `AC-1`, `REQ-DESIGN-1`, `CONSUMER-128-AC-1`)

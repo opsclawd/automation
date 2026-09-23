@@ -20,6 +20,7 @@ Comments file: issue-comments.md (contains issue comments, may not exist)
    - Assumptions made (do not ask questions — state assumptions explicitly)
    - What is in scope and what is explicitly out of scope
    - Any risks or concerns identified from code analysis
+   - Downstream consumer traceability: downstream consumer requirements are future capabilities enabled by this issue's contracts, not present-tense verification targets for this PR. When documenting traceability or forward-looking architectural support for downstream consumers, distinguish "this design enables a future capability / provides contract representability" from "this PR must presently verify or execute the downstream capability." Do not formulate traceability matrix items or design commitments as present-tense verification obligations or hard gates for downstream exit-gate deliverables (such as real-provider validation, locked SHA runs, or phase completion sign-off).
    - Tooling and testing conventions: when specifying a new script, test, or tooling surface, explicitly state which existing repository convention it follows (e.g., "tests use vitest, matching every other test file in this repo") rather than leaving tooling choices implicit.
 
 ## CRITICAL RULES

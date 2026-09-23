@@ -30,6 +30,8 @@ Treat the issue's Anchored Design, Non-goals, and Acceptance Criteria as authori
 
 Make reasonable engineering decisions. Do not try to predict or restrict every file the implementation may need to touch.
 
+Downstream Consumer Traceability: Downstream consumer requirements are future capabilities enabled by this issue's contracts, not present-tense verification targets for this PR. When documenting traceability or forward-looking architectural support for downstream consumers, distinguish "this design enables a future capability / provides contract representability" from "this PR must presently verify or execute the downstream capability." Do not formulate traceability matrix items or design commitments as present-tense verification obligations or hard gates for downstream exit-gate deliverables (such as real-provider validation, locked SHA runs, or phase completion sign-off).
+
 Return:
 
 - `design_md`: the important design decisions, rationale, assumptions, and risks

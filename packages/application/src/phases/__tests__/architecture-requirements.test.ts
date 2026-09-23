@@ -467,6 +467,86 @@ Direct consumer: #999
     ).rejects.toThrow('Failed to fetch declared direct consumer issue #999');
   });
 
+  it('filters exit-gate criteria from downstream consumer issues and enforces hardGate: false', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/69', {
+      number: 69,
+      title: 'Phase 3 exit-gate and candidate validation',
+      body: `
+# Issue 69: Phase 3 Exit Gate
+Depends on #63
+
+## Acceptance criteria
+- [ ] Soundbed loop/trim configuration interface supported
+- [ ] Real-provider candidate validation is run against a locked SHA with pinned model identity.
+- [ ] Candidate receives an explicit evidence-backed **GO** before Phase 3 is considered complete.
+- [ ] Validation harness CLI accepts candidate SHA flag.
+`,
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 63: Foundational Provider Architecture
+Direct consumer: #69
+
+## Acceptance criteria
+- [ ] Implement core provider abstractions
+`;
+
+    const ledger = await buildArchitectureRequirementsLedger({
+      issueNumber: 63,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    const consumerItems = ledger.items.filter((it) => it.category === 'consumer_requirement');
+    expect(consumerItems).toHaveLength(2);
+    expect(consumerItems[0]!.id).toBe('CONSUMER-69-AC-1');
+    expect(consumerItems[0]!.title).toBe('Soundbed loop/trim configuration interface supported');
+    expect(consumerItems[0]!.hardGate).toBe(false);
+
+    expect(consumerItems[1]!.id).toBe('CONSUMER-69-AC-4');
+    expect(consumerItems[1]!.title).toBe('Validation harness CLI accepts candidate SHA flag.');
+    expect(consumerItems[1]!.hardGate).toBe(false);
+
+    expect(ledger.items.some((it) => it.id === 'CONSUMER-69-AC-2')).toBe(false);
+    expect(ledger.items.some((it) => it.id === 'CONSUMER-69-AC-3')).toBe(false);
+  });
+
+  it('suppresses synthetic fallback CONSUMER-REQ-1 when consumer is an exit gate issue', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('test-org/test-repo/69', {
+      number: 69,
+      title: 'Phase 3 exit-gate validation',
+      body: `
+Depends on #63
+
+## Acceptance criteria
+- [ ] Real-provider candidate validation is run against a locked SHA with pinned model identity.
+- [ ] Candidate receives an explicit evidence-backed **GO** before Phase 3 is considered complete.
+`,
+      labels: [],
+    });
+
+    const issueMd = `
+# Issue 63
+Direct consumer: #69
+## Acceptance criteria
+- [ ] Core feature
+`;
+
+    const ledger = await buildArchitectureRequirementsLedger({
+      issueNumber: 63,
+      repoFullName: 'test-org/test-repo',
+      issueMd,
+      github,
+    });
+
+    const consumerItems = ledger.items.filter((it) => it.category === 'consumer_requirement');
+    expect(consumerItems).toHaveLength(0);
+  });
+
   it('generates fallback item when issue markdown is minimal', async () => {
     const issueMd = `Short single line issue without markdown structure`;
     const ledger = await buildArchitectureRequirementsLedger({
