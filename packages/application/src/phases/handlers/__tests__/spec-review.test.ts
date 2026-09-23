@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AgentProfileName } from '@ai-sdlc/domain';
 import { SpecReviewHandler } from '../spec-review.js';
-import { FakeArtifactStore, FakeGitPort, FakeAgentPort } from '../../../test-doubles/index.js';
+import {
+  FakeArtifactStore,
+  FakeGitPort,
+  FakeAgentPort,
+  FakeGitHubPort,
+} from '../../../test-doubles/index.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import { recordValidationEvidence } from '../../validation-evidence.js';
 
@@ -569,5 +574,120 @@ describe('SpecReviewHandler', () => {
         }),
       }),
     );
+  });
+
+  it('omits exit-gate criteria and traceability matrix from spec-requirements-ledger.json and approves cleanly', async () => {
+    const { ctx, artifacts, agent, handler } = setup();
+    const github = new FakeGitHubPort();
+    ctx.github = github;
+
+    github.issues.set('owner/repo/69', {
+      number: 69,
+      title: 'Phase 3 exit-gate and candidate validation',
+      body: `
+# Issue 69: Exit Gate
+Depends on #1132
+
+## Acceptance criteria
+- [ ] Timeline assembly interface supported
+- [ ] Real-provider candidate validation is run against a locked SHA with pinned model identity.
+- [ ] Candidate receives an explicit evidence-backed **GO** before Phase 3 is considered complete.
+- [ ] Validation harness CLI accepts candidate SHA flag.
+`,
+      labels: [],
+    });
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: `# Issue 1132: Base Timeline Assembly\nDirect consumer: #69\n\n## Acceptance criteria\n- [ ] Implement base timeline interface\n`,
+    });
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: `
+# Design: Base Timeline Assembly
+
+## Anchored Design
+- Unified timeline interface
+
+## 6.1 Complete Requirements Traceability Matrix
+- Must provide verification evidence for CONSUMER-69-AC-9
+- Must provide verification evidence for CONSUMER-69-AC-10
+`,
+    });
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    agent.enqueue('spec-review', async () => {
+      // Read generated spec-requirements-ledger.json to verify it has been filtered
+      const ledgerRaw = await artifacts.read(ctx.runUuid, 'spec-requirements-ledger.json');
+      const ledger = JSON.parse(ledgerRaw) as { items: Array<{ id: string; title: string }> };
+
+      expect(ledger.items.some((it) => it.id === 'AC-1')).toBe(true);
+      expect(ledger.items.some((it) => it.id === 'CONSUMER-69-AC-1')).toBe(true);
+      expect(ledger.items.some((it) => it.id === 'CONSUMER-69-AC-4')).toBe(true);
+      // Exit gate criteria must not be present
+      expect(ledger.items.some((it) => it.id === 'CONSUMER-69-AC-2')).toBe(false);
+      expect(ledger.items.some((it) => it.id === 'CONSUMER-69-AC-3')).toBe(false);
+      // Traceability matrix must not be present as an anchored design requirement
+      expect(
+        ledger.items.some(
+          (it) => it.title.includes('Traceability Matrix') || it.title.includes('CONSUMER-69-AC-9'),
+        ),
+      ).toBe(false);
+
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          requirements_checks: [
+            {
+              requirement_id: 'AC-1',
+              requirement: 'Implement base timeline interface',
+              result: 'PASS',
+              evidence: 'Implemented in timeline.ts',
+            },
+            {
+              requirement_id: 'DESIGN-1',
+              requirement: 'Unified timeline interface',
+              result: 'PASS',
+              evidence: 'Implemented interface',
+            },
+            {
+              requirement_id: 'CONSUMER-69-AC-1',
+              requirement: 'Timeline assembly interface supported',
+              result: 'PASS',
+              evidence: 'Supported by timeline interface',
+            },
+            {
+              requirement_id: 'CONSUMER-69-AC-4',
+              requirement: 'Validation harness CLI accepts candidate SHA flag.',
+              result: 'PASS',
+              evidence: 'Flag supported in options',
+            },
+          ],
+          findings: [],
+          summary: 'All requirements pass',
+        }),
+      });
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const res = await handler.run(ctx);
+    expect(res.outcome).toBe('passed');
   });
 });

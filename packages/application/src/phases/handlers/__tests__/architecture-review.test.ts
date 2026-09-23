@@ -1832,4 +1832,110 @@ describe('ArchitectureReviewHandler', () => {
     const finalDesign = await ctx.artifacts.read(ctx.runUuid, 'design.md');
     expect(finalDesign).toContain('Resolved gap 1.');
   });
+
+  it('filters exit-gate criteria from consumer issue in architecture-requirements.json avoiding spurious witness scenario demands', async () => {
+    const handler = new ArchitectureReviewHandler();
+    const ctx = createTestContext({ issueNumber: 63 });
+    const reviewerProfile = 'profile-for-architecture-review';
+
+    (ctx.github as FakeGitHubPort).issues.set('test-org/test-repo/69', {
+      number: 69,
+      title: 'Phase 3 exit-gate and candidate validation',
+      body: `
+# Issue 69: Phase 3 Exit Gate
+Depends on #63
+
+## Acceptance criteria
+- [ ] Soundbed loop/trim configuration interface supported
+- [ ] Real-provider candidate validation is run against a locked SHA with pinned model identity.
+- [ ] Candidate receives an explicit evidence-backed **GO** before Phase 3 is considered complete.
+`,
+      labels: [],
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: `# Issue 63: Base Provider Architecture\nDirect consumer: #69\n\n## Acceptance criteria\n- [ ] Core provider interface\n`,
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: `# Design\n## Anchored Design\n- Provider abstraction\n`,
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: `# Plan\n- Step 1\n`,
+    });
+
+    ctx.agent.enqueue(reviewerProfile, async () => {
+      const archReqsRaw = await ctx.artifacts.read(ctx.runUuid, 'architecture-requirements.json');
+      const archReqs = JSON.parse(archReqsRaw) as { items: Array<{ id: string; title: string }> };
+
+      // Verify that exit-gate ACs are filtered out of architecture-requirements.json
+      expect(archReqs.items.some((it) => it.id === 'CONSUMER-69-AC-1')).toBe(true);
+      expect(archReqs.items.some((it) => it.id === 'CONSUMER-69-AC-2')).toBe(false);
+      expect(archReqs.items.some((it) => it.id === 'CONSUMER-69-AC-3')).toBe(false);
+
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'APPROVE',
+          requirements_checks: [
+            {
+              requirement_id: 'AC-1',
+              requirement: 'Core provider interface',
+              result: 'PASS',
+              evidence: 'Satisfied',
+            },
+            {
+              requirement_id: 'DESIGN-1',
+              requirement: 'Provider abstraction',
+              result: 'PASS',
+              evidence: 'Satisfied',
+            },
+            {
+              requirement_id: 'CONSUMER-69-AC-1',
+              requirement: 'Soundbed loop/trim configuration interface supported',
+              result: 'PASS',
+              evidence: 'Satisfied by provider configuration',
+            },
+          ],
+          witness_scenarios: [
+            {
+              requirement_ids: ['CONSUMER-69-AC-1'],
+              scenario: 'Soundbed configuration is accepted by provider',
+              result: 'PASS',
+              evidence: 'Config parameter represented in interface',
+            },
+          ],
+          findings: [],
+          summary: 'All checks pass',
+        }),
+      });
+
+      return {
+        id: 'inv-exitgate-1' as AgentInvocationId,
+        runId: ctx.runUuid as RunId,
+        phaseId: PhaseName('architecture-review'),
+        profile: AgentProfileName(reviewerProfile),
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        startedAt: new Date(),
+        endedAt: new Date(),
+        startCommitSha: 'sha123',
+        exitCode: 0,
+        durationMs: 100,
+        timeoutMs: 1000,
+        outcome: 'success',
+        contractViolations: [],
+      };
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('passed');
+  });
 });

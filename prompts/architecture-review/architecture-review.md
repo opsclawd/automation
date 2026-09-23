@@ -59,6 +59,7 @@ Specifically evaluate the proposed design and plan against these core architectu
 ### 3. Bounded Consumer Witness & Counterexample Scenarios
 
 - For each material direct-consumer behavior that stresses a proposed contract, construct a concrete witness scenario demonstrating how the design represents it.
+- Downstream consumer requirements evaluate contract and schema representability (verifying that proposed models and APIs can represent consumer needs losslessly). Downstream execution deliverables (such as real-provider candidate validation, locked SHA execution, and human operator GO sign-off) belong to those downstream issues and must not be required as witness proofs or verification targets for upstream issues.
 - Where edge cases materially change semantics (e.g. source < target duration looping, tail trimming, partial segments), evaluate a bounded counterexample set in `witness_scenarios`.
 - If any required scenario cannot be represented unambiguously, you MUST flag it and request changes.
 
@@ -88,7 +89,7 @@ For contract, schema, API, configuration, persistence, or foundation work:
 
 1. **Read directly referenced issues:** Read every issue directly referenced in the issue body or comments using `gh issue view <issue>`.
 2. **Discover direct dependents:** Search GitHub issues for direct dependents that reference the current issue using `gh issue list --search "Depends on #{{var:issue_number}}" --json number,title,body` or `gh issue list --search "#{{var:issue_number}}" --json number,title,body`.
-3. **Read direct consumer issues:** Read the bodies of those direct consumer issues to identify unstated downstream contract assumptions or required fields before approving.
+3. **Read direct consumer issues:** Read the bodies of those direct consumer issues to identify unstated downstream contract assumptions or required fields before approving. Downstream execution deliverables (such as real-provider candidate validation, locked SHA execution, and human operator GO sign-off) belong to those downstream issues and must not be required as verification targets for upstream issues.
 4. **Verify contract sufficiency:** Verify the proposed design and plan provide the necessary fields, representations, and invariants for those direct consumers.
 5. **Strict bounding:** Stop strictly at direct consumers — do NOT recursively crawl entire issue trees.
 
