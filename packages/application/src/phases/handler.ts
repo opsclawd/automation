@@ -9,6 +9,7 @@ import type { DeleteWorktreeFilePort } from '../ports/delete-worktree-file-port.
 import type { WorktreeLifecyclePort } from '../ports/worktree-lifecycle-port.js';
 import type { EventRepositoryPort } from '../ports/event-repository-port.js';
 import type { StructuredResultRepairPort } from '../ports/structured-result-repair-port.js';
+import type { CleanReviewFixtureStorePort } from '../ports/clean-review-fixture-store-port.js';
 
 export interface PhaseHandlerContext {
   runId: string;
@@ -38,6 +39,7 @@ export interface PhaseHandlerContext {
   idFactory?: () => string;
   readWorktreeFile?: ReadWorktreeFilePort | undefined;
   deleteWorktreeFile?: DeleteWorktreeFilePort | undefined;
+  cleanReviewFixtureStore?: CleanReviewFixtureStorePort | undefined;
   worktreeLifecycle?: WorktreeLifecyclePort | undefined;
   eventRepository?: EventRepositoryPort | undefined;
   inboundPreserveAllowance?: string[] | undefined;
@@ -110,6 +112,7 @@ export type PhaseHandlerContextFactory = (
     | 'idFactory'
     | 'readWorktreeFile'
     | 'deleteWorktreeFile'
+    | 'cleanReviewFixtureStore'
     | 'worktreeLifecycle'
     | 'eventRepository'
     | 'inboundPreserveAllowance'
@@ -134,6 +137,7 @@ export type PhaseHandlerContextFactory = (
       | 'idFactory'
       | 'readWorktreeFile'
       | 'deleteWorktreeFile'
+      | 'cleanReviewFixtureStore'
       | 'worktreeLifecycle'
       | 'eventRepository'
       | 'inboundPreserveAllowance'
@@ -159,6 +163,7 @@ export function buildPhaseHandlerContext(
     | 'idFactory'
     | 'readWorktreeFile'
     | 'deleteWorktreeFile'
+    | 'cleanReviewFixtureStore'
     | 'worktreeLifecycle'
     | 'eventRepository'
     | 'inboundPreserveAllowance'
@@ -181,6 +186,7 @@ export function buildPhaseHandlerContext(
       | 'idFactory'
       | 'readWorktreeFile'
       | 'deleteWorktreeFile'
+      | 'cleanReviewFixtureStore'
       | 'worktreeLifecycle'
       | 'eventRepository'
       | 'inboundPreserveAllowance'

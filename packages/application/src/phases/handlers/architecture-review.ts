@@ -54,6 +54,73 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       return { outcome: 'passed' };
     }
 
+    let reviewResult: PhaseResult | undefined;
+    let reviewError: unknown;
+
+    try {
+      reviewResult = await this.executeReview(ctx, emit);
+    } catch (err) {
+      reviewError = err;
+    } finally {
+      if (ctx.cleanReviewFixtureStore) {
+        try {
+          const cleanupResult = await ctx.cleanReviewFixtureStore({ cwd: ctx.cwd });
+          if (cleanupResult.cleanedDirectories.length > 0) {
+            emit(
+              'architecture_review.fixture_store_cleaned',
+              'info',
+              `cleaned review fixture-store residue: ${cleanupResult.cleanedDirectories.join(', ')}`,
+              {
+                cleanedDirectories: cleanupResult.cleanedDirectories,
+                restoredFiles: cleanupResult.restoredFiles,
+                removedFiles: cleanupResult.removedFiles,
+              },
+            );
+          }
+        } catch (cleanupErr) {
+          const cleanupMessage =
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+          emit(
+            'architecture_review.cleanup_failed',
+            'error',
+            `architecture-review failed to clean fixture store: ${cleanupMessage}`,
+            {
+              error: cleanupMessage,
+            },
+          );
+          emit(
+            'architecture_review.phase_boundary_violation',
+            'error',
+            `architecture-review left the worktree dirty: fixture-store cleanup failed: ${cleanupMessage}`,
+            {
+              error: cleanupMessage,
+            },
+          );
+
+          let failureMessage = `architecture-review failed to clean fixture store: ${cleanupMessage}`;
+          if (reviewError) {
+            const errStr = reviewError instanceof Error ? reviewError.message : String(reviewError);
+            failureMessage += ` (underlying review error: ${errStr})`;
+          } else if (reviewResult && reviewResult.outcome !== 'passed') {
+            const priorFailMsg =
+              'failure' in reviewResult ? reviewResult.failure.message : reviewResult.outcome;
+            failureMessage += ` (prior review failure: ${priorFailMsg})`;
+          }
+
+          reviewResult = this.fail(ctx, emit, 'phase_boundary_violation', failureMessage);
+          reviewError = undefined;
+        }
+      }
+    }
+
+    if (reviewError) {
+      throw reviewError;
+    }
+
+    return reviewResult!;
+  }
+
+  private async executeReview(ctx: PhaseHandlerContext, emit: EventEmitter): Promise<PhaseResult> {
     emit('architecture_review.started', 'info', 'independent architecture review started', {
       policy: ctx.executionPolicy,
     });

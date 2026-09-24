@@ -31,3 +31,4 @@ export * from './fake-run-notification.js';
 export * from './fake-release-batch-repository.js';
 export * from './fake-environment-health-port.js';
 export * from './fake-release-batch-notification.js';
+export * from './fake-clean-review-fixture-store-port.js';

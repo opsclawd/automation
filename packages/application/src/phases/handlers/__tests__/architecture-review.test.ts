@@ -5,6 +5,8 @@ import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js'
 import { FakeAgentPort } from '../../../test-doubles/fake-agent-port.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
 import { FakeGitHubPort } from '../../../test-doubles/fake-github-port.js';
+import { createFakeCleanReviewFixtureStore } from '../../../test-doubles/fake-clean-review-fixture-store-port.js';
+import { ImplementHandler } from '../implement.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 
 import { fileURLToPath } from 'node:url';
@@ -1937,5 +1939,317 @@ Depends on #63
 
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
+  });
+
+  describe('review fixture store cleanup', () => {
+    async function setupValidPlanningArtifacts(ctx: PhaseHandlerContext): Promise<void> {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'issue.md',
+        contents: '# Issue 1129\n## Acceptance criteria\n- [ ] Requirements reconciliation\n',
+      });
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'design.md',
+        contents: '# Design 1129\nAnchored design details.',
+      });
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'plan.md',
+        contents:
+          '# Implementation Plan\n\n### Task 1: Setup\n- Files: `src/index.ts`\n- Description: do setup\n- Invariants: none\n- Verification: `pnpm test`\n',
+      });
+    }
+
+    function enqueuePassingReview(
+      ctx: PhaseHandlerContext,
+      reviewerProfile = 'profile-for-architecture-review',
+    ) {
+      const agent = ctx.agent as FakeAgentPort;
+      agent.enqueue(reviewerProfile, async () => {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          relativePath: 'result.json',
+          contents: JSON.stringify({
+            verdict: 'APPROVE',
+            requirements_checks: [
+              {
+                requirement_id: 'AC-1',
+                requirement: 'Requirements reconciliation',
+                result: 'PASS',
+              },
+            ],
+            findings: [],
+            summary: 'All requirements satisfied.',
+          }),
+        });
+        return {
+          id: 'inv-clean-1' as AgentInvocationId,
+          runId: ctx.runUuid as RunId,
+          phaseId: PhaseName('architecture-review'),
+          profile: AgentProfileName(reviewerProfile),
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'claude-sonnet-4',
+          startedAt: new Date(),
+          endedAt: new Date(),
+          startCommitSha: 'sha123',
+          exitCode: 0,
+          durationMs: 100,
+          timeoutMs: 1000,
+          outcome: 'success',
+          contractViolations: [],
+        };
+      });
+    }
+
+    it('invokes cleanup on a passing review before returning passed', async () => {
+      const handler = new ArchitectureReviewHandler();
+      const fakeCleanup = createFakeCleanReviewFixtureStore();
+      fakeCleanup.cleanedDirectories = ['apps/orchestrator/.review-fixture-store'];
+      fakeCleanup.restoredFiles = [
+        'apps/orchestrator/.review-fixture-store/baselines/BASE-001.json',
+      ];
+      fakeCleanup.removedFiles = ['apps/orchestrator/.review-fixture-store/scratch/FINDING-1.json'];
+
+      const ctx = createTestContext({ cleanReviewFixtureStore: fakeCleanup });
+      await setupValidPlanningArtifacts(ctx);
+      enqueuePassingReview(ctx);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(fakeCleanup.calls).toHaveLength(1);
+      expect(fakeCleanup.calls[0]).toEqual({ cwd: ctx.cwd });
+      expect(eventsOf(ctx, 'architecture_review.fixture_store_cleaned')).toHaveLength(1);
+    });
+
+    it('invokes cleanup on review rejection and retains the review failure outcome', async () => {
+      const handler = new ArchitectureReviewHandler({ maxCorrections: 0 });
+      const fakeCleanup = createFakeCleanReviewFixtureStore();
+      fakeCleanup.cleanedDirectories = ['apps/orchestrator/.review-fixture-store'];
+
+      const ctx = createTestContext({ cleanReviewFixtureStore: fakeCleanup });
+      await setupValidPlanningArtifacts(ctx);
+
+      const agent = ctx.agent as FakeAgentPort;
+      const reviewerProfile = 'profile-for-architecture-review';
+      agent.enqueue(reviewerProfile, async () => {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          relativePath: 'result.json',
+          contents: JSON.stringify({
+            verdict: 'REQUEST_CHANGES',
+            requirements_checks: [
+              {
+                requirement_id: 'AC-1',
+                requirement: 'Requirements reconciliation',
+                result: 'FAIL',
+                evidence: 'Missing key piece',
+              },
+            ],
+            findings: [
+              {
+                severity: 'critical',
+                evidence: 'Unsound contract',
+                rationale: 'Breaks invariants',
+                minimal_correction: 'Fix interface',
+              },
+            ],
+            summary: 'Review failed due to critical gap.',
+          }),
+        });
+        return {
+          id: 'inv-clean-2' as AgentInvocationId,
+          runId: ctx.runUuid as RunId,
+          phaseId: PhaseName('architecture-review'),
+          profile: AgentProfileName(reviewerProfile),
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'claude-sonnet-4',
+          startedAt: new Date(),
+          endedAt: new Date(),
+          startCommitSha: 'sha123',
+          exitCode: 0,
+          durationMs: 100,
+          timeoutMs: 1000,
+          outcome: 'success',
+          contractViolations: [],
+        };
+      });
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('needs_human_review');
+      if (result.outcome === 'needs_human_review') {
+        expect(result.failure.kind).toBe('needs_human_review');
+      }
+      expect(fakeCleanup.calls).toHaveLength(1);
+    });
+
+    it('invokes cleanup when agent invocation throws an exception or fails', async () => {
+      const handler = new ArchitectureReviewHandler();
+      const fakeCleanup = createFakeCleanReviewFixtureStore();
+      const ctx = createTestContext({ cleanReviewFixtureStore: fakeCleanup });
+      await setupValidPlanningArtifacts(ctx);
+
+      const agent = ctx.agent as FakeAgentPort;
+      const reviewerProfile = 'profile-for-architecture-review';
+      agent.enqueue(reviewerProfile, async () => {
+        throw new Error('agent process crashed unexpectedly');
+      });
+
+      const result = await handler.run(ctx);
+      expect(result.outcome).toBe('failed');
+      expect(fakeCleanup.calls).toHaveLength(1);
+
+      // Also verify unhandled execution error re-throws and still invokes cleanup
+      const crashCtx = {
+        ...ctx,
+        resolveProfile: () => {
+          throw new Error('profile resolution crashed');
+        },
+      };
+      await expect(handler.run(crashCtx)).rejects.toThrow('profile resolution crashed');
+      expect(fakeCleanup.calls).toHaveLength(2);
+    });
+
+    it('emits failure event and fails phase when fixture-store cleanup fails', async () => {
+      const handler = new ArchitectureReviewHandler();
+      const fakeCleanup = createFakeCleanReviewFixtureStore();
+      fakeCleanup.shouldFail = true;
+      fakeCleanup.failureError = new Error('git clean permission denied');
+
+      const ctx = createTestContext({ cleanReviewFixtureStore: fakeCleanup });
+      await setupValidPlanningArtifacts(ctx);
+      enqueuePassingReview(ctx);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('phase_boundary_violation');
+        expect(result.failure.message).toContain('git clean permission denied');
+      }
+
+      expect(eventsOf(ctx, 'architecture_review.cleanup_failed')).toHaveLength(1);
+      expect(eventsOf(ctx, 'architecture_review.phase_boundary_violation')).toHaveLength(1);
+    });
+
+    it('preserves review failure context when both review and cleanup fail', async () => {
+      const handler = new ArchitectureReviewHandler({ maxCorrections: 0 });
+      const fakeCleanup = createFakeCleanReviewFixtureStore();
+      fakeCleanup.shouldFail = true;
+      fakeCleanup.failureError = new Error('I/O error during checkout');
+
+      const ctx = createTestContext({ cleanReviewFixtureStore: fakeCleanup });
+      await setupValidPlanningArtifacts(ctx);
+
+      const agent = ctx.agent as FakeAgentPort;
+      const reviewerProfile = 'profile-for-architecture-review';
+      agent.enqueue(reviewerProfile, async () => {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          relativePath: 'result.json',
+          contents: JSON.stringify({
+            verdict: 'REQUEST_CHANGES',
+            requirements_checks: [
+              {
+                requirement_id: 'AC-1',
+                requirement: 'Requirements reconciliation',
+                result: 'FAIL',
+                evidence: 'Omitted',
+              },
+            ],
+            findings: [],
+            summary: 'Review rejected',
+          }),
+        });
+        return {
+          id: 'inv-clean-3' as AgentInvocationId,
+          runId: ctx.runUuid as RunId,
+          phaseId: PhaseName('architecture-review'),
+          profile: AgentProfileName(reviewerProfile),
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'claude-sonnet-4',
+          startedAt: new Date(),
+          endedAt: new Date(),
+          startCommitSha: 'sha123',
+          exitCode: 0,
+          durationMs: 100,
+          timeoutMs: 1000,
+          outcome: 'success',
+          contractViolations: [],
+        };
+      });
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('phase_boundary_violation');
+        expect(result.failure.message).toContain('I/O error during checkout');
+        expect(result.failure.message).toContain('prior review failure');
+      }
+    });
+
+    it('does not invoke cleanup when non-strict execution policy skips review', async () => {
+      const handler = new ArchitectureReviewHandler();
+      const fakeCleanup = createFakeCleanReviewFixtureStore();
+      const ctx = createTestContext({
+        executionPolicy: 'standard',
+        cleanReviewFixtureStore: fakeCleanup,
+      });
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(fakeCleanup.calls).toHaveLength(0);
+    });
+
+    it('preserves unrelated dirty paths so implement inbound cleanliness gate continues to detect them', async () => {
+      const archHandler = new ArchitectureReviewHandler();
+      const implementHandler = new ImplementHandler();
+
+      const git = new FakeGitPort();
+      git.currentBranchByCwd.set('/test/repo', 'feature-1129');
+      git.headByCwd.set('/test/repo', 'start123');
+
+      // Simulate: architecture-review leaves unrelated files dirty along with fixture residue
+      // The cleanup only cleans fixture residue; unrelated file remains dirty in git status
+      git.statusByCwd.set('/test/repo', ' M src/unrelated.ts\n');
+
+      const fakeCleanup = createFakeCleanReviewFixtureStore();
+      fakeCleanup.cleanedDirectories = ['apps/orchestrator/.review-fixture-store'];
+      fakeCleanup.restoredFiles = ['apps/orchestrator/.review-fixture-store/seed.json'];
+
+      const ctx = createTestContext({
+        git,
+        cleanReviewFixtureStore: fakeCleanup,
+      });
+      await setupValidPlanningArtifacts(ctx);
+      enqueuePassingReview(ctx);
+
+      const archResult = await archHandler.run(ctx);
+      expect(archResult.outcome).toBe('passed');
+      expect(fakeCleanup.calls).toHaveLength(1);
+
+      // Now implement runs with priorPhaseName: 'architecture-review'
+      const implementCtx: PhaseHandlerContext = {
+        ...ctx,
+        priorPhaseName: 'architecture-review',
+      };
+
+      const implementResult = await implementHandler.run(implementCtx);
+
+      expect(implementResult.outcome).toBe('failed');
+      if (implementResult.outcome === 'failed') {
+        expect(implementResult.failure.kind).toBe('phase_boundary_violation');
+        expect(implementResult.failure.message).toContain(
+          'architecture-review left the worktree dirty: src/unrelated.ts',
+        );
+      }
+    });
   });
 });
