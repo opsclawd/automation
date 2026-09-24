@@ -167,6 +167,18 @@ export type {
 } from './revert-scope-files-port.js';
 export type { ReadWorktreeFilePort } from './read-worktree-file-port.js';
 export type { DeleteWorktreeFilePort } from './delete-worktree-file-port.js';
+export type {
+  CleanReviewFixtureStorePort,
+  CleanReviewFixtureStoreInput,
+  CleanReviewFixtureStoreResult,
+  ReviewFixtureStoreCleanupPort,
+  ReviewFixtureStoreCleanupInput,
+  ReviewFixtureStoreCleanupResult,
+} from './clean-review-fixture-store-port.js';
+export {
+  REVIEW_FIXTURE_STORE_DIRNAME,
+  isReviewFixtureStorePath,
+} from './clean-review-fixture-store-port.js';
 export type { EventRepositoryPort, EventRepositoryFactory } from './event-repository-port.js';
 export type {
   WorktreeLifecyclePort,

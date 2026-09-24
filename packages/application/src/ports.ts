@@ -317,6 +317,18 @@ export type {
 } from './ports/revert-scope-files-port.js';
 export type { DeleteWorktreeFilePort } from './ports/delete-worktree-file-port.js';
 export type {
+  CleanReviewFixtureStorePort,
+  CleanReviewFixtureStoreInput,
+  CleanReviewFixtureStoreResult,
+  ReviewFixtureStoreCleanupPort,
+  ReviewFixtureStoreCleanupInput,
+  ReviewFixtureStoreCleanupResult,
+} from './ports/clean-review-fixture-store-port.js';
+export {
+  REVIEW_FIXTURE_STORE_DIRNAME,
+  isReviewFixtureStorePath,
+} from './ports/clean-review-fixture-store-port.js';
+export type {
   RunNotificationPort,
   RunTerminalNotification,
   RunTerminalStatus,
