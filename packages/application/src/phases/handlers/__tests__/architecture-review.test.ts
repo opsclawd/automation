@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PhaseName, AgentProfileName, type AgentInvocationId, type RunId } from '@ai-sdlc/domain';
-import { ArchitectureReviewHandler } from '../architecture-review.js';
+import { ArchitectureReviewHandler, isSuspiciousPlanFragment } from '../architecture-review.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeAgentPort } from '../../../test-doubles/fake-agent-port.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
@@ -2247,9 +2247,568 @@ Depends on #63
       if (implementResult.outcome === 'failed') {
         expect(implementResult.failure.kind).toBe('phase_boundary_violation');
         expect(implementResult.failure.message).toContain(
-          'architecture-review left the worktree dirty: src/unrelated.ts',
+          "architecture-review left the worktree dirty: 'src/unrelated.ts'",
         );
       }
     });
+
+    describe('phase boundary cleanliness detection', () => {
+      function makeInvocationResult(profile = 'profile-for-architecture-review') {
+        return {
+          id: 'inv-1' as AgentInvocationId,
+          runId: 'run-123' as RunId,
+          phaseId: PhaseName('architecture-review'),
+          profile: AgentProfileName(profile),
+          runtime: 'opencode' as const,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4',
+          startedAt: new Date(),
+          endedAt: new Date(),
+          startCommitSha: 'sha123',
+          exitCode: 0,
+          durationMs: 100,
+          timeoutMs: 1000,
+          outcome: 'success' as const,
+          contractViolations: [],
+        };
+      }
+
+      it('fails with phase_boundary_violation and diagnostic note when agent creates untracked files resembling plan outline fragments', async () => {
+        const handler = new ArchitectureReviewHandler();
+        const ctx = createTestContext();
+        await setupValidPlanningArtifacts(ctx);
+
+        const planFragmentFiles = [
+          'Case 1: OpenAPI contains unbacked fields (authorization_code, gateway_ref, etc.)',
+          'E1[Extend NAMING_ALIGNMENT_INSTRUCTIONS with Domain-Agnostic Boundary Rules]',
+          'I',
+        ];
+
+        const agent = ctx.agent as FakeAgentPort;
+        const reviewerProfile = 'profile-for-architecture-review';
+        agent.enqueue(reviewerProfile, async () => {
+          const git = ctx.git as FakeGitPort;
+          const statusLines = planFragmentFiles.map((f) => `?? ${f}`).join('\n') + '\n';
+          git.statusByCwd.set(ctx.cwd, statusLines);
+
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            relativePath: 'result.json',
+            contents: JSON.stringify({
+              verdict: 'APPROVE',
+              requirements_checks: [
+                {
+                  requirement_id: 'AC-1',
+                  requirement: 'Requirements reconciliation',
+                  result: 'PASS',
+                  evidence: 'Reconciled',
+                },
+              ],
+              findings: [],
+              summary: 'Approved',
+            }),
+          });
+          return makeInvocationResult(reviewerProfile);
+        });
+
+        const result = await handler.run(ctx);
+
+        expect(result.outcome).toBe('failed');
+        if (result.outcome === 'failed') {
+          expect(result.failure.kind).toBe('phase_boundary_violation');
+          expect(result.failure.message).toContain('architecture-review left the worktree dirty:');
+          expect(result.failure.message).toContain(
+            "'Case 1: OpenAPI contains unbacked fields (authorization_code, gateway_ref, etc.)'",
+          );
+          expect(result.failure.message).toContain(
+            "'E1[Extend NAMING_ALIGNMENT_INSTRUCTIONS with Domain-Agnostic Boundary Rules]'",
+          );
+          expect(result.failure.message).toContain("'I'");
+          expect(result.failure.message).toContain(
+            'Diagnostic note: newly introduced files resemble plan outline fragments accidentally materialized on disk',
+          );
+        }
+
+        const events = eventsOf(ctx, 'architecture_review.phase_boundary_violation');
+        expect(events).toHaveLength(1);
+        const eventObj = events[0]![1] as {
+          metadata: {
+            unexpectedPaths: string[];
+            suspiciousPlanFragments: string[];
+            diagnosticHint?: string;
+          };
+        };
+        const payload = eventObj.metadata;
+        expect(payload.unexpectedPaths).toEqual(expect.arrayContaining(planFragmentFiles));
+        expect(payload.suspiciousPlanFragments).toEqual(expect.arrayContaining(planFragmentFiles));
+        expect(payload.diagnosticHint).toBe(
+          'Newly introduced files resemble plan outline fragments or task labels accidentally materialized on disk',
+        );
+
+        // Crucial: files must not be deleted automatically
+        const git = ctx.git as FakeGitPort;
+        const finalStatus = git.statusByCwd.get(ctx.cwd);
+        for (const file of planFragmentFiles) {
+          expect(finalStatus).toContain(file);
+        }
+      });
+
+      it('fails with phase_boundary_violation without diagnostic hint when newly created files are legitimate source paths', async () => {
+        const handler = new ArchitectureReviewHandler();
+        const ctx = createTestContext();
+        await setupValidPlanningArtifacts(ctx);
+
+        const realFiles = ['src/my custom:file.ts', 'src/[category]/index.ts'];
+
+        const agent = ctx.agent as FakeAgentPort;
+        const reviewerProfile = 'profile-for-architecture-review';
+        agent.enqueue(reviewerProfile, async () => {
+          const git = ctx.git as FakeGitPort;
+          const statusLines = realFiles.map((f) => `?? ${f}`).join('\n') + '\n';
+          git.statusByCwd.set(ctx.cwd, statusLines);
+
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            relativePath: 'result.json',
+            contents: JSON.stringify({
+              verdict: 'APPROVE',
+              requirements_checks: [
+                {
+                  requirement_id: 'AC-1',
+                  requirement: 'Requirements reconciliation',
+                  result: 'PASS',
+                  evidence: 'Reconciled',
+                },
+              ],
+              findings: [],
+              summary: 'Approved',
+            }),
+          });
+          return makeInvocationResult(reviewerProfile);
+        });
+
+        const result = await handler.run(ctx);
+
+        expect(result.outcome).toBe('failed');
+        if (result.outcome === 'failed') {
+          expect(result.failure.kind).toBe('phase_boundary_violation');
+          expect(result.failure.message).toContain(
+            "architecture-review left the worktree dirty: 'src/[category]/index.ts', 'src/my custom:file.ts'",
+          );
+          expect(result.failure.message).not.toContain('Diagnostic note:');
+        }
+
+        const events = eventsOf(ctx, 'architecture_review.phase_boundary_violation');
+        expect(events).toHaveLength(1);
+        const eventObj = events[0]![1] as {
+          metadata: {
+            unexpectedPaths: string[];
+            suspiciousPlanFragments: string[];
+            diagnosticHint?: string;
+          };
+        };
+        const payload = eventObj.metadata;
+        expect(payload.unexpectedPaths).toEqual(expect.arrayContaining(realFiles));
+        expect(payload.suspiciousPlanFragments).toHaveLength(0);
+        expect(payload.diagnosticHint).toBeUndefined();
+
+        // Crucial: files must not be deleted automatically
+        const git = ctx.git as FakeGitPort;
+        const finalStatus = git.statusByCwd.get(ctx.cwd);
+        for (const file of realFiles) {
+          expect(finalStatus).toContain(file);
+        }
+      });
+
+      it('permits expected review artifacts without triggering phase boundary violation', async () => {
+        const handler = new ArchitectureReviewHandler();
+        const ctx = createTestContext();
+        await setupValidPlanningArtifacts(ctx);
+
+        const agent = ctx.agent as FakeAgentPort;
+        const reviewerProfile = 'profile-for-architecture-review';
+        agent.enqueue(reviewerProfile, async () => {
+          const git = ctx.git as FakeGitPort;
+          git.statusByCwd.set(
+            ctx.cwd,
+            '?? architecture-review.json\n?? architecture-review.md\n?? architecture-requirements.json\n',
+          );
+
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            relativePath: 'result.json',
+            contents: JSON.stringify({
+              verdict: 'APPROVE',
+              requirements_checks: [
+                {
+                  requirement_id: 'AC-1',
+                  requirement: 'Requirements reconciliation',
+                  result: 'PASS',
+                  evidence: 'Reconciled',
+                },
+              ],
+              findings: [],
+              summary: 'Approved',
+            }),
+          });
+          return makeInvocationResult(reviewerProfile);
+        });
+
+        const result = await handler.run(ctx);
+        expect(result.outcome).toBe('passed');
+        expect(eventsOf(ctx, 'architecture_review.phase_boundary_violation')).toHaveLength(0);
+      });
+
+      it('preserves underlying review error when agent invocation errors and untracked files were introduced', async () => {
+        const handler = new ArchitectureReviewHandler();
+        const ctx = createTestContext();
+        await setupValidPlanningArtifacts(ctx);
+
+        const agent = ctx.agent as FakeAgentPort;
+        const reviewerProfile = 'profile-for-architecture-review';
+        agent.enqueue(reviewerProfile, async () => {
+          const git = ctx.git as FakeGitPort;
+          git.statusByCwd.set(ctx.cwd, '?? I\n');
+          throw new Error('agent runner crashed');
+        });
+
+        const result = await handler.run(ctx);
+
+        expect(result.outcome).toBe('failed');
+        if (result.outcome === 'failed') {
+          expect(result.failure.kind).toBe('phase_boundary_violation');
+          expect(result.failure.message).toContain(
+            "architecture-review left the worktree dirty: 'I'",
+          );
+          expect(result.failure.message).toContain('agent runner crashed');
+        }
+      });
+
+      it('preserves prior review failure when review is rejected and untracked files were introduced', async () => {
+        const handler = new ArchitectureReviewHandler({ maxCorrections: 0 });
+        const ctx = createTestContext();
+        await setupValidPlanningArtifacts(ctx);
+
+        const agent = ctx.agent as FakeAgentPort;
+        const reviewerProfile = 'profile-for-architecture-review';
+        agent.enqueue(reviewerProfile, async () => {
+          const git = ctx.git as FakeGitPort;
+          git.statusByCwd.set(ctx.cwd, '?? E1\n');
+
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            relativePath: 'result.json',
+            contents: JSON.stringify({
+              verdict: 'REQUEST_CHANGES',
+              requirements_checks: [
+                {
+                  requirement_id: 'AC-1',
+                  requirement: 'Requirements reconciliation',
+                  result: 'FAIL',
+                  evidence: 'Missing core check',
+                },
+              ],
+              findings: [
+                {
+                  category: 'requirements_reconciliation',
+                  severity: 'critical',
+                  target: 'design.md',
+                  evidence: 'Missing check',
+                  rationale: 'Spec violation',
+                  minimal_correction: 'Add check',
+                  blocking: true,
+                },
+              ],
+              summary: 'Changes requested',
+            }),
+          });
+          return makeInvocationResult(reviewerProfile);
+        });
+
+        const result = await handler.run(ctx);
+
+        expect(result.outcome).toBe('failed');
+        if (result.outcome === 'failed') {
+          expect(result.failure.kind).toBe('phase_boundary_violation');
+          expect(result.failure.message).toContain(
+            "architecture-review left the worktree dirty: 'E1'",
+          );
+          expect(result.failure.message).toContain(
+            '(prior review failure: Architecture review identified',
+          );
+        }
+      });
+
+      it('fails with phase_boundary_violation when pre-review status call fails', async () => {
+        const handler = new ArchitectureReviewHandler();
+        const ctx = createTestContext();
+        await setupValidPlanningArtifacts(ctx);
+
+        const git = ctx.git as FakeGitPort;
+        git.status = vi.fn().mockRejectedValueOnce(new Error('pre-review status call failed'));
+
+        const result = await handler.run(ctx);
+
+        expect(result.outcome).toBe('failed');
+        if (result.outcome === 'failed') {
+          expect(result.failure.kind).toBe('phase_boundary_violation');
+          expect(result.failure.message).toContain(
+            'architecture-review failed to obtain baseline worktree status: pre-review status call failed',
+          );
+        }
+
+        const events = eventsOf(ctx, 'architecture_review.phase_boundary_violation');
+        expect(events).toHaveLength(1);
+        const payload = (events[0]![1] as { metadata: Record<string, unknown> }).metadata;
+        expect(payload.baselineStatusError).toBe('pre-review status call failed');
+
+        // Review agent must not be invoked when baseline status fails
+        const agent = ctx.agent as FakeAgentPort;
+        expect(agent.invocations).toHaveLength(0);
+      });
+
+      it('fails with phase_boundary_violation and includes fixture store cleanup failure when pre-review status call fails', async () => {
+        const handler = new ArchitectureReviewHandler();
+        const fakeCleanup = createFakeCleanReviewFixtureStore();
+        fakeCleanup.shouldFail = true;
+        fakeCleanup.failureError = new Error('fixture cleanup error on baseline fail');
+
+        const ctx = createTestContext({ cleanReviewFixtureStore: fakeCleanup });
+        await setupValidPlanningArtifacts(ctx);
+
+        const git = ctx.git as FakeGitPort;
+        git.status = vi.fn().mockRejectedValueOnce(new Error('pre-review status call failed'));
+
+        const result = await handler.run(ctx);
+
+        expect(result.outcome).toBe('failed');
+        if (result.outcome === 'failed') {
+          expect(result.failure.kind).toBe('phase_boundary_violation');
+          expect(result.failure.message).toContain(
+            'architecture-review failed to obtain baseline worktree status: pre-review status call failed',
+          );
+          expect(result.failure.message).toContain(
+            'fixture-store cleanup failed: fixture cleanup error on baseline fail',
+          );
+        }
+
+        const events = eventsOf(ctx, 'architecture_review.phase_boundary_violation');
+        expect(events).toHaveLength(1);
+        const payload = (events[0]![1] as { metadata: Record<string, unknown> }).metadata;
+        expect(payload.baselineStatusError).toBe('pre-review status call failed');
+        expect(payload.fixtureStoreCleanupError).toBe('fixture cleanup error on baseline fail');
+      });
+
+      it('fails with phase_boundary_violation when post-review status call fails', async () => {
+        const handler = new ArchitectureReviewHandler();
+        const ctx = createTestContext();
+        await setupValidPlanningArtifacts(ctx);
+        enqueuePassingReview(ctx);
+
+        const git = ctx.git as FakeGitPort;
+        git.status = vi
+          .fn()
+          .mockResolvedValueOnce('') // baseline snapshot succeeds
+          .mockRejectedValueOnce(new Error('post-review status call rejected')); // post-review snapshot fails
+
+        const result = await handler.run(ctx);
+
+        expect(result.outcome).toBe('failed');
+        if (result.outcome === 'failed') {
+          expect(result.failure.kind).toBe('phase_boundary_violation');
+          expect(result.failure.message).toContain(
+            'architecture-review failed to obtain post-review worktree status: post-review status call rejected',
+          );
+        }
+
+        const events = eventsOf(ctx, 'architecture_review.phase_boundary_violation');
+        expect(events).toHaveLength(1);
+        const payload = (events[0]![1] as { metadata: Record<string, unknown> }).metadata;
+        expect(payload.postReviewStatusError).toBe('post-review status call rejected');
+      });
+
+      it('preserves underlying review error when agent invocation errors and post-review status call fails', async () => {
+        const handler = new ArchitectureReviewHandler();
+        const ctx = createTestContext();
+        await setupValidPlanningArtifacts(ctx);
+
+        const agent = ctx.agent as FakeAgentPort;
+        const reviewerProfile = 'profile-for-architecture-review';
+        agent.enqueue(reviewerProfile, async () => {
+          throw new Error('agent crashed during review');
+        });
+
+        const git = ctx.git as FakeGitPort;
+        git.status = vi
+          .fn()
+          .mockResolvedValueOnce('')
+          .mockRejectedValueOnce(new Error('transient status error on post-review'));
+
+        const result = await handler.run(ctx);
+
+        expect(result.outcome).toBe('failed');
+        if (result.outcome === 'failed') {
+          expect(result.failure.kind).toBe('phase_boundary_violation');
+          expect(result.failure.message).toContain(
+            'architecture-review failed to obtain post-review worktree status: transient status error on post-review',
+          );
+          expect(result.failure.message).toContain('agent crashed during review');
+        }
+
+        const events = eventsOf(ctx, 'architecture_review.phase_boundary_violation');
+        expect(events).toHaveLength(1);
+      });
+
+      it('preserves prior review failure when review is rejected and post-review status call fails', async () => {
+        const handler = new ArchitectureReviewHandler({ maxCorrections: 0 });
+        const ctx = createTestContext();
+        await setupValidPlanningArtifacts(ctx);
+
+        const agent = ctx.agent as FakeAgentPort;
+        const reviewerProfile = 'profile-for-architecture-review';
+        agent.enqueue(reviewerProfile, async () => {
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            relativePath: 'result.json',
+            contents: JSON.stringify({
+              verdict: 'REQUEST_CHANGES',
+              requirements_checks: [
+                {
+                  requirement_id: 'AC-1',
+                  requirement: 'Requirements reconciliation',
+                  result: 'FAIL',
+                  evidence: 'Check missing',
+                },
+              ],
+              findings: [
+                {
+                  category: 'requirements_reconciliation',
+                  severity: 'critical',
+                  target: 'design.md',
+                  evidence: 'Missing check',
+                  rationale: 'Spec violation',
+                  minimal_correction: 'Add check',
+                  blocking: true,
+                },
+              ],
+              summary: 'Review failed',
+            }),
+          });
+          return makeInvocationResult(reviewerProfile);
+        });
+
+        const git = ctx.git as FakeGitPort;
+        git.status = vi
+          .fn()
+          .mockResolvedValueOnce('')
+          .mockRejectedValueOnce(new Error('git lock contention'));
+
+        const result = await handler.run(ctx);
+
+        expect(result.outcome).toBe('failed');
+        if (result.outcome === 'failed') {
+          expect(result.failure.kind).toBe('phase_boundary_violation');
+          expect(result.failure.message).toContain(
+            'architecture-review failed to obtain post-review worktree status: git lock contention',
+          );
+          expect(result.failure.message).toContain(
+            '(prior review failure: Architecture review identified',
+          );
+        }
+
+        const events = eventsOf(ctx, 'architecture_review.phase_boundary_violation');
+        expect(events).toHaveLength(1);
+      });
+
+      it('fails with phase_boundary_violation and includes fixture store cleanup failure when post-review status call fails', async () => {
+        const handler = new ArchitectureReviewHandler();
+        const fakeCleanup = createFakeCleanReviewFixtureStore();
+        fakeCleanup.shouldFail = true;
+        fakeCleanup.failureError = new Error('fixture cleanup error');
+
+        const ctx = createTestContext({ cleanReviewFixtureStore: fakeCleanup });
+        await setupValidPlanningArtifacts(ctx);
+        enqueuePassingReview(ctx);
+
+        const git = ctx.git as FakeGitPort;
+        git.status = vi
+          .fn()
+          .mockResolvedValueOnce('')
+          .mockRejectedValueOnce(new Error('post-review status error'));
+
+        const result = await handler.run(ctx);
+
+        expect(result.outcome).toBe('failed');
+        if (result.outcome === 'failed') {
+          expect(result.failure.kind).toBe('phase_boundary_violation');
+          expect(result.failure.message).toContain(
+            'architecture-review failed to obtain post-review worktree status: post-review status error',
+          );
+          expect(result.failure.message).toContain(
+            'fixture-store cleanup failed: fixture cleanup error',
+          );
+        }
+
+        expect(eventsOf(ctx, 'architecture_review.phase_boundary_violation')).toHaveLength(1);
+      });
+    });
+  });
+});
+
+describe('isSuspiciousPlanFragment', () => {
+  it('identifies standalone letter and letter+digit task labels', () => {
+    expect(isSuspiciousPlanFragment('E')).toBe(true);
+    expect(isSuspiciousPlanFragment('E1')).toBe(true);
+    expect(isSuspiciousPlanFragment('F2')).toBe(true);
+    expect(isSuspiciousPlanFragment('I')).toBe(true);
+    expect(isSuspiciousPlanFragment('Task 1')).toBe(true);
+    expect(isSuspiciousPlanFragment('Step 2')).toBe(true);
+  });
+
+  it('identifies letter/number outline labels with bracketed descriptions', () => {
+    expect(
+      isSuspiciousPlanFragment(
+        'E1[Extend NAMING_ALIGNMENT_INSTRUCTIONS with Domain-Agnostic Boundary Rules]',
+      ),
+    ).toBe(true);
+    expect(isSuspiciousPlanFragment('E[Update GenerateOpenApiProjectionUseCase.ts]')).toBe(true);
+    expect(
+      isSuspiciousPlanFragment('F1[Preserve strict RAW_ACTION_VERBS (Do NOT add nouns)]'),
+    ).toBe(true);
+  });
+
+  it('identifies punctuated outline case, step, or task phrases', () => {
+    expect(
+      isSuspiciousPlanFragment(
+        'Case 1: OpenAPI contains unbacked fields (authorization_code, gateway_ref, etc.)',
+      ),
+    ).toBe(true);
+    expect(
+      isSuspiciousPlanFragment('Case 2: OpenAPI only contains parent columns or empty action body'),
+    ).toBe(true);
+    expect(isSuspiciousPlanFragment('Task 1: Add Unit Tests for Initial and Repair Prompt')).toBe(
+      true,
+    );
+  });
+
+  it('identifies outline headings matching provided plan or design markdown context', () => {
+    const context = {
+      planMd: '### Boundary Rules Enforcement\n* Follow-up verification\n',
+    };
+    expect(isSuspiciousPlanFragment('Boundary Rules Enforcement', context)).toBe(true);
+    expect(isSuspiciousPlanFragment('Follow-up verification', context)).toBe(true);
+  });
+
+  it('returns false for legitimate source files with spaces, brackets, or colons', () => {
+    expect(isSuspiciousPlanFragment('src/components/[id]/page.tsx')).toBe(false);
+    expect(isSuspiciousPlanFragment('src/my cool file.ts')).toBe(false);
+    expect(isSuspiciousPlanFragment('config:local.json')).toBe(false);
+    expect(isSuspiciousPlanFragment('src/unrelated.ts')).toBe(false);
+    expect(isSuspiciousPlanFragment('packages/api/src/index.ts')).toBe(false);
+  });
+
+  it('returns false for empty or non-string inputs', () => {
+    expect(isSuspiciousPlanFragment('')).toBe(false);
+    expect(isSuspiciousPlanFragment(null as unknown as string)).toBe(false);
   });
 });

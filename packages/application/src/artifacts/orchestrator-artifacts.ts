@@ -297,12 +297,28 @@ export function isUntrackedOrAddedStatusLine(line: string): boolean {
   return line.startsWith('?? ') || line.charAt(0) === 'A' || line.charAt(1) === 'A';
 }
 
-export function formatDirtyPaths(paths: readonly string[], max = 10): string {
-  if (paths.length <= max) {
-    return paths.join(', ');
+export function quoteDirtyPath(path: string): string {
+  const stepMatch = /^(.*)\s(\(reported by step \d+\))$/.exec(path);
+  if (stepMatch && stepMatch[1] !== undefined && stepMatch[2] !== undefined) {
+    const filePath = stepMatch[1];
+    const stepSuffix = stepMatch[2];
+    const escaped = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `'${escaped}' ${stepSuffix}`;
   }
-  const shown = paths.slice(0, max).join(', ');
-  const remaining = paths.length - max;
+  const escaped = path.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  return `'${escaped}'`;
+}
+
+export function formatDirtyPaths(paths: readonly string[], max = 10): string {
+  if (paths.length === 0) {
+    return '';
+  }
+  const quoted = paths.map(quoteDirtyPath);
+  if (quoted.length <= max) {
+    return quoted.join(', ');
+  }
+  const shown = quoted.slice(0, max).join(', ');
+  const remaining = quoted.length - max;
   return `${shown} and ${remaining} more`;
 }
 

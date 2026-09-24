@@ -12,6 +12,7 @@ import {
   uncommittedSourcePaths,
   unquoteGitPath,
   formatDirtyPaths,
+  quoteDirtyPath,
   isUntrackedOrAddedStatusLine,
   getGitCommitExcludePathspecs,
   getGitCommitExcludePathspecsString,
@@ -344,21 +345,67 @@ describe('formatDirtyPaths', () => {
     expect(formatDirtyPaths([])).toBe('');
   });
 
-  it('formats paths with comma-separated list when length is within default limit (10)', () => {
+  it('formats paths with individually quoted values when length is within default limit (10)', () => {
     const paths = ['a.ts', 'b.ts', 'c.ts'];
-    expect(formatDirtyPaths(paths)).toBe('a.ts, b.ts, c.ts');
+    expect(formatDirtyPaths(paths)).toBe("'a.ts', 'b.ts', 'c.ts'");
   });
 
   it('truncates paths list when length exceeds default limit of 10 and appends count', () => {
     const paths = Array.from({ length: 15 }, (_, i) => `file-${i + 1}.ts`);
     const expected =
-      'file-1.ts, file-2.ts, file-3.ts, file-4.ts, file-5.ts, file-6.ts, file-7.ts, file-8.ts, file-9.ts, file-10.ts and 5 more';
+      "'file-1.ts', 'file-2.ts', 'file-3.ts', 'file-4.ts', 'file-5.ts', 'file-6.ts', 'file-7.ts', 'file-8.ts', 'file-9.ts', 'file-10.ts' and 5 more";
     expect(formatDirtyPaths(paths)).toBe(expected);
   });
 
   it('supports custom limit parameter', () => {
     const paths = ['a.ts', 'b.ts', 'c.ts', 'd.ts'];
-    expect(formatDirtyPaths(paths, 2)).toBe('a.ts, b.ts and 2 more');
+    expect(formatDirtyPaths(paths, 2)).toBe("'a.ts', 'b.ts' and 2 more");
+  });
+
+  it('escapes single quotes and backslashes in filenames', () => {
+    const paths = ["file'with'quote.ts", 'file\\with\\backslash.ts'];
+    expect(formatDirtyPaths(paths)).toBe(
+      "'file\\'with\\'quote.ts', 'file\\\\with\\\\backslash.ts'",
+    );
+  });
+
+  it('unambiguously formats filenames containing commas, colons, brackets, and spaces', () => {
+    const paths = [
+      'Case 1: OpenAPI contains unbacked fields (authorization_code, gateway_ref, etc.)',
+      'E1[Extend NAMING_ALIGNMENT_INSTRUCTIONS with Domain-Agnostic Boundary Rules]',
+      'I',
+    ];
+    expect(formatDirtyPaths(paths)).toBe(
+      "'Case 1: OpenAPI contains unbacked fields (authorization_code, gateway_ref, etc.)', 'E1[Extend NAMING_ALIGNMENT_INSTRUCTIONS with Domain-Agnostic Boundary Rules]', 'I'",
+    );
+  });
+
+  it('formats step-attributed paths correctly', () => {
+    const paths = [
+      'probe.js (reported by step 1)',
+      'test-ast.js (reported by step 3)',
+      'unknown.ts',
+    ];
+    expect(formatDirtyPaths(paths)).toBe(
+      "'probe.js' (reported by step 1), 'test-ast.js' (reported by step 3), 'unknown.ts'",
+    );
+  });
+});
+
+describe('quoteDirtyPath', () => {
+  it('quotes standard filenames with single quotes', () => {
+    expect(quoteDirtyPath('src/file.ts')).toBe("'src/file.ts'");
+  });
+
+  it('escapes quotes and backslashes', () => {
+    expect(quoteDirtyPath("don't.ts")).toBe("'don\\'t.ts'");
+    expect(quoteDirtyPath('path\\to\\file.ts')).toBe("'path\\\\to\\\\file.ts'");
+  });
+
+  it('preserves trailing step attributions outside quotes', () => {
+    expect(quoteDirtyPath('src/file.ts (reported by step 2)')).toBe(
+      "'src/file.ts' (reported by step 2)",
+    );
   });
 });
 

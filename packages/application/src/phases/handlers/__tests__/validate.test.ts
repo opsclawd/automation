@@ -123,7 +123,7 @@ describe('ValidateHandler', () => {
       expect(result.outcome).toBe('failed');
       if (result.outcome === 'failed') {
         expect(result.failure.message).toBe(
-          'Validation blocked by uncommitted source changes (reported by step 3): test-ast.cjs, test-ast.js',
+          "Validation blocked by uncommitted source changes (reported by step 3): 'test-ast.cjs', 'test-ast.js'",
         );
       }
     });
@@ -161,7 +161,7 @@ describe('ValidateHandler', () => {
       expect(result.outcome).toBe('failed');
       if (result.outcome === 'failed') {
         expect(result.failure.message).toBe(
-          'Validation blocked by uncommitted source changes (reported by step 2): probe.ts',
+          "Validation blocked by uncommitted source changes (reported by step 2): 'probe.ts'",
         );
       }
     });
@@ -199,7 +199,7 @@ describe('ValidateHandler', () => {
       expect(result.outcome).toBe('failed');
       if (result.outcome === 'failed') {
         expect(result.failure.message).toBe(
-          'Validation blocked by uncommitted source changes (reported by step 1): packages/contracts/scratch.ts',
+          "Validation blocked by uncommitted source changes (reported by step 1): 'packages/contracts/scratch.ts'",
         );
       }
     });
@@ -243,7 +243,7 @@ describe('ValidateHandler', () => {
       expect(result.outcome).toBe('failed');
       if (result.outcome === 'failed') {
         expect(result.failure.message).toBe(
-          'Validation blocked by uncommitted source changes: probe.js (reported by step 1), test-ast.js (reported by step 3), unknown.ts',
+          "Validation blocked by uncommitted source changes: 'probe.js' (reported by step 1), 'test-ast.js' (reported by step 3), 'unknown.ts'",
         );
       }
     });
