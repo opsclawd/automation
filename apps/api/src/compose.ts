@@ -229,6 +229,7 @@ import {
   RepositoryRegistryRepository,
   StructuredResultRepair,
   deleteWorktreeFile,
+  cleanReviewFixtureStore,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildReviewFixFixPrompt } from './review-fix-prompts.js';
@@ -776,6 +777,8 @@ export interface ComposeOptions {
   releaseBatchNotification?: ReleaseBatchNotificationPort;
   /** Inject custom InterItemMaintenanceService (for tests) */
   interItemMaintenanceService?: InterItemMaintenanceService;
+  /** Inject custom CleanReviewFixtureStorePort (for tests) */
+  cleanReviewFixtureStorePort?: import('@ai-sdlc/application/ports').CleanReviewFixtureStorePort;
 }
 
 class AbortRegistry implements RunAbortPort {
@@ -3613,6 +3616,9 @@ export function composeRoot(opts: ComposeOptions): Container {
     });
   }
 
+  const cleanReviewFixtureStoreAdapter =
+    opts.cleanReviewFixtureStorePort ?? cleanReviewFixtureStore;
+
   const composeBuildPhaseHandlerContext: PhaseHandlerContextFactory = (base, opts) => {
     const idFactory = () => randomUUID();
     return {
@@ -3623,6 +3629,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       targetRoot,
       readWorktreeFile,
       deleteWorktreeFile,
+      cleanReviewFixtureStore: cleanReviewFixtureStoreAdapter,
       worktreeLifecycle: worktreeLifecycleAdapter,
       eventRepository,
       repair: phaseContextRepair,

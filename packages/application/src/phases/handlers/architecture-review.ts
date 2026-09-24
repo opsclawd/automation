@@ -18,6 +18,10 @@ import {
 } from '../requirements-ledger.js';
 import { plannerPackageSchema } from '../../results/schemas/planner-package.js';
 import { validatePlanTaskList } from '../plan-tasks.js';
+import {
+  uncommittedSourcePaths,
+  formatDirtyPaths,
+} from '../../artifacts/orchestrator-artifacts.js';
 
 export interface ArchitectureReviewHandlerOpts {
   profileName?: string;
@@ -29,6 +33,68 @@ export interface FailedRequirementCheck {
   requirement_id?: string | undefined;
   evidence?: string | undefined;
   source?: string | undefined;
+}
+
+export interface PlanFragmentContext {
+  planMd?: string | undefined;
+  designMd?: string | undefined;
+  findingsText?: string | undefined;
+}
+
+export function isSuspiciousPlanFragment(filePath: string, context?: PlanFragmentContext): boolean {
+  if (!filePath || typeof filePath !== 'string') {
+    return false;
+  }
+
+  // Normalize path to basename if separated by slashes
+  const basename = filePath.includes('/') ? filePath.split('/').pop()! : filePath;
+
+  // 1. Standalone single-letter or letter+digit task labels: "E", "E1", "F", "F1", "F2", "G", "G1", "H", "I", "J"
+  // or "Task 1", "Step 2"
+  if (/^[A-Z]\d?$/.test(basename) || /^(Task|Step|Phase)\s+\d+$/i.test(basename)) {
+    return true;
+  }
+
+  // 2. Letter/number outline label with bracketed description:
+  // e.g. "E1[Extend NAMING_ALIGNMENT_INSTRUCTIONS with Domain-Agnostic Boundary Rules]"
+  // "E[Update GenerateOpenApiProjectionUseCase.ts]"
+  // "F1[Preserve strict RAW_ACTION_VERBS (Do NOT add nouns)]"
+  // "Task 1[Description]"
+  if (/^[A-Z]\d?\[.+\]$/.test(basename) || /^(Task|Step|Phase)\s+\d+\[.+\]$/i.test(basename)) {
+    return true;
+  }
+
+  // 3. Punctuated outline case, step, or task phrases:
+  // e.g. "Case 1: OpenAPI contains unbacked fields (authorization_code, gateway_ref, etc.)"
+  // "Case 2: OpenAPI only contains parent columns or empty action body"
+  // "Task 1: Add Unit Tests"
+  // "Step 1: Run migration"
+  if (/^(Case|Step|Task|Phase)\s+\d+:\s*.+$/i.test(basename)) {
+    return true;
+  }
+
+  // 4. Exact match against headings or outline list items in planMd, designMd, or findingsText
+  if (context) {
+    const { planMd, designMd, findingsText } = context;
+    const sources = [planMd, designMd, findingsText].filter(Boolean) as string[];
+    for (const source of sources) {
+      if (source.includes(basename)) {
+        const lines = source.split(/\r?\n/);
+        for (const line of lines) {
+          const trimmed = line
+            .trim()
+            .replace(/^#{1,6}\s+/, '')
+            .replace(/^[-*+]\s+/, '')
+            .trim();
+          if (trimmed.length > 0 && (trimmed === basename || trimmed.startsWith(basename))) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 export class ArchitectureReviewHandler implements PhaseHandler {
@@ -54,6 +120,214 @@ export class ArchitectureReviewHandler implements PhaseHandler {
       return { outcome: 'passed' };
     }
 
+    let statusBefore = '';
+    let statusBeforeError: unknown;
+    if (ctx.git) {
+      try {
+        statusBefore = await ctx.git.status(ctx.cwd);
+      } catch (err) {
+        statusBeforeError = err;
+      }
+    } else {
+      statusBeforeError = new Error('GitPort is not available on PhaseHandlerContext');
+    }
+
+    let reviewResult: PhaseResult | undefined;
+    let reviewError: unknown;
+
+    try {
+      if (!statusBeforeError) {
+        reviewResult = await this.executeReview(ctx, emit);
+      }
+    } catch (err) {
+      reviewError = err;
+    } finally {
+      let fixtureStoreCleanupFailed = false;
+      let fixtureStoreCleanupMessage = '';
+
+      if (ctx.cleanReviewFixtureStore) {
+        try {
+          const cleanupResult = await ctx.cleanReviewFixtureStore({ cwd: ctx.cwd });
+          if (cleanupResult.cleanedDirectories.length > 0) {
+            emit(
+              'architecture_review.fixture_store_cleaned',
+              'info',
+              `cleaned review fixture-store residue: ${cleanupResult.cleanedDirectories.join(', ')}`,
+              {
+                cleanedDirectories: cleanupResult.cleanedDirectories,
+                restoredFiles: cleanupResult.restoredFiles,
+                removedFiles: cleanupResult.removedFiles,
+              },
+            );
+          }
+        } catch (cleanupErr) {
+          fixtureStoreCleanupFailed = true;
+          fixtureStoreCleanupMessage =
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+          emit(
+            'architecture_review.cleanup_failed',
+            'error',
+            `architecture-review failed to clean fixture store: ${fixtureStoreCleanupMessage}`,
+            {
+              error: fixtureStoreCleanupMessage,
+            },
+          );
+        }
+      }
+
+      let newlyIntroducedPaths: string[] = [];
+      let statusAfterError: unknown;
+      if (!statusBeforeError) {
+        if (ctx.git) {
+          try {
+            const statusAfter = await ctx.git.status(ctx.cwd);
+            const dirtyBefore = new Set(uncommittedSourcePaths(statusBefore));
+            const dirtyAfter = uncommittedSourcePaths(statusAfter);
+            newlyIntroducedPaths = dirtyAfter.filter((p) => !dirtyBefore.has(p));
+          } catch (err) {
+            statusAfterError = err;
+          }
+        } else {
+          statusAfterError = new Error('GitPort is not available on PhaseHandlerContext');
+        }
+      }
+
+      const hasBoundaryViolation =
+        statusBeforeError !== undefined ||
+        statusAfterError !== undefined ||
+        fixtureStoreCleanupFailed ||
+        newlyIntroducedPaths.length > 0;
+
+      if (hasBoundaryViolation) {
+        let planMd: string | undefined;
+        try {
+          planMd = await ctx.artifacts.read(ctx.runUuid, 'plan.md');
+        } catch {}
+        let designMd: string | undefined;
+        try {
+          designMd = await ctx.artifacts.read(ctx.runUuid, 'design.md');
+        } catch {}
+
+        const suspiciousPlanFragments = newlyIntroducedPaths.filter((p) =>
+          isSuspiciousPlanFragment(p, { planMd, designMd }),
+        );
+
+        let failureMessage: string;
+        let eventMessage: string;
+
+        if (statusBeforeError !== undefined) {
+          const statusBeforeMessage =
+            statusBeforeError instanceof Error
+              ? statusBeforeError.message
+              : String(statusBeforeError);
+          eventMessage = `architecture-review failed to obtain baseline worktree status: ${statusBeforeMessage}. architecture-review aborted to surface the phase boundary violation; resolve worktree status before proceeding.`;
+          failureMessage = `architecture-review failed to obtain baseline worktree status: ${statusBeforeMessage}`;
+          if (fixtureStoreCleanupFailed) {
+            eventMessage += ` fixture-store cleanup failed: ${fixtureStoreCleanupMessage}.`;
+            failureMessage += ` (fixture-store cleanup failed: ${fixtureStoreCleanupMessage})`;
+          }
+        } else if (statusAfterError !== undefined) {
+          const statusAfterMessage =
+            statusAfterError instanceof Error ? statusAfterError.message : String(statusAfterError);
+          eventMessage = `architecture-review failed to obtain post-review worktree status: ${statusAfterMessage}. architecture-review aborted to surface the phase boundary violation; resolve worktree status before proceeding.`;
+          failureMessage = `architecture-review failed to obtain post-review worktree status: ${statusAfterMessage}`;
+          if (fixtureStoreCleanupFailed) {
+            eventMessage += ` fixture-store cleanup failed: ${fixtureStoreCleanupMessage}.`;
+            failureMessage += ` (fixture-store cleanup failed: ${fixtureStoreCleanupMessage})`;
+          }
+        } else if (newlyIntroducedPaths.length > 0) {
+          const formattedFiles = formatDirtyPaths(newlyIntroducedPaths);
+          eventMessage = `architecture-review left the worktree dirty: ${formattedFiles}.`;
+          if (suspiciousPlanFragments.length > 0) {
+            const formattedSuspicious = formatDirtyPaths(suspiciousPlanFragments);
+            eventMessage += ` Diagnostic note: newly introduced files resemble plan outline fragments accidentally materialized on disk (${formattedSuspicious}).`;
+          }
+          if (fixtureStoreCleanupFailed) {
+            eventMessage += ` fixture-store cleanup failed: ${fixtureStoreCleanupMessage}.`;
+          }
+          eventMessage += ` architecture-review aborted to surface the phase boundary violation; resolve the dirty worktree before proceeding.`;
+          failureMessage = eventMessage;
+        } else {
+          eventMessage = `architecture-review left the worktree dirty: fixture-store cleanup failed: ${fixtureStoreCleanupMessage}`;
+          failureMessage = `architecture-review failed to clean fixture store: ${fixtureStoreCleanupMessage}`;
+        }
+
+        const violationEventPayload: Record<string, unknown> = {
+          ...(statusBeforeError !== undefined
+            ? {
+                error:
+                  statusBeforeError instanceof Error
+                    ? statusBeforeError.message
+                    : String(statusBeforeError),
+                baselineStatusError:
+                  statusBeforeError instanceof Error
+                    ? statusBeforeError.message
+                    : String(statusBeforeError),
+              }
+            : {}),
+          ...(statusAfterError !== undefined
+            ? {
+                error:
+                  statusAfterError instanceof Error
+                    ? statusAfterError.message
+                    : String(statusAfterError),
+                postReviewStatusError:
+                  statusAfterError instanceof Error
+                    ? statusAfterError.message
+                    : String(statusAfterError),
+              }
+            : {}),
+          ...(newlyIntroducedPaths.length > 0
+            ? {
+                unexpectedPaths: newlyIntroducedPaths,
+                suspiciousPlanFragments,
+                ...(suspiciousPlanFragments.length > 0
+                  ? {
+                      diagnosticHint:
+                        'Newly introduced files resemble plan outline fragments or task labels accidentally materialized on disk',
+                    }
+                  : {}),
+              }
+            : {}),
+          ...(fixtureStoreCleanupFailed
+            ? {
+                fixtureStoreCleanupError: fixtureStoreCleanupMessage,
+                ...(!statusBeforeError && !statusAfterError
+                  ? { error: fixtureStoreCleanupMessage }
+                  : {}),
+              }
+            : {}),
+        };
+
+        emit(
+          'architecture_review.phase_boundary_violation',
+          'error',
+          eventMessage,
+          violationEventPayload,
+        );
+
+        if (reviewError) {
+          const errStr = reviewError instanceof Error ? reviewError.message : String(reviewError);
+          failureMessage += ` (underlying review error: ${errStr})`;
+        } else if (reviewResult && reviewResult.outcome !== 'passed') {
+          const priorFailMsg =
+            'failure' in reviewResult ? reviewResult.failure.message : reviewResult.outcome;
+          failureMessage += ` (prior review failure: ${priorFailMsg})`;
+        }
+
+        reviewResult = this.fail(ctx, emit, 'phase_boundary_violation', failureMessage);
+        reviewError = undefined;
+      }
+    }
+
+    if (reviewError) {
+      throw reviewError;
+    }
+
+    return reviewResult!;
+  }
+
+  private async executeReview(ctx: PhaseHandlerContext, emit: EventEmitter): Promise<PhaseResult> {
     emit('architecture_review.started', 'info', 'independent architecture review started', {
       policy: ctx.executionPolicy,
     });

@@ -44,6 +44,10 @@ export { createFixDiffInspector } from './git/fix-diff-inspector.js';
 export { createFindingEvidenceInspector } from './git/finding-evidence-inspector.js';
 export { revertScopeFiles } from './git/revert-scope-files.js';
 export { deleteWorktreeFile } from './git/delete-worktree-file.js';
+export {
+  cleanReviewFixtureStore,
+  assertValidFixtureStoreTarget,
+} from './git/clean-review-fixture-store.js';
 export * from './artifacts/filesystem-artifact-store.js';
 export * from './artifacts/file-tailer.js';
 export { createSignatureReferenceAnalyzer } from './typescript/signature-reference-analyzer.js';
