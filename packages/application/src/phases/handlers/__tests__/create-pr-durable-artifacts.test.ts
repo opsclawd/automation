@@ -7,7 +7,11 @@ import { FakeArtifactStore, FakeGitHubPort, FakeGitPort } from '../../../test-do
 import type { PhaseHandlerContext } from '../../handler.js';
 
 class CleanupGitPort extends FakeGitPort {
-  override async cleanOrchestratorArtifacts(cwd: string, _baseBranch?: string): Promise<void> {
+  override async cleanOrchestratorArtifacts(
+    cwd: string,
+    _baseBranch?: string,
+    _startCommitSha?: string,
+  ): Promise<void> {
     await rmSync(join(cwd, 'implementation-log.md'), { force: true });
     await rmSync(join(cwd, 'task-manifest.json'), { force: true });
     await rmSync(join(cwd, 'plan.md'), { force: true });
@@ -47,6 +51,7 @@ async function build() {
 
   const git = new CleanupGitPort();
   git.headByCwd.set(cwd, 'base-sha');
+  git.remoteRefs.set('origin/main', 'base-sha');
 
   const ctx = {
     runId: 'issue-7-run',
@@ -112,7 +117,7 @@ describe('CreatePrHandler durable artifacts', () => {
     const result = await HANDLER.run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(cleanupSpy).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch ?? 'main');
+    expect(cleanupSpy).toHaveBeenCalledWith(ctx.cwd, 'base-sha', ctx.startCommitSha);
     expect(git.pushes).toHaveLength(1);
     expect(github.createdPrInputs).toHaveLength(1);
 

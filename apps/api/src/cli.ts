@@ -3247,14 +3247,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 return;
               }
 
-              const outputLines = [
-                `Source branch integrated into release batch ${batchId}:`,
-                `  New Release Head: ${result.newReleaseSha ?? 'up-to-date'}`,
-              ];
+              const message =
+                result.outcome === 'already_integrated'
+                  ? 'Source branch is already integrated into release branch (no merge required)'
+                  : `Merged source branch ${result.sourceBranch} into release branch ${result.releaseBranch} (New Release Head: ${result.newReleaseSha})`;
               await new Promise<void>((resolve, reject) =>
-                process.stdout.write(outputLines.join('\n') + '\n', (err) =>
-                  err ? reject(err) : resolve(),
-                ),
+                process.stdout.write(message + '\n', (err) => (err ? reject(err) : resolve())),
               );
 
               const isCliTestSuite =

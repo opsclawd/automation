@@ -3,7 +3,10 @@ import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, isAbsolute } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
+import {
+  TrackedSourceDriftError,
+  ProtectedArtifactCollisionError,
+} from '@ai-sdlc/application/ports';
 import { git } from '../git-runner.js';
 import { GitWorktreeAdapter } from '../git-worktree-adapter.js';
 import { clearTempDirs, getTempDirs, makeTempRepo, makeRepoWithRemote } from './helpers.js';
@@ -97,6 +100,23 @@ describe('createWorktree()', () => {
 
     const branch = await git(worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD']);
     expect(branch).toBe('ai/existing-branch');
+  });
+
+  it('creates a worktree when the parent directory (e.g. .ai-worktrees) does not exist yet', async () => {
+    const repoLocalBasePath = await makeTempRepo();
+    const worktreesDir = join(repoLocalBasePath, '.ai-worktrees');
+    const worktreePath = join(worktreesDir, `integrate-wt-${randomBytes(6).toString('hex')}`);
+    _extraDirs.push(worktreePath);
+
+    await adapter.createWorktree({
+      repoLocalBasePath,
+      worktreePath,
+      branch: 'ai/parent-dir-creation',
+      baseBranch: 'main',
+    });
+
+    const branch = await git(worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    expect(branch).toBe('ai/parent-dir-creation');
   });
 });
 
@@ -465,6 +485,12 @@ describe('Artifact Guarding & Cleanup', () => {
     'issue.md',
     'design.md',
     'plan.md',
+    'spec-review.md',
+    'spec-review.json',
+    'quality-review.md',
+    'quality-review.json',
+    'architecture-review.md',
+    'architecture-review.json',
   ]);
   const adapter = new GitWorktreeAdapter(sampleExcludePatterns);
 
@@ -526,6 +552,7 @@ describe('Artifact Guarding & Cleanup', () => {
   describe('cleanOrchestratorArtifacts()', () => {
     it('cleanup unstages and removes a staged canonical artifact', async () => {
       const repoPath = await makeTempRepo();
+      const startCommitSha = await adapter.headCommitSha(repoPath);
       const artifactFile = join(repoPath, 'validation.result');
       await writeFile(artifactFile, 'staged content\n');
 
@@ -533,7 +560,7 @@ describe('Artifact Guarding & Cleanup', () => {
       const stagedBefore = await git(repoPath, ['diff', '--cached', '--name-only']);
       expect(stagedBefore).toContain('validation.result');
 
-      await adapter.cleanOrchestratorArtifacts(repoPath);
+      await adapter.cleanOrchestratorArtifacts(repoPath, undefined, startCommitSha);
 
       const stagedAfter = await git(repoPath, ['diff', '--cached', '--name-only']);
       expect(stagedAfter).not.toContain('validation.result');
@@ -600,6 +627,7 @@ describe('Artifact Guarding & Cleanup', () => {
     it('cleanup removes committed artifacts and commits the removal when baseBranch is provided', async () => {
       const repoPath = await makeTempRepo();
       const baseBranch = 'main';
+      const startCommitSha = await adapter.headCommitSha(repoPath);
 
       // Create a branch off baseBranch
       await git(repoPath, ['checkout', '-b', 'ai/work-branch']);
@@ -614,7 +642,7 @@ describe('Artifact Guarding & Cleanup', () => {
       const diffBefore = await git(repoPath, ['diff', `${baseBranch}...HEAD`, '--name-only']);
       expect(diffBefore).toContain('implementation-log.md');
 
-      await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch);
+      await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch, startCommitSha);
 
       // Verify it's no longer present on filesystem
       const { access: fsAccess } = await import('node:fs/promises');
@@ -627,6 +655,7 @@ describe('Artifact Guarding & Cleanup', () => {
 
     it('cleanup does not remove committed artifacts when baseBranch is omitted', async () => {
       const repoPath = await makeTempRepo();
+      const startCommitSha = await adapter.headCommitSha(repoPath);
 
       const artifactFile = join(repoPath, 'validation.result');
       await writeFile(artifactFile, 'committed content\n');
@@ -638,7 +667,7 @@ describe('Artifact Guarding & Cleanup', () => {
       const trackedBefore = await git(repoPath, ['ls-files', 'validation.result']);
       expect(trackedBefore).toContain('validation.result');
 
-      await adapter.cleanOrchestratorArtifacts(repoPath);
+      await adapter.cleanOrchestratorArtifacts(repoPath, undefined, startCommitSha);
 
       // Verify it is still present on filesystem
       const { access: fsAccess } = await import('node:fs/promises');
@@ -690,6 +719,7 @@ describe('Artifact Guarding & Cleanup', () => {
     it('cleanup handles staged and committed artifacts with spaces in paths', async () => {
       const repoPath = await makeTempRepo();
       const baseBranch = 'main';
+      const startCommitSha = await adapter.headCommitSha(repoPath);
       await git(repoPath, ['checkout', '-b', 'ai/space-branch']);
 
       await mkdir(join(repoPath, 'space dir'), { recursive: true });
@@ -703,7 +733,7 @@ describe('Artifact Guarding & Cleanup', () => {
       await writeFile(stagedArtifact, 'staged with spaces\n');
       await git(repoPath, ['add', 'space dir/fix spaced.patch']);
 
-      await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch);
+      await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch, startCommitSha);
 
       const { access: fsAccess } = await import('node:fs/promises');
       await expect(fsAccess(stagedArtifact)).rejects.toThrow();
@@ -761,6 +791,194 @@ describe('Artifact Guarding & Cleanup', () => {
       const { access: fsAccess } = await import('node:fs/promises');
       // If ? was not escaped, it would make '-' optional and match 'artifact-.md'
       await expect(fsAccess(nonMatchingFile)).resolves.toBeUndefined();
+    });
+
+    it('preserves pre-existing repository files sharing names with orchestrator artifacts committed before startCommitSha', async () => {
+      const repoPath = await makeTempRepo();
+      const baseBranch = 'main';
+
+      await mkdir(join(repoPath, 'prompts', 'architecture-review'), { recursive: true });
+      await mkdir(join(repoPath, 'prompts', 'review-fix'), { recursive: true });
+      const archPrompt = join(repoPath, 'prompts', 'architecture-review', 'architecture-review.md');
+      const specPrompt = join(repoPath, 'prompts', 'review-fix', 'spec-review.md');
+      await writeFile(archPrompt, '# Architecture Review Template\n');
+      await writeFile(specPrompt, '# Spec Review Template\n');
+
+      await git(repoPath, ['add', '.']);
+      await git(repoPath, ['commit', '-m', 'add prompt templates']);
+
+      const startCommitSha = await adapter.headCommitSha(repoPath);
+
+      await git(repoPath, ['checkout', '-b', 'ai/work-branch']);
+
+      await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch, startCommitSha);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(archPrompt)).resolves.toBeUndefined();
+      await expect(fsAccess(specPrompt)).resolves.toBeUndefined();
+
+      const tracked = await git(repoPath, ['ls-files', '-z']);
+      expect(tracked).toContain('prompts/architecture-review/architecture-review.md');
+      expect(tracked).toContain('prompts/review-fix/spec-review.md');
+
+      const diff = await git(repoPath, ['diff', `${baseBranch}...HEAD`, '--name-only']);
+      expect(diff).toBe('');
+    });
+
+    it('removes safe newly-created artifacts while preserving pre-existing tracked prompt templates', async () => {
+      const repoPath = await makeTempRepo();
+      const baseBranch = 'main';
+
+      await mkdir(join(repoPath, 'prompts', 'architecture-review'), { recursive: true });
+      const archPrompt = join(repoPath, 'prompts', 'architecture-review', 'architecture-review.md');
+      await writeFile(archPrompt, '# Architecture Review Template\n');
+
+      await git(repoPath, ['add', '.']);
+      await git(repoPath, ['commit', '-m', 'add prompt templates']);
+
+      const startCommitSha = await adapter.headCommitSha(repoPath);
+
+      await git(repoPath, ['checkout', '-b', 'ai/work-branch']);
+
+      // Create new untracked artifact and newly committed artifact
+      const scratchFile = join(repoPath, 'validation.result');
+      await writeFile(scratchFile, 'untracked result\n');
+
+      const implLog = join(repoPath, 'implementation-log.md');
+      await writeFile(implLog, 'committed log\n');
+      await git(repoPath, ['add', 'implementation-log.md']);
+      await git(repoPath, ['commit', '-m', 'add implementation-log.md']);
+
+      await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch, startCommitSha);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      // Newly created artifacts removed
+      await expect(fsAccess(scratchFile)).rejects.toThrow();
+      await expect(fsAccess(implLog)).rejects.toThrow();
+
+      // Pre-existing prompt template preserved
+      await expect(fsAccess(archPrompt)).resolves.toBeUndefined();
+      const tracked = await git(repoPath, ['ls-files', '-z']);
+      expect(tracked).toContain('prompts/architecture-review/architecture-review.md');
+    });
+
+    it('fails closed and throws ProtectedArtifactCollisionError when baseline-tracked artifact file is deleted by current branch', async () => {
+      const repoPath = await makeTempRepo();
+      const baseBranch = 'main';
+
+      await mkdir(join(repoPath, 'prompts', 'architecture-review'), { recursive: true });
+      const archPrompt = join(repoPath, 'prompts', 'architecture-review', 'architecture-review.md');
+      await writeFile(archPrompt, '# Architecture Review Template\n');
+
+      await git(repoPath, ['add', '.']);
+      await git(repoPath, ['commit', '-m', 'add prompt templates']);
+
+      const startCommitSha = await adapter.headCommitSha(repoPath);
+
+      await git(repoPath, ['checkout', '-b', 'ai/work-branch']);
+
+      // Simulate agent deleting the pre-existing prompt file
+      await rm(archPrompt, { force: true });
+
+      await expect(
+        adapter.cleanOrchestratorArtifacts(repoPath, baseBranch, startCommitSha),
+      ).rejects.toThrow(ProtectedArtifactCollisionError);
+
+      try {
+        await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch, startCommitSha);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ProtectedArtifactCollisionError);
+        const collision = err as ProtectedArtifactCollisionError;
+        expect(collision.protectedPaths).toContain(
+          'prompts/architecture-review/architecture-review.md',
+        );
+        expect(collision.startCommitSha).toBe(startCommitSha);
+      }
+    });
+
+    it('fails closed and throws ProtectedArtifactCollisionError when baseline-tracked artifact file is modified by current branch', async () => {
+      const repoPath = await makeTempRepo();
+      const baseBranch = 'main';
+
+      await mkdir(join(repoPath, 'prompts', 'review-fix'), { recursive: true });
+      const specPrompt = join(repoPath, 'prompts', 'review-fix', 'spec-review.md');
+      await writeFile(specPrompt, '# Original Spec Review Template\n');
+
+      await git(repoPath, ['add', '.']);
+      await git(repoPath, ['commit', '-m', 'add prompt templates']);
+
+      const startCommitSha = await adapter.headCommitSha(repoPath);
+
+      await git(repoPath, ['checkout', '-b', 'ai/work-branch']);
+
+      // Modify the pre-existing prompt file
+      await writeFile(specPrompt, '# Modified Spec Review Template\n');
+
+      await expect(
+        adapter.cleanOrchestratorArtifacts(repoPath, baseBranch, startCommitSha),
+      ).rejects.toThrow(ProtectedArtifactCollisionError);
+    });
+
+    it('in mixed scenario, cleans safe newly created artifacts without committing removals for colliding protected path', async () => {
+      const repoPath = await makeTempRepo();
+      const baseBranch = 'main';
+
+      await mkdir(join(repoPath, 'prompts', 'architecture-review'), { recursive: true });
+      const archPrompt = join(repoPath, 'prompts', 'architecture-review', 'architecture-review.md');
+      await writeFile(archPrompt, '# Architecture Review Template\n');
+
+      await git(repoPath, ['add', '.']);
+      await git(repoPath, ['commit', '-m', 'add prompt templates']);
+
+      const startCommitSha = await adapter.headCommitSha(repoPath);
+
+      await git(repoPath, ['checkout', '-b', 'ai/work-branch']);
+
+      // Safe newly created artifact
+      const scratchFile = join(repoPath, 'validation.result');
+      await writeFile(scratchFile, 'untracked result\n');
+
+      // Protected file deleted
+      await rm(archPrompt, { force: true });
+
+      await expect(
+        adapter.cleanOrchestratorArtifacts(repoPath, baseBranch, startCommitSha),
+      ).rejects.toThrow(ProtectedArtifactCollisionError);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      // Safe scratch file WAS cleaned
+      await expect(fsAccess(scratchFile)).rejects.toThrow();
+
+      // No automated cleanup commit was authored
+      const log = await git(repoPath, ['log', '-n', '1', '--oneline']);
+      expect(log).not.toContain('fix: remove orchestrator artifacts');
+    });
+
+    it('fails closed for tracked candidates when baseline startCommitSha is missing or invalid', async () => {
+      const repoPath = await makeTempRepo();
+      const baseBranch = 'main';
+
+      await mkdir(join(repoPath, 'prompts', 'architecture-review'), { recursive: true });
+      const archPrompt = join(repoPath, 'prompts', 'architecture-review', 'architecture-review.md');
+      await writeFile(archPrompt, '# Architecture Review Template\n');
+
+      await git(repoPath, ['add', '.']);
+      await git(repoPath, ['commit', '-m', 'add prompt templates']);
+
+      // Missing startCommitSha
+      await expect(
+        adapter.cleanOrchestratorArtifacts(repoPath, baseBranch, undefined),
+      ).rejects.toThrow(ProtectedArtifactCollisionError);
+
+      // Invalid startCommitSha
+      await expect(
+        adapter.cleanOrchestratorArtifacts(repoPath, baseBranch, 'invalid-nonexistent-commit-sha'),
+      ).rejects.toThrow(ProtectedArtifactCollisionError);
+
+      // File remains on disk and tracked
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(archPrompt)).resolves.toBeUndefined();
     });
   });
 });

@@ -6,6 +6,7 @@ import { PhaseName, AgentProfileName, type AgentInvocationId } from '@ai-sdlc/do
 import { runSingleShotAgentPhase } from '../run-single-shot-agent-phase.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import { FakeArtifactStore, FakeAgentPort, FakeGitPort } from '../../../test-doubles/index.js';
+import { ProtectedArtifactCollisionError } from '../../../ports/git-port.js';
 import type {
   StructuredResultRepairPort,
   StructuredResultRepairInput,
@@ -770,5 +771,61 @@ describe('runSingleShotAgentPhase - Centralized Result Ingestion', () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('escalates to needs_human_review when cleanArtifacts encounters ProtectedArtifactCollisionError', async () => {
+    await artifacts.write({
+      runId: 'run-1128',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    git.cleanOrchestratorArtifactsThrows = new ProtectedArtifactCollisionError(
+      ctx.cwd,
+      ['prompts/architecture-review/architecture-review.md'],
+      ctx.startCommitSha,
+    );
+
+    const result = await runSingleShotAgentPhase(ctx, {
+      phase: PhaseName('fix-review'),
+      profile: AgentProfileName('fix-review'),
+      step: 'fix-review',
+      vars: { cwd: ctx.cwd },
+      resultJsonPath: 'result.json',
+      agentContract: { requiredArtifacts: [], mustNotChangeBranch: true },
+      cleanArtifacts: true,
+    });
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toContain(
+        'prompts/architecture-review/architecture-review.md',
+      );
+      expect(result.failure.canRetry).toBe(false);
+    }
+
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const collisionEvents = publishedEvents.filter(
+      (call) => (call[1] as { type?: string })?.type === 'fix-review.protected_artifact_collision',
+    );
+    expect(collisionEvents).toHaveLength(1);
+    expect(
+      (collisionEvents[0][1] as { metadata?: { paths?: string[] } }).metadata?.paths,
+    ).toContain('prompts/architecture-review/architecture-review.md');
   });
 });

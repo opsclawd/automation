@@ -13,7 +13,11 @@ import {
   wasRevertedToBeforeState,
   type ValidationCriticalFile,
 } from '../../review-fix/validation-critical-files.js';
-import { parseGitStatusLine, unquoteGitPath } from '../../artifacts/orchestrator-artifacts.js';
+import {
+  parseGitStatusLine,
+  unquoteGitPath,
+  isProtectedArtifactCandidate,
+} from '../../artifacts/orchestrator-artifacts.js';
 import { formatSelfVerifyInstructions } from '../../prompts/constants.js';
 import { isGovernanceFilePath } from '../../scratch-file-remediation.js';
 
@@ -79,6 +83,54 @@ export class FixReviewHandler implements PhaseHandler {
     const validationCriticalWarning = formatValidationCriticalFilesWarning(criticalFiles);
     const selfVerifyCommands = this.opts.selfVerifyCommands ?? ctx.selfVerifyCommands;
 
+    // Verify startCommitSha baseline commit is present to protect pre-existing repository files
+    if (!ctx.startCommitSha || ctx.startCommitSha.trim() === '') {
+      const errorMsg = 'missing startCommitSha baseline commit';
+      const msg = `Protected pre-existing repository file safety check failed: ${errorMsg}.`;
+      emit('fix_review.protected_artifact_collision', 'error', msg, {
+        baselineCommit: undefined,
+        error: errorMsg,
+      });
+      emit('fix_review.failed', 'error', msg);
+      return {
+        outcome: 'needs_human_review',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'needs_human_review',
+          message: msg,
+          canRetry: false,
+          suggestedAction:
+            'Ensure the run baseline commit (startCommitSha) is provided to protect pre-existing repository files.',
+          artifacts: ['code-review.md', 'finding-ledger.json'],
+          detectedAt: ctx.now(),
+        },
+      };
+    }
+
+    if (!ctx.git) {
+      const errorMsg = 'git port is unavailable';
+      const msg = `Protected pre-existing repository file safety check failed: ${errorMsg}.`;
+      emit('fix_review.protected_artifact_collision', 'error', msg, {
+        baselineCommit: ctx.startCommitSha,
+        error: errorMsg,
+      });
+      emit('fix_review.failed', 'error', msg);
+      return {
+        outcome: 'needs_human_review',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'needs_human_review',
+          message: msg,
+          canRetry: false,
+          suggestedAction: 'Ensure git port is available to verify pre-existing repository files.',
+          artifacts: ['code-review.md', 'finding-ledger.json'],
+          detectedAt: ctx.now(),
+        },
+      };
+    }
+
     let statusBefore = '';
     try {
       if (ctx.git) {
@@ -134,6 +186,174 @@ export class FixReviewHandler implements PhaseHandler {
           message,
           canRetry: true,
           suggestedAction: 'Review the findings and intervene manually.',
+          artifacts: ['code-review.md', 'finding-ledger.json'],
+          detectedAt: ctx.now(),
+        },
+      };
+    }
+
+    // 5b. Check whether fixer deleted or modified any pre-existing repository files matching orchestrator artifact patterns
+    if (!ctx.startCommitSha || ctx.startCommitSha.trim() === '') {
+      const errorMsg = 'missing startCommitSha baseline commit';
+      const msg = `Protected pre-existing repository file safety check failed: ${errorMsg}.`;
+      emit('fix_review.protected_artifact_collision', 'error', msg, {
+        baselineCommit: undefined,
+        error: errorMsg,
+      });
+      emit('fix_review.failed', 'error', msg);
+      return {
+        outcome: 'needs_human_review',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'needs_human_review',
+          message: msg,
+          canRetry: false,
+          suggestedAction:
+            'Ensure the run baseline commit (startCommitSha) is provided to protect pre-existing repository files.',
+          artifacts: ['code-review.md', 'finding-ledger.json'],
+          detectedAt: ctx.now(),
+        },
+      };
+    }
+
+    if (!ctx.git) {
+      const errorMsg = 'git port is unavailable';
+      const msg = `Protected pre-existing repository file safety check failed: ${errorMsg}.`;
+      emit('fix_review.protected_artifact_collision', 'error', msg, {
+        baselineCommit: ctx.startCommitSha,
+        error: errorMsg,
+      });
+      emit('fix_review.failed', 'error', msg);
+      return {
+        outcome: 'needs_human_review',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'needs_human_review',
+          message: msg,
+          canRetry: false,
+          suggestedAction: 'Ensure git port is available to verify pre-existing repository files.',
+          artifacts: ['code-review.md', 'finding-ledger.json'],
+          detectedAt: ctx.now(),
+        },
+      };
+    }
+
+    let baselineFiles: string[];
+    try {
+      baselineFiles = await ctx.git.listFilesAtCommit(ctx.cwd, ctx.startCommitSha);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      const msg = `Failed to enumerate baseline files at ${ctx.startCommitSha}: ${errorMsg}`;
+      emit('fix_review.protected_artifact_collision', 'error', msg, {
+        baselineCommit: ctx.startCommitSha,
+        error: errorMsg,
+      });
+      emit('fix_review.failed', 'error', msg);
+      return {
+        outcome: 'needs_human_review',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'needs_human_review',
+          message: msg,
+          canRetry: false,
+          suggestedAction: 'Inspect git repository state and verify baseline commit is valid.',
+          artifacts: ['code-review.md', 'finding-ledger.json'],
+          detectedAt: ctx.now(),
+        },
+      };
+    }
+
+    const protectedArtifactCandidates = baselineFiles.filter(isProtectedArtifactCandidate);
+    const violatedPaths: string[] = [];
+
+    for (const path of protectedArtifactCandidates) {
+      let currentContent: string | undefined;
+      try {
+        currentContent = await ctx.git.worktreeFileContent(ctx.cwd, path);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const msg = `Failed to inspect worktree content for protected file ${path}: ${errorMsg}`;
+        emit('fix_review.protected_artifact_collision', 'error', msg, {
+          paths: [path],
+          baselineCommit: ctx.startCommitSha,
+          error: errorMsg,
+        });
+        emit('fix_review.failed', 'error', msg);
+        return {
+          outcome: 'needs_human_review',
+          failure: {
+            runUuid: ctx.runUuid,
+            phase: this.phase,
+            kind: 'needs_human_review',
+            message: msg,
+            canRetry: false,
+            suggestedAction:
+              'Inspect git repository state and verify pre-existing source files were not corrupted or deleted.',
+            artifacts: ['code-review.md', 'finding-ledger.json'],
+            detectedAt: ctx.now(),
+          },
+        };
+      }
+
+      if (currentContent === undefined) {
+        // Pre-existing protected file was deleted
+        violatedPaths.push(path);
+      } else {
+        let baselineContent: string;
+        try {
+          baselineContent = await ctx.git.fileContent(ctx.cwd, ctx.startCommitSha, path);
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const msg = `Failed to read baseline content for protected file ${path} at ${ctx.startCommitSha}: ${errorMsg}`;
+          emit('fix_review.protected_artifact_collision', 'error', msg, {
+            paths: [path],
+            baselineCommit: ctx.startCommitSha,
+            error: errorMsg,
+          });
+          emit('fix_review.failed', 'error', msg);
+          return {
+            outcome: 'needs_human_review',
+            failure: {
+              runUuid: ctx.runUuid,
+              phase: this.phase,
+              kind: 'needs_human_review',
+              message: msg,
+              canRetry: false,
+              suggestedAction:
+                'Inspect git repository state and verify pre-existing source files were not corrupted or deleted.',
+              artifacts: ['code-review.md', 'finding-ledger.json'],
+              detectedAt: ctx.now(),
+            },
+          };
+        }
+
+        if (currentContent !== baselineContent) {
+          // Pre-existing protected file was modified
+          violatedPaths.push(path);
+        }
+      }
+    }
+
+    if (violatedPaths.length > 0) {
+      const msg = `Protected pre-existing repository file(s) matching orchestrator artifact pattern were deleted or modified during review fix: ${violatedPaths.join(', ')}. Automated fixers must not delete or modify pre-existing repository files.`;
+      emit('fix_review.protected_artifact_collision', 'error', msg, {
+        paths: violatedPaths,
+        baselineCommit: ctx.startCommitSha,
+      });
+      emit('fix_review.failed', 'error', msg);
+      return {
+        outcome: 'needs_human_review',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'needs_human_review',
+          message: msg,
+          canRetry: false,
+          suggestedAction:
+            'Review the modified or deleted protected repository files and restore pre-existing source files.',
           artifacts: ['code-review.md', 'finding-ledger.json'],
           detectedAt: ctx.now(),
         },

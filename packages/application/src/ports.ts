@@ -151,6 +151,7 @@ export type {
   PushInput,
   ArtifactGuardPort,
 } from './ports/git-port.js';
+export { TrackedSourceDriftError, ProtectedArtifactCollisionError } from './ports/git-port.js';
 export type {
   ValidationPort,
   RunValidationInput,

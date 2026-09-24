@@ -2625,6 +2625,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           {
             executionPolicy: run.executionPolicy ?? config.executionPolicy ?? 'standard',
             promptsRoot: join(effectiveRepoRoot, 'prompts'),
+            automationRoot: effectiveRepoRoot,
+            targetRoot: repoRootPath,
             expectedBranch: `ai/issue-${run.issueNumber}`,
             baseBranch: run.baseBranch ?? opts.baseBranch ?? defaultBranch,
             ...(startCommitSha ? { startCommitSha } : {}),
@@ -3617,6 +3619,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       ...base,
       ...(resolveProfileForPhaseBound ? { resolveProfile: resolveProfileForPhaseBound } : {}),
       idFactory,
+      automationRoot: effectiveRepoRoot,
+      targetRoot,
       readWorktreeFile,
       deleteWorktreeFile,
       worktreeLifecycle: worktreeLifecycleAdapter,

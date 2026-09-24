@@ -27,7 +27,7 @@ import {
   type PhaseResultRegistryMap,
   type RegisteredPhase,
 } from '../../results/phase-registry.js';
-import type { ArtifactGuardPort } from '../../ports/git-port.js';
+import { type ArtifactGuardPort, ProtectedArtifactCollisionError } from '../../ports/git-port.js';
 import {
   takeCandidateSnapshot,
   evaluateCandidateDelta,
@@ -636,8 +636,26 @@ export async function runSingleShotAgentPhase(
     try {
       const gitGuard = ctx.git as Partial<ArtifactGuardPort>;
       if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
-        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.baseBranch);
+        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.baseBranch, ctx.startCommitSha);
       }
+    } catch (err) {
+      if (err instanceof ProtectedArtifactCollisionError) {
+        emit(`${String(config.phase)}.protected_artifact_collision`, 'error', err.message, {
+          paths: err.protectedPaths,
+          baselineCommit: err.startCommitSha,
+        });
+        const failure = buildFailure(
+          ctx,
+          config.phase as string,
+          'needs_human_review',
+          err.message,
+          false,
+          'Review the protected pre-existing repository file collision and restore the affected source file(s).',
+        );
+        emit(`${String(config.phase)}.failed`, 'error', failure.message);
+        return { outcome: 'needs_human_review', failure };
+      }
+      throw err;
     } finally {
       if (validationResult !== undefined && validationResult.trim() !== '') {
         await ctx.artifacts.write({

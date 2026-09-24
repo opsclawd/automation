@@ -6,6 +6,7 @@ import {
   orchestratorArtifactPathSet,
   isOrchestratorArtifactPath,
   isOrchestratorArtifactPattern,
+  isProtectedArtifactCandidate,
   orchestratorExcludePatterns,
   parseGitStatusPaths,
   uncommittedSourcePaths,
@@ -403,5 +404,33 @@ describe('getGitCommitExcludePathspecs', () => {
     const str = getGitCommitExcludePathspecsString();
     const pathspecs = getGitCommitExcludePathspecs();
     expect(str).toBe(pathspecs.join(' '));
+  });
+});
+
+describe('isProtectedArtifactCandidate', () => {
+  it('matches root orchestrator artifact paths', () => {
+    expect(isProtectedArtifactCandidate('validation.result')).toBe(true);
+    expect(isProtectedArtifactCandidate('architecture-review.md')).toBe(true);
+    expect(isProtectedArtifactCandidate('spec-review.md')).toBe(true);
+    expect(isProtectedArtifactCandidate('implementation-log.md')).toBe(true);
+  });
+
+  it('matches nested paths where basename matches an orchestrator artifact pattern', () => {
+    expect(isProtectedArtifactCandidate('prompts/architecture-review/architecture-review.md')).toBe(
+      true,
+    );
+    expect(isProtectedArtifactCandidate('prompts/review-fix/spec-review.md')).toBe(true);
+    expect(isProtectedArtifactCandidate('nested/sub/validation.result')).toBe(true);
+    expect(isProtectedArtifactCandidate('deep/path/to/fix.patch')).toBe(true);
+    expect(isProtectedArtifactCandidate('archive/step-history/implement-step-history-1.json')).toBe(
+      true,
+    );
+  });
+
+  it('returns false for regular source files', () => {
+    expect(isProtectedArtifactCandidate('src/index.ts')).toBe(false);
+    expect(isProtectedArtifactCandidate('packages/application/src/ports.ts')).toBe(false);
+    expect(isProtectedArtifactCandidate('README.md')).toBe(false);
+    expect(isProtectedArtifactCandidate('')).toBe(false);
   });
 });

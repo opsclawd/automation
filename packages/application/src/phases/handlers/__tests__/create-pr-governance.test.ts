@@ -35,6 +35,7 @@ async function buildContext(ctxOverrides?: Partial<PhaseHandlerContext>) {
   const git = new FakeGitPort();
   const headSha = '0123456789abcdef0123456789abcdef01234567';
   git.headByCwd.set('/tmp/wt', headSha);
+  git.remoteRefs.set('origin/main', 'base-sha');
 
   const events: OrchestratorEvent[] = [];
   const ctx = {

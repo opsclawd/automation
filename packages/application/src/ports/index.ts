@@ -35,7 +35,7 @@ export type {
   ArtifactGuardPort,
   GitRenamePair,
 } from './git-port.js';
-export { TrackedSourceDriftError } from './git-port.js';
+export { TrackedSourceDriftError, ProtectedArtifactCollisionError } from './git-port.js';
 export type {
   ValidationPort,
   RunValidationInput,

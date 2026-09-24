@@ -41,6 +41,8 @@ describe('SpecReviewHandler', () => {
       cwd: '/tmp/worktree',
       executionPolicy: 'standard',
       promptsRoot: '/tmp',
+      automationRoot: '/tmp/repo',
+      targetRoot: '/tmp/repo',
       startCommitSha: 'commit-sha-1132',
       expectedBranch: 'ai/issue-1132',
       artifacts,
@@ -689,5 +691,403 @@ Depends on #1132
 
     const res = await handler.run(ctx);
     expect(res.outcome).toBe('passed');
+  });
+
+  it('passes live worktree configuration to spec-review prompt and recognizes implement-time validation commands (issue #1270)', async () => {
+    const { ctx, artifacts, agent, handler } = setup();
+
+    const readWorktreeFileMock = vi
+      .fn()
+      .mockImplementation(async (cwd: string, relativePath: string) => {
+        if (cwd === '/tmp/worktree' && relativePath === '.ai-orchestrator.json') {
+          return JSON.stringify(
+            {
+              validation: {
+                commands: ['exit-gate:phase1', 'exit-gate:phase2', 'test:browser'],
+              },
+            },
+            null,
+            2,
+          );
+        }
+        return undefined;
+      });
+    ctx.readWorktreeFile = readWorktreeFileMock;
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: `# Issue 1270
+## Acceptance Criteria
+- [ ] AC-1: Implement core functionality
+- [ ] AC-2: Add tests for validation config
+- [ ] AC-3: validation.commands includes exit-gate:phase1, exit-gate:phase2, and test:browser
+`,
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design 1270',
+    });
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    agent.enqueue('spec-review', async () => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          requirements_checks: [
+            {
+              requirement_id: 'AC-1',
+              requirement: 'Implement core functionality',
+              result: 'PASS',
+              evidence: 'Implemented in core.ts',
+            },
+            {
+              requirement_id: 'AC-2',
+              requirement: 'Add tests for validation config',
+              result: 'PASS',
+              evidence: 'Tests added in test file',
+            },
+            {
+              requirement_id: 'AC-3',
+              requirement:
+                'validation.commands includes exit-gate:phase1, exit-gate:phase2, and test:browser',
+              result: 'PASS',
+              evidence:
+                'Verified .ai-orchestrator.json in live worktree contains exit-gate:phase1, exit-gate:phase2, and test:browser',
+            },
+          ],
+          findings: [],
+          summary: 'All requirements verified including live worktree validation commands',
+        }),
+      });
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const res = await handler.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    expect(readWorktreeFileMock).toHaveBeenCalledWith('/tmp/worktree', '.ai-orchestrator.json');
+
+    expect(mockRenderPrompt).toHaveBeenCalled();
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    expect(promptCtx?.vars.live_worktree_configuration).toContain('exit-gate:phase1');
+    expect(promptCtx?.vars.live_worktree_configuration).toContain('exit-gate:phase2');
+    expect(promptCtx?.vars.live_worktree_configuration).toContain('test:browser');
+    expect(promptCtx?.vars.live_worktree_configuration).toContain('Status: present');
+
+    const specJson = await artifacts.read(ctx.runUuid, 'spec-review.json');
+    const parsed = JSON.parse(specJson);
+    expect(parsed.verdict).toBe('PASS');
+    expect(parsed.findings).toEqual([]);
+    const ledgerRaw = await artifacts.read(ctx.runUuid, 'finding-ledger.json');
+    const ledger = JSON.parse(ledgerRaw);
+    expect(ledger.entries).toHaveLength(0);
+  });
+
+  it('provides explicit unavailable state when worktree config is missing or unreadable, and fails closed without silent approval (issue #1270)', async () => {
+    const { ctx, artifacts, agent, handler } = setup();
+
+    const readWorktreeFileMock = vi.fn().mockResolvedValue(undefined);
+    ctx.readWorktreeFile = readWorktreeFileMock;
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: `# Issue 1270\n## Acceptance Criteria\n- [ ] AC-1: Configure exit-gate in .ai-orchestrator.json`,
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design 1270',
+    });
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    agent.enqueue('spec-review', async () => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'FAIL',
+          requirements_checks: [
+            {
+              requirement_id: 'AC-1',
+              requirement: 'Configure exit-gate in .ai-orchestrator.json',
+              result: 'FAIL',
+              evidence: '.ai-orchestrator.json is missing in live worktree',
+            },
+          ],
+          findings: [
+            {
+              severity: 'critical',
+              files: ['.ai-orchestrator.json'],
+              evidence: 'Configuration file missing',
+              rationale: 'Required configuration was not found in worktree',
+              minimal_correction: 'Add .ai-orchestrator.json',
+              blocking: true,
+            },
+          ],
+          summary: 'Missing configuration',
+        }),
+      });
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const res = await handler.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    expect(readWorktreeFileMock).toHaveBeenCalledWith('/tmp/worktree', '.ai-orchestrator.json');
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    expect(promptCtx?.vars.live_worktree_configuration).toContain('Status: NOT PRESENT');
+
+    const specJson = await artifacts.read(ctx.runUuid, 'spec-review.json');
+    const parsed = JSON.parse(specJson);
+    expect(parsed.verdict).toBe('FAIL');
+    const ledgerRaw = await artifacts.read(ctx.runUuid, 'finding-ledger.json');
+    const ledger = JSON.parse(ledgerRaw);
+    expect(ledger.entries.length).toBeGreaterThanOrEqual(1);
+    expect(ledger.entries[0].evidence).toContain('.ai-orchestrator.json is missing');
+  });
+
+  it('recognizes validation commands supplied across inherited automation and local layers without false-positive missing command findings (findings F-28453ee5, F-9372c900, AC-2, AC-3)', async () => {
+    const { ctx, artifacts, agent, handler } = setup();
+
+    ctx.automationRoot = '/tmp/automation';
+    ctx.targetRoot = '/tmp/repo';
+    ctx.cwd = '/tmp/worktree';
+
+    const automationBase = JSON.stringify({
+      validation: {
+        commands: ['exit-gate:phase1', 'exit-gate:phase2'],
+      },
+    });
+    const targetBase = JSON.stringify({
+      validation: {
+        additionalCommands: ['test:browser'],
+      },
+    });
+    const targetLocal = JSON.stringify({
+      validation: {
+        additionalCommands: ['test:local-check'],
+      },
+    });
+
+    const readWorktreeFileMock = vi
+      .fn()
+      .mockImplementation(async (cwd: string, relativePath: string) => {
+        if (cwd === '/tmp/automation' && relativePath === '.ai-orchestrator.json')
+          return automationBase;
+        if (cwd === '/tmp/automation' && relativePath === '.ai-orchestrator.local.json')
+          return undefined;
+        if (cwd === '/tmp/worktree' && relativePath === '.ai-orchestrator.json') return targetBase;
+        if (cwd === '/tmp/worktree' && relativePath === '.ai-orchestrator.local.json')
+          return targetLocal;
+        return undefined;
+      });
+    ctx.readWorktreeFile = readWorktreeFileMock;
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: `# Issue 1270
+## Acceptance Criteria
+- [ ] AC-1: Inherited commands exit-gate:phase1 and exit-gate:phase2 satisfied
+- [ ] AC-2: Target command test:browser satisfied
+- [ ] AC-3: Local command test:local-check satisfied
+`,
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design 1270',
+    });
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    agent.enqueue('spec-review', async () => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          requirements_checks: [
+            {
+              requirement_id: 'AC-1',
+              requirement: 'Inherited commands exit-gate:phase1 and exit-gate:phase2 satisfied',
+              result: 'PASS',
+              evidence: 'Inherited from automation layer into effective validation configuration',
+            },
+            {
+              requirement_id: 'AC-2',
+              requirement: 'Target command test:browser satisfied',
+              result: 'PASS',
+              evidence: 'Present in target worktree configuration additionalCommands',
+            },
+            {
+              requirement_id: 'AC-3',
+              requirement: 'Local command test:local-check satisfied',
+              result: 'PASS',
+              evidence: 'Present in target local configuration additionalCommands',
+            },
+          ],
+          findings: [],
+          summary: 'All validation command requirements satisfied across supported layers',
+        }),
+      });
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const res = await handler.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    expect(readWorktreeFileMock).toHaveBeenCalledWith('/tmp/automation', '.ai-orchestrator.json');
+    expect(readWorktreeFileMock).toHaveBeenCalledWith('/tmp/worktree', '.ai-orchestrator.json');
+    expect(readWorktreeFileMock).toHaveBeenCalledWith(
+      '/tmp/worktree',
+      '.ai-orchestrator.local.json',
+    );
+    expect(readWorktreeFileMock).not.toHaveBeenCalledWith('/tmp/repo', expect.anything());
+
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    const liveConfigPrompt = promptCtx?.vars.live_worktree_configuration;
+
+    expect(liveConfigPrompt).toContain('exit-gate:phase1');
+    expect(liveConfigPrompt).toContain('exit-gate:phase2');
+    expect(liveConfigPrompt).toContain('test:browser');
+    expect(liveConfigPrompt).toContain('test:local-check');
+    expect(liveConfigPrompt).toContain('Automation Base');
+    expect(liveConfigPrompt).toContain('Target Base');
+    expect(liveConfigPrompt).toContain('Target Local');
+    expect(liveConfigPrompt).toContain('Status: present');
+
+    const specJson = await artifacts.read(ctx.runUuid, 'spec-review.json');
+    const parsed = JSON.parse(specJson);
+    expect(parsed.verdict).toBe('PASS');
+    expect(parsed.findings).toEqual([]);
+    const ledgerRaw = await artifacts.read(ctx.runUuid, 'finding-ledger.json');
+    const ledger = JSON.parse(ledgerRaw);
+    expect(ledger.entries).toHaveLength(0);
+  });
+
+  it('omits sensitive fields such as notifications.runWebhookUrl from live_worktree_configuration prompt variable (finding F-c7127793)', async () => {
+    const { ctx, artifacts, agent, handler } = setup();
+
+    const configWithSecrets = JSON.stringify({
+      notifications: {
+        runWebhookUrl: 'https://secret.example.com/webhook?token=super-secret-xyz-789',
+      },
+      agent: {
+        secretApiKey: 'hidden-secret-key-456',
+      },
+      validation: {
+        commands: ['exit-gate:phase1', 'test:browser'],
+      },
+    });
+
+    const readWorktreeFileMock = vi
+      .fn()
+      .mockImplementation(async (cwd: string, relativePath: string) => {
+        if (cwd === '/tmp/worktree' && relativePath === '.ai-orchestrator.json')
+          return configWithSecrets;
+        return undefined;
+      });
+    ctx.readWorktreeFile = readWorktreeFileMock;
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'issue.md',
+      contents: `# Issue 1270\n## Acceptance Criteria\n- [ ] AC-1: validation commands present\n`,
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design 1270',
+    });
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    agent.enqueue('spec-review', async () => {
+      await artifacts.write({
+        runId: ctx.runUuid,
+        relativePath: 'result.json',
+        contents: JSON.stringify({
+          verdict: 'PASS',
+          requirements_checks: [
+            {
+              requirement_id: 'AC-1',
+              requirement: 'validation commands present',
+              result: 'PASS',
+              evidence: 'Commands verified',
+            },
+          ],
+          findings: [],
+        }),
+      });
+      return {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/tmp/stdout',
+        stderrPath: '/tmp/stderr',
+        resultJsonPath: 'result.json',
+        contractViolations: [],
+        outcome: 'success',
+      };
+    });
+
+    const res = await handler.run(ctx);
+    expect(res.outcome).toBe('passed');
+
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    const liveConfigPrompt = promptCtx?.vars.live_worktree_configuration;
+
+    expect(liveConfigPrompt).toContain('exit-gate:phase1');
+    expect(liveConfigPrompt).toContain('test:browser');
+    expect(liveConfigPrompt).not.toContain('super-secret-xyz-789');
+    expect(liveConfigPrompt).not.toContain('hidden-secret-key-456');
+    expect(liveConfigPrompt).not.toContain('runWebhookUrl');
   });
 });

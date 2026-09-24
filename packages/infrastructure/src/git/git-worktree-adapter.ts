@@ -7,7 +7,10 @@ import type {
   ArtifactGuardPort,
   GitRenamePair,
 } from '@ai-sdlc/application/ports';
-import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
+import {
+  TrackedSourceDriftError,
+  ProtectedArtifactCollisionError,
+} from '@ai-sdlc/application/ports';
 import { git, GitFailedError, toLiteralGitPathspec } from './git-runner.js';
 
 export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
@@ -51,6 +54,8 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     } catch {
       // branch does not exist yet
     }
+
+    await mkdir(dirname(worktreePath), { recursive: true });
 
     if (branchExists) {
       await git(repoLocalBasePath, ['worktree', 'add', worktreePath, branch]);
@@ -395,11 +400,16 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     }
   }
 
-  async cleanOrchestratorArtifacts(cwd: string, baseBranch?: string): Promise<void> {
+  async cleanOrchestratorArtifacts(
+    cwd: string,
+    baseBranch?: string,
+    startCommitSha?: string,
+  ): Promise<void> {
     const parseZOutput = (output: string): string[] =>
       output
         .split('\0')
         .map((p) => p.replace(/\\/g, '/'))
+        .map((p) => p.replace(/^\/+/, ''))
         .map((p) => (p.endsWith('/') ? p.slice(0, -1) : p))
         .filter(Boolean);
 
@@ -467,12 +477,86 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
       }
     }
 
-    const removedCommittedArtifacts: string[] = [];
+    if (resolvedArtifacts.size === 0) {
+      return;
+    }
+
+    // 4. Resolve baseline files if startCommitSha is provided
+    let baselineFiles: Set<string> | undefined;
+    if (startCommitSha) {
+      try {
+        const files = await this.listFilesAtCommit(cwd, startCommitSha);
+        baselineFiles = new Set(
+          files.map((p) => p.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/$/, '')),
+        );
+      } catch {
+        baselineFiles = undefined;
+      }
+    }
+
+    // If baseline could not be resolved (missing or invalid startCommitSha):
+    // Fail closed: tracked candidates (in trackedSet or committedSet) cannot be deleted.
+    if (baselineFiles === undefined) {
+      const trackedCandidates = [...resolvedArtifacts].filter(
+        (p) => trackedSet.has(p) || committedSet.has(p),
+      );
+      if (trackedCandidates.length > 0) {
+        throw new ProtectedArtifactCollisionError(cwd, trackedCandidates.sort(), startCommitSha);
+      }
+      baselineFiles = new Set<string>();
+    }
+
+    const protectedArtifacts = new Set<string>();
+    const safeArtifacts = new Set<string>();
 
     for (const artifact of resolvedArtifacts) {
-      const artifactPath = join(cwd, artifact);
+      if (baselineFiles.has(artifact)) {
+        protectedArtifacts.add(artifact);
+      } else {
+        safeArtifacts.add(artifact);
+      }
+    }
 
-      // Check if tracked
+    // Check for collisions on protected artifacts: were any modified or deleted?
+    const collidingProtectedPaths: string[] = [];
+    if (protectedArtifacts.size > 0 && startCommitSha) {
+      for (const artifact of protectedArtifacts) {
+        let changedOrDeleted = false;
+        try {
+          const diffOutput = await git(cwd, [
+            'diff',
+            '-z',
+            startCommitSha,
+            '--name-only',
+            '--',
+            toLiteralGitPathspec(artifact),
+          ]);
+          if (parseZOutput(diffOutput).length > 0) {
+            changedOrDeleted = true;
+          }
+        } catch {
+          // Fallback if diff fails
+        }
+
+        if (!changedOrDeleted) {
+          try {
+            await access(join(cwd, artifact));
+          } catch {
+            changedOrDeleted = true;
+          }
+        }
+
+        if (changedOrDeleted) {
+          collidingProtectedPaths.push(artifact);
+        }
+      }
+    }
+
+    // 5. Clean only safe (non-protected) artifacts
+    const removedCommittedArtifacts: string[] = [];
+
+    for (const artifact of safeArtifacts) {
+      const artifactPath = join(cwd, artifact);
       const isTracked = trackedSet.has(artifact);
 
       if (baseBranch && committedSet.has(artifact)) {
@@ -495,7 +579,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
       }
     }
 
-    // 4. Commit the removals if any committed artifacts were removed
+    // 6. Commit removals if any committed safe artifacts were removed
     if (removedCommittedArtifacts.length > 0) {
       try {
         await git(cwd, [
@@ -516,6 +600,15 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
           `Failed to commit orchestrator artifact removal: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+    }
+
+    // 7. If any protected artifacts collided, fail closed
+    if (collidingProtectedPaths.length > 0) {
+      throw new ProtectedArtifactCollisionError(
+        cwd,
+        collidingProtectedPaths.sort(),
+        startCommitSha,
+      );
     }
   }
 

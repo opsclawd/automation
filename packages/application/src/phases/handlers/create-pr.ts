@@ -2,7 +2,7 @@ import type { PhaseName, Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError, type Artifact } from '../../ports/artifact-store.js';
-import type { ArtifactGuardPort } from '../../ports/git-port.js';
+import { type ArtifactGuardPort, ProtectedArtifactCollisionError } from '../../ports/git-port.js';
 import {
   uncommittedSourcePaths,
   formatDirtyPaths,
@@ -364,20 +364,86 @@ export class CreatePrHandler implements PhaseHandler {
     const headBranch = this.opts.headBranch(ctx);
     const baseBranch = ctx.baseBranch ?? 'main';
 
+    const fetchBranch = baseBranch.startsWith('origin/')
+      ? baseBranch.slice('origin/'.length)
+      : baseBranch;
+    const remoteBaseRef = baseBranch.startsWith('origin/') ? baseBranch : `origin/${baseBranch}`;
+
+    try {
+      await ctx.git.fetch(ctx.cwd, 'origin', fetchBranch);
+    } catch (e) {
+      const msg = `failed to fetch base branch ${fetchBranch} from origin: ${(e as Error).message}`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        true,
+        'Verify network and git remote state, then resume create-pr.',
+        writtenArtifacts,
+      );
+    }
+
+    let resolvedBaseRef: string | undefined;
+    try {
+      resolvedBaseRef = await ctx.git.resolveRef(ctx.cwd, remoteBaseRef);
+    } catch (e) {
+      const msg = `failed to resolve base ref ${remoteBaseRef}: ${(e as Error).message}`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        true,
+        'Verify remote tracking refs and git repository state, then resume create-pr.',
+        writtenArtifacts,
+      );
+    }
+
+    if (!resolvedBaseRef) {
+      const msg = `failed to resolve base ref ${remoteBaseRef}: ref not found`;
+      emit('create_pr.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        true,
+        'Verify remote tracking refs and git repository state, then resume create-pr.',
+        writtenArtifacts,
+      );
+    }
+
+    const baseRef = resolvedBaseRef;
+
     // Clean up orchestrator artifacts now that the PR body has been assembled.
-    // Non-fatal: cleanup failure does not block the run outcome.
+    // Non-fatal: cleanup failure does not block the run outcome, EXCEPT for
+    // protected artifact collisions which fail closed to human review.
     try {
       const gitGuard = ctx.git as Partial<ArtifactGuardPort>;
       if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
-        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, baseBranch);
+        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, baseRef, ctx.startCommitSha);
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof ProtectedArtifactCollisionError) {
+        const msg = err.message;
+        emit('create_pr.protected_artifact_collision', 'error', msg, {
+          paths: err.protectedPaths,
+          baselineCommit: err.startCommitSha,
+        });
+        emit('create_pr.failed', 'error', msg);
+        return this._needsHumanReview(
+          ctx,
+          msg,
+          'Review the protected pre-existing repository file collision and restore the affected source file(s).',
+          writtenArtifacts,
+        );
+      }
       // ignore
     }
 
     let fullyMerged = false;
     try {
-      fullyMerged = await ctx.git.isAncestor(ctx.cwd, headBranch, baseBranch);
+      fullyMerged = await ctx.git.isAncestor(ctx.cwd, headBranch, baseRef);
     } catch (e) {
       const msg = `failed to check branch ancestry for ${headBranch} against ${baseBranch}: ${(e as Error).message}`;
       emit('create_pr.failed', 'error', msg);
@@ -405,9 +471,10 @@ export class CreatePrHandler implements PhaseHandler {
     }
 
     // ── Stage 3b: Branch diff inspection — verify no unpermitted protected files were committed ──
+
     if (typeof ctx.git.changedFiles === 'function') {
       try {
-        const changedInBranch = await ctx.git.changedFiles(ctx.cwd, baseBranch);
+        const changedInBranch = await ctx.git.changedFiles(ctx.cwd, baseRef);
         const allowedSet = new Set((ctx.allowProtectedPaths ?? []).map(normalizeTaskPath));
         const unapprovedCommittedProtected: string[] = [];
         for (const p of changedInBranch) {
@@ -423,7 +490,7 @@ export class CreatePrHandler implements PhaseHandler {
             }
             if (p === '.ai-orchestrator.json') {
               const [baseContent, headContent] = await Promise.all([
-                ctx.git.fileContent(ctx.cwd, baseBranch, p).catch(() => undefined),
+                ctx.git.fileContent(ctx.cwd, baseRef, p).catch(() => undefined),
                 ctx.git.fileContent(ctx.cwd, 'HEAD', p).catch(() => undefined),
               ]);
               if (
@@ -524,10 +591,8 @@ export class CreatePrHandler implements PhaseHandler {
 
       for (const p of candidateCommitted) {
         const headContent = await ctx.git.fileContent(ctx.cwd, headSha, p);
-        const baseContent = await ctx.git
-          .fileContent(ctx.cwd, baseBranch, p)
-          .catch(() => undefined);
-        // If file exists in baseBranch with identical content, tolerate as pre-existing operator-authored artifact
+        const baseContent = await ctx.git.fileContent(ctx.cwd, baseRef, p).catch(() => undefined);
+        // If file exists in baseRef with identical content, tolerate as pre-existing operator-authored artifact
         if (baseContent !== undefined && baseContent === headContent) {
           continue;
         }

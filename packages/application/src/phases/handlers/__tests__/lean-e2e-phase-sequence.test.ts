@@ -72,6 +72,7 @@ describe('Lean End-to-End Phase Sequence (Issue #1103)', () => {
     const events: OrchestratorEvent[] = [];
 
     git.headByCwd.set(cwd, baseSha);
+    git.remoteRefs.set('origin/main', baseSha);
     git.currentBranchByCwd.set(cwd, 'ai/issue-1103');
 
     github.issues.set('opsclawd/automation/1103', {

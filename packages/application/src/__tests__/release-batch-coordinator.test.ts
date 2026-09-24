@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   RepositoryId,
@@ -1347,17 +1348,25 @@ describe('ReleaseBatchCoordinator', () => {
 
       // Now prepare git for integrateSourceBranch:
       const integratedSha = 'sha-commit-integrated-merge';
-      fakeGit.headByCwd.set(defaultRepo.localBasePath, integratedSha);
-      // Simulate remote updated on push
-      fakeGit.push = vi.fn(async () => {
-        fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', integratedSha);
-      });
+      fakeGit.defaultMergeHead = integratedSha;
       fakeGit.ancestorResults.set(`${driftedSourceSha}|${integratedSha}`, true);
       fakeGit.treeShaResults.set(integratedSha, 'tree-integrated');
 
       const integrated = await coordinator.integrateSourceBranch(batchId);
       expect(integrated.success).toBe(true);
-      expect(integrated.newReleaseSha).toBe(integratedSha);
+      if (integrated.success && integrated.outcome === 'merged') {
+        expect(integrated.outcome).toBe('merged');
+        expect(integrated.sourceBranch).toBe('main');
+        expect(integrated.releaseBranch).toBe('release/2026-09-11-batch-five');
+        expect(integrated.newReleaseSha).toBe(integratedSha);
+      }
+
+      expect(fakeGit.createWorktreeCalls).toHaveLength(1);
+      expect(fakeGit.createWorktreeCalls[0]?.branch).toBe('release/2026-09-11-batch-five');
+      expect(fakeGit.createWorktreeCalls[0]?.worktreePath).toContain('.ai-worktrees');
+      expect(fakeGit.mergeBranchCalls).toHaveLength(1);
+      expect(fakeGit.mergeBranchCalls[0]?.sourceRef).toBe('origin/main');
+      expect(fakeGit.removeWorktreeCalls).toHaveLength(1);
 
       const saved = releaseBatchRepository.findById(batchId)!;
       expect(saved.status).toBe('awaiting_manual_test');
@@ -1370,6 +1379,531 @@ describe('ReleaseBatchCoordinator', () => {
       expect(driftIntegratedEvent).toBeDefined();
       expect(driftIntegratedEvent?.runUuid).toBe(saved.items[4]?.runUuid);
       expect(driftIntegratedEvent?.runUuid).not.toBe(batchId);
+    });
+
+    it('integrateSourceBranch returns already_integrated when source branch is already contained in release branch', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const finalSha = 'sha-commit-105';
+      const containedSourceSha = 'sha-main-ancestor';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', finalSha);
+      fakeGit.remoteRefs.set('origin/main', containedSourceSha);
+      fakeGit.ancestorResults.set(`${containedSourceSha}|${finalSha}`, true);
+
+      // Batch is blocked on source_branch_advanced
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = { ...batch, status: 'blocked', blockedReason: 'source_branch_advanced' };
+      releaseBatchRepository.update(batch);
+
+      fakeGit.createWorktreeCalls = [];
+      fakeGit.mergeBranchCalls = [];
+      fakeGit.pushes = [];
+      eventBus.published = [];
+
+      const result = await coordinator.integrateSourceBranch(batchId);
+      expect(result.success).toBe(true);
+      if (result.success && result.outcome === 'already_integrated') {
+        expect(result.outcome).toBe('already_integrated');
+        expect(result.sourceBranch).toBe('main');
+        expect(result.releaseBranch).toBe('release/2026-09-11-batch-five');
+        expect(result.releaseSha).toBe(finalSha);
+        expect((result as Record<string, unknown>)['newReleaseSha']).toBeUndefined();
+      }
+
+      // Assert no worktree, merge, or push was performed
+      expect(fakeGit.createWorktreeCalls).toHaveLength(0);
+      expect(fakeGit.mergeBranchCalls).toHaveLength(0);
+      expect(fakeGit.pushes).toHaveLength(0);
+
+      // Assert no integration event was published
+      const driftIntegratedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.source_drift_integrated',
+      );
+      expect(driftIntegratedEvent).toBeUndefined();
+
+      // Assert batch was unblocked
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).not.toBe('blocked');
+    });
+
+    it('integrateSourceBranch prevents false success when remote release ref does not advance after push', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const releaseSha = 'sha-commit-105';
+      const driftedSourceSha = 'sha-main-drifted-999';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', releaseSha);
+      fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${releaseSha}`, false);
+
+      // Model push that fails to advance remote release SHA
+      fakeGit.headByCwd.set(defaultRepo.localBasePath, releaseSha);
+      fakeGit.autoAdvanceOnMerge = false;
+      fakeGit.push = vi.fn().mockResolvedValue(undefined);
+
+      eventBus.published = [];
+      fakeGit.createWorktreeCalls = [];
+      fakeGit.removeWorktreeCalls = [];
+
+      const result = await coordinator.integrateSourceBranch(batchId);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Remote release branch head did not advance after push');
+
+      // Assert cleanup occurred
+      expect(fakeGit.removeWorktreeCalls).toHaveLength(1);
+
+      // Assert no integration event was published
+      const driftIntegratedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.source_drift_integrated',
+      );
+      expect(driftIntegratedEvent).toBeUndefined();
+    });
+
+    it('integrateSourceBranch prevents false success when post-push ancestry check fails', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const releaseSha = 'sha-commit-105';
+      const driftedSourceSha = 'sha-main-drifted-999';
+      const advancedSha = 'sha-commit-advanced-999';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', releaseSha);
+      fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${releaseSha}`, false);
+
+      // Worktree advances to advancedSha
+      fakeGit.defaultMergeHead = advancedSha;
+      fakeGit.push = vi.fn(async () => {
+        fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', advancedSha);
+        fakeGit.resolveRefResults.set('origin/release/2026-09-11-batch-five', advancedSha);
+      });
+      // But ancestry check fails
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${advancedSha}`, false);
+
+      eventBus.published = [];
+      fakeGit.removeWorktreeCalls = [];
+
+      const result = await coordinator.integrateSourceBranch(batchId);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('is not an ancestor of updated release head');
+
+      // Worktree must be cleaned up
+      expect(fakeGit.removeWorktreeCalls).toHaveLength(1);
+
+      // No event published
+      const driftIntegratedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.source_drift_integrated',
+      );
+      expect(driftIntegratedEvent).toBeUndefined();
+    });
+
+    it('integrateSourceBranch fails on merge conflict and cleans up worktree without push or event', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const releaseSha = 'sha-commit-105';
+      const driftedSourceSha = 'sha-main-drifted-999';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', releaseSha);
+      fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${releaseSha}`, false);
+
+      fakeGit.mergeBranchResults.set('origin/main', {
+        success: false,
+        conflict: true,
+        error: 'Automatic merge failed; fix conflicts and then commit the result.',
+      });
+
+      fakeGit.pushes = [];
+      eventBus.published = [];
+      fakeGit.removeWorktreeCalls = [];
+
+      const result = await coordinator.integrateSourceBranch(batchId);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Automatic merge failed');
+
+      // Worktree was removed
+      expect(fakeGit.removeWorktreeCalls).toHaveLength(1);
+      // No push was executed
+      expect(fakeGit.pushes).toHaveLength(0);
+      // No event was published
+      const driftIntegratedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.source_drift_integrated',
+      );
+      expect(driftIntegratedEvent).toBeUndefined();
+    });
+
+    it('integrateSourceBranch fails when worktree branch mismatches batch release branch', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const releaseSha = 'sha-commit-105';
+      const driftedSourceSha = 'sha-main-drifted-999';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', releaseSha);
+      fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${releaseSha}`, false);
+
+      // Return a mismatched branch
+      const origCurrentBranch = fakeGit.currentBranch.bind(fakeGit);
+      fakeGit.currentBranch = vi.fn().mockResolvedValue('wrong-branch');
+
+      fakeGit.removeWorktreeCalls = [];
+      const result = await coordinator.integrateSourceBranch(batchId);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Worktree branch mismatch');
+      expect(fakeGit.removeWorktreeCalls).toHaveLength(1);
+
+      fakeGit.currentBranch = origCurrentBranch;
+    });
+
+    it('integrateSourceBranch fails when worktree cleanup fails after push', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const releaseSha = 'sha-commit-105';
+      const driftedSourceSha = 'sha-main-drifted-999';
+      const integratedSha = 'sha-integrated-cleanup-fail';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', releaseSha);
+      fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${releaseSha}`, false);
+      fakeGit.defaultMergeHead = integratedSha;
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${integratedSha}`, true);
+
+      fakeGit.removeWorktree = vi
+        .fn()
+        .mockRejectedValue(new Error('EPERM: operation not permitted'));
+
+      eventBus.published = [];
+      const result = await coordinator.integrateSourceBranch(batchId);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Failed to remove worktree');
+
+      // Invariant: integration event must NOT be published if cleanup invariant fails
+      const driftIntegratedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.source_drift_integrated',
+      );
+      expect(driftIntegratedEvent).toBeUndefined();
+    });
+
+    it('integrateSourceBranch tolerates already absent worktree path during cleanup', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const releaseSha = 'sha-commit-105';
+      const driftedSourceSha = 'sha-main-drifted-999';
+      const integratedSha = 'sha-integrated-absent-ok';
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', releaseSha);
+      fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${releaseSha}`, false);
+      fakeGit.defaultMergeHead = integratedSha;
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${integratedSha}`, true);
+
+      // Simulate removeWorktree throwing 'no worktree ...' because already removed
+      fakeGit.removeWorktree = vi
+        .fn()
+        .mockRejectedValue(new Error('no worktree /path/to/worktree'));
+
+      const result = await coordinator.integrateSourceBranch(batchId);
+      expect(result.success).toBe(true);
+      if (result.success && result.outcome === 'merged') {
+        expect(result.outcome).toBe('merged');
+        expect(result.newReleaseSha).toBe(integratedSha);
+      }
+    });
+
+    it('integrateSourceBranch evaluates fresh remote-tracking refs, ignoring stale local branch refs', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const staleLocalReleaseSha = 'sha-local-stale-release';
+      const freshRemoteReleaseSha = 'sha-remote-fresh-release';
+      const freshRemoteSourceSha = 'sha-remote-fresh-source';
+      const staleLocalSourceSha = 'sha-local-stale-source';
+
+      // Local branches have stale refs
+      fakeGit.resolveRefResults.set('release/2026-09-11-batch-five', staleLocalReleaseSha);
+      fakeGit.resolveRefResults.set('main', staleLocalSourceSha);
+
+      // Remote tracking refs have fresh refs
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', freshRemoteReleaseSha);
+      fakeGit.remoteRefs.set('origin/main', freshRemoteSourceSha);
+
+      // Fresh remote source IS contained by fresh remote release
+      fakeGit.ancestorResults.set(`${freshRemoteSourceSha}|${freshRemoteReleaseSha}`, true);
+      // Stale local source is NOT contained
+      fakeGit.ancestorResults.set(`${staleLocalSourceSha}|${staleLocalReleaseSha}`, false);
+
+      const result = await coordinator.integrateSourceBranch(batchId);
+      expect(result.success).toBe(true);
+      if (result.success && result.outcome === 'already_integrated') {
+        expect(result.outcome).toBe('already_integrated');
+        expect(result.releaseSha).toBe(freshRemoteReleaseSha);
+      }
+    });
+
+    it('integrateSourceBranch fails when source branch advances during merge/push and refetches fresh source tip', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const initialReleaseSha = 'sha-commit-105';
+      const initialSourceSha = 'sha-main-drifted-999';
+      const mergedReleaseSha = 'sha-commit-integrated-merge';
+      const racingSourceSha = 'sha-main-racing-drift-1000';
+
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', initialReleaseSha);
+      fakeGit.remoteRefs.set('origin/main', initialSourceSha);
+      fakeGit.ancestorResults.set(`${initialSourceSha}|${initialReleaseSha}`, false);
+
+      fakeGit.defaultMergeHead = mergedReleaseSha;
+
+      // During push, origin/main races ahead
+      fakeGit.push = vi.fn(async () => {
+        fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', mergedReleaseSha);
+        fakeGit.resolveRefResults.set('origin/release/2026-09-11-batch-five', mergedReleaseSha);
+        fakeGit.remoteRefs.set('origin/main', racingSourceSha);
+        fakeGit.resolveRefResults.set('origin/main', racingSourceSha);
+      });
+
+      // Ancestry from initial source to merged release would be true, but racing source is NOT an ancestor
+      fakeGit.ancestorResults.set(`${initialSourceSha}|${mergedReleaseSha}`, true);
+      fakeGit.ancestorResults.set(`${racingSourceSha}|${mergedReleaseSha}`, false);
+
+      eventBus.published = [];
+      fakeGit.removeWorktreeCalls = [];
+
+      const result = await coordinator.integrateSourceBranch(batchId);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('is not an ancestor of updated release head');
+
+      // Assert cleanup occurred
+      expect(fakeGit.removeWorktreeCalls).toHaveLength(1);
+
+      // Assert no integration event was published
+      const driftIntegratedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.source_drift_integrated',
+      );
+      expect(driftIntegratedEvent).toBeUndefined();
+    });
+
+    it('integrateSourceBranch confines worktree path under .ai-worktrees when batch ID contains path traversal', async () => {
+      const traversalBatchId = ReleaseBatchId('../../traversal-batch');
+      const batch = createReleaseBatch({
+        id: traversalBatchId,
+        repoId: RepositoryId('test-org/test-repo'),
+        sourceBranch: 'main',
+        sourceStartSha: 'start-sha',
+        releaseBranch: 'release/traversal-batch',
+        createdAt: t1,
+        items: [
+          {
+            position: 1,
+            issueNumber: 1,
+            runUuid: '550e8400-e29b-41d4-a716-446655440000',
+            status: 'merged',
+          },
+        ],
+      });
+      releaseBatchRepository.insert(batch);
+
+      const releaseSha = 'sha-commit-105';
+      const driftedSourceSha = 'sha-main-drifted-999';
+      fakeGit.remoteRefs.set('origin/release/traversal-batch', releaseSha);
+      fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${releaseSha}`, false);
+
+      const integratedSha = 'sha-commit-integrated-merge';
+      fakeGit.defaultMergeHead = integratedSha;
+      fakeGit.ancestorResults.set(`${driftedSourceSha}|${integratedSha}`, true);
+
+      fakeGit.createWorktreeCalls = [];
+      fakeGit.currentBranchByCwd.clear();
+
+      // Ensure currentBranch returns release branch for any worktree path
+      const originalCurrentBranch = fakeGit.currentBranch.bind(fakeGit);
+      fakeGit.currentBranch = vi.fn().mockImplementation(async (cwd: string) => {
+        if (cwd.includes('.ai-worktrees')) return 'release/traversal-batch';
+        return originalCurrentBranch(cwd);
+      });
+
+      const result = await coordinator.integrateSourceBranch(traversalBatchId);
+      expect(result.success).toBe(true);
+
+      expect(fakeGit.createWorktreeCalls).toHaveLength(1);
+      const createdPath = fakeGit.createWorktreeCalls[0]!.worktreePath;
+      const worktreesRoot = path.resolve(defaultRepo.localBasePath, '.ai-worktrees');
+      const rel = path.relative(worktreesRoot, createdPath);
+      expect(rel.startsWith('..')).toBe(false);
+      expect(path.isAbsolute(rel)).toBe(false);
+      expect(createdPath.startsWith(worktreesRoot)).toBe(true);
+    });
+
+    it('reconcile allows source branch advancement when commit matches approved promotion PR and persists promotionCommitSha', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+      const promotionSha = 'sha-promoted-commit-789';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'approved';
+      batch.promotionPrNumber = 42;
+      batch.promotionCommitSha = undefined;
+      releaseBatchRepository.update(batch);
+
+      // GitHub reports PR is merged with mergeCommitSha
+      fakeGitHub.mergeReadiness.set('test-org/test-repo/42', {
+        prNumber: 42,
+        state: 'merged',
+        isMerged: true,
+        ciStatus: 'passed',
+        mergeStateStatus: 'clean',
+        baseRefName: batch.sourceBranch,
+        autoMergeEnabled: true,
+        mergeCommitSha: promotionSha,
+      });
+
+      // Remote source branch advanced to the promotion merge commit
+      fakeGit.remoteRefs.set('origin/' + batch.sourceBranch, promotionSha);
+      fakeGit.remoteRefs.set('origin/' + batch.releaseBranch, candidateSha);
+      fakeGit.ancestorResults.set(`${promotionSha}|${candidateSha}`, false);
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).not.toContain('blocked');
+      expect(result.actions).not.toContain('approval_invalidated');
+      expect(result.actions).not.toContain('source_drift_detected');
+      expect(result.batchStatus).toBe('approved');
+
+      // Batch now has promotionCommitSha persisted
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.promotionCommitSha).toBe(promotionSha);
+      expect(saved.status).toBe('approved');
+
+      // Now source branch advances further to new drift
+      const laterDriftSha = 'sha-main-later-drift-999';
+      fakeGit.remoteRefs.set('origin/' + batch.sourceBranch, laterDriftSha);
+      fakeGit.ancestorResults.set(`${laterDriftSha}|${candidateSha}`, false);
+
+      const resultAfterDrift = await coordinator.reconcile(batchId);
+      expect(resultAfterDrift.actions).toContain('blocked');
+      expect(resultAfterDrift.actions).toContain('approval_invalidated');
+      expect(resultAfterDrift.actions).toContain('source_drift_detected');
+      expect(resultAfterDrift.batchStatus).toBe('blocked');
+
+      const savedBlocked = releaseBatchRepository.findById(batchId)!;
+      expect(savedBlocked.status).toBe('blocked');
+      expect(savedBlocked.blockedReason).toBe('source_branch_advanced');
+    });
+
+    it('reconcile handles merged promotion PR without mergeCommitSha by using resolved remote source tip', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+      const resolvedSourceTip = 'sha-source-tip-888';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'approved';
+      batch.promotionPrNumber = 43;
+      batch.promotionCommitSha = undefined;
+      releaseBatchRepository.update(batch);
+
+      // GitHub reports PR is merged without mergeCommitSha
+      fakeGitHub.mergeReadiness.set('test-org/test-repo/43', {
+        prNumber: 43,
+        state: 'merged',
+        isMerged: true,
+        ciStatus: 'passed',
+        mergeStateStatus: 'clean',
+        baseRefName: batch.sourceBranch,
+        autoMergeEnabled: true,
+      });
+
+      fakeGit.remoteRefs.set('origin/' + batch.sourceBranch, resolvedSourceTip);
+      fakeGit.remoteRefs.set('origin/' + batch.releaseBranch, candidateSha);
+      fakeGit.ancestorResults.set(`${resolvedSourceTip}|${candidateSha}`, false);
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).not.toContain('blocked');
+      expect(result.actions).not.toContain('approval_invalidated');
+      expect(result.batchStatus).toBe('approved');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.promotionCommitSha).toBe(resolvedSourceTip);
+    });
+
+    it('reconcile blocks with source_branch_advanced when PR readiness reports unmerged even if stale promotionCommitSha matches source tip', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+      const stalePromotionSha = 'sha-stale-promoted-789';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'approved';
+      batch.promotionPrNumber = 44;
+      batch.promotionCommitSha = stalePromotionSha;
+      releaseBatchRepository.update(batch);
+
+      // GitHub reports PR is NOT merged (e.g. open or draft)
+      fakeGitHub.mergeReadiness.set('test-org/test-repo/44', {
+        prNumber: 44,
+        state: 'open',
+        isMerged: false,
+        ciStatus: 'passed',
+        mergeStateStatus: 'clean',
+        baseRefName: batch.sourceBranch,
+        autoMergeEnabled: false,
+      });
+
+      // Remote source matches the stale promotionCommitSha, but PR is not merged
+      fakeGit.remoteRefs.set('origin/' + batch.sourceBranch, stalePromotionSha);
+      fakeGit.remoteRefs.set('origin/' + batch.releaseBranch, candidateSha);
+      fakeGit.ancestorResults.set(`${stalePromotionSha}|${candidateSha}`, false);
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('blocked');
+      expect(result.actions).toContain('approval_invalidated');
+      expect(result.actions).toContain('source_drift_detected');
+      expect(result.batchStatus).toBe('blocked');
+
+      const savedBlocked = releaseBatchRepository.findById(batchId)!;
+      expect(savedBlocked.status).toBe('blocked');
+      expect(savedBlocked.blockedReason).toBe('source_branch_advanced');
+    });
+
+    it('reconcile blocks with source_branch_advanced when PR readiness lookup fails even if stale promotionCommitSha matches source tip', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+      const stalePromotionSha = 'sha-stale-promoted-789';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'approved';
+      batch.promotionPrNumber = 45;
+      batch.promotionCommitSha = stalePromotionSha;
+      releaseBatchRepository.update(batch);
+
+      // GitHub throws an error (e.g. network failure)
+      fakeGitHub.getPrMergeReadiness = vi
+        .fn()
+        .mockRejectedValue(new Error('GitHub API unavailable'));
+
+      // Remote source matches the stale promotionCommitSha
+      fakeGit.remoteRefs.set('origin/' + batch.sourceBranch, stalePromotionSha);
+      fakeGit.remoteRefs.set('origin/' + batch.releaseBranch, candidateSha);
+      fakeGit.ancestorResults.set(`${stalePromotionSha}|${candidateSha}`, false);
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('blocked');
+      expect(result.actions).toContain('approval_invalidated');
+      expect(result.actions).toContain('source_drift_detected');
+      expect(result.batchStatus).toBe('blocked');
+
+      const savedBlocked = releaseBatchRepository.findById(batchId)!;
+      expect(savedBlocked.status).toBe('blocked');
+      expect(savedBlocked.blockedReason).toBe('source_branch_advanced');
     });
 
     it('reconciles promotion PR merge and marks batch completed', async () => {
@@ -1460,11 +1994,7 @@ describe('ReleaseBatchCoordinator', () => {
       fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', finalSha);
       fakeGit.remoteRefs.set('origin/main', driftedSourceSha);
       fakeGit.ancestorResults.set(`${driftedSourceSha}|${finalSha}`, false);
-      fakeGit.ancestorResults.set(`${driftedSourceSha}|${integratedSha}`, true);
-      fakeGit.headByCwd.set(defaultRepo.localBasePath, integratedSha);
-      fakeGit.push = vi.fn(async () => {
-        fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', integratedSha);
-      });
+      fakeGit.defaultMergeHead = integratedSha;
       fakeGit.treeShaResults.set(integratedSha, 'tree-integrated');
 
       for (let pos = 1; pos <= 5; pos++) {

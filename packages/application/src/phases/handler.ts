@@ -29,6 +29,8 @@ export interface PhaseHandlerContext {
    */
   executionPolicy?: ExecutionPolicy;
   promptsRoot?: string;
+  automationRoot?: string;
+  targetRoot?: string;
   startCommitSha?: string;
   expectedBranch?: string;
   baseBranch?: string;
@@ -99,6 +101,8 @@ export type PhaseHandlerContextFactory = (
     PhaseHandlerContext,
     | 'executionPolicy'
     | 'promptsRoot'
+    | 'automationRoot'
+    | 'targetRoot'
     | 'startCommitSha'
     | 'expectedBranch'
     | 'baseBranch'
@@ -121,6 +125,8 @@ export type PhaseHandlerContextFactory = (
       PhaseHandlerContext,
       | 'executionPolicy'
       | 'promptsRoot'
+      | 'automationRoot'
+      | 'targetRoot'
       | 'startCommitSha'
       | 'expectedBranch'
       | 'baseBranch'

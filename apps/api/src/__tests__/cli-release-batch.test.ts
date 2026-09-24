@@ -341,10 +341,13 @@ describe('CLI release-batch command', () => {
     expect(fullStdout).toContain('Auto-merge Requested: yes');
   });
 
-  it('invokes integrateSourceBranch on coordinator and writes formatted output', async () => {
+  it('invokes integrateSourceBranch on coordinator and writes formatted output when merged', async () => {
     const mockCoordinator = {
       integrateSourceBranch: vi.fn().mockResolvedValue({
         success: true,
+        outcome: 'merged',
+        sourceBranch: 'main',
+        releaseBranch: 'release/2026-09-22-batch-1',
         newReleaseSha: 'sha-integrated-head',
       }),
     };
@@ -366,8 +369,44 @@ describe('CLI release-batch command', () => {
     expect(mockCoordinator.integrateSourceBranch).toHaveBeenCalledWith(ReleaseBatchId('batch-001'));
 
     const fullStdout = stdoutOutput.join('');
-    expect(fullStdout).toContain('Source branch integrated into release batch batch-001:');
+    expect(fullStdout).toContain(
+      'Merged source branch main into release branch release/2026-09-22-batch-1 (New Release Head: sha-integrated-head)',
+    );
     expect(fullStdout).toContain('New Release Head: sha-integrated-head');
+  });
+
+  it('invokes integrateSourceBranch on coordinator and writes explicit no-op output when already integrated', async () => {
+    const mockCoordinator = {
+      integrateSourceBranch: vi.fn().mockResolvedValue({
+        success: true,
+        outcome: 'already_integrated',
+        sourceBranch: 'main',
+        releaseBranch: 'release/2026-09-22-batch-1',
+        releaseSha: 'sha-current-head',
+      }),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        releaseBatchCoordinator:
+          mockCoordinator as unknown as import('@ai-sdlc/application').ReleaseBatchCoordinator,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['integrate-source', '--batch-id', 'batch-001'], { from: 'user' });
+
+    expect(mockCoordinator.integrateSourceBranch).toHaveBeenCalledWith(ReleaseBatchId('batch-001'));
+
+    const fullStdout = stdoutOutput.join('');
+    expect(fullStdout).toContain(
+      'Source branch is already integrated into release branch (no merge required)',
+    );
+    expect(fullStdout).not.toContain('New Release Head');
   });
 
   it('prints error and exits with code 1 on missing issues', async () => {

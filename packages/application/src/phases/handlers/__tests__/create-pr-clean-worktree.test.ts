@@ -35,6 +35,7 @@ describe('CreatePrHandler clean-worktree gate', () => {
 
     git = new FakeGitPort();
     git.headByCwd.set('/tmp/wt', 'base-sha');
+    git.remoteRefs.set('origin/main', 'base-sha');
 
     events = [];
     ctx = {
@@ -467,6 +468,260 @@ describe('CreatePrHandler clean-worktree gate', () => {
       }
       expect(git.pushes).toEqual([]);
       expect(github.createdPrInputs).toEqual([]);
+    });
+
+    it('fetches and resolves origin/<baseBranch> before diff inspection, avoiding false positives from earlier merged batch items', async () => {
+      git.statusByCwd.set('/tmp/wt', '');
+      // Stale local base branch diff contains .ai-orchestrator.json merged by earlier batch item
+      git.changedFilesResults.set('main|HEAD', ['.ai-orchestrator.json']);
+      // Remote tracking ref advances to 0e276ecb after fetch
+      git.fetchRemoteRefs.set('origin/main', '0e276ecb');
+      // Refreshed remote baseline diff has no modifications
+      git.changedFilesResults.set('origin/main|HEAD', []);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.fetchCalls).toContainEqual({
+        cwd: '/tmp/wt',
+        remote: 'origin',
+        ref: 'main',
+      });
+      expect(git.changedFilesCalls).toContainEqual({
+        cwd: '/tmp/wt',
+        base: '0e276ecb',
+      });
+      expect(git.pushes).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+    });
+
+    it('fetches and resolves origin/<baseBranch> for custom release branches', async () => {
+      const releaseBranch = 'release/2026-09-19-batch-63-64-65-66-67-68-69';
+      ctx = {
+        ...ctx,
+        baseBranch: releaseBranch,
+      };
+      git.statusByCwd.set('/tmp/wt', '');
+      git.changedFilesResults.set(`${releaseBranch}|HEAD`, ['.ai-orchestrator.json']);
+      git.fetchRemoteRefs.set(`origin/${releaseBranch}`, '0e276ecb');
+      git.changedFilesResults.set(`origin/${releaseBranch}|HEAD`, []);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.fetchCalls).toContainEqual({
+        cwd: '/tmp/wt',
+        remote: 'origin',
+        ref: releaseBranch,
+      });
+      expect(git.changedFilesCalls).toContainEqual({
+        cwd: '/tmp/wt',
+        base: '0e276ecb',
+      });
+      expect(git.pushes).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+      expect(github.createdPrInputs[0]?.baseBranch).toBe(releaseBranch);
+    });
+
+    it('proves fetch and resolution precede every Stage 3 base-dependent call', async () => {
+      git.statusByCwd.set('/tmp/wt', '');
+      git.fetchRemoteRefs.set('origin/main', '0e276ecb');
+
+      const callOrder: string[] = [];
+      const origFetch = git.fetch.bind(git);
+      git.fetch = async (...args) => {
+        callOrder.push('fetch');
+        return origFetch(...args);
+      };
+      const origResolveRef = git.resolveRef.bind(git);
+      git.resolveRef = async (...args) => {
+        callOrder.push('resolveRef');
+        return origResolveRef(...args);
+      };
+      const origClean = git.cleanOrchestratorArtifacts.bind(git);
+      git.cleanOrchestratorArtifacts = async (...args) => {
+        callOrder.push('cleanOrchestratorArtifacts');
+        return origClean(...args);
+      };
+      const origIsAncestor = git.isAncestor.bind(git);
+      git.isAncestor = async (...args) => {
+        callOrder.push('isAncestor');
+        return origIsAncestor(...args);
+      };
+      const origChangedFiles = git.changedFiles.bind(git);
+      git.changedFiles = async (...args) => {
+        callOrder.push('changedFiles');
+        return origChangedFiles(...args);
+      };
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(callOrder.indexOf('fetch')).toBe(0);
+      expect(callOrder.indexOf('resolveRef')).toBe(1);
+      expect(callOrder.indexOf('cleanOrchestratorArtifacts')).toBeGreaterThan(
+        callOrder.indexOf('resolveRef'),
+      );
+      expect(callOrder.indexOf('isAncestor')).toBeGreaterThan(
+        callOrder.indexOf('cleanOrchestratorArtifacts'),
+      );
+      expect(callOrder.indexOf('changedFiles')).toBeGreaterThan(callOrder.indexOf('isAncestor'));
+
+      expect(git.cleanOrchestratorArtifactsCalls).toContainEqual({
+        cwd: '/tmp/wt',
+        baseBranch: '0e276ecb',
+        startCommitSha: 'base-sha',
+      });
+      expect(git.ancestorCalls).toContainEqual({
+        cwd: '/tmp/wt',
+        ancestor: 'feat/issue-7',
+        descendant: '0e276ecb',
+      });
+      expect(git.changedFilesCalls).toContainEqual({
+        cwd: '/tmp/wt',
+        base: '0e276ecb',
+      });
+    });
+
+    it('fails closed when remote base contains HEAD while stale local base does not', async () => {
+      git.statusByCwd.set('/tmp/wt', '');
+      const remoteSha = '0e276ecb';
+      git.fetchRemoteRefs.set('origin/main', remoteSha);
+
+      // Stale local base branch does NOT contain HEAD
+      git.ancestorResults.set('feat/issue-7|main', false);
+      // Fresh remote base DOES contain HEAD
+      git.ancestorResults.set(`feat/issue-7|${remoteSha}`, true);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.canRetry).toBe(false);
+        expect(result.failure.message).toContain('feat/issue-7');
+        expect(result.failure.message).toContain('main');
+        expect(result.failure.message).toContain('already contained in base branch');
+      }
+
+      // Assert ancestry check used the resolved remote SHA
+      expect(git.ancestorCalls).toContainEqual({
+        cwd: '/tmp/wt',
+        ancestor: 'feat/issue-7',
+        descendant: remoteSha,
+      });
+
+      // No push and no PR creation
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+      expect(events.some((e) => e.type === 'create_pr.failed')).toBe(true);
+    });
+
+    it('blocks PR creation when current branch introduces unpermitted protected changes relative to fresh remote base', async () => {
+      git.statusByCwd.set('/tmp/wt', '');
+      git.fetchRemoteRefs.set('origin/main', '0e276ecb');
+      git.changedFilesResults.set('origin/main|HEAD', ['.ai-orchestrator.json']);
+      // Non-additive orchestrator modification
+      git.fileContentResults.set(
+        'origin/main:.ai-orchestrator.json',
+        JSON.stringify({
+          validation: { commands: ['pnpm build'], forbiddenArtifactPaths: ['cert/'] },
+        }),
+      );
+      git.fileContentResults.set(
+        'HEAD:.ai-orchestrator.json',
+        JSON.stringify({ validation: { commands: ['pnpm build'] } }),
+      );
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.message).toContain(
+          'PR creation blocked by unpermitted protected files committed in branch: .ai-orchestrator.json',
+        );
+      }
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+    });
+
+    it('permits additive .ai-orchestrator.json changes against fresh remote base', async () => {
+      git.statusByCwd.set('/tmp/wt', '');
+      git.fetchRemoteRefs.set('origin/main', '0e276ecb');
+      git.changedFilesResults.set('origin/main|HEAD', ['.ai-orchestrator.json']);
+      git.fileContentResults.set(
+        'origin/main:.ai-orchestrator.json',
+        JSON.stringify({ validation: { commands: ['pnpm build'] } }),
+      );
+      git.fileContentResults.set(
+        'HEAD:.ai-orchestrator.json',
+        JSON.stringify({ validation: { commands: ['pnpm build', 'pnpm test:new'] } }),
+      );
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(git.pushes).toHaveLength(1);
+      expect(github.createdPrInputs).toHaveLength(1);
+    });
+
+    it('fails closed with retryable git_failed when remote base branch fetch fails', async () => {
+      git.statusByCwd.set('/tmp/wt', '');
+      vi.spyOn(git, 'fetch').mockRejectedValue(
+        new Error('fatal: unable to access repository: network unreachable'),
+      );
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.canRetry).toBe(true);
+        expect(result.failure.message).toContain('failed to fetch base branch main from origin');
+        expect(result.failure.message).toContain('network unreachable');
+      }
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+      expect(events.some((e) => e.type === 'create_pr.failed')).toBe(true);
+    });
+
+    it('fails closed with retryable git_failed when remote base ref resolution returns undefined', async () => {
+      git.statusByCwd.set('/tmp/wt', '');
+      vi.spyOn(git, 'resolveRef').mockResolvedValue(undefined);
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.canRetry).toBe(true);
+        expect(result.failure.message).toContain(
+          'failed to resolve base ref origin/main: ref not found',
+        );
+      }
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+      expect(events.some((e) => e.type === 'create_pr.failed')).toBe(true);
+    });
+
+    it('fails closed with retryable git_failed when remote base ref resolution throws', async () => {
+      git.statusByCwd.set('/tmp/wt', '');
+      vi.spyOn(git, 'resolveRef').mockRejectedValue(new Error('rev-parse command failed'));
+
+      const result = await handler.run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('git_failed');
+        expect(result.failure.canRetry).toBe(true);
+        expect(result.failure.message).toContain(
+          'failed to resolve base ref origin/main: rev-parse command failed',
+        );
+      }
+      expect(git.pushes).toEqual([]);
+      expect(github.createdPrInputs).toEqual([]);
+      expect(events.some((e) => e.type === 'create_pr.failed')).toBe(true);
     });
   });
 });
