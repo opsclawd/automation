@@ -27,6 +27,8 @@ import {
   recordPromotionCommit,
   completeBatch,
   ReleaseBatchStateError,
+  isReleaseBatchStatus,
+  isAllItemsMergedAllowedStatus,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type {
@@ -63,7 +65,9 @@ export type ReconciliationAction =
   | 'promotion_pr_created'
   | 'source_drift_detected'
   | 'source_drift_integrated'
-  | 'promotion_completed';
+  | 'promotion_completed'
+  | 'unrecognized_status'
+  | 'unexpected_status';
 
 export interface ReconcileBatchResult {
   batchId: ReleaseBatchId;
@@ -299,8 +303,38 @@ export class ReleaseBatchCoordinator {
       };
     }
 
+    const rawStatus = (batch as { status?: unknown }).status;
+    if (!isReleaseBatchStatus(rawStatus)) {
+      const statusStr = String(rawStatus ?? batch.status);
+      this.deps.logger?.warn?.(
+        `Release batch ${batch.id} has unrecognized status '${statusStr}'; reconciliation skipped`,
+      );
+      return {
+        batchId: batch.id,
+        batchStatus: batch.status,
+        currentPosition: batch.currentPosition,
+        actions: ['unrecognized_status'],
+        batch,
+      };
+    }
+
     // Identify current unmerged items
     const unmergedItems = batch.items.filter((i) => i.status !== 'merged');
+
+    if (unmergedItems.length === 0) {
+      if (!isAllItemsMergedAllowedStatus(batch.status)) {
+        this.deps.logger?.warn?.(
+          `Release batch ${batch.id} has unexpected status '${batch.status}' with all items merged; reconciliation skipped`,
+        );
+        return {
+          batchId: batch.id,
+          batchStatus: batch.status,
+          currentPosition: batch.currentPosition,
+          actions: ['unexpected_status'],
+          batch,
+        };
+      }
+    }
 
     // Reconcile run status for merged items to ensure consistency and heal stale records
     for (const item of batch.items) {
@@ -462,61 +496,6 @@ export class ReleaseBatchCoordinator {
           actions,
           batch,
         };
-      }
-
-      // If batch is blocked on source_branch_advanced, check if it can be unblocked (source integrated)
-      if (batch.status === 'blocked' && batch.blockedReason === 'source_branch_advanced') {
-        const repo = this.deps.repositoryPort.findById(batch.repoId);
-        if (this.deps.git && repo) {
-          try {
-            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
-            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
-            const remoteReleaseSha = await this.deps.git.resolveRef(
-              repo.localBasePath,
-              `origin/${batch.releaseBranch}`,
-            );
-            const remoteSourceSha = await this.deps.git.resolveRef(
-              repo.localBasePath,
-              `origin/${batch.sourceBranch}`,
-            );
-            if (remoteReleaseSha && remoteSourceSha) {
-              const isSourceContained = await this.deps.git.isAncestor(
-                repo.localBasePath,
-                remoteSourceSha,
-                remoteReleaseSha,
-              );
-              if (isSourceContained) {
-                batch = unblockBatch(batch);
-                const candidateTreeSha = await this.deps.git.treeSha(
-                  repo.localBasePath,
-                  remoteReleaseSha,
-                );
-                batch = transitionToAwaitingManualTest(batch, remoteReleaseSha, candidateTreeSha);
-                this.deps.releaseBatchRepository.update(batch);
-                actions.push('unblocked', 'candidate_captured');
-
-                batch = await this.ensurePromotionPr(batch, remoteReleaseSha, now, actions);
-
-                this.dispatchNotification(batch, 'awaiting_manual_test', {
-                  candidateSha: remoteReleaseSha,
-                  ...(batch.promotionPrNumber !== undefined
-                    ? { promotionPrNumber: batch.promotionPrNumber }
-                    : {}),
-                });
-
-                return {
-                  batchId: batch.id,
-                  batchStatus: batch.status,
-                  currentPosition: batch.currentPosition,
-                  actions,
-                  batch,
-                };
-              }
-            }
-          } catch (err) {
-            this.deps.logger?.warn?.(`Failed re-checking source drift: ${err}`);
-          }
-        }
       }
 
       // If batch is awaiting_manual_test, approved, or promoting, check safety invariant (branch movement)

@@ -555,6 +555,52 @@ describe('CLI release-batch command', () => {
     expect(fullStdout).toContain('Actions: source_drift_integrated, status_reconciled');
   });
 
+  it('surfaces unrecognized status drift with actions, blocker, and action diagnostics on resume', async () => {
+    const mockResume = {
+      execute: vi.fn().mockResolvedValue({
+        batchId: ReleaseBatchId('batch-001'),
+        batch: {
+          id: ReleaseBatchId('batch-001'),
+          status: 'running',
+        },
+        actions: ['unrecognized_status'],
+        blocker: {
+          owner: 'release',
+          reason: 'unrecognized_status: running',
+          action:
+            "Stored status 'running' is not a valid ReleaseBatchStatus. Review and manually repair release_batches.status to an appropriate valid lifecycle state before resuming via: releases resume --id batch-001",
+        },
+      }),
+    };
+
+    const program = buildProgram({
+      isCliTestSuite: true,
+      composeOverrides: {
+        repoFullName: 'owner/repo',
+        resumeReleaseBatch:
+          mockResume as unknown as import('@ai-sdlc/application').ResumeReleaseBatch,
+      },
+    });
+
+    const batchCmd = program.commands.find((c) => c.name() === 'release-batch')!;
+    batchCmd.exitOverride();
+
+    await batchCmd.parseAsync(['resume', '-i', 'batch-001', '--confirm'], { from: 'user' });
+
+    expect(mockResume.execute).toHaveBeenCalledWith({
+      batchId: ReleaseBatchId('batch-001'),
+    });
+
+    const fullStdout = stdoutOutput.join('');
+    expect(fullStdout).toContain('Release batch batch-001 resumed:');
+    expect(fullStdout).toContain('Status:  running');
+    expect(fullStdout).toContain('Actions: unrecognized_status');
+    expect(fullStdout).toContain('Blocker: release: unrecognized_status: running');
+    expect(fullStdout).toContain(
+      "Action:  Stored status 'running' is not a valid ReleaseBatchStatus",
+    );
+  });
+
   it('fails closed and directs operator to runs resume when resumeReleaseBatch encounters RunOwnedBlockerError', async () => {
     const { RunOwnedBlockerError } = await import('@ai-sdlc/application');
     const mockResume = {

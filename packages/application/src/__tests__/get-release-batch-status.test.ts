@@ -368,4 +368,58 @@ describe('GetReleaseBatchStatus', () => {
     expect(status.formattedLines.some((l) => /Run Status:\s+passed/.test(l))).toBe(true);
     expect(status.formattedLines.some((l) => /Run Phase:\s+completed/.test(l))).toBe(true);
   });
+
+  it('surfaces unrecognized status drift with release-owned blocker and diagnostics', async () => {
+    const batchId = ReleaseBatchId('batch-unrecognized-status');
+    const runUuid = 'uuid-run-merged-1';
+    const run = createRun({
+      uuid: runUuid,
+      displayId: 'issue-101-004',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 101,
+      startedAt: new Date(),
+    });
+    run.status = 'passed';
+    runRepo.insertIfNoActive(run);
+
+    batchRepo.insert({
+      id: batchId,
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-main-0',
+      releaseBranch: 'release/batch-unrecognized',
+      status: 'running' as unknown as import('@ai-sdlc/domain').ReleaseBatchStatus,
+      currentPosition: 1,
+      createdAt: new Date(),
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged',
+          runUuid,
+          mergedCommitSha: 'sha-merged-101',
+          completedAt: new Date(),
+        },
+      ],
+    });
+
+    const status = await useCase.execute({ batchId });
+
+    expect(status.status).toBe('running');
+    expect(status.blocker.owner).toBe('release');
+    expect(status.blocker.reason).toBe('unrecognized_status: running');
+    expect(status.blocker.action).toContain(
+      "Stored status 'running' is not a valid ReleaseBatchStatus",
+    );
+    expect(status.formattedLines.some((l) => /Status:\s+running/.test(l))).toBe(true);
+    expect(status.formattedLines.some((l) => /Owner:\s+release/.test(l))).toBe(true);
+    expect(
+      status.formattedLines.some((l) => /Reason:\s+unrecognized_status: running/.test(l)),
+    ).toBe(true);
+    expect(
+      status.formattedLines.some((l) =>
+        l.includes("Stored status 'running' is not a valid ReleaseBatchStatus"),
+      ),
+    ).toBe(true);
+  });
 });

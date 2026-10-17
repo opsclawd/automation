@@ -11,6 +11,37 @@ export type ReleaseBatchStatus =
   | 'completed'
   | 'cancelled';
 
+export const RELEASE_BATCH_STATUSES: readonly ReleaseBatchStatus[] = [
+  'queued',
+  'building',
+  'blocked',
+  'awaiting_manual_test',
+  'test_failed',
+  'approved',
+  'promoting',
+  'completed',
+  'cancelled',
+] as const;
+
+export function isReleaseBatchStatus(value: unknown): value is ReleaseBatchStatus {
+  return typeof value === 'string' && (RELEASE_BATCH_STATUSES as readonly string[]).includes(value);
+}
+
+export const ALL_ITEMS_MERGED_ALLOWED_STATUSES: readonly ReleaseBatchStatus[] = [
+  'building',
+  'awaiting_manual_test',
+  'approved',
+  'promoting',
+  'completed',
+] as const;
+
+export function isAllItemsMergedAllowedStatus(value: unknown): value is ReleaseBatchStatus {
+  return (
+    typeof value === 'string' &&
+    (ALL_ITEMS_MERGED_ALLOWED_STATUSES as readonly string[]).includes(value)
+  );
+}
+
 export type ReleaseBatchItemStatus = 'pending' | 'active' | 'waiting_merge' | 'merged' | 'blocked';
 
 export type ReleaseBatchBlockedReason = string;

@@ -2221,4 +2221,176 @@ describe('ReleaseBatchCoordinator', () => {
       expect(run2?.pinnedRuntime).toBeUndefined();
     });
   });
+
+  describe('Status drift and unrecognized status diagnostics', () => {
+    it('reports unrecognized_status action when all items are merged but batch status is invalid', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      // Merge all 5 items
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t2,
+        });
+      }
+
+      // Simulate status drift: manual SQL update wrote 'running' to release_batches.status
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = {
+        ...batch,
+        status: 'running' as unknown as typeof batch.status,
+      };
+      releaseBatchRepository.update(batch);
+
+      // Reconcile batch
+      const result = await coordinator.reconcile(batchId);
+
+      // Must report the problem rather than returning actions: []
+      expect(result.actions).toEqual(['unrecognized_status']);
+      expect(result.batchStatus).toBe('running');
+      expect(result.actions).not.toContain('candidate_captured');
+      expect(result.actions).not.toContain('build_completed');
+
+      // Persisted batch remains unchanged
+      const persisted = releaseBatchRepository.findById(batchId)!;
+      expect(persisted.status).toBe('running');
+      expect(persisted.candidateSha).toBeUndefined();
+    });
+
+    it('reports unexpected_status action when all items are merged but batch status is queued', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t2,
+        });
+      }
+
+      // Explicitly set a non-passed run state to verify reconcile does not mutate it
+      runRepository.update('run-item-1', {
+        status: 'running',
+        currentPhase: 'plan',
+      });
+      const runBefore = { ...runRepository.findByUuid('run-item-1')! };
+
+      // Set status to queued (known status, but unexpected when all items merged)
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = { ...batch, status: 'queued' };
+      releaseBatchRepository.update(batch);
+
+      const result = await coordinator.reconcile(batchId);
+
+      expect(result.actions).toEqual(['unexpected_status']);
+      expect(result.batchStatus).toBe('queued');
+      expect(result.actions).not.toContain('candidate_captured');
+
+      // Regression: linked Run remains unchanged for unexpected/queued status
+      const runAfter = runRepository.findByUuid('run-item-1')!;
+      expect(runAfter.status).toBe(runBefore.status);
+      expect(runAfter.currentPhase).toBe(runBefore.currentPhase);
+    });
+
+    it('reports unexpected_status action when all items are merged but batch status is test_failed', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t2,
+        });
+      }
+
+      // Set status to test_failed (valid member of ReleaseBatchStatus, but unexpected when reconciling merged items)
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = { ...batch, status: 'test_failed' };
+      releaseBatchRepository.update(batch);
+
+      const result = await coordinator.reconcile(batchId);
+
+      expect(result.actions).toEqual(['unexpected_status']);
+      expect(result.batchStatus).toBe('test_failed');
+      expect(result.actions).not.toContain('candidate_captured');
+      expect(result.actions).not.toContain('build_completed');
+
+      const persisted = releaseBatchRepository.findById(batchId)!;
+      expect(persisted.status).toBe('test_failed');
+      expect(persisted.candidateSha).toBeUndefined();
+    });
+
+    it('reports unexpected_status action when all items are merged but batch status is blocked', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t2,
+        });
+      }
+
+      // Set status to blocked (valid member of ReleaseBatchStatus, but unexpected when reconciling all items merged)
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = { ...batch, status: 'blocked', blockedReason: 'manual_hold' };
+      releaseBatchRepository.update(batch);
+
+      const result = await coordinator.reconcile(batchId);
+
+      expect(result.actions).toEqual(['unexpected_status']);
+      expect(result.batchStatus).toBe('blocked');
+      expect(result.actions).not.toContain('candidate_captured');
+      expect(result.actions).not.toContain('build_completed');
+
+      const persisted = releaseBatchRepository.findById(batchId)!;
+      expect(persisted.status).toBe('blocked');
+      expect(persisted.candidateSha).toBeUndefined();
+    });
+
+    it('preserves existing candidate capture when batch status is building with all items merged', async () => {
+      const fakeGit = new FakeGitPort();
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', 'sha-release-cand');
+      fakeGit.remoteRefs.set('origin/main', 'sha-main-cand');
+      fakeGit.ancestorResults.set('sha-main-cand|sha-release-cand', true);
+      fakeGit.treeShaResults.set('sha-release-cand', 'tree-cand-sha');
+
+      coordinator = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        jobQueue,
+        repositoryPort,
+        eventBus,
+        git: fakeGit,
+        now: () => t2,
+      });
+
+      const { batchId } = setupFiveItemBatch();
+
+      // Mark all items merged directly in repository so batch remains in building
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = {
+        ...batch,
+        status: 'building',
+        items: batch.items.map((i) => ({
+          ...i,
+          status: 'merged',
+          mergedCommitSha: `sha-commit-${i.position}`,
+        })),
+      };
+      releaseBatchRepository.update(batch);
+
+      // Status is building (default valid state) -> reconcile triggers candidate capture
+      const result = await coordinator.reconcile(batchId);
+
+      expect(result.actions).toContain('build_completed');
+      expect(result.actions).toContain('candidate_captured');
+      expect(result.batchStatus).toBe('awaiting_manual_test');
+    });
+  });
 });
