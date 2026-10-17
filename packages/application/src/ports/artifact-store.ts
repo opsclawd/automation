@@ -33,6 +33,12 @@ export interface ArtifactStore {
    * Useful during resume if the worktree was cleaned or artifacts were lost.
    */
   hydrateWorktree(runId: string): Promise<void>;
+  /**
+   * Invalidate/remove an artifact from all locations consultable by read
+   * (durable store, hydrated worktree path, and legacy worktree path if canonical).
+   * Idempotent when no copy exists.
+   */
+  invalidate(runId: string, relativePath: string): Promise<void>;
 }
 
 export const CANONICAL_DELIVERABLE_KEYS = [

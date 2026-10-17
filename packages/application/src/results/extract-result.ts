@@ -36,6 +36,7 @@ export interface ExtractResultInputWithMeta<T> {
   rerunContext?: { cwd: string; [key: string]: unknown } | undefined;
   repairExpectedHead?: string | undefined;
   transcriptEvidence?: string | undefined;
+  disableRepair?: boolean | undefined;
   resultMeta: PhaseResultMeta<T>;
 }
 
@@ -50,6 +51,7 @@ export interface ExtractResultInputFromRegistry<_P extends RegisteredPhase = Reg
   rerunContext?: { cwd: string; [key: string]: unknown } | undefined;
   repairExpectedHead?: string | undefined;
   transcriptEvidence?: string | undefined;
+  disableRepair?: boolean | undefined;
   resultMeta?: undefined;
 }
 
@@ -170,7 +172,7 @@ export async function extractResult(
     });
   const initialClassification = hasEv ? 'serialization_artifact' : 'unrecoverable_artifact';
 
-  if (initialClassification === 'unrecoverable_artifact' || !ports.repair) {
+  if (input.disableRepair || initialClassification === 'unrecoverable_artifact' || !ports.repair) {
     return {
       ...initial,
       classification: initialClassification,

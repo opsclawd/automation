@@ -2522,6 +2522,15 @@ export function composeRoot(opts: ComposeOptions): Container {
           const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
           return artifactStoreForRun(runId, cwd).hydrateWorktree(runId);
         },
+        invalidate: async (runId, relativePath) => {
+          const run = runRepository.findByUuid(runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          const cwd = existsSync(worktreePath) ? worktreePath : repoRootPath;
+          return artifactStoreForRun(runId, cwd).invalidate(runId, relativePath);
+        },
       };
 
       const fixValidateProfileName: string = composePinnedRuntime
@@ -3305,6 +3314,14 @@ export function composeRoot(opts: ComposeOptions): Container {
           const repoRootPath = repo ? repo.localBasePath : targetRoot;
           const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
           return artifactStoreForRun(runId, cwd).hydrateWorktree(runId);
+        },
+        invalidate: async (runId, relativePath) => {
+          const run = runRepository.findByUuid(runId);
+          if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+          const repo = registryBackedRepo.findById(run.repoId);
+          const repoRootPath = repo ? repo.localBasePath : targetRoot;
+          const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
+          return artifactStoreForRun(runId, cwd).invalidate(runId, relativePath);
         },
       },
       baseBranch: opts.baseBranch ?? resolvedDefaultBranch,

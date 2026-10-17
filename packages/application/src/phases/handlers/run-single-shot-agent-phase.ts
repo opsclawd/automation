@@ -44,6 +44,12 @@ export interface SingleShotConfigBase {
   /** Skip emitting <phase>.completed when caller handles completion emission after deterministic post-processing. */
   skipCompletedEmit?: boolean;
   resultJsonPath?: string;
+  /**
+   * Bounded single correction retry for eligible result contract failures
+   * (missing required result, malformed JSON, schema violation).
+   * Enabled exclusively by follow-up-review handler.
+   */
+  correctionRetry?: boolean;
 }
 
 export interface SingleShotConfigSkipExtraction extends SingleShotConfigBase {
@@ -155,6 +161,66 @@ function buildFailure(
     artifacts: [],
     detectedAt: ctx.now(),
   };
+}
+
+export interface CorrectionFeedbackInput {
+  category: 'missing_artifact' | 'invalid_json' | 'schema_violation';
+  resultJsonPath: string;
+  diagnosticDetail?: string | undefined;
+  observedApproved?: boolean | undefined;
+}
+
+export function buildCorrectionFeedback(input: CorrectionFeedbackInput): string {
+  const lines: string[] = [
+    '## CORRECTION REQUIRED (Attempt 2 of 2)',
+    '',
+    'Your previous review attempt failed contract validation:',
+    `- **Failure category:** ${input.category}`,
+    `- **Required artifact path:** ./${input.resultJsonPath}`,
+  ];
+
+  if (input.diagnosticDetail && input.diagnosticDetail.trim().length > 0) {
+    lines.push('- **Diagnostic detail:**', '```', input.diagnosticDetail.trim(), '```');
+  }
+
+  if (input.observedApproved) {
+    lines.push(
+      '- **Invalid verdict literal:** The value `"APPROVED"` was rejected. `"APPROVED"` is NOT a valid verdict literal.',
+    );
+  }
+
+  lines.push(
+    '',
+    '### Allowed Verdict Values',
+    'The `verdict` field must be exactly one of the following accepted enum literals:',
+    '- `APPROVE`',
+    '- `REQUEST_CHANGES`',
+    '- `approve`',
+    '- `request_changes`',
+    '- `PASS`',
+    '- `FAIL`',
+    '- `pass`',
+    '- `fail`',
+    '',
+    `### Schema Requirements for ./${input.resultJsonPath}`,
+    `You must write a complete, valid JSON artifact directly to ./${input.resultJsonPath}. Markdown prose, stdout output, or summary comments cannot substitute for this required JSON file. Inspect the supplied review evidence and produce a complete JSON result.`,
+    '',
+    'Field requirements:',
+    '- `verdict` (string, required): Exactly one of the accepted enum literals listed above.',
+    '- `evaluations` (array of objects, default: `[]`):',
+    '  Each evaluation entry must contain:',
+    '  - `finding_id` (string, required, non-empty): ID of the evaluated finding from the ledger.',
+    '  - `resolved` (boolean, required): `true` if verified resolved, `false` otherwise.',
+    '  - `evidence` (string, required, non-empty): Concrete evidence verifying resolution or explaining non-resolution.',
+    '  - `rationale` (string, optional): Additional context or reasoning.',
+    '- `new_findings` (array of objects, optional, default: `[]`): New findings or regressions detected.',
+    '- `summary` (string, optional): High-level review summary.',
+    '- `review_md` (string, optional): Optional markdown review notes.',
+    '',
+    `Inspect the supplied review evidence and write the complete JSON result to ./${input.resultJsonPath} before completing.`,
+  );
+
+  return lines.join('\n');
 }
 
 export async function runSingleShotAgentPhase(
@@ -374,7 +440,12 @@ export async function runSingleShotAgentPhase(
       }
     });
 
+  const canAttemptCorrectionRetry = Boolean(
+    config.correctionRetry && config.phase === 'follow-up-review',
+  );
+
   const isEmptyResponseViolation = (r: AgentInvocationResult) =>
+    !canAttemptCorrectionRetry &&
     !config.skipResultExtraction &&
     r.outcome === 'contract_violation' &&
     r.contractViolations.length > 0 &&
@@ -463,7 +534,254 @@ export async function runSingleShotAgentPhase(
     }
   }
 
+  const effectiveInvocationId = agentResult.invocationId ?? invocationId;
+
+  const executeCorrectionRetry = async (eligibleFailure: {
+    category: 'missing_artifact' | 'invalid_json' | 'schema_violation';
+    detail?: string;
+    observedApproved?: boolean;
+  }): Promise<SingleShotAgentPhaseResult<unknown>> => {
+    // 1. Invalidate result path in all consultable read locations
+    try {
+      await ctx.artifacts.invalidate(ctx.runUuid, resolvedResultJsonPath);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        'command_failed',
+        `Artifact invalidation failed for '${resolvedResultJsonPath}': ${message}`,
+        false,
+        'Check artifact storage permissions and disk health.',
+      );
+      emit(`${String(config.phase)}.failed`, 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+
+    // 2. Clean candidate destinations from worktree
+    try {
+      const targetsToClean = new Set<string>([resolvedResultJsonPath, ...candidateDestinations]);
+      for (const target of targetsToClean) {
+        const fullPath = join(ctx.cwd, target);
+        if (existsSync(fullPath)) {
+          unlinkSync(fullPath);
+        }
+      }
+    } catch {
+      // Best-effort cleanup
+    }
+
+    // 3. Build feedback and persist retry prompt
+    const feedbackBlock = buildCorrectionFeedback({
+      category: eligibleFailure.category,
+      resultJsonPath: resolvedResultJsonPath,
+      diagnosticDetail: eligibleFailure.detail,
+      observedApproved: eligibleFailure.observedApproved,
+    });
+    const retryPrompt = `${renderedPrompt}\n\n${feedbackBlock}\n`;
+    const retryPromptRelativePath = 'follow-up-review-retry-1-prompt.md';
+    let retryPromptAbsolutePath: string;
+    try {
+      const retryPromptArtifact = await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: config.phase as string,
+        relativePath: retryPromptRelativePath,
+        contents: retryPrompt,
+      });
+      retryPromptAbsolutePath = retryPromptArtifact.absolutePath;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        'command_failed',
+        `Failed to write retry prompt artifact: ${message}`,
+        false,
+        'Check disk space and permissions, then retry.',
+      );
+      emit(`${String(config.phase)}.failed`, 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+    emit('artifact.created', 'info', `wrote ${retryPromptRelativePath}`, {
+      path: retryPromptRelativePath,
+    });
+
+    // 4. Build retry invocation request
+    const retryInvocationId = AgentInvocationId(ctx.idFactory?.() || randomUUID());
+    const retryRequest: AgentInvocationRequest = {
+      ...request,
+      id: retryInvocationId,
+      promptPath: retryPromptAbsolutePath,
+      fallbackOfInvocationId: effectiveInvocationId,
+      fallbackReason: `correction_retry_${eligibleFailure.category}`,
+      metadata: {
+        ...request.metadata,
+        invocation_type: 'correction_retry',
+        attempt: 2,
+        cause: eligibleFailure.category,
+      },
+    };
+
+    emit('agent.invoking', 'info', `invoking agent for ${config.phase} (correction retry 1 of 1)`, {
+      profile: config.profile,
+      attempt: 2,
+      cause: eligibleFailure.category,
+    });
+
+    const retryStartedAt = ctx.now();
+    let retryAgentResult: AgentInvocationResult;
+    try {
+      retryAgentResult = await ctx.agent.invoke(retryRequest);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        'command_failed',
+        `Agent invocation [${retryInvocationId}] (correction retry) failed: ${message}`,
+        false,
+        'Check agent infrastructure configuration, then retry.',
+      );
+      emit(`${String(config.phase)}.failed`, 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+
+    // 5. Governance check on retry
+    const retryFinalCandidateSnapshot = await takeCandidateSnapshot(ctx.cwd, ctx.git);
+    const retryCandidateDeltaResult = evaluateCandidateDelta(
+      baselineCandidateSnapshot,
+      retryFinalCandidateSnapshot,
+    );
+    if (!retryCandidateDeltaResult.ok) {
+      const findingMessages = retryCandidateDeltaResult.findings
+        .map((f) => `${f.code}: ${f.message}`)
+        .join('; ');
+      emit(
+        `${String(config.phase)}.governance_violation`,
+        'error',
+        `Candidate-validation governance violation detected: ${findingMessages}`,
+        { findings: retryCandidateDeltaResult.findings },
+      );
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        'needs_human_review',
+        `Candidate-validation governance violation: Automated agents are not permitted to author or delete candidate validation reports, sign-offs, or release promotion decisions. Violations: ${findingMessages}`,
+        false,
+        'Review candidate-validation artifacts. Candidate reports, sign-offs, and release promotion decisions must be authored exclusively by human operators.',
+      );
+      emit(`${String(config.phase)}.needs_human_review`, 'error', failure.message, {
+        findings: retryCandidateDeltaResult.findings,
+      });
+      return { outcome: 'needs_human_review', failure };
+    }
+
+    // 6. Outcome check on retry
+    if (retryAgentResult.outcome !== 'success') {
+      const kind: Failure['kind'] =
+        retryAgentResult.outcome === 'timeout'
+          ? 'timeout'
+          : retryAgentResult.outcome === 'contract_violation'
+            ? 'agent_contract_violation'
+            : 'command_failed';
+      const violationDetail =
+        retryAgentResult.contractViolations?.length > 0
+          ? `: ${retryAgentResult.contractViolations.join(', ')}`
+          : '';
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        kind,
+        `Agent invocation [${retryInvocationId}] (correction retry) failed with outcome '${retryAgentResult.outcome}' (exit code ${retryAgentResult.exitCode})${violationDetail}`,
+        false,
+        'Review the agent output and result schema. The agent produced an invalid result on correction retry.',
+      );
+      emit(`${String(config.phase)}.failed`, 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+
+    // 7. Build retry invocation domain object
+    const effectiveRetryInvocationId = retryAgentResult.invocationId ?? retryInvocationId;
+    const retryInvocation = buildAgentInvocation(
+      ctx,
+      config,
+      retryRequest,
+      retryAgentResult,
+      retryPrompt.length,
+      retryStartedAt,
+      effectiveRetryInvocationId,
+      resolvedResultJsonPath,
+    );
+
+    // 8. Contract validation on retry
+    const retryViolations = await validateAgentContract({
+      contract: config.agentContract,
+      invocation: retryInvocation,
+      ports: {
+        artifacts: ctx.artifacts,
+        git: ctx.git,
+        github: ctx.github,
+      },
+      cwd: ctx.cwd,
+      expectedBranch,
+      repoFullName: ctx.repoFullName,
+    });
+
+    if (retryViolations.length > 0) {
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        'agent_contract_violation',
+        `Agent contract violations on correction retry: ${retryViolations.join(', ')}`,
+        false,
+        'Review agent output and contract requirements. The agent violated its instructions on correction retry.',
+      );
+      emit(`${String(config.phase)}.blocked`, 'error', failure.message, {
+        violations: retryViolations,
+      });
+      return { outcome: 'blocked', failure };
+    }
+
+    // 9. Extract result on retry
+    const retryExtracted = config.resultMeta
+      ? await extractResult({
+          invocation: retryInvocation,
+          ports: {
+            artifacts: ctx.artifacts,
+            repair: undefined,
+          },
+          disableRepair: true,
+          cwd: ctx.cwd,
+          resultMeta: config.resultMeta,
+        })
+      : await extractResult({
+          invocation: retryInvocation,
+          ports: {
+            artifacts: ctx.artifacts,
+            repair: undefined,
+          },
+          disableRepair: true,
+          cwd: ctx.cwd,
+        });
+
+    if (!retryExtracted.ok) {
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        'invalid_result',
+        `Result extraction failed on correction retry: ${retryExtracted.detail}`,
+        false,
+        'Review the agent output and result schema. The agent produced an invalid result on correction retry.',
+      );
+      emit(`${String(config.phase)}.failed`, 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+
+    return { outcome: 'passed', result: retryExtracted.result };
+  };
+
   const canAttemptExtractionRescue =
+    !canAttemptCorrectionRetry &&
     !config.skipResultExtraction &&
     agentResult.outcome === 'contract_violation' &&
     agentResult.contractViolations.length > 0 &&
@@ -473,7 +791,26 @@ export async function runSingleShotAgentPhase(
     ctx.repair !== undefined &&
     hasCandidateOnDisk();
 
-  if (agentResult.outcome !== 'success' && !canAttemptExtractionRescue) {
+  const isOnlyMissingArtifact =
+    agentResult.outcome === 'contract_violation' &&
+    agentResult.contractViolations.length > 0 &&
+    agentResult.contractViolations.every(
+      (v) => v === CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+    );
+
+  let extractedResult: unknown;
+
+  if (canAttemptCorrectionRetry && isOnlyMissingArtifact) {
+    const retryRes = await executeCorrectionRetry({
+      category: 'missing_artifact',
+      detail: `Required result artifact '${resolvedResultJsonPath}' was not created (contract violation: missing_required_artifact)`,
+      observedApproved: false,
+    });
+    if (retryRes.outcome !== 'passed') {
+      return retryRes;
+    }
+    extractedResult = retryRes.result;
+  } else if (agentResult.outcome !== 'success' && !canAttemptExtractionRescue) {
     const kind: Failure['kind'] =
       agentResult.outcome === 'timeout'
         ? 'timeout'
@@ -499,7 +836,6 @@ export async function runSingleShotAgentPhase(
   }
 
   // 7. Build AgentInvocation domain object
-  const effectiveInvocationId = agentResult.invocationId ?? invocationId;
   let invocation = buildAgentInvocation(
     ctx,
     config,
@@ -512,7 +848,7 @@ export async function runSingleShotAgentPhase(
   );
 
   // 8. Validate contract
-  if (agentResult.outcome === 'success') {
+  if (extractedResult === undefined && agentResult.outcome === 'success') {
     const violations = await validateAgentContract({
       contract: config.agentContract,
       invocation,
@@ -527,21 +863,36 @@ export async function runSingleShotAgentPhase(
     });
 
     if (violations.length > 0) {
-      const failure = buildFailure(
-        ctx,
-        config.phase as string,
-        'agent_contract_violation',
-        `Agent contract violations: ${violations.join(', ')}`,
-        false,
-        'Review agent output and contract requirements. The agent violated its instructions.',
-      );
-      emit(`${String(config.phase)}.blocked`, 'error', failure.message, { violations });
-      return { outcome: 'blocked', failure };
+      if (
+        canAttemptCorrectionRetry &&
+        violations.every((v) => v === CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
+      ) {
+        const retryRes = await executeCorrectionRetry({
+          category: 'missing_artifact',
+          detail: `Required result artifact '${resolvedResultJsonPath}' was missing during contract validation`,
+          observedApproved: false,
+        });
+        if (retryRes.outcome !== 'passed') {
+          return retryRes;
+        }
+        extractedResult = retryRes.result;
+      } else {
+        const failure = buildFailure(
+          ctx,
+          config.phase as string,
+          'agent_contract_violation',
+          `Agent contract violations: ${violations.join(', ')}`,
+          false,
+          'Review agent output and contract requirements. The agent violated its instructions.',
+        );
+        emit(`${String(config.phase)}.blocked`, 'error', failure.message, { violations });
+        return { outcome: 'blocked', failure };
+      }
     }
   }
 
   // 9. Worktree artifact verification and recovery
-  if (config.agentContract.requiredArtifacts) {
+  if (extractedResult === undefined && config.agentContract.requiredArtifacts) {
     for (const artifactPath of config.agentContract.requiredArtifacts) {
       const fullPath = join(ctx.cwd, artifactPath);
       if (!existsSync(fullPath)) {
@@ -575,15 +926,16 @@ export async function runSingleShotAgentPhase(
   // 10. Extract result
   //     Skipped for phases where the agent produces draft artifacts only,
   //     and the result values are determined by handler-level operations.
-  let extractedResult: unknown;
-  if (!config.skipResultExtraction) {
+  if (extractedResult === undefined && !config.skipResultExtraction) {
+    const repairPort = canAttemptCorrectionRetry ? undefined : ctx.repair;
     const extracted = config.resultMeta
       ? await extractResult({
           invocation,
           ports: {
             artifacts: ctx.artifacts,
-            repair: ctx.repair,
+            repair: repairPort,
           },
+          disableRepair: canAttemptCorrectionRetry,
           cwd: ctx.cwd,
           resultMeta: config.resultMeta,
         })
@@ -591,27 +943,52 @@ export async function runSingleShotAgentPhase(
           invocation,
           ports: {
             artifacts: ctx.artifacts,
-            repair: ctx.repair,
+            repair: repairPort,
           },
+          disableRepair: canAttemptCorrectionRetry,
           cwd: ctx.cwd,
         });
 
     if (!extracted.ok) {
-      const failure = buildFailure(
-        ctx,
-        config.phase as string,
-        agentResult.outcome === 'contract_violation'
-          ? 'agent_contract_violation'
-          : 'invalid_result',
-        `Result extraction failed: ${extracted.detail}`,
-        false,
-        'Review the agent output and result schema. The agent produced an invalid result.',
-      );
-      emit(`${String(config.phase)}.failed`, 'error', failure.message);
-      return { outcome: 'failed', failure };
+      if (
+        canAttemptCorrectionRetry &&
+        extracted.violationCode !== CONTRACT_VIOLATION_CODES.ARTIFACT_READ_ERROR
+      ) {
+        let category: 'missing_artifact' | 'invalid_json' | 'schema_violation';
+        if (extracted.reason === 'missing') {
+          category = 'missing_artifact';
+        } else if (extracted.detail.includes('JSON.parse failed')) {
+          category = 'invalid_json';
+        } else {
+          category = 'schema_violation';
+        }
+        const observedApproved = extracted.detail.includes('APPROVED');
+        const retryRes = await executeCorrectionRetry({
+          category,
+          detail: extracted.detail,
+          observedApproved,
+        });
+        if (retryRes.outcome !== 'passed') {
+          return retryRes;
+        }
+        extractedResult = retryRes.result;
+      } else {
+        const failure = buildFailure(
+          ctx,
+          config.phase as string,
+          agentResult.outcome === 'contract_violation'
+            ? 'agent_contract_violation'
+            : 'invalid_result',
+          `Result extraction failed: ${extracted.detail}`,
+          false,
+          'Review the agent output and result schema. The agent produced an invalid result.',
+        );
+        emit(`${String(config.phase)}.failed`, 'error', failure.message);
+        return { outcome: 'failed', failure };
+      }
+    } else {
+      extractedResult = extracted.result;
     }
-
-    extractedResult = extracted.result;
   }
 
   // 11. Success

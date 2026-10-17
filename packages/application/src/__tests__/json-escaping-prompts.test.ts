@@ -30,6 +30,7 @@ const mockArtifacts: ArtifactStore = {
     return [];
   },
   async hydrateWorktree() {},
+  async invalidate() {},
 };
 
 const mockVars = new Proxy<Record<string, string>>(

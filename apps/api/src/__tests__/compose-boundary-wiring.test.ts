@@ -372,6 +372,7 @@ describe('ValidateFixLoop and ReviewFixLoop wiring in composeRoot', () => {
         writeFileSync(path.join(worktreeDir, relativePath), contents),
       list: async () => [],
       hydrateWorktree: async () => {},
+      invalidate: async () => {},
     };
 
     const ctx = container.buildPhaseHandlerContext({
