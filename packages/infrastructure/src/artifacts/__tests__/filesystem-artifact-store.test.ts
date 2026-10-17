@@ -535,4 +535,102 @@ describe('createFilesystemArtifactStore', () => {
       rmSync(baseDir, { recursive: true, force: true });
     }
   });
+
+  describe('invalidate', () => {
+    it('removes durable file and hydrated worktree file while preserving unrelated artifacts', async () => {
+      const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+      try {
+        const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+        await store.write({
+          runId: 'run-1',
+          relativePath: 'follow-up-review-result.json',
+          contents: '{"verdict":"APPROVE"}',
+        });
+        await store.write({
+          runId: 'run-1',
+          relativePath: 'unrelated.json',
+          contents: '{"keep":true}',
+        });
+
+        // Verify written in both durable and worktree
+        expect(existsSync(join(durableRoot, 'follow-up-review-result.json'))).toBe(true);
+        expect(existsSync(join(worktreeRoot, 'follow-up-review-result.json'))).toBe(true);
+        expect(existsSync(join(durableRoot, 'unrelated.json'))).toBe(true);
+        expect(existsSync(join(worktreeRoot, 'unrelated.json'))).toBe(true);
+
+        await store.invalidate('run-1', 'follow-up-review-result.json');
+
+        // Target artifact is removed from both locations
+        expect(existsSync(join(durableRoot, 'follow-up-review-result.json'))).toBe(false);
+        expect(existsSync(join(worktreeRoot, 'follow-up-review-result.json'))).toBe(false);
+        await expect(store.read('run-1', 'follow-up-review-result.json')).rejects.toThrow();
+
+        // Unrelated artifact remains
+        expect(existsSync(join(durableRoot, 'unrelated.json'))).toBe(true);
+        expect(existsSync(join(worktreeRoot, 'unrelated.json'))).toBe(true);
+        await expect(store.read('run-1', 'unrelated.json')).resolves.toBe('{"keep":true}');
+      } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+      }
+    });
+
+    it('removes durable, hydrated (.ai), and legacy root copies of canonical deliverables', async () => {
+      const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+      try {
+        mkdirSync(durableRoot, { recursive: true });
+        mkdirSync(join(worktreeRoot, '.ai'), { recursive: true });
+
+        writeFileSync(join(durableRoot, 'plan.md'), '# Durable Plan', 'utf8');
+        writeFileSync(join(worktreeRoot, '.ai', 'plan.md'), '# Hydrated Plan', 'utf8');
+        writeFileSync(join(worktreeRoot, 'plan.md'), '# Legacy Plan', 'utf8');
+
+        const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+
+        await store.invalidate('run-1', 'plan.md');
+
+        expect(existsSync(join(durableRoot, 'plan.md'))).toBe(false);
+        expect(existsSync(join(worktreeRoot, '.ai', 'plan.md'))).toBe(false);
+        expect(existsSync(join(worktreeRoot, 'plan.md'))).toBe(false);
+        await expect(store.read('run-1', 'plan.md')).rejects.toThrow();
+      } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+      }
+    });
+
+    it('is idempotent when target does not exist or on repeated invalidation', async () => {
+      const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+      try {
+        const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+        await expect(store.invalidate('run-1', 'nonexistent.json')).resolves.toBeUndefined();
+        await expect(store.invalidate('run-1', 'nonexistent.json')).resolves.toBeUndefined();
+      } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects path traversal and absolute paths', async () => {
+      const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+      try {
+        const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+        await expect(store.invalidate('run-1', '../escaped.json')).rejects.toThrow();
+        await expect(store.invalidate('run-1', '/tmp/absolute.json')).rejects.toThrow();
+        await expect(store.invalidate('run-1', '')).rejects.toThrow();
+      } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+      }
+    });
+
+    it('throws when target path points to a directory', async () => {
+      const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+      try {
+        mkdirSync(join(durableRoot, 'subdir'), { recursive: true });
+        const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+        await expect(store.invalidate('run-1', 'subdir')).rejects.toThrow(
+          'path points to a directory',
+        );
+      } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+      }
+    });
+  });
 });

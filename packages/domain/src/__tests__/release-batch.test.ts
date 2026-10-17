@@ -34,6 +34,10 @@ import {
   UnapprovedPromotionError,
   TerminalBatchError,
   RemediationNotAllowedError,
+  RELEASE_BATCH_STATUSES,
+  isReleaseBatchStatus,
+  ALL_ITEMS_MERGED_ALLOWED_STATUSES,
+  isAllItemsMergedAllowedStatus,
 } from '../index.js';
 
 const t0 = new Date('2026-09-11T12:00:00.000Z');
@@ -650,6 +654,67 @@ describe('ReleaseBatch domain model & invariants', () => {
     it('rejects empty remediation issue list', () => {
       const failedBatch = createFailedTestBatch();
       expect(() => appendRemediationItems(failedBatch, [])).toThrow(ReleaseBatchStateError);
+    });
+  });
+
+  describe('RELEASE_BATCH_STATUSES and isReleaseBatchStatus', () => {
+    it('defines all valid statuses in RELEASE_BATCH_STATUSES', () => {
+      expect(RELEASE_BATCH_STATUSES).toEqual([
+        'queued',
+        'building',
+        'blocked',
+        'awaiting_manual_test',
+        'test_failed',
+        'approved',
+        'promoting',
+        'completed',
+        'cancelled',
+      ]);
+    });
+
+    it('returns true for all valid ReleaseBatchStatus values', () => {
+      for (const status of RELEASE_BATCH_STATUSES) {
+        expect(isReleaseBatchStatus(status)).toBe(true);
+      }
+    });
+
+    it('returns false for unrecognized strings or non-string values', () => {
+      expect(isReleaseBatchStatus('running')).toBe(false);
+      expect(isReleaseBatchStatus('pending')).toBe(false);
+      expect(isReleaseBatchStatus('unknown')).toBe(false);
+      expect(isReleaseBatchStatus('')).toBe(false);
+      expect(isReleaseBatchStatus(null)).toBe(false);
+      expect(isReleaseBatchStatus(undefined)).toBe(false);
+      expect(isReleaseBatchStatus(123)).toBe(false);
+      expect(isReleaseBatchStatus({})).toBe(false);
+    });
+  });
+
+  describe('ALL_ITEMS_MERGED_ALLOWED_STATUSES and isAllItemsMergedAllowedStatus', () => {
+    it('defines expected permitted statuses for all-items-merged lifecycle point', () => {
+      expect(ALL_ITEMS_MERGED_ALLOWED_STATUSES).toEqual([
+        'building',
+        'awaiting_manual_test',
+        'approved',
+        'promoting',
+        'completed',
+      ]);
+    });
+
+    it('returns true for allowed all-items-merged statuses', () => {
+      for (const status of ALL_ITEMS_MERGED_ALLOWED_STATUSES) {
+        expect(isAllItemsMergedAllowedStatus(status)).toBe(true);
+      }
+    });
+
+    it('returns false for lifecycle-incompatible or unrecognized statuses', () => {
+      expect(isAllItemsMergedAllowedStatus('queued')).toBe(false);
+      expect(isAllItemsMergedAllowedStatus('blocked')).toBe(false);
+      expect(isAllItemsMergedAllowedStatus('test_failed')).toBe(false);
+      expect(isAllItemsMergedAllowedStatus('cancelled')).toBe(false);
+      expect(isAllItemsMergedAllowedStatus('running')).toBe(false);
+      expect(isAllItemsMergedAllowedStatus(null)).toBe(false);
+      expect(isAllItemsMergedAllowedStatus(undefined)).toBe(false);
     });
   });
 });

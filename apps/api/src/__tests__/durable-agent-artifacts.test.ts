@@ -85,6 +85,8 @@ function makeStore(writes: Array<WriteArtifactInput>): ArtifactStore {
     async list(): Promise<Artifact[]> {
       return [];
     },
+    async hydrateWorktree(): Promise<void> {},
+    async invalidate(): Promise<void> {},
   };
 }
 

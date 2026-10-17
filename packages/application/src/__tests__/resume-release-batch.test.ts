@@ -220,4 +220,96 @@ describe('ResumeReleaseBatch', () => {
     expect(result.actions).toContain('status_reconciled');
     expect(result.blocker.owner).toBe('none');
   });
+
+  it('surfaces unrecognized status drift without throwing RunOwnedBlockerError and reports unrecognized_status action', async () => {
+    const batchId = ReleaseBatchId('batch-resume-unrecognized');
+    const batch = {
+      id: batchId,
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-0',
+      releaseBranch: 'release/batch-resume-unrecognized',
+      status: 'running' as unknown as import('@ai-sdlc/domain').ReleaseBatchStatus,
+      currentPosition: 1,
+      createdAt: new Date(),
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged' as const,
+          runUuid: 'uuid-run-101',
+          mergedCommitSha: 'sha-101',
+        },
+      ],
+    };
+    batchRepo.insert(batch);
+
+    coordinator.reconcile = vi.fn().mockResolvedValue({
+      batch,
+      actions: ['unrecognized_status'],
+    });
+
+    const result = await useCase.execute({ batchId });
+
+    expect(coordinator.reconcile).toHaveBeenCalledWith(batchId);
+    expect(result.actions).toContain('unrecognized_status');
+    expect(result.batch.status).toBe('running');
+    expect(result.blocker.owner).toBe('release');
+    expect(result.blocker.reason).toBe('unrecognized_status: running');
+    expect(result.blocker.action).toContain(
+      "Stored status 'running' is not a valid ReleaseBatchStatus",
+    );
+  });
+
+  it('resumes batch blocked on promotion_ci_failed and completes when coordinator reconciles promotion', async () => {
+    const batchId = ReleaseBatchId('batch-resume-promotion-ci');
+    const batch = {
+      id: batchId,
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-0',
+      releaseBranch: 'release/batch-resume-promotion-ci',
+      status: 'blocked' as const,
+      blockedReason: 'promotion_ci_failed: PR #42 CI checks failed',
+      currentPosition: 1,
+      candidateSha: 'sha-candidate',
+      approvedCandidateSha: 'sha-candidate',
+      candidateTreeSha: 'tree-candidate',
+      promotionPrNumber: 42,
+      createdAt: new Date(),
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged' as const,
+          runUuid: 'uuid-run-101',
+          mergedCommitSha: 'sha-101',
+        },
+      ],
+    };
+    batchRepo.insert(batch);
+
+    const completedBatch = {
+      ...batch,
+      status: 'completed' as const,
+      blockedReason: undefined,
+      promotionCommitSha: 'sha-promoted',
+      completedAt: new Date(),
+    };
+
+    coordinator.reconcile = vi.fn().mockImplementation(async (_id) => {
+      batchRepo.update(completedBatch);
+      return {
+        batch: completedBatch,
+        actions: ['promotion_completed'],
+      };
+    });
+
+    const result = await useCase.execute({ batchId });
+
+    expect(coordinator.reconcile).toHaveBeenCalledWith(batchId);
+    expect(result.actions).toContain('promotion_completed');
+    expect(result.batch.status).toBe('completed');
+    expect(result.blocker.owner).toBe('none');
+  });
 });

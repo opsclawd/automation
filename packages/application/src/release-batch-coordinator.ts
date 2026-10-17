@@ -27,6 +27,8 @@ import {
   recordPromotionCommit,
   completeBatch,
   ReleaseBatchStateError,
+  isReleaseBatchStatus,
+  isAllItemsMergedAllowedStatus,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type {
@@ -63,7 +65,9 @@ export type ReconciliationAction =
   | 'promotion_pr_created'
   | 'source_drift_detected'
   | 'source_drift_integrated'
-  | 'promotion_completed';
+  | 'promotion_completed'
+  | 'unrecognized_status'
+  | 'unexpected_status';
 
 export interface ReconcileBatchResult {
   batchId: ReleaseBatchId;
@@ -299,8 +303,41 @@ export class ReleaseBatchCoordinator {
       };
     }
 
+    const rawStatus = (batch as { status?: unknown }).status;
+    if (!isReleaseBatchStatus(rawStatus)) {
+      const statusStr = String(rawStatus ?? batch.status);
+      this.deps.logger?.warn?.(
+        `Release batch ${batch.id} has unrecognized status '${statusStr}'; reconciliation skipped`,
+      );
+      return {
+        batchId: batch.id,
+        batchStatus: batch.status,
+        currentPosition: batch.currentPosition,
+        actions: ['unrecognized_status'],
+        batch,
+      };
+    }
+
     // Identify current unmerged items
     const unmergedItems = batch.items.filter((i) => i.status !== 'merged');
+
+    if (unmergedItems.length === 0) {
+      if (
+        !isAllItemsMergedAllowedStatus(batch.status) &&
+        !this.isPromotionRecoveryEligible(batch)
+      ) {
+        this.deps.logger?.warn?.(
+          `Release batch ${batch.id} has unexpected status '${batch.status}' with all items merged; reconciliation skipped`,
+        );
+        return {
+          batchId: batch.id,
+          batchStatus: batch.status,
+          currentPosition: batch.currentPosition,
+          actions: ['unexpected_status'],
+          batch,
+        };
+      }
+    }
 
     // Reconcile run status for merged items to ensure consistency and heal stale records
     for (const item of batch.items) {
@@ -464,61 +501,6 @@ export class ReleaseBatchCoordinator {
         };
       }
 
-      // If batch is blocked on source_branch_advanced, check if it can be unblocked (source integrated)
-      if (batch.status === 'blocked' && batch.blockedReason === 'source_branch_advanced') {
-        const repo = this.deps.repositoryPort.findById(batch.repoId);
-        if (this.deps.git && repo) {
-          try {
-            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.releaseBranch);
-            await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
-            const remoteReleaseSha = await this.deps.git.resolveRef(
-              repo.localBasePath,
-              `origin/${batch.releaseBranch}`,
-            );
-            const remoteSourceSha = await this.deps.git.resolveRef(
-              repo.localBasePath,
-              `origin/${batch.sourceBranch}`,
-            );
-            if (remoteReleaseSha && remoteSourceSha) {
-              const isSourceContained = await this.deps.git.isAncestor(
-                repo.localBasePath,
-                remoteSourceSha,
-                remoteReleaseSha,
-              );
-              if (isSourceContained) {
-                batch = unblockBatch(batch);
-                const candidateTreeSha = await this.deps.git.treeSha(
-                  repo.localBasePath,
-                  remoteReleaseSha,
-                );
-                batch = transitionToAwaitingManualTest(batch, remoteReleaseSha, candidateTreeSha);
-                this.deps.releaseBatchRepository.update(batch);
-                actions.push('unblocked', 'candidate_captured');
-
-                batch = await this.ensurePromotionPr(batch, remoteReleaseSha, now, actions);
-
-                this.dispatchNotification(batch, 'awaiting_manual_test', {
-                  candidateSha: remoteReleaseSha,
-                  ...(batch.promotionPrNumber !== undefined
-                    ? { promotionPrNumber: batch.promotionPrNumber }
-                    : {}),
-                });
-
-                return {
-                  batchId: batch.id,
-                  batchStatus: batch.status,
-                  currentPosition: batch.currentPosition,
-                  actions,
-                  batch,
-                };
-              }
-            }
-          } catch (err) {
-            this.deps.logger?.warn?.(`Failed re-checking source drift: ${err}`);
-          }
-        }
-      }
-
       // If batch is awaiting_manual_test, approved, or promoting, check safety invariant (branch movement)
       if (
         batch.status === 'awaiting_manual_test' ||
@@ -635,105 +617,13 @@ export class ReleaseBatchCoordinator {
         }
       }
 
-      // If batch is promoting, check promotion PR merge status
-      if (batch.status === 'promoting' && batch.promotionPrNumber && this.deps.github) {
-        const repo = this.deps.repositoryPort.findById(batch.repoId);
-        if (repo) {
-          try {
-            const readiness = await this.deps.github.getPrMergeReadiness(
-              repo.fullName,
-              batch.promotionPrNumber,
-            );
-            if (readiness.isMerged || readiness.state === 'merged') {
-              let promoSha = batch.promotionCommitSha ?? readiness.mergeCommitSha;
-              if (this.deps.git) {
-                await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
-                const sourceSha = await this.deps.git.resolveRef(
-                  repo.localBasePath,
-                  `origin/${batch.sourceBranch}`,
-                );
-                if (sourceSha) {
-                  if (!promoSha) promoSha = sourceSha;
-
-                  // Verify ancestry or tree equivalence
-                  const isAncestor = await this.deps.git.isAncestor(
-                    repo.localBasePath,
-                    batch.approvedCandidateSha!,
-                    sourceSha,
-                  );
-                  if (!isAncestor && batch.candidateTreeSha) {
-                    const sourceTreeSha = await this.deps.git.treeSha(
-                      repo.localBasePath,
-                      sourceSha,
-                    );
-                    if (sourceTreeSha !== batch.candidateTreeSha) {
-                      batch = this.blockBatchAndNotify(
-                        batch,
-                        'promotion_tree_mismatch',
-                        'promotion_blocked',
-                      );
-                      this.deps.releaseBatchRepository.update(batch);
-                      actions.push('blocked');
-                      return {
-                        batchId: batch.id,
-                        batchStatus: batch.status,
-                        currentPosition: batch.currentPosition,
-                        actions,
-                        batch,
-                      };
-                    }
-                  }
-                }
-              }
-              if (promoSha) {
-                batch = recordPromotionCommit(batch, promoSha);
-              }
-              batch = completeBatch(batch, now);
-              this.deps.releaseBatchRepository.update(batch);
-              this.dispatchNotification(batch, 'completed', {
-                ...(promoSha !== undefined ? { candidateSha: promoSha } : {}),
-                ...(batch.promotionPrNumber !== undefined
-                  ? { promotionPrNumber: batch.promotionPrNumber }
-                  : {}),
-              });
-              actions.push('promotion_completed');
-
-              this.publishEvent(batch, {
-                type: 'release_batch.completed',
-                level: 'info',
-                message: `release-batch ${batch.id} promoted and completed successfully (${promoSha ?? 'merged'})`,
-                timestamp: now,
-                metadata: {
-                  releaseBatchId: batch.id,
-                  promotionCommitSha: promoSha,
-                  promotionPrNumber: batch.promotionPrNumber,
-                },
-              });
-
-              return {
-                batchId: batch.id,
-                batchStatus: batch.status,
-                currentPosition: batch.currentPosition,
-                actions,
-                batch,
-              };
-            } else if (readiness.ciStatus === 'failed') {
-              const reason = `promotion_ci_failed: PR #${batch.promotionPrNumber} CI checks failed`;
-              batch = this.blockBatchAndNotify(batch, reason, 'promotion_blocked');
-              this.deps.releaseBatchRepository.update(batch);
-              actions.push('blocked');
-              return {
-                batchId: batch.id,
-                batchStatus: batch.status,
-                currentPosition: batch.currentPosition,
-                actions,
-                batch,
-              };
-            }
-          } catch (err) {
-            this.deps.logger?.warn?.(`Failed checking promotion PR merge status: ${err}`);
-          }
-        }
+      // If batch is promoting or recovering from promotion blocker, check promotion PR merge status
+      if (
+        (batch.status === 'promoting' || this.isPromotionRecoveryEligible(batch)) &&
+        batch.promotionPrNumber &&
+        this.deps.github
+      ) {
+        return this.reconcilePromotionReadiness(batch, now, actions);
       }
 
       return {
@@ -1844,6 +1734,213 @@ export class ReleaseBatchCoordinator {
     }
 
     return { batch, actions };
+  }
+
+  private isPromotionRecoveryEligible(batch: ReleaseBatch): boolean {
+    if (batch.status !== 'blocked' || !batch.blockedReason) {
+      return false;
+    }
+    const isCiFailed = batch.blockedReason.startsWith('promotion_ci_failed');
+    const isTreeMismatch = batch.blockedReason.startsWith('promotion_tree_mismatch');
+    if (!isCiFailed && !isTreeMismatch) {
+      return false;
+    }
+    if (batch.items.length === 0 || batch.items.some((i) => i.status !== 'merged')) {
+      return false;
+    }
+    if (batch.promotionPrNumber === undefined) {
+      return false;
+    }
+    if (!this.deps.github) {
+      return false;
+    }
+    const repo = this.deps.repositoryPort.findById(batch.repoId);
+    if (!repo) {
+      return false;
+    }
+    if (
+      !batch.candidateSha ||
+      !batch.approvedCandidateSha ||
+      batch.approvedCandidateSha !== batch.candidateSha
+    ) {
+      return false;
+    }
+    if (isTreeMismatch && (!this.deps.git || !batch.candidateTreeSha)) {
+      return false;
+    }
+    return true;
+  }
+
+  private async reconcilePromotionReadiness(
+    batch: ReleaseBatch,
+    now: Date,
+    actions: ReconciliationAction[],
+  ): Promise<ReconcileBatchResult> {
+    const repo = this.deps.repositoryPort.findById(batch.repoId);
+    if (!repo || !batch.promotionPrNumber || !this.deps.github) {
+      return {
+        batchId: batch.id,
+        batchStatus: batch.status,
+        currentPosition: batch.currentPosition,
+        actions,
+        batch,
+      };
+    }
+
+    try {
+      const readiness = await this.deps.github.getPrMergeReadiness(
+        repo.fullName,
+        batch.promotionPrNumber,
+      );
+
+      if (readiness.isMerged || readiness.state === 'merged') {
+        let promoSha = batch.promotionCommitSha ?? readiness.mergeCommitSha;
+        if (this.deps.git) {
+          await this.deps.git.fetch(repo.localBasePath, 'origin', batch.sourceBranch);
+          const sourceSha = await this.deps.git.resolveRef(
+            repo.localBasePath,
+            `origin/${batch.sourceBranch}`,
+          );
+          if (sourceSha) {
+            if (!promoSha) promoSha = sourceSha;
+
+            // Verify ancestry or tree equivalence
+            const isAncestor = await this.deps.git.isAncestor(
+              repo.localBasePath,
+              batch.approvedCandidateSha!,
+              sourceSha,
+            );
+            if (!isAncestor) {
+              if (batch.candidateTreeSha) {
+                const sourceTreeSha = await this.deps.git.treeSha(repo.localBasePath, sourceSha);
+                if (sourceTreeSha !== batch.candidateTreeSha) {
+                  batch = this.blockBatchAndNotify(
+                    batch,
+                    'promotion_tree_mismatch',
+                    'promotion_blocked',
+                  );
+                  this.deps.releaseBatchRepository.update(batch);
+                  actions.push('blocked');
+                  return {
+                    batchId: batch.id,
+                    batchStatus: batch.status,
+                    currentPosition: batch.currentPosition,
+                    actions,
+                    batch,
+                  };
+                }
+              } else {
+                batch = this.blockBatchAndNotify(
+                  batch,
+                  'promotion_tree_mismatch',
+                  'promotion_blocked',
+                );
+                this.deps.releaseBatchRepository.update(batch);
+                actions.push('blocked');
+                return {
+                  batchId: batch.id,
+                  batchStatus: batch.status,
+                  currentPosition: batch.currentPosition,
+                  actions,
+                  batch,
+                };
+              }
+            }
+          } else {
+            this.deps.logger?.warn?.(
+              `Cannot verify promotion merge for batch ${batch.id}: failed to resolve origin/${batch.sourceBranch}`,
+            );
+            return {
+              batchId: batch.id,
+              batchStatus: batch.status,
+              currentPosition: batch.currentPosition,
+              actions,
+              batch,
+            };
+          }
+        }
+
+        if (promoSha) {
+          batch = recordPromotionCommit(batch, promoSha);
+        }
+        if (batch.status === 'blocked') {
+          const { blockedReason: _br, ...unblocked } = batch;
+          void _br;
+          batch = { ...unblocked, status: 'promoting' };
+        }
+        batch = completeBatch(batch, now);
+        this.deps.releaseBatchRepository.update(batch);
+        this.dispatchNotification(batch, 'completed', {
+          ...(promoSha !== undefined ? { candidateSha: promoSha } : {}),
+          ...(batch.promotionPrNumber !== undefined
+            ? { promotionPrNumber: batch.promotionPrNumber }
+            : {}),
+        });
+        actions.push('promotion_completed');
+
+        this.publishEvent(batch, {
+          type: 'release_batch.completed',
+          level: 'info',
+          message: `release-batch ${batch.id} promoted and completed successfully (${promoSha ?? 'merged'})`,
+          timestamp: now,
+          metadata: {
+            releaseBatchId: batch.id,
+            promotionCommitSha: promoSha,
+            promotionPrNumber: batch.promotionPrNumber,
+          },
+        });
+
+        return {
+          batchId: batch.id,
+          batchStatus: batch.status,
+          currentPosition: batch.currentPosition,
+          actions,
+          batch,
+        };
+      } else if (readiness.state === 'closed' && !readiness.isMerged) {
+        const reason =
+          batch.status === 'blocked' && batch.blockedReason
+            ? batch.blockedReason
+            : `pr_closed_unmerged: PR #${batch.promotionPrNumber} closed without merge`;
+        batch = this.blockBatchAndNotify(batch, reason, 'promotion_blocked');
+        this.deps.releaseBatchRepository.update(batch);
+        actions.push('blocked');
+        return {
+          batchId: batch.id,
+          batchStatus: batch.status,
+          currentPosition: batch.currentPosition,
+          actions,
+          batch,
+        };
+      } else if (readiness.ciStatus === 'failed') {
+        const reason = `promotion_ci_failed: PR #${batch.promotionPrNumber} CI checks failed`;
+        batch = this.blockBatchAndNotify(batch, reason, 'promotion_blocked');
+        this.deps.releaseBatchRepository.update(batch);
+        actions.push('blocked');
+        return {
+          batchId: batch.id,
+          batchStatus: batch.status,
+          currentPosition: batch.currentPosition,
+          actions,
+          batch,
+        };
+      } else if (batch.status === 'blocked') {
+        const { blockedReason: _br, ...unblocked } = batch;
+        void _br;
+        batch = { ...unblocked, status: 'promoting' };
+        this.deps.releaseBatchRepository.update(batch);
+      }
+    } catch (err) {
+      this.deps.logger?.warn?.(`Failed checking promotion PR merge status: ${err}`);
+    }
+
+    return {
+      batchId: batch.id,
+      batchStatus: batch.status,
+      currentPosition: batch.currentPosition,
+      actions,
+      batch,
+    };
   }
 
   private publishEvent(

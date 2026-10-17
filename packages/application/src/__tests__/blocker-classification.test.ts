@@ -345,4 +345,91 @@ describe('classifyReleaseBatchBlocker', () => {
     const blocker = classifyReleaseBatchBlocker(batch, run);
     expect(blocker.owner).toBe('none');
   });
+
+  it('classifies as owner: release with unrecognized_status when batch status is outside ReleaseBatchStatus union', () => {
+    const batch = makeBatch({
+      status: 'running' as unknown as typeof batch.status,
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged',
+          runUuid: 'uuid-run-101',
+          mergedCommitSha: 'sha-101',
+        },
+      ],
+    });
+
+    const blocker = classifyReleaseBatchBlocker(batch, null);
+    expect(blocker.owner).toBe('release');
+    expect(blocker.reason).toBe('unrecognized_status: running');
+    expect(blocker.action).toContain("Stored status 'running' is not a valid ReleaseBatchStatus");
+    expect(blocker.action).toContain(`releases resume --id ${batch.id}`);
+  });
+
+  it('classifies as owner: release with unexpected_status when all items are merged and batch status is queued', () => {
+    const batch = makeBatch({
+      status: 'queued',
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged',
+          runUuid: 'uuid-run-101',
+          mergedCommitSha: 'sha-101',
+        },
+      ],
+    });
+
+    const blocker = classifyReleaseBatchBlocker(batch, null);
+    expect(blocker.owner).toBe('release');
+    expect(blocker.reason).toBe('unexpected_status: queued');
+    expect(blocker.action).toContain("Release batch status is 'queued' but all items are merged");
+    expect(blocker.action).toContain(`releases resume --id ${batch.id}`);
+  });
+
+  it('classifies as owner: release with unexpected_status when all items are merged and batch status is test_failed', () => {
+    const batch = makeBatch({
+      status: 'test_failed',
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged',
+          runUuid: 'uuid-run-101',
+          mergedCommitSha: 'sha-101',
+        },
+      ],
+    });
+
+    const blocker = classifyReleaseBatchBlocker(batch, null);
+    expect(blocker.owner).toBe('release');
+    expect(blocker.reason).toBe('unexpected_status: test_failed');
+    expect(blocker.action).toContain(
+      "Release batch status is 'test_failed' but all items are merged",
+    );
+    expect(blocker.action).toContain(`releases resume --id ${batch.id}`);
+  });
+
+  it('classifies as owner: release with unexpected_status when all items are merged and batch status is blocked', () => {
+    const batch = makeBatch({
+      status: 'blocked',
+      blockedReason: 'manual_hold',
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged',
+          runUuid: 'uuid-run-101',
+          mergedCommitSha: 'sha-101',
+        },
+      ],
+    });
+
+    const blocker = classifyReleaseBatchBlocker(batch, null);
+    expect(blocker.owner).toBe('release');
+    expect(blocker.reason).toBe('unexpected_status: blocked');
+    expect(blocker.action).toContain("Release batch status is 'blocked' but all items are merged");
+    expect(blocker.action).toContain(`releases resume --id ${batch.id}`);
+  });
 });

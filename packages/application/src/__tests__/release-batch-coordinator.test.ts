@@ -18,6 +18,7 @@ import { FakeEventBus } from '../test-doubles/fake-event-bus.js';
 import { FakeRepositoryPort } from '../test-doubles/fake-repository-port.js';
 import { FakeGitHubPort } from '../test-doubles/fake-github-port.js';
 import { FakeGitPort } from '../test-doubles/fake-git-port.js';
+import { FakeReleaseBatchNotification } from '../test-doubles/fake-release-batch-notification.js';
 import { FakeEnvironmentHealthPort } from '../test-doubles/fake-environment-health-port.js';
 import { InterItemMaintenanceService } from '../inter-item-maintenance.js';
 import { ReapOrphanedTestWorkers } from '../reap-orphaned-test-workers.js';
@@ -1164,10 +1165,12 @@ describe('ReleaseBatchCoordinator', () => {
   describe('candidate capture and promotion lifecycle', () => {
     let fakeGit: FakeGitPort;
     let fakeGitHub: FakeGitHubPort;
+    let fakeNotification: FakeReleaseBatchNotification;
 
     beforeEach(() => {
       fakeGit = new FakeGitPort();
       fakeGitHub = new FakeGitHubPort();
+      fakeNotification = new FakeReleaseBatchNotification();
       coordinator = new ReleaseBatchCoordinator({
         releaseBatchRepository,
         runRepository,
@@ -1176,6 +1179,7 @@ describe('ReleaseBatchCoordinator', () => {
         eventBus,
         git: fakeGit,
         github: fakeGitHub,
+        releaseBatchNotification: fakeNotification,
         now: () => t1,
       });
     });
@@ -1964,6 +1968,373 @@ describe('ReleaseBatchCoordinator', () => {
       expect(completedEvent?.runUuid).not.toBe(batchId);
     });
 
+    it('recovers batch blocked on promotion_ci_failed once PR is green and merged', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+      const promotionSha = 'sha-promoted-commit-789';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'blocked';
+      batch.blockedReason = 'promotion_ci_failed: PR #42 CI checks failed';
+      batch.promotionPrNumber = 42;
+      releaseBatchRepository.update(batch);
+
+      // Setup fake GitHub PR readiness as merged and passed
+      fakeGitHub.prs.set('test-org/test-repo/42', {
+        number: 42,
+        url: 'https://example/pr/42',
+        state: 'merged',
+        headRefName: batch.releaseBranch,
+        baseRefName: batch.sourceBranch,
+      });
+      fakeGitHub.mergeReadiness.set('test-org/test-repo/42', {
+        prNumber: 42,
+        state: 'merged',
+        isMerged: true,
+        ciStatus: 'passed',
+        mergeStateStatus: 'clean',
+        baseRefName: batch.sourceBranch,
+        autoMergeEnabled: true,
+        mergeCommitSha: promotionSha,
+      });
+
+      // Setup Git
+      fakeGit.remoteRefs.set('origin/' + batch.sourceBranch, promotionSha);
+      fakeGit.ancestorResults.set(`${candidateSha}|${promotionSha}`, true);
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('promotion_completed');
+      expect(result.actions).not.toContain('unblocked');
+      expect(result.batchStatus).toBe('completed');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('completed');
+      expect(saved.blockedReason).toBeUndefined();
+      expect(saved.promotionCommitSha).toBe(promotionSha);
+      expect(saved.completedAt).toBeDefined();
+
+      const completedEvent = eventBus.published.find(
+        (p) => p.event.type === 'release_batch.completed',
+      );
+      expect(completedEvent).toBeDefined();
+      expect(fakeNotification.hasNotification('completed')).toBe(true);
+      expect(fakeGitHub.autoMergeRequests).toHaveLength(0);
+    });
+
+    it('leaves batch blocked with promotion_ci_failed when PR CI is still failing on resume', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'blocked';
+      batch.blockedReason = 'promotion_ci_failed: PR #42 CI checks failed';
+      batch.promotionPrNumber = 42;
+      releaseBatchRepository.update(batch);
+
+      fakeGitHub.prs.set('test-org/test-repo/42', {
+        number: 42,
+        url: 'https://example/pr/42',
+        state: 'open',
+        headRefName: batch.releaseBranch,
+        baseRefName: batch.sourceBranch,
+      });
+      fakeGitHub.mergeReadiness.set('test-org/test-repo/42', {
+        prNumber: 42,
+        state: 'open',
+        isMerged: false,
+        ciStatus: 'failed',
+        mergeStateStatus: 'blocked',
+        baseRefName: batch.sourceBranch,
+      });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('blocked');
+      expect(result.actions).not.toContain('promotion_completed');
+      expect(result.actions).not.toContain('unblocked');
+      expect(result.batchStatus).toBe('blocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.blockedReason).toBe('promotion_ci_failed: PR #42 CI checks failed');
+      expect(saved.completedAt).toBeUndefined();
+    });
+
+    it('leaves batch blocked with exact reason when PR merge readiness lookup throws', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'blocked';
+      batch.blockedReason = 'promotion_ci_failed: PR #42 CI checks failed';
+      batch.promotionPrNumber = 42;
+      releaseBatchRepository.update(batch);
+
+      vi.spyOn(fakeGitHub, 'getPrMergeReadiness').mockRejectedValueOnce(
+        new Error('GitHub API unavailable: 503 Service Unavailable'),
+      );
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.batchStatus).toBe('blocked');
+      expect(result.batch.blockedReason).toBe('promotion_ci_failed: PR #42 CI checks failed');
+      expect(result.actions).not.toContain('unblocked');
+      expect(result.actions).not.toContain('promotion_completed');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.blockedReason).toBe('promotion_ci_failed: PR #42 CI checks failed');
+      expect(saved.completedAt).toBeUndefined();
+    });
+
+    it('clears promotion blocker and transitions to promoting when PR is open and CI passes without merging', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'blocked';
+      batch.blockedReason = 'promotion_ci_failed: PR #42 CI checks failed';
+      batch.promotionPrNumber = 42;
+      releaseBatchRepository.update(batch);
+
+      fakeGitHub.prs.set('test-org/test-repo/42', {
+        number: 42,
+        url: 'https://example/pr/42',
+        state: 'open',
+        headRefName: batch.releaseBranch,
+        baseRefName: batch.sourceBranch,
+      });
+      fakeGitHub.mergeReadiness.set('test-org/test-repo/42', {
+        prNumber: 42,
+        state: 'open',
+        isMerged: false,
+        ciStatus: 'passed',
+        mergeStateStatus: 'clean',
+        baseRefName: batch.sourceBranch,
+      });
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.batchStatus).toBe('promoting');
+      expect(result.actions).not.toContain('promotion_completed');
+      expect(result.actions).not.toContain('unblocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('promoting');
+      expect(saved.blockedReason).toBeUndefined();
+      expect(saved.completedAt).toBeUndefined();
+      expect(fakeGitHub.autoMergeRequests).toHaveLength(0);
+    });
+
+    it('re-evaluates promotion_tree_mismatch: stays blocked on persistent tree mismatch', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+      const promotionSha = 'sha-promoted-commit-789';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'blocked';
+      batch.blockedReason = 'promotion_tree_mismatch';
+      batch.promotionPrNumber = 42;
+      releaseBatchRepository.update(batch);
+
+      fakeGitHub.prs.set('test-org/test-repo/42', {
+        number: 42,
+        url: 'https://example/pr/42',
+        state: 'merged',
+        headRefName: batch.releaseBranch,
+        baseRefName: batch.sourceBranch,
+      });
+      fakeGitHub.mergeReadiness.set('test-org/test-repo/42', {
+        prNumber: 42,
+        state: 'merged',
+        isMerged: true,
+        ciStatus: 'passed',
+        mergeStateStatus: 'clean',
+        baseRefName: batch.sourceBranch,
+        autoMergeEnabled: true,
+        mergeCommitSha: promotionSha,
+      });
+
+      fakeGit.remoteRefs.set('origin/' + batch.sourceBranch, promotionSha);
+      fakeGit.ancestorResults.set(`${candidateSha}|${promotionSha}`, false);
+      fakeGit.treeShaResults.set(promotionSha, 'tree-different-789');
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('blocked');
+      expect(result.actions).not.toContain('promotion_completed');
+      expect(result.batchStatus).toBe('blocked');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.blockedReason).toBe('promotion_tree_mismatch');
+      expect(saved.completedAt).toBeUndefined();
+    });
+
+    it('re-evaluates promotion_tree_mismatch: completes batch when source tree now matches candidate tree', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+      const promotionSha = 'sha-promoted-commit-789';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'blocked';
+      batch.blockedReason = 'promotion_tree_mismatch';
+      batch.promotionPrNumber = 42;
+      releaseBatchRepository.update(batch);
+
+      fakeGitHub.prs.set('test-org/test-repo/42', {
+        number: 42,
+        url: 'https://example/pr/42',
+        state: 'merged',
+        headRefName: batch.releaseBranch,
+        baseRefName: batch.sourceBranch,
+      });
+      fakeGitHub.mergeReadiness.set('test-org/test-repo/42', {
+        prNumber: 42,
+        state: 'merged',
+        isMerged: true,
+        ciStatus: 'passed',
+        mergeStateStatus: 'clean',
+        baseRefName: batch.sourceBranch,
+        autoMergeEnabled: true,
+        mergeCommitSha: promotionSha,
+      });
+
+      fakeGit.remoteRefs.set('origin/' + batch.sourceBranch, promotionSha);
+      fakeGit.ancestorResults.set(`${candidateSha}|${promotionSha}`, false);
+      fakeGit.treeShaResults.set(promotionSha, 'tree-candidate-456');
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toContain('promotion_completed');
+      expect(result.batchStatus).toBe('completed');
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('completed');
+      expect(saved.blockedReason).toBeUndefined();
+      expect(saved.promotionCommitSha).toBe(promotionSha);
+      expect(saved.completedAt).toBeDefined();
+    });
+
+    it('preserves blocked state and emits unexpected_status when recovery candidate metadata or PR number is missing', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'blocked';
+      batch.blockedReason = 'promotion_ci_failed: PR #42 CI checks failed';
+      // Missing promotionPrNumber
+      batch.promotionPrNumber = undefined;
+      releaseBatchRepository.update(batch);
+
+      const result1 = await coordinator.reconcile(batchId);
+      expect(result1.actions).toEqual(['unexpected_status']);
+      expect(result1.batchStatus).toBe('blocked');
+      expect(releaseBatchRepository.findById(batchId)!.status).toBe('blocked');
+
+      // Missing approvedCandidateSha
+      batch = releaseBatchRepository.findById(batchId)!;
+      batch.promotionPrNumber = 42;
+      batch.approvedCandidateSha = undefined;
+      releaseBatchRepository.update(batch);
+
+      const result2 = await coordinator.reconcile(batchId);
+      expect(result2.actions).toEqual(['unexpected_status']);
+      expect(result2.batchStatus).toBe('blocked');
+
+      // Mismatched approvedCandidateSha
+      batch = releaseBatchRepository.findById(batchId)!;
+      batch.approvedCandidateSha = 'different-sha';
+      releaseBatchRepository.update(batch);
+
+      const result3 = await coordinator.reconcile(batchId);
+      expect(result3.actions).toEqual(['unexpected_status']);
+      expect(result3.batchStatus).toBe('blocked');
+
+      // Tree mismatch without candidateTreeSha
+      batch = releaseBatchRepository.findById(batchId)!;
+      batch.approvedCandidateSha = candidateSha;
+      batch.blockedReason = 'promotion_tree_mismatch';
+      batch.candidateTreeSha = undefined;
+      releaseBatchRepository.update(batch);
+
+      const result4 = await coordinator.reconcile(batchId);
+      expect(result4.actions).toEqual(['unexpected_status']);
+      expect(result4.batchStatus).toBe('blocked');
+    });
+
+    it('does not evaluate PR merge readiness for all-items-merged batches blocked with unrelated reasons', async () => {
+      const { batchId } = setupFiveItemBatch();
+      const candidateSha = 'sha-candidate-456';
+
+      let batch = releaseBatchRepository.findById(batchId)!;
+      for (const item of batch.items) {
+        item.status = 'merged';
+        item.mergedCommitSha = 'sha-item-' + item.position;
+      }
+      batch.candidateSha = candidateSha;
+      batch.approvedCandidateSha = candidateSha;
+      batch.candidateTreeSha = 'tree-candidate-456';
+      batch.status = 'blocked';
+      batch.blockedReason = 'manual_hold';
+      batch.promotionPrNumber = 42;
+      releaseBatchRepository.update(batch);
+
+      const readinessSpy = vi.spyOn(fakeGitHub, 'getPrMergeReadiness');
+
+      const result = await coordinator.reconcile(batchId);
+      expect(result.actions).toEqual(['unexpected_status']);
+      expect(readinessSpy).not.toHaveBeenCalled();
+
+      const saved = releaseBatchRepository.findById(batchId)!;
+      expect(saved.status).toBe('blocked');
+      expect(saved.blockedReason).toBe('manual_hold');
+    });
+
     it('publishes batch-level events with fallback runUuid from latest item and avoids batch.id as runUuid (#1266)', async () => {
       const { batchId } = setupFiveItemBatch();
       const insertedEvents: Array<{ runUuid: string; type: string }> = [];
@@ -2219,6 +2590,178 @@ describe('ReleaseBatchCoordinator', () => {
       const saved = releaseBatchRepository.findById(batchId)!;
       const run2 = runRepository.findByUuid(saved.items[1]?.runUuid!);
       expect(run2?.pinnedRuntime).toBeUndefined();
+    });
+  });
+
+  describe('Status drift and unrecognized status diagnostics', () => {
+    it('reports unrecognized_status action when all items are merged but batch status is invalid', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      // Merge all 5 items
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t2,
+        });
+      }
+
+      // Simulate status drift: manual SQL update wrote 'running' to release_batches.status
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = {
+        ...batch,
+        status: 'running' as unknown as typeof batch.status,
+      };
+      releaseBatchRepository.update(batch);
+
+      // Reconcile batch
+      const result = await coordinator.reconcile(batchId);
+
+      // Must report the problem rather than returning actions: []
+      expect(result.actions).toEqual(['unrecognized_status']);
+      expect(result.batchStatus).toBe('running');
+      expect(result.actions).not.toContain('candidate_captured');
+      expect(result.actions).not.toContain('build_completed');
+
+      // Persisted batch remains unchanged
+      const persisted = releaseBatchRepository.findById(batchId)!;
+      expect(persisted.status).toBe('running');
+      expect(persisted.candidateSha).toBeUndefined();
+    });
+
+    it('reports unexpected_status action when all items are merged but batch status is queued', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t2,
+        });
+      }
+
+      // Explicitly set a non-passed run state to verify reconcile does not mutate it
+      runRepository.update('run-item-1', {
+        status: 'running',
+        currentPhase: 'plan',
+      });
+      const runBefore = { ...runRepository.findByUuid('run-item-1')! };
+
+      // Set status to queued (known status, but unexpected when all items merged)
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = { ...batch, status: 'queued' };
+      releaseBatchRepository.update(batch);
+
+      const result = await coordinator.reconcile(batchId);
+
+      expect(result.actions).toEqual(['unexpected_status']);
+      expect(result.batchStatus).toBe('queued');
+      expect(result.actions).not.toContain('candidate_captured');
+
+      // Regression: linked Run remains unchanged for unexpected/queued status
+      const runAfter = runRepository.findByUuid('run-item-1')!;
+      expect(runAfter.status).toBe(runBefore.status);
+      expect(runAfter.currentPhase).toBe(runBefore.currentPhase);
+    });
+
+    it('reports unexpected_status action when all items are merged but batch status is test_failed', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t2,
+        });
+      }
+
+      // Set status to test_failed (valid member of ReleaseBatchStatus, but unexpected when reconciling merged items)
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = { ...batch, status: 'test_failed' };
+      releaseBatchRepository.update(batch);
+
+      const result = await coordinator.reconcile(batchId);
+
+      expect(result.actions).toEqual(['unexpected_status']);
+      expect(result.batchStatus).toBe('test_failed');
+      expect(result.actions).not.toContain('candidate_captured');
+      expect(result.actions).not.toContain('build_completed');
+
+      const persisted = releaseBatchRepository.findById(batchId)!;
+      expect(persisted.status).toBe('test_failed');
+      expect(persisted.candidateSha).toBeUndefined();
+    });
+
+    it('reports unexpected_status action when all items are merged but batch status is blocked', async () => {
+      const { batchId } = setupFiveItemBatch();
+
+      for (let pos = 1; pos <= 5; pos++) {
+        await coordinator.certifyItemMerged({
+          batchId,
+          position: pos,
+          mergedCommitSha: `sha-commit-${100 + pos}`,
+          now: t2,
+        });
+      }
+
+      // Set status to blocked (valid member of ReleaseBatchStatus, but unexpected when reconciling all items merged)
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = { ...batch, status: 'blocked', blockedReason: 'manual_hold' };
+      releaseBatchRepository.update(batch);
+
+      const result = await coordinator.reconcile(batchId);
+
+      expect(result.actions).toEqual(['unexpected_status']);
+      expect(result.batchStatus).toBe('blocked');
+      expect(result.actions).not.toContain('candidate_captured');
+      expect(result.actions).not.toContain('build_completed');
+
+      const persisted = releaseBatchRepository.findById(batchId)!;
+      expect(persisted.status).toBe('blocked');
+      expect(persisted.candidateSha).toBeUndefined();
+    });
+
+    it('preserves existing candidate capture when batch status is building with all items merged', async () => {
+      const fakeGit = new FakeGitPort();
+      fakeGit.remoteRefs.set('origin/release/2026-09-11-batch-five', 'sha-release-cand');
+      fakeGit.remoteRefs.set('origin/main', 'sha-main-cand');
+      fakeGit.ancestorResults.set('sha-main-cand|sha-release-cand', true);
+      fakeGit.treeShaResults.set('sha-release-cand', 'tree-cand-sha');
+
+      coordinator = new ReleaseBatchCoordinator({
+        releaseBatchRepository,
+        runRepository,
+        jobQueue,
+        repositoryPort,
+        eventBus,
+        git: fakeGit,
+        now: () => t2,
+      });
+
+      const { batchId } = setupFiveItemBatch();
+
+      // Mark all items merged directly in repository so batch remains in building
+      let batch = releaseBatchRepository.findById(batchId)!;
+      batch = {
+        ...batch,
+        status: 'building',
+        items: batch.items.map((i) => ({
+          ...i,
+          status: 'merged',
+          mergedCommitSha: `sha-commit-${i.position}`,
+        })),
+      };
+      releaseBatchRepository.update(batch);
+
+      // Status is building (default valid state) -> reconcile triggers candidate capture
+      const result = await coordinator.reconcile(batchId);
+
+      expect(result.actions).toContain('build_completed');
+      expect(result.actions).toContain('candidate_captured');
+      expect(result.batchStatus).toBe('awaiting_manual_test');
     });
   });
 });

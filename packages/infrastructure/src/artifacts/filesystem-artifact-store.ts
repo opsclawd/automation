@@ -111,6 +111,38 @@ export function createFilesystemArtifactStore(
       throw new ArtifactNotFoundError(runId, relativePath);
     },
 
+    async invalidate(runId: string, relativePath: string): Promise<void> {
+      const normalizedPath = normalizeSafeRelativePath(relativePath);
+      const durablePath = await resolveArtifactPath(durableRoot, normalizedPath, relativePath);
+      const hydratedRelativePath = getHydratedWorktreePath(normalizedPath);
+      const hydratedWorktreePath = await resolveArtifactPath(
+        worktreeRoot,
+        hydratedRelativePath,
+        relativePath,
+      );
+
+      const pathsToRemove = new Set<string>([durablePath, hydratedWorktreePath]);
+      if (isCanonicalDeliverableKey(normalizedPath)) {
+        const legacyWorktreePath = await resolveArtifactPath(
+          worktreeRoot,
+          normalizedPath,
+          relativePath,
+        );
+        pathsToRemove.add(legacyWorktreePath);
+      }
+
+      for (const pathToRemove of pathsToRemove) {
+        const fileStat = await statIfPresent(pathToRemove);
+        if (!fileStat) {
+          continue;
+        }
+        if (fileStat.isDirectory()) {
+          throw new InvalidArtifactPathError(relativePath, 'path points to a directory');
+        }
+        await unlink(pathToRemove);
+      }
+    },
+
     async list(runId: string): Promise<Artifact[]> {
       // List only from the durable root — it contains only written artifacts.
       // Walking worktreeRoot would enumerate the entire repo checkout (source

@@ -221,6 +221,20 @@ export class ValidateHandler implements PhaseHandler {
     }
 
     if (passed) {
+      try {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: 'validate',
+          relativePath: 'validate/critical-files.json',
+          contents: JSON.stringify([], null, 2),
+        });
+      } catch {
+        emit(
+          'validate.artifact_write_failed',
+          'warn',
+          'failed to write validate/critical-files.json artifact; stale snapshot may remain',
+        );
+      }
       await recordValidationEvidence(ctx, 'validate');
       emit('validate.completed', 'info', 'validation passed', {
         commands: validationRunLength,
