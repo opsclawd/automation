@@ -1,4 +1,10 @@
-import type { ReleaseBatch, ReleaseBatchItem, Run } from '@ai-sdlc/domain';
+import {
+  type ReleaseBatch,
+  type ReleaseBatchItem,
+  type Run,
+  isReleaseBatchStatus,
+  isAllItemsMergedAllowedStatus,
+} from '@ai-sdlc/domain';
 
 export type ReleaseBatchBlockerOwner = 'none' | 'run' | 'release' | 'github' | 'environment';
 
@@ -28,6 +34,34 @@ export function classifyReleaseBatchBlocker(
     batch.items.find((i) => i.status === 'blocked' || i.status === 'active') ??
     batch.items.find((i) => i.position === batch.currentPosition);
 
+  // Check for unrecognized status or unexpected status at all-items-merged
+  const rawStatus = (batch as { status?: unknown }).status;
+  if (!isReleaseBatchStatus(rawStatus)) {
+    const statusStr = String(rawStatus ?? batch.status);
+    return {
+      owner: 'release',
+      reason: `unrecognized_status: ${statusStr}`,
+      ...(currentItem?.position !== undefined ? { position: currentItem.position } : {}),
+      ...(currentItem?.issueNumber !== undefined ? { issueNumber: currentItem.issueNumber } : {}),
+      action: `Stored status '${statusStr}' is not a valid ReleaseBatchStatus. Review and manually repair release_batches.status to an appropriate valid lifecycle state before resuming via: releases resume --id ${batch.id}`,
+    };
+  }
+
+  const allItemsMerged = batch.items.length > 0 && batch.items.every((i) => i.status === 'merged');
+  if (
+    allItemsMerged &&
+    batch.status !== 'cancelled' &&
+    !isAllItemsMergedAllowedStatus(batch.status)
+  ) {
+    return {
+      owner: 'release',
+      reason: `unexpected_status: ${batch.status}`,
+      ...(currentItem?.position !== undefined ? { position: currentItem.position } : {}),
+      ...(currentItem?.issueNumber !== undefined ? { issueNumber: currentItem.issueNumber } : {}),
+      action: `Release batch status is '${batch.status}' but all items are merged. Review and manually repair release_batches.status to an appropriate valid lifecycle state before resuming via: releases resume --id ${batch.id}`,
+    };
+  }
+
   // 1. Check if Run owns the blocker
   const batchReason = batch.blockedReason ?? '';
   const itemReason = currentItem?.blockedReason ?? '';
@@ -40,7 +74,6 @@ export function classifyReleaseBatchBlocker(
     itemReason.startsWith('run_');
 
   const isCurrentItemMerged = currentItem?.status === 'merged';
-  const allItemsMerged = batch.items.length > 0 && batch.items.every((i) => i.status === 'merged');
   const canRunOwnBlocker = !isCurrentItemMerged && !allItemsMerged;
 
   const isRunBlockerStatus =

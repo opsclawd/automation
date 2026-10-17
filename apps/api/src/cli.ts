@@ -2835,6 +2835,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   `  Status:  ${result.batch.status}`,
                   `  Actions: ${result.actions.length > 0 ? result.actions.join(', ') : 'none'}`,
                   `  Blocker: ${result.blocker.owner !== 'none' ? `${result.blocker.owner}: ${result.blocker.reason}` : 'none'}`,
+                  ...(result.blocker.owner !== 'none' && result.blocker.action
+                    ? [`  Action:  ${result.blocker.action}`]
+                    : []),
                 ];
                 await new Promise<void>((resolve, reject) =>
                   process.stdout.write(outputLines.join('\n') + '\n', (err) =>

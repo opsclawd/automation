@@ -220,4 +220,44 @@ describe('ResumeReleaseBatch', () => {
     expect(result.actions).toContain('status_reconciled');
     expect(result.blocker.owner).toBe('none');
   });
+
+  it('surfaces unrecognized status drift without throwing RunOwnedBlockerError and reports unrecognized_status action', async () => {
+    const batchId = ReleaseBatchId('batch-resume-unrecognized');
+    const batch = {
+      id: batchId,
+      repoId: RepositoryId('owner/repo'),
+      sourceBranch: 'main',
+      sourceStartSha: 'sha-0',
+      releaseBranch: 'release/batch-resume-unrecognized',
+      status: 'running' as unknown as import('@ai-sdlc/domain').ReleaseBatchStatus,
+      currentPosition: 1,
+      createdAt: new Date(),
+      items: [
+        {
+          position: 1,
+          issueNumber: 101,
+          status: 'merged' as const,
+          runUuid: 'uuid-run-101',
+          mergedCommitSha: 'sha-101',
+        },
+      ],
+    };
+    batchRepo.insert(batch);
+
+    coordinator.reconcile = vi.fn().mockResolvedValue({
+      batch,
+      actions: ['unrecognized_status'],
+    });
+
+    const result = await useCase.execute({ batchId });
+
+    expect(coordinator.reconcile).toHaveBeenCalledWith(batchId);
+    expect(result.actions).toContain('unrecognized_status');
+    expect(result.batch.status).toBe('running');
+    expect(result.blocker.owner).toBe('release');
+    expect(result.blocker.reason).toBe('unrecognized_status: running');
+    expect(result.blocker.action).toContain(
+      "Stored status 'running' is not a valid ReleaseBatchStatus",
+    );
+  });
 });
