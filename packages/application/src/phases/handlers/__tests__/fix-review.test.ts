@@ -1,9 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
 import { FixReviewHandler } from '../fix-review.js';
+import { ValidateHandler } from '../validate.js';
 import type { PhaseHandlerContext } from '../../handler.js';
-import { FakeArtifactStore, FakeAgentPort, FakeGitPort } from '../../../test-doubles/index.js';
+import {
+  FakeArtifactStore,
+  FakeAgentPort,
+  FakeGitPort,
+  FakeValidationPort,
+  FakeValidationRunRepository,
+} from '../../../test-doubles/index.js';
 import { createFindingLedger } from '../../../review-fix/finding-ledger.js';
 import { recordValidationEvidence } from '../../validation-evidence.js';
+import { RunValidation } from '../../../run-validation.js';
 
 const { mockLoadPromptTemplate, mockRenderPrompt } = vi.hoisted(() => ({
   mockLoadPromptTemplate: vi.fn(() => '# Template\n'),
@@ -678,6 +686,116 @@ describe('FixReviewHandler', () => {
         'validate/critical-files.json',
       ]);
     }
+  });
+
+  it('does not block fix-review when clean validate passes invalidate stale critical-files snapshot', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    // 1. Seed stale failing-validation snapshot from earlier fix-validate attempt
+    const crypto = await import('node:crypto');
+    const originalConfig = '{"timeout": 30}';
+    const beforeHash = crypto.createHash('sha256').update(originalConfig).digest('hex');
+    const attemptedFixHash = crypto.createHash('sha256').update('{"timeout": 60}').digest('hex');
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'validate/critical-files.json',
+      contents: JSON.stringify([
+        {
+          path: '.ai-orchestrator.json',
+          beforeHash,
+          afterHash: attemptedFixHash,
+          diagnostic: '1 validation command(s) failed: test (timed out). See validate/ logs.',
+        },
+      ]),
+    });
+
+    // 2. The critical file in the worktree was never touched by the real work (sits at original beforeHash)
+    git.worktreeFileContents.set('.ai-orchestrator.json', originalConfig);
+    git.defaultWorktreeFileContent = (p) =>
+      p === '.ai-orchestrator.json' ? originalConfig : 'content';
+
+    // 3. Setup ValidateHandler fixture with passing validation
+    const validation = new FakeValidationPort();
+    validation.result = [
+      {
+        command: 'pnpm test',
+        exitCode: 0,
+        durationMs: 1500,
+        stdout: 'Tests passed',
+        stderr: '',
+        stdoutPath: 'validate/0-test.stdout.log',
+        stderrPath: 'validate/0-test.stderr.log',
+        outcome: 'passed',
+      },
+    ];
+    const runValidation = new RunValidation({
+      validation,
+      validationRunRepository: new FakeValidationRunRepository(),
+      idFactory: () => 'vr1',
+      now: () => new Date('2026-06-16T00:00:00Z'),
+    });
+    const validateHandler = new ValidateHandler({
+      runValidation,
+      commands: ['pnpm test'],
+      timeoutSeconds: 300,
+      logDir: '/test/repo/.ai-runs/r1/validate',
+      fixValidateEnabled: false,
+    });
+
+    // 4. Simulate several subsequent clean validate passes (as when fix-validate is skipped)
+    const valResult1 = await validateHandler.run(ctx);
+    expect(valResult1.outcome).toBe('passed');
+
+    const valResult2 = await validateHandler.run(ctx);
+    expect(valResult2.outcome).toBe('passed');
+
+    // Verify validate cleared the critical files artifact
+    const criticalRaw = await artifacts.read('run-1', 'validate/critical-files.json');
+    expect(JSON.parse(criticalRaw)).toEqual([]);
+
+    // 5. Setup FixReviewHandler inputs
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(createFindingLedger([])),
+    });
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'fix-review-result.json',
+      contents: JSON.stringify({ result: 'done_with_fixes' }),
+    });
+
+    agent.enqueue('fix-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'fix-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    // 6. Run FixReviewHandler
+    const fixReviewHandler = new FixReviewHandler();
+    const result = await fixReviewHandler.run(ctx);
+
+    // 7. FixReviewHandler must not block with needs_human_review on the stale snapshot
+    expect(result.outcome).toBe('passed');
+
+    const publishedEvents = (ctx.events.publish as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const revertEvents = publishedEvents.filter(
+      (call) =>
+        (call[1] as { type?: string })?.type === 'review_fix.validation_critical_file_reverted',
+    );
+    expect(revertEvents).toHaveLength(0);
   });
 
   it('emits review_fix.validation_critical_file_read_failed on non-ENOENT read error when file was deleted before', async () => {

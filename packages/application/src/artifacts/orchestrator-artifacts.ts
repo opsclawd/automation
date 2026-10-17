@@ -49,6 +49,7 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'architecture-review.json',
   'architecture-review.md',
   'architecture-requirements.json',
+  'validate/critical-files.json',
 ] as const);
 
 export const ORCHESTRATOR_PATCH_EXCLUDE = '*.patch';
