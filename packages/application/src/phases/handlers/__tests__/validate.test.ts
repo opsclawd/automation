@@ -444,9 +444,14 @@ describe('ValidateHandler', () => {
       }).run(ctx);
 
       const list = await artifacts.list('550e8400-e29b-41d4-a716-446655440000');
-      expect(list).toHaveLength(3);
+      expect(list).toHaveLength(4);
       const paths = list.map((a) => a.relativePath).sort();
-      expect(paths).toEqual(['validation.fingerprint', 'validation.headsha', 'validation.result']);
+      expect(paths).toEqual([
+        'validate/critical-files.json',
+        'validation.fingerprint',
+        'validation.headsha',
+        'validation.result',
+      ]);
       const contents = await artifacts.read(
         '550e8400-e29b-41d4-a716-446655440000',
         'validation.result',
@@ -462,6 +467,104 @@ describe('ValidateHandler', () => {
         'validation.fingerprint',
       );
       expect(fingerprint.trim().length).toBe(64);
+      const criticalFiles = await artifacts.read(
+        '550e8400-e29b-41d4-a716-446655440000',
+        'validate/critical-files.json',
+      );
+      expect(JSON.parse(criticalFiles)).toEqual([]);
+    });
+
+    it('clears existing validate/critical-files.json snapshot when validation passes', async () => {
+      const { runValidation } = deps('passed');
+      const { ctx, artifacts } = makeCtx();
+
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'fix-validate',
+        relativePath: 'validate/critical-files.json',
+        contents: JSON.stringify([
+          {
+            path: '.ai-orchestrator.json',
+            beforeHash: 'abc',
+            afterHash: 'def',
+            diagnostic: '1 validation command(s) failed',
+          },
+        ]),
+      });
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+      }).run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      const clearedRaw = await artifacts.read(ctx.runUuid, 'validate/critical-files.json');
+      expect(JSON.parse(clearedRaw)).toEqual([]);
+    });
+
+    it('retains existing validate/critical-files.json snapshot when validation fails', async () => {
+      const { runValidation } = deps('failed');
+      const { ctx, artifacts } = makeCtx();
+
+      const initialSnapshot = [
+        {
+          path: '.ai-orchestrator.json',
+          beforeHash: 'abc',
+          afterHash: 'def',
+          diagnostic: '1 validation command(s) failed',
+        },
+      ];
+
+      await artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'fix-validate',
+        relativePath: 'validate/critical-files.json',
+        contents: JSON.stringify(initialSnapshot),
+      });
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      const retainedRaw = await artifacts.read(ctx.runUuid, 'validate/critical-files.json');
+      expect(JSON.parse(retainedRaw)).toEqual(initialSnapshot);
+    });
+
+    it('emits validate.artifact_write_failed and continues returning passed if clearing critical-files artifact fails', async () => {
+      const { runValidation } = deps('passed');
+      const { ctx, artifacts, events } = makeCtx();
+
+      const origWrite = artifacts.write.bind(artifacts);
+      artifacts.write = vi.fn(async (input) => {
+        if (input.relativePath === 'validate/critical-files.json') {
+          throw new Error('disk full');
+        }
+        return origWrite(input);
+      });
+
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+      }).run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      const warnEvents = events.filter(
+        (e) =>
+          e.type === 'validate.artifact_write_failed' &&
+          e.message?.includes('validate/critical-files.json'),
+      );
+      expect(warnEvents.length).toBeGreaterThan(0);
     });
 
     it('overwrites validation.headsha on subsequent successful validations', async () => {

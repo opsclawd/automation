@@ -59,6 +59,7 @@ describe('orchestrator-artifacts canonical artifact paths', () => {
       'architecture-review.json',
       'architecture-review.md',
       'architecture-requirements.json',
+      'validate/critical-files.json',
     ];
     expect(ORCHESTRATOR_ARTIFACT_PATHS).toEqual(expected);
     expect(Object.isFrozen(ORCHESTRATOR_ARTIFACT_PATHS)).toBe(true);
