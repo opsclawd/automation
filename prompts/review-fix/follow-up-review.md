@@ -45,6 +45,64 @@ Fix diff since previous review:
 {{var:fix_diff}}
 ```
 
+## REQUIRED OUTPUT CONTRACT
+
+{{var:JSON_ESCAPING}}
+
+You MUST write your review directly to `./follow-up-review-result.json`.
+Writing your verdict or evaluations as markdown prose, stdout output, or conversational summaries CANNOT replace `./follow-up-review-result.json`. If `./follow-up-review-result.json` is missing or fails JSON/schema validation, this phase fails contract validation.
+
+### Allowed Verdict Values
+The `verdict` field must be exactly one of the following accepted enum literals:
+- `APPROVE`
+- `REQUEST_CHANGES`
+- `approve`
+- `request_changes`
+- `PASS`
+- `FAIL`
+- `pass`
+- `fail`
+
+CRITICAL: The literal `"APPROVED"` is NOT valid and will cause schema validation rejection. You must use `"APPROVE"` (or `"REQUEST_CHANGES"`).
+
+### JSON Schema & Field Requirements
+Write valid JSON to `./follow-up-review-result.json` matching the schema:
+- `verdict` (string, required): Exactly one of the accepted enum literals above (`"APPROVE"` or `"REQUEST_CHANGES"`).
+- `evaluations` (array of objects, default: `[]`):
+  For each finding in the ledger:
+  - `finding_id` (string, required, non-empty): Exact finding ID from the ledger.
+  - `resolved` (boolean, required): `true` if verified resolved, `false` otherwise.
+  - `evidence` (string, required, non-empty): Concrete file:line citations and verification evidence.
+  - `rationale` (string, optional): Context or explanation for the evaluation.
+- `new_findings` (array of objects, optional, default: `[]`): Any new defects or regressions discovered.
+- `summary` (string, optional): High-level summary of the follow-up review.
+- `review_md` (string, optional): Markdown-formatted review notes.
+
+```json
+{
+  "verdict": "APPROVE",
+  "evaluations": [
+    {
+      "finding_id": "Finding ID from ledger",
+      "resolved": true,
+      "evidence": "Evidence citing exact file:line showing resolution",
+      "rationale": "Optional explanation"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "critical",
+      "files": ["path/to/file.ts"],
+      "evidence": "Concrete evidence",
+      "rationale": "Why this matters",
+      "minimal_correction": "Smallest correction",
+      "blocking": true
+    }
+  ],
+  "summary": "Summary of follow-up review."
+}
+```
+
 ## TASK
 
 Perform a focused follow-up review grounded in the issue, acceptance criteria, design, accumulated finding ledger, and diffs above.
@@ -84,40 +142,11 @@ If you inspect `git status` or the worktree directly, you will see untracked fil
 
 This exemption is narrow: it applies only to the exact untracked paths listed, as they exist right now. It does not extend to tracked files (even ones with the same name), to any content or behavior change in the branch diff, or to `.gitignore`/`.prettierignore` modifications — an implementation change that widens an ignore file to hide unrelated untracked output is still a real finding and must be evaluated normally. A prior finding about scope/hygiene is resolved on this basis only when its own cited evidence was solely the presence of these exact listed paths.
 
-## OUTPUT FORMAT
-
-{{var:JSON_ESCAPING}}
-
-Write your review to `./follow-up-review-result.json`:
-
-```json
-{
-  "verdict": "APPROVE" | "REQUEST_CHANGES",
-  "evaluations": [
-    {
-      "finding_id": "Finding ID from ledger",
-      "resolved": true,
-      "evidence": "Evidence showing resolution or why it is not resolved"
-    }
-  ],
-  "new_findings": [
-    {
-      "severity": "critical" | "high" | "medium" | "low",
-      "files": ["path/to/file.ts"],
-      "evidence": "Concrete evidence",
-      "rationale": "Why this matters",
-      "minimal_correction": "Smallest correction",
-      "blocking": true
-    }
-  ],
-  "summary": "Summary of follow-up review."
-}
-```
-
 ## CRITICAL RULES
 
 - This is a read-only review. Do not modify source code or create scratch files in the worktree.
 - Do not switch git branches.
 - Do not ask questions.
 - Write `./follow-up-review-result.json` before stopping.
+- Markdown prose, stdout output, or comments cannot substitute for `./follow-up-review-result.json`.
 - If `./follow-up-review-result.json` already exists and needs revision (e.g. a second pass over your own review found something new), rewrite the entire file from scratch. Do not patch/diff-edit it — context-based patch tools are unreliable against large JSON arrays, since they require reproducing exact surrounding text; a failed or partial patch application can silently corrupt the file.

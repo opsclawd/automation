@@ -1,10 +1,11 @@
-import { ArtifactNotFoundError } from '../ports/artifact-store.js';
+import { ArtifactNotFoundError, getHydratedWorktreePath } from '../ports/artifact-store.js';
 import type { ArtifactStore, WriteArtifactInput, Artifact } from '../ports/artifact-store.js';
 
 export class FakeArtifactStore implements ArtifactStore {
   private files = new Map<string, { artifact: Artifact; contents: string }>();
   private worktree = new Map<string, string>();
   shouldThrowOnWrite = false;
+  shouldThrowOnInvalidate = false;
 
   async write(input: WriteArtifactInput): Promise<Artifact> {
     if (this.shouldThrowOnWrite) {
@@ -45,6 +46,21 @@ export class FakeArtifactStore implements ArtifactStore {
       if (key.startsWith(`${runId}/`)) {
         this.worktree.set(key, entry.contents);
       }
+    }
+  }
+
+  async invalidate(runId: string, relativePath: string): Promise<void> {
+    if (this.shouldThrowOnInvalidate) {
+      throw new Error('invalidate error');
+    }
+    const key = `${runId}/${relativePath}`;
+    this.files.delete(key);
+    this.worktree.delete(key);
+    const hydratedRelative = getHydratedWorktreePath(relativePath);
+    if (hydratedRelative !== relativePath) {
+      const hydratedKey = `${runId}/${hydratedRelative}`;
+      this.files.delete(hydratedKey);
+      this.worktree.delete(hydratedKey);
     }
   }
 
