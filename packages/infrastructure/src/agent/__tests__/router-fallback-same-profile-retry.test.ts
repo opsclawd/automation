@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { AgentInvocationId, AgentProfileName, RunId } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
+import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import { type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
 import { AgentRuntimeRouter } from '../agent-runtime-router.js';
 
@@ -153,6 +154,103 @@ describe('AgentRuntimeRouter same-profile chained retry (#1318)', () => {
     expect(events[0].metadata.triggerOwner).toBe('use_case');
     expect(events[1].metadata.triggerOwner).toBe('router');
     expect(events[1].metadata.fromProfile).toBe('opencode-frontier');
+    expect(events[1].metadata.toProfile).toBe('pi-local');
+  });
+
+  // The real #473 failure: `missing_required_artifact` is normally excluded
+  // from auto-fallback entirely (isSerializationContractOutcome in
+  // shouldFallback — a serialization failure is assumed to be the repair
+  // pipeline's job, not a model-capability problem). But once the *same*
+  // profile has hit it twice in a row (initial + its own same-profile
+  // correction retry), that exclusion must not also block the configured
+  // fallback profile from getting a turn.
+  it('still escalates to the fallback profile when a same-profile retry repeats missing_required_artifact', async () => {
+    const inv = new FakeAgentInvocationPort();
+
+    const opencodeResult: AgentInvocationResult = {
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'm',
+      exitCode: 0,
+      durationMs: 5000,
+      stdoutPath: '/s',
+      stderrPath: '/e',
+      contractViolations: [CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT],
+      outcome: 'contract_violation',
+    };
+    const piResult: AgentInvocationResult = {
+      runtime: 'pi',
+      provider: 'local',
+      model: 'q',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/s2',
+      stderrPath: '/e2',
+      contractViolations: [],
+      outcome: 'success',
+    };
+
+    const events: OrchestratorEvent[] = [];
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: {
+          async invoke() {
+            return opencodeResult;
+          },
+        },
+        pi: {
+          async invoke() {
+            return piResult;
+          },
+        },
+      },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-fallback-artifact',
+      readPromptChars: () => 100,
+      eventBus: {
+        publish(_runId, ev) {
+          if (ev.type === 'phase.fallback.escalated') events.push(ev);
+        },
+      },
+    });
+
+    // Initial invocation already hit missing_required_artifact; the use-case
+    // layer issued a same-profile correction retry chained to it.
+    inv.insert({
+      id: AgentInvocationId('prev-invocation-2'),
+      runId: RunId('00000000-0000-0000-0000-000000000001'),
+      profile: AgentProfileName('opencode-frontier'),
+      runtime: 'opencode' as const,
+      provider: 'anthropic',
+      model: 'm',
+      promptPath: '/tmp/prompt.md',
+      promptChars: 50,
+      stdoutPath: '',
+      stderrPath: '',
+      startedAt: FIXED_NOW,
+      startCommitSha: 'a'.repeat(40),
+      timeoutMs: 60000,
+      contractViolations: [CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT],
+    });
+
+    const result = await router.invoke(
+      req({
+        fallbackOfInvocationId: AgentInvocationId('prev-invocation-2'),
+        fallbackReason: 'correction_retry_missing_artifact',
+      }),
+    );
+
+    expect(result.outcome).toBe('success');
+    expect(result.model).toBe('q');
+
+    const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+    expect(rows.length).toBe(3);
+    expect(rows[2].profile).toBe('pi-local');
+
+    expect(events.length).toBe(2);
+    expect(events[1].metadata.triggerOwner).toBe('router');
     expect(events[1].metadata.toProfile).toBe('pi-local');
   });
 });

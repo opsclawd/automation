@@ -155,16 +155,33 @@ export class AgentRuntimeRouter implements AgentPort {
     // out or hits a contract violation never gets a chance at the phase's
     // configured fallback profile, leaving a flaky primary model able to
     // permanently block the phase (#1318).
-    const isFallbackOrCallerSignalled =
-      hasFallbackChain && (!previous || previous.profile !== request.profile);
+    const isSameProfileChainedRetry =
+      hasFallbackChain && !!previous && previous.profile === request.profile;
+    const isFallbackOrCallerSignalled = hasFallbackChain && !isSameProfileChainedRetry;
 
-    const result = await this.dispatch(request, isFallbackOrCallerSignalled);
+    // shouldFallback() normally refuses to escalate `missing_required_artifact`
+    // / `invalid_result_json` / `no_output` outcomes (isSerializationContractOutcome),
+    // on the theory that a serialization failure is a structural/schema problem
+    // the repair pipeline should fix, not a model-capability problem a
+    // different profile would fix. That's the right default for a FIRST
+    // occurrence, but once the *same* profile has already failed on the
+    // initial invocation AND its own same-profile correction retry with that
+    // exact violation, it has had two chances — a different profile should
+    // get to try rather than failing the phase outright (#1318; observed with
+    // `argon` hitting `missing_required_artifact` twice in a row while `sol`,
+    // the configured fallback, had already proven it could do the job).
+    const result = await this.dispatch(
+      request,
+      isFallbackOrCallerSignalled,
+      isSameProfileChainedRetry,
+    );
     return result;
   }
 
   private async dispatch(
     request: AgentInvocationRequest,
     isFallbackOrCallerSignalled?: boolean,
+    allowSerializationFallback?: boolean,
   ): Promise<AgentInvocationResult> {
     const profile = this.opts.agent.profiles[request.profile];
     if (!profile) {
@@ -610,7 +627,10 @@ export class AgentRuntimeRouter implements AgentPort {
     // for spec-review/quality-review, which is a different, opposite-precedence
     // mechanism — see the doc comment on resolvePhaseProfileEntry.
     const routingPhase = normalizeRoutingPhase(request.phaseId);
-    if (!isFallbackOrCallerSignalled && this.shouldFallback(result, request.phaseId)) {
+    if (
+      !isFallbackOrCallerSignalled &&
+      this.shouldFallback(result, request.phaseId, allowSerializationFallback)
+    ) {
       let phaseEntry = resolvePhaseProfileEntry(this.opts.agent.phaseProfiles, routingPhase);
       if (!phaseEntry && routingPhase === 'arbiter') {
         phaseEntry =
@@ -672,9 +692,13 @@ export class AgentRuntimeRouter implements AgentPort {
     return { ...result, invocationId: id, provider: effectiveProvider, model: effectiveModel };
   }
 
-  private shouldFallback(result: AgentInvocationResult, phaseId: string): boolean {
+  private shouldFallback(
+    result: AgentInvocationResult,
+    phaseId: string,
+    allowSerializationFallback = false,
+  ): boolean {
     const isSerializationOutcome = isSerializationContractOutcome(result);
-    if (isSerializationOutcome) return false;
+    if (isSerializationOutcome && !allowSerializationFallback) return false;
 
     // NOTE: Does not consult PHASE_FALLBACKS — relies on caller passing a phaseId
     // whose normalized form exists in phaseProfiles. See comment in dispatch().
