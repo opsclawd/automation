@@ -464,4 +464,119 @@ describe('remediateMissingArtifacts', () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  // #473: the agent wrote `follow-up-review.json` instead of the required
+  // `follow-up-review-result.json` — the expected stem with its last
+  // hyphen-segment dropped. Pass 1 (exact basename elsewhere on disk) and
+  // Pass 2 (stem-prefix, i.e. a *suffixed* variant) both miss this; it's the
+  // inverse case.
+  it('recovers a truncated-stem candidate (expected stem minus its last segment)', () => {
+    const cwd = makeTmpDir();
+    try {
+      makeGitRepo(cwd);
+      writeFileSync(join(cwd, 'follow-up-review.json'), '{"verdict":"REQUEST_CHANGES"}');
+
+      const startMs = Date.now();
+      const startSec = startMs / 1000;
+      utimesSync(join(cwd, 'follow-up-review.json'), startSec + 60, startSec + 60);
+
+      const result = remediateMissingArtifacts({
+        cwd,
+        startMs,
+        expectedArtifacts: ['follow-up-review-result.json'],
+        stderrForLog: '',
+      });
+
+      expect(result.remediatedArtifacts).toEqual([
+        { src: 'follow-up-review.json', artifact: 'follow-up-review-result.json' },
+      ]);
+      expect(result.missingArtifacts).toEqual([]);
+      expect(existsSync(join(cwd, 'follow-up-review-result.json'))).toBe(true);
+      expect(readFileSync(join(cwd, 'follow-up-review-result.json'), 'utf-8')).toBe(
+        '{"verdict":"REQUEST_CHANGES"}',
+      );
+      // Untracked source is deleted after copy, same as stem-prefix recovery.
+      expect(existsSync(join(cwd, 'follow-up-review.json'))).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores a stale truncated-stem candidate written before invocation start', () => {
+    const cwd = makeTmpDir();
+    try {
+      makeGitRepo(cwd);
+      writeFileSync(join(cwd, 'follow-up-review.json'), '{"verdict":"APPROVE"}');
+
+      const startMs = Date.now();
+      const startSec = startMs / 1000;
+      utimesSync(join(cwd, 'follow-up-review.json'), startSec - 120, startSec - 120);
+
+      const result = remediateMissingArtifacts({
+        cwd,
+        startMs,
+        expectedArtifacts: ['follow-up-review-result.json'],
+        stderrForLog: '',
+      });
+
+      expect(result.remediatedArtifacts).toEqual([]);
+      expect(result.missingArtifacts).toEqual(['follow-up-review-result.json']);
+      expect(existsSync(join(cwd, 'follow-up-review-result.json'))).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('appends TRUNCATED_STEM_REMEDIATED: lines to stderrForLog', () => {
+    const cwd = makeTmpDir();
+    try {
+      makeGitRepo(cwd);
+      writeFileSync(join(cwd, 'follow-up-review.json'), '{}');
+      const startMs = Date.now();
+      const startSec = startMs / 1000;
+      utimesSync(join(cwd, 'follow-up-review.json'), startSec + 60, startSec + 60);
+
+      const opts = {
+        cwd,
+        startMs,
+        expectedArtifacts: ['follow-up-review-result.json'],
+        stderrForLog: 'existing\n',
+      };
+      remediateMissingArtifacts(opts);
+
+      expect(opts.stderrForLog).toContain(
+        'TRUNCATED_STEM_REMEDIATED: follow-up-review.json → follow-up-review-result.json',
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves the truncated-stem source intact when it is git-tracked', () => {
+    const cwd = makeTmpDir();
+    try {
+      makeGitRepo(cwd);
+      writeFileSync(join(cwd, 'follow-up-review.json'), 'tracked');
+      execSync('git add follow-up-review.json', { cwd, stdio: 'pipe' });
+      execSync('git commit -m "add tracked source"', { cwd, stdio: 'pipe' });
+
+      const startMs = Date.now();
+      const startSec = startMs / 1000;
+      utimesSync(join(cwd, 'follow-up-review.json'), startSec + 120, startSec + 120);
+
+      const result = remediateMissingArtifacts({
+        cwd,
+        startMs,
+        expectedArtifacts: ['follow-up-review-result.json'],
+        stderrForLog: '',
+      });
+
+      expect(result.remediatedArtifacts).toHaveLength(1);
+      expect(existsSync(join(cwd, 'follow-up-review.json'))).toBe(true);
+      expect(existsSync(join(cwd, 'follow-up-review-result.json'))).toBe(true);
+      expect(readFileSync(join(cwd, 'follow-up-review-result.json'), 'utf-8')).toBe('tracked');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });

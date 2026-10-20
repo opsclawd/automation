@@ -287,8 +287,70 @@ export function remediateMissingArtifacts(opts: RemediateOptions): RemediateResu
     }
   }
 
-  // Mutate the caller's stderrForLog in place so STEM_PREFIX_REMEDIATED lines
-  // are persisted on the next writeFileSync(stderrPath, stderrForLog).
+  // Pass 3: truncated-stem recovery (root-only). Covers the inverse of Pass 2:
+  // the model wrote the expected artifact's stem with its *last* hyphen/underscore
+  // segment dropped (observed with follow-up-review: the agent wrote
+  // `follow-up-review.json` instead of the required `follow-up-review-result.json`,
+  // apparently pattern-matching the phase name rather than the literal instructed
+  // path; issue #473 run). Only a single, unambiguous truncated-stem candidate
+  // is accepted — if multiple segment-boundaries could produce the same dropped
+  // suffix this still resolves to one filename, so no further disambiguation is
+  // needed beyond the existing freshness filter.
+  for (const artifact of expectedArtifacts) {
+    if (existsSync(join(cwd, artifact))) continue;
+    const artifactBasename = basename(artifact);
+    const dotIdx = artifactBasename.lastIndexOf('.');
+    const stem = dotIdx > 0 ? artifactBasename.slice(0, dotIdx) : artifactBasename;
+    const ext = dotIdx > 0 ? artifactBasename.slice(dotIdx) : '';
+
+    const lastSepIdx = Math.max(stem.lastIndexOf('-'), stem.lastIndexOf('_'));
+    if (lastSepIdx <= 0) continue; // no segment to drop
+    const truncatedName = `${stem.slice(0, lastSepIdx)}${ext}`;
+    if (truncatedName === artifactBasename) continue;
+
+    const candidatePath = join(searchRoot, truncatedName);
+    let mtimeMs = 0;
+    try {
+      mtimeMs = statSync(candidatePath).mtimeMs;
+    } catch {
+      continue; // candidate doesn't exist
+    }
+    if (mtimeMs < startMs) continue; // stale leftover from a prior attempt
+
+    const destPath = join(cwd, artifact);
+    try {
+      mkdirSync(dirname(destPath), { recursive: true });
+      copyFileSync(candidatePath, destPath);
+      remediatedArtifacts.push({ src: truncatedName, artifact });
+      stderrForLog = `TRUNCATED_STEM_REMEDIATED: ${truncatedName} → ${artifact}\n${stderrForLog}`;
+      if (!copyOnly) {
+        try {
+          execFileSync(
+            'git',
+            ['ls-files', '--error-unmatch', '--', toLiteralGitPathspec(truncatedName)],
+            {
+              cwd: searchRoot,
+              stdio: 'pipe',
+            },
+          );
+        } catch (gitErr) {
+          if ((gitErr as { status?: number }).status === 1) {
+            try {
+              unlinkSync(candidatePath);
+            } catch {
+              // best-effort
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('truncated-stem remediation failed:', e);
+    }
+  }
+
+  // Mutate the caller's stderrForLog in place so STEM_PREFIX_REMEDIATED /
+  // TRUNCATED_STEM_REMEDIATED lines are persisted on the next
+  // writeFileSync(stderrPath, stderrForLog).
   opts.stderrForLog = stderrForLog;
 
   const missingArtifacts = expectedArtifacts.filter((a) => !existsSync(join(cwd, a)));
