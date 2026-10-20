@@ -939,6 +939,83 @@ describe('runExternalCli', () => {
     });
   });
 
+  describe('early-exit grace period (#1316)', () => {
+    it('terminates early once stdout closes and expected artifacts are already on disk', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        writeFileSync(join(cwd, 'result.json'), '{}');
+        const start = Date.now();
+        const result = await runExternalCli({
+          runtime: 'antigravity',
+          // Closes its own stdout fd (simulating agy's stream-closed state)
+          // but keeps running well past the grace period and the test's
+          // patience, modeling the real bug: background work keeps the
+          // process alive after the deliverable is already written.
+          bin: 'bash',
+          args: ['-c', 'exec 1>&-; sleep 30'],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          detached: true,
+          expectedArtifacts: ['result.json'],
+          earlyExitGraceMs: 200,
+          timeoutMsDefault: 25_000,
+        });
+        const durationMs = Date.now() - start;
+        expect(result.outcome).toBe('success');
+        expect(durationMs).toBeLessThan(5_000);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    }, 10_000);
+
+    it('does not early-exit when expected artifacts are still missing after stdout closes', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        const result = await runExternalCli({
+          runtime: 'antigravity',
+          bin: 'bash',
+          args: ['-c', 'exec 1>&-; sleep 5'],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          detached: true,
+          expectedArtifacts: ['result.json'],
+          earlyExitGraceMs: 200,
+          timeoutMsDefault: 1_000,
+        });
+        expect(result.outcome).toBe('timeout');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    }, 10_000);
+
+    it('does not affect normal fast-exiting processes', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        writeFileSync(join(cwd, 'output.md'), 'content');
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['output.md'],
+        });
+        expect(result.outcome).toBe('success');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('provider error reclassification on zero-exit path', () => {
     it('reclassifies outcome to failed when provider error appears in last 200 lines of stderr (exit 0)', async () => {
       const cwd = makeTmpDir();
