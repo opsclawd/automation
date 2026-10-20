@@ -126,12 +126,13 @@ export class AgentRuntimeRouter implements AgentPort {
   }
 
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
-    const isCallerSignalled = !!request.fallbackOfInvocationId;
+    const hasFallbackChain = !!request.fallbackOfInvocationId;
+    let previous: AgentInvocation | undefined;
 
-    if (isCallerSignalled && request.fallbackOfInvocationId) {
+    if (hasFallbackChain && request.fallbackOfInvocationId) {
       const reason = request.fallbackReason ?? 'unknown';
       const triggerReason = reason.length > 64 ? reason.slice(0, 64) : reason;
-      const previous = this.opts.invocationRepository.findById(request.fallbackOfInvocationId);
+      previous = this.opts.invocationRepository.findById(request.fallbackOfInvocationId);
       const fromProfile = previous?.profile ?? 'unknown';
 
       this.emitFallbackEvent(
@@ -143,7 +144,21 @@ export class AgentRuntimeRouter implements AgentPort {
       );
     }
 
-    const result = await this.dispatch(request, isCallerSignalled);
+    // A chained request that reuses `fallbackOfInvocationId` is not always an
+    // actual profile switch: follow-up-review's same-profile correction-retry
+    // and empty-response-retry (run-single-shot-agent-phase.ts) reuse it
+    // purely for invocation-chain bookkeeping/traceability, since they
+    // re-invoke the *same* profile with a corrected prompt. Only an actual
+    // profile switch (the router's own PHASE_FALLBACKS dispatch below, or a
+    // dedicated synthesis/repair profile) should suppress further
+    // auto-escalation — otherwise a same-profile retry that itself also times
+    // out or hits a contract violation never gets a chance at the phase's
+    // configured fallback profile, leaving a flaky primary model able to
+    // permanently block the phase (#1318).
+    const isFallbackOrCallerSignalled =
+      hasFallbackChain && (!previous || previous.profile !== request.profile);
+
+    const result = await this.dispatch(request, isFallbackOrCallerSignalled);
     return result;
   }
 
