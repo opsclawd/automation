@@ -26,6 +26,12 @@ export interface ExternalCliRunInput {
   expectedArtifacts?: string[];
   resultJsonPath?: string;
   skipErrorScanning?: boolean;
+  /**
+   * Grace period (ms) after the child's stdout stream closes before checking
+   * whether expected artifacts are already on disk and, if so, terminating
+   * the process early instead of waiting out the full timeout. Default 10s.
+   */
+  earlyExitGraceMs?: number;
 }
 
 export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentInvocationResult> {
@@ -51,6 +57,15 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   if (input.abortSignal) signals.push(input.abortSignal);
   const cancelSignal =
     signals.length === 1 ? signals[0] : signals.length > 1 ? AbortSignal.any(signals) : undefined;
+
+  // Computed early (not just at the post-exit check below) so the early-exit
+  // watcher below can reuse it.
+  const effectiveExpectedArtifacts = [
+    ...(input.expectedArtifacts ?? []),
+    ...(input.resultJsonPath && !input.expectedArtifacts?.includes(input.resultJsonPath)
+      ? [input.resultJsonPath]
+      : []),
+  ];
 
   const child = execa(input.bin, input.args, {
     cwd: input.cwd,
@@ -80,6 +95,55 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   };
   cancelSignal?.addEventListener('abort', onAbort);
 
+  // Early-exit watcher (#1316): some CLI runtimes (observed with agy's
+  // --print headless mode) finish the turn, write the expected deliverable,
+  // and close their stdout stream — but leave background goroutines/threads
+  // (internal LSP, periodic polling, inotify watchers) alive, so the process
+  // never reaches exit(0) on its own. Without this, the orchestrator sits
+  // idle for the full timeoutMsDefault (typically 30 minutes) before the
+  // abort-signal kill above fires, then needlessly falls back to another
+  // model. Once stdout actually closes, give it a short grace period; if it
+  // still hasn't exited and the expected artifacts are already valid on
+  // disk, the work is done — terminate now instead of waiting out the timer.
+  let earlyExitVerified = false;
+  let settled = false;
+  let earlyExitTimer: NodeJS.Timeout | undefined;
+  child
+    .finally(() => {
+      settled = true;
+      // The normal exit/kill path already fired — this timer (if pending)
+      // has nothing left to check and would otherwise dangle and hold the
+      // event loop open until it fires.
+      if (earlyExitTimer) clearTimeout(earlyExitTimer);
+    })
+    .catch(() => {
+      // child promise rejection (shouldn't happen with reject: false) — the
+      // outer try/catch below handles reporting; nothing to do here.
+    });
+  if (effectiveExpectedArtifacts.length > 0) {
+    child.stdout?.once('end', () => {
+      if (settled) return;
+      earlyExitTimer = setTimeout(() => {
+        if (settled) return;
+        const allPresent = effectiveExpectedArtifacts.every((artifact) =>
+          existsSync(join(input.cwd, artifact)),
+        );
+        if (!allPresent) return;
+        earlyExitVerified = true;
+        try {
+          if (input.detached) {
+            if (child.pid) process.kill(-child.pid, 'SIGTERM');
+          } else {
+            child.kill('SIGTERM');
+          }
+        } catch {
+          // ESRCH = already dead, ignore
+        }
+      }, input.earlyExitGraceMs ?? 10_000);
+      earlyExitTimer.unref?.();
+    });
+  }
+
   let stderrForLog = stderr;
   try {
     const r = await child;
@@ -87,7 +151,14 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     stderr = r.stderr ?? '';
     stderrForLog = stderr;
     exitCode = r.exitCode ?? 0;
-    if (r.isCanceled) {
+    if (earlyExitVerified) {
+      // We deliberately killed this process after its stdout closed and its
+      // expected artifacts were already valid on disk — the work is done;
+      // the signal-terminated exit code is not a real failure signal.
+      outcome = 'success';
+      exitCode = 0;
+      stderrForLog = `EARLY_EXIT_GRACE: stdout closed and expected artifacts were already present; terminated early instead of waiting out the full timeout\n${stderrForLog}`;
+    } else if (r.isCanceled) {
       if (timeoutSignal?.aborted && !input.abortSignal?.aborted) {
         outcome = 'timeout';
       } else {
@@ -173,13 +244,6 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   }
 
   let remediatedArtifacts: { src: string; artifact: string }[] | undefined;
-
-  const effectiveExpectedArtifacts = [
-    ...(input.expectedArtifacts ?? []),
-    ...(input.resultJsonPath && !input.expectedArtifacts?.includes(input.resultJsonPath)
-      ? [input.resultJsonPath]
-      : []),
-  ];
 
   if (
     outcome === 'success' &&
