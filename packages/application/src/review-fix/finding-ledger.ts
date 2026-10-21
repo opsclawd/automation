@@ -21,6 +21,17 @@ export interface FindingLedgerEntry {
   resolvedInIteration?: number;
   resolutionEvidence?: string;
   isAcceptanceCriterionFailure?: boolean;
+  /** Normalized evidence text from the most recent `resolved: false` evaluation, used to detect a stalled reviewer re-asserting an identical verdict instead of re-deriving it from current code. */
+  lastUnresolvedEvidence?: string;
+  /** Count of consecutive iterations this finding was evaluated `resolved: false` with evidence identical (after normalization) to the previous iteration's. Reset to 1 whenever the evidence text changes. */
+  staleRepeatCount?: number;
+}
+
+/** Threshold at which a finding's repeated identical `resolved: false` verdict is treated as a stalled reviewer loop rather than a genuinely persistent defect, and surfaced for human review instead of looping indefinitely. */
+export const STALE_REPEAT_THRESHOLD = 3;
+
+function normalizeEvidenceForStaleDetection(evidence: string): string {
+  return evidence.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 export interface FindingLedger {
@@ -187,18 +198,26 @@ export function updateFindingLedger(
     const ev = evalMap.get(entry.id);
     if (ev) {
       if (ev.resolved) {
-        return {
+        const resolvedEntry: FindingLedgerEntry = {
           ...entry,
           source: entry.source ?? 'spec-review',
           status: 'resolved',
           resolvedInIteration: iterationIndex,
           resolutionEvidence: ev.evidence,
         };
+        delete resolvedEntry.lastUnresolvedEvidence;
+        delete resolvedEntry.staleRepeatCount;
+        return resolvedEntry;
       }
+      const normalized = normalizeEvidenceForStaleDetection(ev.evidence);
+      const isRepeat =
+        entry.lastUnresolvedEvidence !== undefined && normalized === entry.lastUnresolvedEvidence;
       return {
         ...entry,
         source: entry.source ?? 'spec-review',
         status: 'unresolved',
+        lastUnresolvedEvidence: normalized,
+        staleRepeatCount: isRepeat ? (entry.staleRepeatCount ?? 1) + 1 : 1,
       };
     }
     return {
@@ -224,6 +243,24 @@ export function updateFindingLedger(
 
 export function hasUnresolvedBlockingFindings(ledger: FindingLedger): boolean {
   return ledger.entries.some((e) => e.status === 'unresolved');
+}
+
+/**
+ * Returns unresolved findings whose evidence text has been re-asserted
+ * byte-identically (after normalization) across at least `threshold`
+ * consecutive follow-up-review iterations. A stalled reviewer repeating the
+ * same verdict without re-deriving it from the current diff looks
+ * indistinguishable from a genuinely persistent defect to the normal
+ * resolve/unresolve loop, so the loop never converges. Surfacing these lets
+ * the caller break out to human review instead of looping indefinitely.
+ */
+export function getStaleRepeatedFindings(
+  ledger: FindingLedger,
+  threshold: number = STALE_REPEAT_THRESHOLD,
+): FindingLedgerEntry[] {
+  return ledger.entries.filter(
+    (e) => e.status === 'unresolved' && (e.staleRepeatCount ?? 0) >= threshold,
+  );
 }
 
 export function formatLedgerForPrompt(ledger: FindingLedger): string {

@@ -3,7 +3,7 @@ import { FollowUpReviewHandler } from '../follow-up-review.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import { FakeArtifactStore, FakeAgentPort, FakeGitPort } from '../../../test-doubles/index.js';
 import { PhaseName } from '@ai-sdlc/domain';
-import { createFindingLedger } from '../../../review-fix/finding-ledger.js';
+import { createFindingLedger, STALE_REPEAT_THRESHOLD } from '../../../review-fix/finding-ledger.js';
 import { recordValidationEvidence } from '../../validation-evidence.js';
 
 const { mockLoadPromptTemplate, mockRenderPrompt } = vi.hoisted(() => ({
@@ -502,6 +502,90 @@ describe('FollowUpReviewHandler', () => {
     const promptCtx = lastCall?.[1];
     expect(promptCtx?.vars.validation_critical_files).toContain('packages/api/src/whisperx.ts');
     expect(promptCtx?.vars.validation_critical_files).toContain('pnpm test:whisperx timed out');
+  });
+
+  it('surfaces needs_human_review when a finding keeps repeating an identical unresolved verdict (stalled reviewer loop)', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('read_issue'),
+      relativePath: 'issue.md',
+      contents: '# Issue 1106',
+    });
+
+    const initialLedger = createFindingLedger([
+      {
+        severity: 'high',
+        files: ['src/app.ts'],
+        evidence: 'NPE',
+        rationale: 'risk',
+        minimal_correction: 'fix',
+      },
+    ]);
+    const findingId = initialLedger.entries[0]!.id;
+    const staleEvidence = 'still unresolved: db.ts:42';
+    // Simulate this finding having already repeated the same evidence text
+    // for STALE_REPEAT_THRESHOLD - 1 prior iterations.
+    initialLedger.entries[0]!.lastUnresolvedEvidence = staleEvidence;
+    initialLedger.entries[0]!.staleRepeatCount = STALE_REPEAT_THRESHOLD - 1;
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('spec-review'),
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(initialLedger),
+    });
+
+    agent.enqueue('follow-up-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'follow-up-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    // Reviewer re-asserts the exact same evidence one more time.
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'follow-up-review-result.json',
+      contents: JSON.stringify({
+        verdict: 'REQUEST_CHANGES',
+        evaluations: [
+          {
+            finding_id: findingId,
+            resolved: false,
+            evidence: staleEvidence,
+          },
+        ],
+        new_findings: [],
+        summary: 'Still broken',
+      }),
+    });
+
+    const handler = new FollowUpReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review' || result.outcome === 'failed') {
+      expect(result.failure.message).toContain(findingId);
+      expect(result.failure.canRetry).toBe(false);
+    }
+
+    // The ledger is still persisted so a human can inspect the latest state.
+    const updatedLedgerRaw = await artifacts.read('run-1', 'finding-ledger.json');
+    const updatedLedger = JSON.parse(updatedLedgerRaw);
+    expect(updatedLedger.entries[0].staleRepeatCount).toBe(STALE_REPEAT_THRESHOLD);
   });
 
   it('handles PASS verdict alias and normalizes to APPROVE (issue #1222 audit)', async () => {
