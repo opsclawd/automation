@@ -10,6 +10,8 @@ import {
   updateFindingLedger,
   formatLedgerForPrompt,
   hasUnresolvedBlockingFindings,
+  getStaleRepeatedFindings,
+  STALE_REPEAT_THRESHOLD,
   type FindingLedger,
 } from '../../review-fix/finding-ledger.js';
 import {
@@ -227,6 +229,38 @@ export class FollowUpReviewHandler implements PhaseHandler {
         `Failed to persist follow-up review artifacts: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`,
         'Ensure artifact storage directory is writable.',
       );
+    }
+
+    // Break out of an otherwise-infinite loop if the reviewer keeps
+    // re-asserting an identical unresolved verdict for the same finding
+    // across iterations without re-deriving it from the current diff
+    // (suspected automation bug, not a persistent defect). Surface it to a
+    // human rather than silently re-running follow-up-review forever.
+    const staleRepeats = getStaleRepeatedFindings(updatedLedger);
+    if (staleRepeats.length > 0) {
+      const ids = staleRepeats.map((f) => f.id).join(', ');
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: this.phase as string,
+        kind: 'needs_human_review',
+        message:
+          `Follow-up review has re-asserted an identical unresolved verdict for ${staleRepeats.length} finding(s) ` +
+          `(${ids}) across ${STALE_REPEAT_THRESHOLD}+ consecutive iterations without the evidence text changing. ` +
+          'This looks like a stalled reviewer re-asserting a stale verdict rather than a persistent defect; ' +
+          'a human should verify the underlying code directly before overriding the ledger.',
+        canRetry: false,
+        suggestedAction:
+          'Read the current code for the cited finding(s) and verify directly whether they are actually resolved, ' +
+          'then override the finding ledger entry/entries accordingly before resuming.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+      emit('follow_up_review.stale_repeat_detected', 'error', failure.message, {
+        findingIds: staleRepeats.map((f) => f.id),
+      });
+      // The updated ledger/artifacts were already persisted above, so the
+      // human has the latest evaluation evidence to inspect.
+      return { outcome: 'needs_human_review', failure };
     }
 
     if (effectiveVerdict === 'APPROVE') {

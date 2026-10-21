@@ -7,6 +7,8 @@ import {
   hasUnresolvedBlockingFindings,
   formatLedgerForPrompt,
   formatLedgerForFixPrompt,
+  getStaleRepeatedFindings,
+  STALE_REPEAT_THRESHOLD,
 } from '../finding-ledger.js';
 
 describe('finding-ledger', () => {
@@ -213,6 +215,106 @@ describe('finding-ledger', () => {
     expect(fixPromptText).toContain('FINDINGS TO RESOLVE');
     expect(fixPromptText).toContain('add optional chaining');
     expect(fixPromptText).toContain('Source: quality-review');
+  });
+
+  it('detects a finding re-asserted unresolved with identical evidence across consecutive iterations', () => {
+    const findings = [
+      {
+        severity: 'high' as const,
+        files: ['packages/app.ts'],
+        evidence: 'missing error handling',
+        rationale: 'unhandled exception',
+        minimal_correction: 'add try/catch',
+      },
+    ];
+    let ledger = createFindingLedger(findings, [], 'spec-review');
+    const id = ledger.entries[0]!.id;
+
+    // Same evidence text re-asserted (case/whitespace-insensitive) for
+    // STALE_REPEAT_THRESHOLD consecutive iterations should be flagged.
+    for (let i = 1; i <= STALE_REPEAT_THRESHOLD; i++) {
+      ledger = updateFindingLedger(
+        ledger,
+        [{ finding_id: id, resolved: false, evidence: '  Still Unresolved: db.ts:42  ' }],
+        [],
+        i,
+      );
+      if (i < STALE_REPEAT_THRESHOLD) {
+        expect(getStaleRepeatedFindings(ledger)).toHaveLength(0);
+      }
+    }
+
+    const stale = getStaleRepeatedFindings(ledger);
+    expect(stale).toHaveLength(1);
+    expect(stale[0]!.id).toBe(id);
+    expect(stale[0]!.staleRepeatCount).toBe(STALE_REPEAT_THRESHOLD);
+  });
+
+  it('does not flag a finding whose unresolved evidence changes between iterations', () => {
+    const findings = [
+      {
+        severity: 'high' as const,
+        files: ['packages/app.ts'],
+        evidence: 'missing error handling',
+        rationale: 'unhandled exception',
+        minimal_correction: 'add try/catch',
+      },
+    ];
+    let ledger = createFindingLedger(findings, [], 'spec-review');
+    const id = ledger.entries[0]!.id;
+
+    for (let i = 1; i <= STALE_REPEAT_THRESHOLD; i++) {
+      ledger = updateFindingLedger(
+        ledger,
+        [{ finding_id: id, resolved: false, evidence: `still unresolved, attempt ${i}` }],
+        [],
+        i,
+      );
+    }
+
+    expect(getStaleRepeatedFindings(ledger)).toHaveLength(0);
+    const entry = ledger.entries.find((e) => e.id === id)!;
+    expect(entry.staleRepeatCount).toBe(1);
+  });
+
+  it('clears stale-repeat tracking once a finding is resolved', () => {
+    const findings = [
+      {
+        severity: 'high' as const,
+        files: ['packages/app.ts'],
+        evidence: 'missing error handling',
+        rationale: 'unhandled exception',
+        minimal_correction: 'add try/catch',
+      },
+    ];
+    let ledger = createFindingLedger(findings, [], 'spec-review');
+    const id = ledger.entries[0]!.id;
+
+    ledger = updateFindingLedger(
+      ledger,
+      [{ finding_id: id, resolved: false, evidence: 'same evidence' }],
+      [],
+      1,
+    );
+    ledger = updateFindingLedger(
+      ledger,
+      [{ finding_id: id, resolved: false, evidence: 'same evidence' }],
+      [],
+      2,
+    );
+    let entry = ledger.entries.find((e) => e.id === id)!;
+    expect(entry.staleRepeatCount).toBe(2);
+
+    ledger = updateFindingLedger(
+      ledger,
+      [{ finding_id: id, resolved: true, evidence: 'genuinely fixed now' }],
+      [],
+      3,
+    );
+    entry = ledger.entries.find((e) => e.id === id)!;
+    expect(entry.status).toBe('resolved');
+    expect(entry.lastUnresolvedEvidence).toBeUndefined();
+    expect(entry.staleRepeatCount).toBeUndefined();
   });
 
   it('generates consistent hash fingerprints', () => {
