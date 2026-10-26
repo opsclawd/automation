@@ -3020,6 +3020,23 @@ export function composeRoot(opts: ComposeOptions): Container {
               } catch {
                 // best-effort fetch
               }
+              // Prefer the freshly-fetched remote-tracking ref over the bare branch
+              // name: if a LOCAL branch of the same name already exists in this
+              // orchestrator's own checkout (e.g. a release-batch branch created
+              // once, long-lived, and never advanced locally while PRs merge into
+              // it on GitHub), `git worktree add -b <new> <worktree> <bareName>`
+              // resolves to that stale local ref instead of origin's current tip,
+              // silently pinning new runs' startCommitSha to a point the base
+              // branch left behind long ago.
+              if (!r.startCommitSha) {
+                const remoteRef = `origin/${r.baseBranch}`;
+                const remoteSha = await gitAdapter
+                  .resolveRef(repoRootPath, remoteRef)
+                  .catch(() => undefined);
+                if (remoteSha) {
+                  baseBranch = remoteRef;
+                }
+              }
             }
             if (resumeDisposition !== undefined && !r.startCommitSha) {
               const configuredBaseBranch = r.baseBranch ?? opts.baseBranch ?? repoDefaultBranch;
