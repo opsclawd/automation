@@ -770,7 +770,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           process.exit(EXIT_USER_ERROR);
         });
         const tee = opts.verbose ?? Boolean(process.stdout.isTTY);
-        const { c, repoRoot } = composeWithTarget(targetRepoRoot, {
+        const { c, repoRoot: orchestratorRepoRoot } = composeWithTarget(targetRepoRoot, {
           ...(buildOpts !== undefined ? { buildOpts } : {}),
           runStartupSweeps: true,
           composeOverrides: {
@@ -782,6 +782,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           },
         });
         containerRef = c;
+
+        // Remote/worktree operations below (base-branch existence check, post-run
+        // worktree cleanup) must operate on the TARGET repo when --target-repo-root
+        // is given, not on this orchestrator's own repo — composeWithTarget's
+        // returned `repoRoot` is always the orchestrator's cwd-based root.
+        const repoRoot = targetRepoRoot ?? orchestratorRepoRoot;
 
         // --- runtime pin validation ---
         if (opts.runtime !== undefined && !isPinnedRuntime(opts.runtime)) {
