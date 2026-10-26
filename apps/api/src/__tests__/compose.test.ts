@@ -1006,6 +1006,99 @@ describe('composeRoot', () => {
     vi.restoreAllMocks();
   });
 
+  it('workerLoopDeps.prepareWorktree bases a new run off origin/<branch>, not a same-named stale local branch', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'compose-prepare-wt-stale-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      repoFullName: 'owner/repo',
+      runStartupSweeps: false,
+    });
+    expect(container.workerLoopDeps).toBeDefined();
+
+    // New run, no startCommitSha pinned yet: the local repo happens to have a
+    // long-lived local branch of the exact same name as the batch base
+    // branch, left over from when the batch was created, stale at an old
+    // commit while the remote has since moved on via GitHub-merged PRs.
+    container.runRepository.insertIfNoActive({
+      uuid: 'prepare-wt-stale-local-uuid',
+      displayId: 'issue-427-20260622-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 427,
+      type: 'issue_to_pr',
+      status: 'running',
+      baseBranch: 'release/batch-stale',
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    });
+
+    const staleLocalSha = 'aaaa111122223333444455556666777788889999';
+    const freshRemoteSha = 'bbbb111122223333444455556666777788889999';
+
+    const createWorktreeSpy = vi
+      .spyOn(GitWorktreeAdapter.prototype, 'createWorktree')
+      .mockResolvedValue(undefined);
+    vi.spyOn(GitWorktreeAdapter.prototype, 'seedArtifactExcludes').mockResolvedValue(undefined);
+    const fetchSpy = vi.spyOn(GitWorktreeAdapter.prototype, 'fetch').mockResolvedValue(undefined);
+    const resolveRefSpy = vi
+      .spyOn(GitWorktreeAdapter.prototype, 'resolveRef')
+      .mockImplementation(async (_cwd, ref) =>
+        ref === 'origin/release/batch-stale' ? freshRemoteSha : staleLocalSha,
+      );
+    const headCommitShaSpy = vi
+      .spyOn(GitWorktreeAdapter.prototype, 'headCommitSha')
+      .mockResolvedValue(freshRemoteSha);
+
+    const ac = new AbortController();
+    await container.workerLoopDeps!(RepositoryId('owner/repo')).prepareWorktree({
+      repoId: RepositoryId('owner/repo'),
+      runId: RunId('prepare-wt-stale-local-uuid'),
+      signal: ac.signal,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(root, 'origin', 'release/batch-stale');
+    expect(resolveRefSpy).toHaveBeenCalledWith(root, 'origin/release/batch-stale');
+    expect(createWorktreeSpy).toHaveBeenCalledOnce();
+    expect(createWorktreeSpy.mock.calls[0][0]).toMatchObject({
+      worktreePath: path.join(root, '.ai-worktrees', 'issue-427'),
+      branch: 'ai/issue-427',
+      // Must resolve the worktree base off the fresh remote-tracking ref,
+      // never the bare branch name (which would silently prefer a stale
+      // same-named local branch if one exists).
+      baseBranch: 'origin/release/batch-stale',
+    });
+
+    createWorktreeSpy.mockRestore();
+    headCommitShaSpy.mockRestore();
+    fetchSpy.mockRestore();
+    resolveRefSpy.mockRestore();
+    vi.restoreAllMocks();
+  });
+
   it('recovers a resumed null baseline from the base branch before creating the worktree', async () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'compose-resume-wt-')));
     writeFileSync(
