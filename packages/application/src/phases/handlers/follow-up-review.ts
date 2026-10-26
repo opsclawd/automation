@@ -23,6 +23,7 @@ import {
   formatValidationCriticalFilesWarning,
   type ValidationCriticalFile,
 } from '../../review-fix/validation-critical-files.js';
+import { capDiffForPrompt } from '../../review-fix/diff-budget.js';
 
 export interface FollowUpReviewHandlerOpts {
   profileName?: string;
@@ -144,6 +145,23 @@ export class FollowUpReviewHandler implements PhaseHandler {
     }
     const validationCriticalWarning = formatValidationCriticalFilesWarning(criticalFiles);
 
+    // 6b. Cap diff text to a safe prompt budget. complete_diff is the
+    // cumulative diff since the run's original start commit and grows
+    // unboundedly with every fix iteration on a long-running issue; agent
+    // backends enforce a hard input-size limit (e.g. opencode's turn/start
+    // RPC: 1,048,576 characters) that an uncapped diff can deterministically
+    // exceed, which no amount of retrying can fix. See diff-budget.ts.
+    const cappedCompleteDiff = capDiffForPrompt(completeDiff);
+    const cappedFixDiff = capDiffForPrompt(fixDiff);
+    if (cappedCompleteDiff.truncated || cappedFixDiff.truncated) {
+      emit('follow_up_review.diff_truncated', 'warn', 'diff text truncated to fit prompt budget', {
+        completeDiffChars: cappedCompleteDiff.originalChars,
+        completeDiffTruncated: cappedCompleteDiff.truncated,
+        fixDiffChars: cappedFixDiff.originalChars,
+        fixDiffTruncated: cappedFixDiff.truncated,
+      });
+    }
+
     // 7. Invoke single-shot follow-up reviewer agent (read-only)
     const runResult = await runSingleShotAgentPhase(ctx, {
       phase: 'follow-up-review',
@@ -157,8 +175,8 @@ export class FollowUpReviewHandler implements PhaseHandler {
         cwd: ctx.cwd,
         finding_ledger: formattedLedger,
         validation_evidence: validationEvidence,
-        complete_diff: completeDiff || '(no diff)',
-        fix_diff: fixDiff || '(no diff)',
+        complete_diff: cappedCompleteDiff.text || '(no diff)',
+        fix_diff: cappedFixDiff.text || '(no diff)',
         validation_critical_files: validationCriticalWarning,
         orchestrator_bookkeeping_files:
           formatOrchestratorOwnedUntrackedPathsForPrompt(orchestratorOwnedPaths),

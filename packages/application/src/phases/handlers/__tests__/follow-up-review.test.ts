@@ -641,4 +641,66 @@ describe('FollowUpReviewHandler', () => {
     const parsedFollowUp = JSON.parse(rawFollowUp);
     expect(parsedFollowUp.verdict).toBe('APPROVE');
   });
+
+  it('caps an oversized cumulative diff before it reaches the prompt, instead of deterministically exceeding the agent input limit (issue #426 regression)', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const git = new FakeGitPort();
+    // Simulate a long-running issue whose cumulative diff since start has
+    // grown past the agent backend's hard input-size limit (observed: 34MB
+    // on issue #426 vs. opencode's 1,048,576-character turn/start limit).
+    git.diff = async () => 'x'.repeat(2_000_000);
+    const ctx = createMockContext(artifacts, agent, git);
+
+    await recordValidationEvidence(ctx, 'validate');
+
+    await artifacts.write({
+      runId: 'run-1',
+      phaseId: PhaseName('read_issue'),
+      relativePath: 'issue.md',
+      contents: '# Issue 1106',
+    });
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'finding-ledger.json',
+      contents: JSON.stringify(createFindingLedger([])),
+    });
+
+    agent.enqueue('follow-up-review', () => ({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/tmp/stdout',
+      stderrPath: '/tmp/stderr',
+      resultJsonPath: 'follow-up-review-result.json',
+      contractViolations: [],
+      outcome: 'success',
+    }));
+
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'follow-up-review-result.json',
+      contents: JSON.stringify({
+        verdict: 'APPROVE',
+        evaluations: [],
+        new_findings: [],
+        summary: 'All clear',
+      }),
+    });
+
+    const handler = new FollowUpReviewHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const lastCall = mockRenderPrompt.mock.calls[mockRenderPrompt.mock.calls.length - 1];
+    const promptCtx = lastCall?.[1];
+    const completeDiffVar = promptCtx?.vars.complete_diff as string;
+    const fixDiffVar = promptCtx?.vars.fix_diff as string;
+    expect(completeDiffVar.length).toBeLessThan(1_048_576);
+    expect(completeDiffVar).toContain('diff truncated');
+    expect(fixDiffVar.length).toBeLessThan(1_048_576);
+  });
 });
